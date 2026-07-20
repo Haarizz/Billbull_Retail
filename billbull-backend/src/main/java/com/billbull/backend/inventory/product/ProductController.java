@@ -82,9 +82,22 @@ public class ProductController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProductAggregateResponse> create(
             @RequestPart("data") String data,
-            @RequestPart(value = "file", required = false) MultipartFile file) throws JsonProcessingException {
+            @RequestPart(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "source", required = false) String source) throws JsonProcessingException {
         // Manually parse the JSON string into the Request object
-        modulePermissionService.requireCanCreate("inventory");
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isCashier = auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_CASHIER"));
+
+        if (!modulePermissionService.canCreate("inventory")) {
+            if ("pos".equals(source) || isCashier) {
+                if (!modulePermissionService.canView("sales") && !modulePermissionService.canView("inventory")) {
+                    modulePermissionService.requireCanView("inventory");
+                }
+            } else {
+                modulePermissionService.requireCanCreate("inventory");
+            }
+        }
         ProductAggregateRequest request = objectMapper.readValue(data, ProductAggregateRequest.class);
         return ResponseEntity.ok(service.create(request, file));
     }
@@ -150,8 +163,21 @@ public class ProductController {
             @RequestParam(defaultValue = "") String name,
             @RequestParam(defaultValue = "") String code,
             @RequestParam(defaultValue = "") String sku,
-            @RequestParam(defaultValue = "") String barcode) {
-        modulePermissionService.requireCanView("inventory");
+            @RequestParam(defaultValue = "") String barcode,
+            @RequestParam(value = "source", required = false) String source) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isCashier = auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_CASHIER"));
+
+        if (!modulePermissionService.canView("inventory")) {
+            if ("pos".equals(source) || isCashier) {
+                if (!modulePermissionService.canView("sales")) {
+                    modulePermissionService.requireCanView("inventory");
+                }
+            } else {
+                modulePermissionService.requireCanView("inventory");
+            }
+        }
         return ResponseEntity.ok(service.validateDuplicate(name, code, sku, barcode));
     }
 

@@ -16,3 +16,13 @@ export const applyAdvance = async ({ advanceReceiptId, invoiceNumber, amount, ap
     });
     return res.data;
 };
+
+export const hasAdvanceHistory = async (customerCode) => {
+    const res = await api.get(`${BASE_PATH}/customer/${encodeURIComponent(customerCode)}/has-history`);
+    return res.data?.hasHistory === true;
+};
+
+export const applyAdvanceAgainstOutstanding = async ({ customerCode, advanceReceiptId }) => {
+    const res = await api.post(`${BASE_PATH}/apply-against-outstanding`, { customerCode, advanceReceiptId });
+    return res.data;
+};

@@ -528,4 +528,111 @@ public interface StockMovementRepository
         List<Object[]> getNetAvailableStockForProductsInWarehouse(
                 @Param("warehouseId") Long warehouseId,
                 @Param("productIds")  List<Long> productIds);
+
+        // =========================================================================================
+        // Branch-Level Inventory Phase 3 — DORMANT branch-scoped aggregate variants.
+        //
+        // These mirror the hot on-hand / net-available / valuation queries above, adding the
+        // branch predicate `(sm.branchId IN :branchIds OR sm.branchId IS NULL)`. Legacy/global
+        // rows (branch_id IS NULL) stay visible in every branch — the proven "null = shared" rule.
+        //
+        // NOTHING CALLS THESE YET. Phase 4+ wires them in behind InventoryBranchScopeResolver
+        // (gated by inventory.branch-scope.enabled, default off). The existing unscoped methods
+        // above are UNTOUCHED and remain the admin / All-Branches path. `branchIds` is never empty
+        // (BranchAccessService.ListScope uses a -1 sentinel), so the IN clause is always valid.
+        // =========================================================================================
+
+        /** Branch-scoped variant of {@link #getTotalAvailableStockForProducts}. */
+        @Query("""
+                            SELECT sm.productId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.productId IN :productIds
+                              AND (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                            GROUP BY sm.productId
+                        """)
+        List<Object[]> getTotalAvailableStockForProductsAndBranchIdIn(
+                        @Param("productIds") List<Long> productIds,
+                        @Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /** Branch-scoped variant of {@link #getTotalAvailableStock} (single product). */
+        @Query("""
+                            SELECT COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.productId = :productId
+                              AND (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                        """)
+        BigDecimal getTotalAvailableStockAndBranchIdIn(
+                        @Param("productId") Long productId,
+                        @Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /** Branch-scoped variant of {@link #findAllStockGroupedByProductAndWarehouse}. */
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                            GROUP BY sm.productId, sm.warehouseId
+                        """)
+        List<Object[]> findAllStockGroupedByProductAndWarehouseAndBranchIdIn(
+                        @Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /** Branch-scoped variant of {@link #findStockByProductsForAllWarehouses}. */
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.productId IN :productIds
+                              AND (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                            GROUP BY sm.productId, sm.warehouseId
+                        """)
+        List<Object[]> findStockByProductsForAllWarehousesAndBranchIdIn(
+                        @Param("productIds") List<Long> productIds,
+                        @Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /** Branch-scoped variant of {@link #sumGlobalInventoryValue} (valuation over branch scope). */
+        @Query("""
+                            SELECT COALESCE(SUM(sm.quantity * sm.unitCost), 0)
+                            FROM StockMovement sm
+                            WHERE sm.quantity > 0 AND sm.unitCost IS NOT NULL AND sm.unitCost > 0
+                              AND (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                        """)
+        BigDecimal sumInventoryValueByBranchIdIn(
+                        @Param("branchIds") java.util.Collection<Long> branchIds);
+
+        /**
+         * Branch-scoped variant of {@link #getNetAvailableStockForProductsInWarehouse}. Native
+         * (mirrors the RESERVED-allocation subtraction). The branch predicate is applied to the
+         * on-hand sum; RESERVED allocations are product-level (not branch-stamped) and unchanged.
+         */
+        @Query(value = """
+                    SELECT sm.product_id,
+                           COALESCE(SUM(sm.quantity), 0)
+                           - COALESCE((SELECT SUM(ba.quantity)
+                                        FROM batch_allocations ba
+                                        WHERE ba.product_id = sm.product_id
+                                          AND ba.status = 'RESERVED'), 0)
+                    FROM stock_movements sm
+                    WHERE sm.warehouse_id = :warehouseId
+                      AND sm.product_id IN :productIds
+                      AND (sm.branch_id IN :branchIds OR sm.branch_id IS NULL)
+                    GROUP BY sm.product_id
+                """, nativeQuery = true)
+        List<Object[]> getNetAvailableStockForProductsInWarehouseAndBranchIdIn(
+                @Param("warehouseId") Long warehouseId,
+                @Param("productIds")  List<Long> productIds,
+                @Param("branchIds")   java.util.Collection<Long> branchIds);
+
+        /**
+         * Branch-scoped variant of {@link #findAllStockGroupedByProductWarehouseAndBatch} (Phase 10,
+         * inventory reports). Identical projection + GROUP BY; adds the branch predicate so the
+         * all-warehouses report path can be narrowed to the active branch (+ global). Used only when
+         * the toggle is on + a branch is active + branchScope=active; the unscoped method above stays
+         * the consolidated / All-Branches / toggle-off path. branchIds never empty (sentinel).
+         */
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                            GROUP BY sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate
+                        """)
+        List<Object[]> findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn(
+                        @Param("branchIds") java.util.Collection<Long> branchIds);
 }

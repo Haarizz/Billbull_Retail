@@ -14,20 +14,36 @@ public class SubDepartmentService {
     private final SubDepartmentRepository repo;
     private final DepartmentRepository departmentRepo;
     private final com.billbull.backend.inventory.product.ProductRepository productRepo;
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver;
+    private final com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch;
 
     public SubDepartmentService(SubDepartmentRepository repo,
             DepartmentRepository departmentRepo,
-            com.billbull.backend.inventory.product.ProductRepository productRepo) {
+            com.billbull.backend.inventory.product.ProductRepository productRepo,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver scopeResolver,
+            com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch) {
         this.repo = repo;
         this.departmentRepo = departmentRepo;
         this.productRepo = productRepo;
+        this.scopeResolver = scopeResolver;
+        this.masterBranch = masterBranch;
+    }
+
+    private java.util.Collection<Long> activeScope() {
+        return scopeResolver.activeListScope()
+                .map(com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
+                .orElse(null);
     }
 
     // ---------------------------
     // LIST
     // ---------------------------
     public List<SubDepartmentResponse> list() {
-        return repo.findAll().stream().map(this::map).toList();
+        java.util.Collection<Long> scope = activeScope();
+        List<SubDepartment> rows = scope != null
+                ? repo.findActiveInBranchScope(scope)
+                : repo.findAll();
+        return rows.stream().map(this::map).toList();
     }
 
     // ---------------------------
@@ -38,7 +54,17 @@ public class SubDepartmentService {
         Department dept = departmentRepo.findById(req.departmentId)
                 .orElseThrow(() -> new RuntimeException("Department not found"));
 
-        if (repo.existsByNameAndDepartmentIdAndActiveTrue(req.name, dept.getId())) {
+        // Phase 6B: resolve this row's branch (governance-gated; null = global / toggle off).
+        com.billbull.backend.settings.branch.Branch branch = masterBranch.resolveBranchForCreate();
+        // §16 reference validation: a sub-department may reference own-branch or global Department only.
+        masterBranch.assertMasterReferenceAccessible(
+                com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(dept.getBranch()),
+                com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(branch),
+                "Department");
+
+        java.util.Collection<Long> scope = activeScope();
+
+        if (nameInDeptExists(req.name, dept.getId(), scope)) {
             throw new RuntimeException("Sub-Department already exists in this department");
         }
 
@@ -48,12 +74,12 @@ public class SubDepartmentService {
             String base = raw.isEmpty() ? "SD" : raw.substring(0, Math.min(raw.length(), 10));
             String candidate = base;
             int suffix = 1;
-            while (repo.existsByCodeAndActiveTrue(candidate)) {
+            while (codeExists(candidate, scope)) {
                 String s = String.valueOf(suffix++);
                 candidate = base.substring(0, Math.min(base.length(), 10 - s.length())) + s;
             }
             req.code = candidate;
-        } else if (repo.existsByCodeAndActiveTrue(req.code)) {
+        } else if (codeExists(req.code, scope)) {
             throw new RuntimeException("Sub-Department code already exists");
         }
 
@@ -61,6 +87,7 @@ public class SubDepartmentService {
         sd.setName(req.name);
         sd.setCode(req.code);
         sd.setDepartment(dept);
+        sd.setBranch(branch); // Phase 6B stamp (null = global / toggle off)
         sd.setDescription(req.description);
         // QA-001: default to active=true when not explicitly set (Boolean null check)
         sd.setActive(req.active == null ? true : req.active);
@@ -69,6 +96,18 @@ public class SubDepartmentService {
         sd.setRestrictTerminals(req.restrictTerminals);
 
         return map(repo.save(sd));
+    }
+
+    private boolean codeExists(String code, java.util.Collection<Long> scope) {
+        return scope != null
+                ? repo.existsActiveByCodeInBranchScope(code, scope)
+                : repo.existsByCodeAndActiveTrue(code);
+    }
+
+    private boolean nameInDeptExists(String name, Long deptId, java.util.Collection<Long> scope) {
+        return scope != null
+                ? repo.existsActiveByNameAndDepartmentInBranchScope(name, deptId, scope)
+                : repo.existsByNameAndDepartmentIdAndActiveTrue(name, deptId);
     }
 
     // ---------------------------
@@ -81,6 +120,12 @@ public class SubDepartmentService {
 
         Department dept = departmentRepo.findById(req.departmentId)
                 .orElseThrow(() -> new RuntimeException("Department not found"));
+
+        // §16: the (re)referenced Department must be own-branch or global relative to this sub-dept.
+        masterBranch.assertMasterReferenceAccessible(
+                com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(dept.getBranch()),
+                com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(sd.getBranch()),
+                "Department");
 
         sd.setName(req.name);
         sd.setCode(req.code);

@@ -63,6 +63,7 @@ import { getProductById, searchProductByBarcode } from '../../../api/productsApi
 import ProductSelector from '../../../components/ProductSelector';
 import SearchableDropdown from '../../../components/SearchableDropdown';
 import LocationSelector from '../../../components/common/LocationSelector';
+import DateFilter from '../../../components/common/DateFilter';
 import VendorSelector from '../../../components/VendorSelector';
 import { getImageUrl } from '../../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../../utils/unitPricing';
@@ -150,13 +151,9 @@ const getStatusColor = (status) => {
 // ==========================================
 
 // --- LIST VIEW ---
-const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownload, onProceedToInvoice, activeFilter, setActiveFilter, currencyLabel, currentPage, pageSize, totalElements, isLoading = false }) => {
+const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownload, onProceedToInvoice, activeFilter, setActiveFilter, dateRange, setDateRange, currencyLabel, currentPage, pageSize, totalElements, isLoading = false }) => {
   const filteredData = data.filter(item => {
     if (activeFilter === "All GRNs") return true;
-    if (activeFilter === "Today") {
-      const today = new Date().toISOString().split('T')[0];
-      return item.date === today;
-    }
     if (activeFilter === "QC Pending") return item.status === GRN_STATUS.QC_PENDING;
     if (activeFilter === "Pending Invoice") return item.status === GRN_STATUS.POSTED && item.invStatus !== 'Fully Invoiced';
     if (activeFilter === "With Variance") return item.hasVariance || (item.variance && item.variance !== 0); // Check for variance flag or value
@@ -168,7 +165,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownlo
   return (
     <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200 pb-20">
       {/* Table Container */}
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-visible">
         {/* Filter Bar */}
         <div className="px-4 md:px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -176,6 +173,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownlo
             <h3 className="text-sm font-semibold text-slate-700">Goods Receipt Notes</h3>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+            <DateFilter onChange={(range) => setDateRange(range)} />
             <div className="relative w-full sm:w-auto flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input
@@ -1580,288 +1578,275 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         items={items}
       />
 
-      {/* Modified Grid Layout: 1 (Left) - 3 (Middle) - 1 (Right) */}
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
-
-        {/* --- LEFT SIDEBAR: GRN INFO --- */}
-        <div className="xl:col-span-1 space-y-4 order-2 xl:order-1">
-          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-slate-400" />
-                <h3 className="font-semibold text-sm text-slate-700">GRN Info</h3>
-              </div>
-              {getWorkflowBadge()}
-            </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">GRN No</label>
-                <input type="text" value={formData.grnNo} readOnly className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-500 font-mono" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">GRN Date</label>
-                <input type="date" value={formData.date} disabled={isLocked} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-600" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">GRN Type</label>
-                <div className="relative">
-                  <select
-                    value={grnType}
-                    onChange={handleGrnTypeChange}
-                    disabled={isLocked}
-                    className="w-full text-xs border border-slate-200 rounded p-2 bg-white text-slate-700 appearance-none"
-                  >
-                    <option value="Against LPO">Against LPO</option>
-                    <option value="Direct GRN">Direct Purchase</option>
-                  </select>
-                  <ChevronDown className="absolute right-2 top-2.5 h-3 w-3 text-slate-400 pointer-events-none" />
-                </div>
-              </div>
-
-              {grnType === "Against LPO" && (
-                <div>
-                  <label className="text-xs font-medium text-slate-500 mb-1 block">LPO No</label>
-                  <div className="relative">
-                    <SearchableDropdown
-                      options={lpoList
-                        .filter(lpo => ['APPROVED', 'SENT_TO_VENDOR', 'PARTIALLY_RECEIVED'].includes(lpo.status))
-                        .map(lpo => ({
-                          value: lpo.lpoNumber || lpo.id,
-                          label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName || lpo.vendor || "Vendor"}`
-                        }))}
-                      value={formData.lpo}
-                      onChange={handleLpoChange}
-                      placeholder="Select LPO"
-                      disabled={isLocked}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {(grnType === "Direct GRN" || grnType === "Direct Return") && (
-                <div>
-                  <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor</label>
-                  {formData.vendor ? (
-                    <div className={`bg-slate-50 border border-slate-200 rounded-md p-4 relative group ${isLocked ? 'opacity-70 pointer-events-none' : ''}`}>
-                      <button
-                        onClick={() => !isLocked && setIsVendorSearchOpen(true)}
-                        disabled={isLocked}
-                        className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-slate-200 rounded-md transition-all text-slate-500"
-                        title="Change Vendor"
-                      >
-                        <Search className="h-4 w-4" />
-                      </button>
-                      <div className="font-bold text-slate-800 text-sm mb-1">{formData.vendor}</div>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => !isLocked && setIsVendorSearchOpen(true)}
-                      disabled={isLocked}
-                      className={`w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors ${isLocked ? 'opacity-50 pointer-events-none' : ''}`}
-                    >
-                      <span className="text-slate-400">Select Vendor...</span>
-                      <Search className="h-4 w-4 text-slate-400" />
-                    </button>
-                  )}
-
-                  <VendorSelector
-                    isOpen={isVendorSearchOpen}
-                    onClose={() => setIsVendorSearchOpen(false)}
-                    onSelect={(v) => {
-                      setFormData(prev => ({
-                        ...prev,
-                        vendorId: v?.id || v?.code || '',
-                        vendor: v?.name || ''
-                      }));
-                      setSelectedVendorDetails(v);
-                    }}
-                    vendors={vendors}
-                    selectedCode={formData.vendorId || ''}
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Delivery Note</label>
-                <input type="text" placeholder="e.g. DN-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Invoice No</label>
-                <input type="text" placeholder="e.g. INV-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Shipment / Container No</label>
-                <input type="text" placeholder="e.g. SHIP-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Packing List No</label>
-                <input type="text" placeholder="e.g. PL-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-2 text-slate-700" />
-              </div>
+      {/* --- DOCUMENT META BAR (Quotation-style single-row header) --- */}
+      <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase">Status</span>
+            {getWorkflowBadge()}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">GRN No</span>
+            <input type="text" value={formData.grnNo} readOnly placeholder="Auto-generated" className="w-36 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1.5 text-slate-500 font-mono" />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">GRN Date</span>
+            <input type="date" value={formData.date} disabled={isLocked} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-36 text-xs border border-slate-200 rounded px-2 py-1.5 text-slate-600" />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">GRN Type</span>
+            <div className="relative">
+              <select
+                value={grnType}
+                onChange={handleGrnTypeChange}
+                disabled={isLocked}
+                className="w-36 text-xs border border-slate-200 rounded px-2 py-1.5 bg-white text-slate-700 appearance-none pr-6"
+              >
+                <option value="Against LPO">Against LPO</option>
+                <option value="Direct GRN">Direct Purchase</option>
+              </select>
+              <ChevronDown className="absolute right-2 top-2.5 h-3 w-3 text-slate-400 pointer-events-none" />
             </div>
           </div>
 
-          {/* Vendor Details Box */}
-          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-3">
-              <User className="h-4 w-4 text-slate-400" />
-              <h3 className="font-semibold text-sm text-slate-700">Vendor Details</h3>
-            </div>
-            <div className="bg-slate-50/50 rounded p-3 text-xs border border-slate-100 space-y-2">
-              <div className="flex justify-between font-medium text-slate-900 pb-1 border-b border-slate-100 mb-1">
-                <span className="text-slate-500 font-normal">Vendor</span>
-              </div>
-              <div className="font-medium text-slate-800 flex justify-between items-center">
-                {formData.vendor || "Select Vendor/LPO"}
-                <span className="text-slate-400"><MoreHorizontal size={14} /></span>
-              </div>
-
-              {selectedVendorDetails && (
-                <>
-                  <div className="flex justify-between text-slate-500 pt-2">
-                    <span>Vendor Code</span>
-                    <span className="font-medium text-slate-700">{selectedVendorDetails.code || selectedVendorDetails.vendorCode || "N/A"}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-500">
-                    <span>Contact</span>
-                    <span className="font-medium text-slate-700">{selectedVendorDetails.contactPerson || selectedVendorDetails.contact || "N/A"}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-500">
-                    <span>Phone</span>
-                    <span className="font-medium text-slate-700">{selectedVendorDetails.phone || selectedVendorDetails.telephone || "N/A"}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-500">
-                    <span>Email</span>
-                    <span className="font-medium text-slate-700">{selectedVendorDetails.email || "N/A"}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-500">
-                    <span>Payment Terms</span>
-                    <span className="font-medium text-slate-700">{selectedVendorDetails.paymentTerms || "Net 30"}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-500">
-                    <span>Currency</span>
-                    <span className="font-medium text-slate-700">{selectedVendorDetails.currency || "AED"}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-500">
-                    <span>TRN</span>
-                    <span className="font-mono text-[10px]">{selectedVendorDetails.taxNumber || selectedVendorDetails.trn || "N/A"}</span>
-                  </div>
-                </>
-              )}
-
-              {!selectedVendorDetails && (
-                <div className="text-xs text-slate-400 italic text-center py-2">
-                  Select an LPO or Vendor to see details
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Receiving Details Box */}
-          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-3">
-              <Truck className="h-4 w-4 text-slate-400" />
-              <h3 className="font-semibold text-sm text-slate-700">Receiving Details</h3>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] mb-1 flex items-center gap-1">
-                  <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
-                  {locationError && <span className="text-red-500">*</span>}
-                  {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
-                </label>
-                <LocationSelector
-                  value={{
-                    warehouseId: formData.warehouseId,
-                    warehouseName: formData.warehouse,
-                    zoneId: formData.zoneId,
-                    locatorId: formData.locatorId,
-                    binId: formData.binId
-                  }}
-                  onChange={handleLocationChange}
+          {grnType === "Against LPO" && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">LPO No</span>
+              <div className="relative w-48">
+                <SearchableDropdown
+                  options={lpoList
+                    .filter(lpo => ['APPROVED', 'SENT_TO_VENDOR', 'PARTIALLY_RECEIVED'].includes(lpo.status))
+                    .map(lpo => ({
+                      value: lpo.lpoNumber || lpo.id,
+                      label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName || lpo.vendor || "Vendor"}`
+                    }))}
+                  value={formData.lpo}
+                  onChange={handleLpoChange}
+                  placeholder="Select LPO"
                   disabled={isLocked}
-                  className="w-full"
-                  error={locationError}
                 />
               </div>
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Received By</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={formData.receivedBy || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, receivedBy: e.target.value }))}
-                    disabled={isLocked}
-                    className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
-                    placeholder="Receiver Name"
-                  />
-                </div>
-              </div>
-
-
-
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Checked By</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={formData.checkedBy || ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, checkedBy: e.target.value }))}
-                    disabled={isLocked}
-                    className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
-                    placeholder="Checker Name"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Delivery Mode</label>
-                <input type="text" placeholder="e.g. Supplier Delivery" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Packages Count</label>
-                <input
-                    type="number"
-                    value={formData.packageCount ?? ''}
-                    onChange={(e) => setFormData(prev => ({ ...prev, packageCount: e.target.value }))}
-                    disabled={isLocked}
-                    className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700"
-                    placeholder="0"
-                  />
-              </div>
             </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-400 uppercase whitespace-nowrap">Warehouse</span>
+            <span className="text-xs font-medium text-slate-700">{formData.warehouse || '—'}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* --- INFO CARD ROW: Vendor (left) + Receiving/Logistics (right), Quotation Customer/Shipping pattern --- */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+        {/* Vendor Card */}
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <User className="h-4 w-4 text-slate-400" />
+              <h3 className="font-semibold text-sm text-slate-700">Vendor</h3>
+            </div>
+            {selectedVendorDetails && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100">Selected</span>
+            )}
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-3">
-              <Truck className="h-4 w-4 text-slate-400" />
-              <h3 className="font-semibold text-sm text-slate-700">Logistics</h3>
+          {(grnType === "Direct GRN" || grnType === "Direct Return") ? (
+            formData.vendor ? (
+              <div className={`bg-slate-50 border border-slate-200 rounded-md p-3 relative group ${isLocked ? 'opacity-70 pointer-events-none' : ''}`}>
+                <button
+                  onClick={() => !isLocked && setIsVendorSearchOpen(true)}
+                  disabled={isLocked}
+                  className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-slate-200 rounded-md transition-all text-slate-500"
+                  title="Change Vendor"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+                <div className="font-bold text-slate-800 text-sm mb-1">{formData.vendor}</div>
+              </div>
+            ) : (
+              <button
+                onClick={() => !isLocked && setIsVendorSearchOpen(true)}
+                disabled={isLocked}
+                className={`w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors ${isLocked ? 'opacity-50 pointer-events-none' : ''}`}
+              >
+                <span className="text-slate-400">Select Vendor...</span>
+                <Search className="h-4 w-4 text-slate-400" />
+              </button>
+            )
+          ) : (
+            <div className="font-bold text-slate-800 text-sm mb-1">{formData.vendor || <span className="text-slate-400 font-normal">Select an LPO to load vendor</span>}</div>
+          )}
+
+          <VendorSelector
+            isOpen={isVendorSearchOpen}
+            onClose={() => setIsVendorSearchOpen(false)}
+            onSelect={(v) => {
+              setFormData(prev => ({
+                ...prev,
+                vendorId: v?.id || v?.code || '',
+                vendor: v?.name || ''
+              }));
+              setSelectedVendorDetails(v);
+            }}
+            vendors={vendors}
+            selectedCode={formData.vendorId || ''}
+          />
+
+          <div className="bg-slate-50/50 rounded p-3 text-xs border border-slate-100 space-y-2 mt-3">
+            {selectedVendorDetails ? (
+              <>
+                <div className="flex justify-between text-slate-500">
+                  <span>Vendor Code</span>
+                  <span className="font-medium text-slate-700">{selectedVendorDetails.code || selectedVendorDetails.vendorCode || "N/A"}</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>Contact</span>
+                  <span className="font-medium text-slate-700">{selectedVendorDetails.contactPerson || selectedVendorDetails.contact || "N/A"}</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>Phone</span>
+                  <span className="font-medium text-slate-700">{selectedVendorDetails.phone || selectedVendorDetails.telephone || "N/A"}</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>Email</span>
+                  <span className="font-medium text-slate-700">{selectedVendorDetails.email || "N/A"}</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>Payment Terms</span>
+                  <span className="font-medium text-slate-700">{selectedVendorDetails.paymentTerms || "Net 30"}</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>Currency</span>
+                  <span className="font-medium text-slate-700">{selectedVendorDetails.currency || "AED"}</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>TRN</span>
+                  <span className="font-mono text-[10px]">{selectedVendorDetails.taxNumber || selectedVendorDetails.trn || "N/A"}</span>
+                </div>
+              </>
+            ) : (
+              <div className="text-xs text-slate-400 italic text-center py-2">
+                Select an LPO or Vendor to see details
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Vendor Delivery Note</label>
+              <input type="text" placeholder="e.g. DN-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
             </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Vehicle No</label>
-                <input type="text" placeholder="e.g. DXB-12345" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Driver Name</label>
-                <input type="text" placeholder="Driver name" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Gate Entry No</label>
-                <input type="text" placeholder="e.g. GE-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Dock No</label>
-                <input type="text" placeholder="e.g. DOCK-1" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500 mb-1 block">Additional Notes</label>
-                <textarea disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 h-12 text-slate-700 resize-none" placeholder="Unloading instructions, special notes..."></textarea>
-              </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Vendor Invoice No</label>
+              <input type="text" placeholder="e.g. INV-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Shipment / Container No</label>
+              <input type="text" placeholder="e.g. SHIP-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Packing List No</label>
+              <input type="text" placeholder="e.g. PL-00001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
             </div>
           </div>
         </div>
 
+        {/* Receiving / Logistics Card */}
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Truck className="h-4 w-4 text-slate-400" />
+            <h3 className="font-semibold text-sm text-slate-700">Receiving &amp; Logistics</h3>
+          </div>
+
+          <div className="mb-3">
+            <label className="text-[10px] mb-1 flex items-center gap-1">
+              <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
+              {locationError && <span className="text-red-500">*</span>}
+              {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
+            </label>
+            <LocationSelector
+              value={{
+                warehouseId: formData.warehouseId,
+                warehouseName: formData.warehouse,
+                zoneId: formData.zoneId,
+                locatorId: formData.locatorId,
+                binId: formData.binId
+              }}
+              onChange={handleLocationChange}
+              disabled={isLocked}
+              className="w-full"
+              error={locationError}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Received By</label>
+              <input
+                type="text"
+                value={formData.receivedBy || ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, receivedBy: e.target.value }))}
+                disabled={isLocked}
+                className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
+                placeholder="Receiver Name"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Checked By</label>
+              <input
+                type="text"
+                value={formData.checkedBy || ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, checkedBy: e.target.value }))}
+                disabled={isLocked}
+                className="w-full text-xs border border-slate-200 rounded p-1.5 bg-white text-slate-700"
+                placeholder="Checker Name"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Delivery Mode</label>
+              <input type="text" placeholder="e.g. Supplier Delivery" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Packages Count</label>
+              <input
+                type="number"
+                value={formData.packageCount ?? ''}
+                onChange={(e) => setFormData(prev => ({ ...prev, packageCount: e.target.value }))}
+                disabled={isLocked}
+                className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Vehicle No</label>
+              <input type="text" placeholder="e.g. DXB-12345" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Driver Name</label>
+              <input type="text" placeholder="Driver name" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Gate Entry No</label>
+              <input type="text" placeholder="e.g. GE-001" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500 mb-1 block">Dock No</label>
+              <input type="text" placeholder="e.g. DOCK-1" disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 text-slate-700" />
+            </div>
+          </div>
+          <div className="mt-2">
+            <label className="text-[10px] text-slate-500 mb-1 block">Additional Notes</label>
+            <textarea disabled={isLocked} className="w-full text-xs border border-slate-200 rounded p-1.5 h-12 text-slate-700 resize-none" placeholder="Unloading instructions, special notes..."></textarea>
+          </div>
+        </div>
+      </div>
+
+      {/* Modified Grid Layout: 4 (Middle) - 1 (Right) */}
+      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+
         {/* --- MIDDLE: ITEM LINES (EXTENDED) --- */}
-        <div className="xl:col-span-3 space-y-4 order-1 xl:order-2">
+        <div className="xl:col-span-4 space-y-4">
           <div className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col h-full min-h-[600px]">
             {/* Toolbar */}
             <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
@@ -2483,6 +2468,8 @@ const GRN = () => {
   const LIST_PAGE_SIZE = 30;
   const [qcQueue, setQcQueue] = useState([]);
   const [activeFilter, setActiveFilter] = useState("All GRNs");
+  const _today = new Date().toISOString().slice(0, 10);
+  const [dateRange, setDateRange] = useState({ fromDate: _today, toDate: _today });
   const grnSummaryCards = useMemo(() => {
     const total = grns.length;
     const qcPending = grns.filter((item) => item.status === GRN_STATUS.QC_PENDING).length;
@@ -2494,10 +2481,10 @@ const GRN = () => {
     ).length;
 
     return [
-      { label: 'Total GRNs', value: total, tone: 'text-slate-900 bg-slate-50 border-slate-200' },
-      { label: 'QC Pending', value: qcPending, tone: 'text-amber-700 bg-amber-50 border-amber-200' },
-      { label: 'Pending Invoice', value: pendingInvoice, tone: 'text-blue-700 bg-blue-50 border-blue-200' },
-      { label: 'Completed', value: completed, tone: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
+      { label: 'Total GRNs', value: total, accent: 'blue', filter: 'All GRNs' },
+      { label: 'QC Pending', value: qcPending, accent: 'yellow', filter: 'QC Pending' },
+      { label: 'Pending Invoice', value: pendingInvoice, accent: 'blue', filter: 'Pending Invoice' },
+      { label: 'Completed', value: completed, accent: 'emerald', filter: 'Completed' },
     ];
   }, [grns]);
 
@@ -2635,11 +2622,10 @@ const GRN = () => {
 
   const filteredData = useMemo(() => {
     return grns.filter(item => {
+      if (dateRange?.fromDate && item.date < dateRange.fromDate) return false;
+      if (dateRange?.toDate && item.date > dateRange.toDate) return false;
+
       if (activeFilter === "All GRNs") return true;
-      if (activeFilter === "Today") {
-        const today = new Date().toISOString().split('T')[0];
-        return item.date === today;
-      }
       if (activeFilter === "QC Pending") return item.status === GRN_STATUS.QC_PENDING;
       if (activeFilter === "Pending Invoice") return item.status === GRN_STATUS.POSTED && item.invStatus !== 'Fully Invoiced';
       if (activeFilter === "With Variance") return item.hasVariance || (item.variance && item.variance !== 0);
@@ -2647,7 +2633,7 @@ const GRN = () => {
       if (activeFilter === "Reversed") return item.status === GRN_STATUS.REVERSED;
       return true;
     });
-  }, [grns, activeFilter]);
+  }, [grns, activeFilter, dateRange]);
 
   // Reset page on filter change; slice for the visible page.
   useEffect(() => { setListPage(0); }, [activeFilter]);
@@ -2843,6 +2829,31 @@ const GRN = () => {
     switch (activeNavTab) {
       case 'list':
         return <>
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            {grnSummaryCards.map((card) => {
+              const accentClasses = {
+                blue: { border: 'border-l-blue-500', ring: 'border-blue-300 ring-2 ring-blue-100', text: 'text-blue-600' },
+                yellow: { border: 'border-l-yellow-500', ring: 'border-yellow-300 ring-2 ring-yellow-100', text: 'text-yellow-600' },
+                emerald: { border: 'border-l-emerald-500', ring: 'border-emerald-300 ring-2 ring-emerald-100', text: 'text-emerald-600' },
+              }[card.accent];
+              const isActive = activeFilter === card.filter;
+              return (
+                <button
+                  key={card.label}
+                  type="button"
+                  onClick={() => setActiveFilter(card.filter)}
+                  className={`bg-white p-4 rounded-lg border shadow-sm border-l-4 ${accentClasses.border} text-left transition-all hover:-translate-y-0.5 hover:shadow-md ${isActive ? accentClasses.ring : 'border-slate-200'
+                    }`}
+                >
+                  <div className="text-sm font-medium text-slate-500">{card.label}</div>
+                  <div className="mt-2 flex items-baseline gap-2">
+                    <span className={`text-2xl font-bold ${accentClasses.text}`}>{card.value}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
           <GRNListView
             data={pagedFilteredData}
             onView={handleEdit}
@@ -2854,6 +2865,8 @@ const GRN = () => {
             onProceedToInvoice={handleProceedToInvoice}
             activeFilter={activeFilter}
             setActiveFilter={setActiveFilter}
+            dateRange={dateRange}
+            setDateRange={setDateRange}
             currencyLabel={currencyLabel}
             currentPage={listPage}
             pageSize={LIST_PAGE_SIZE}
@@ -2898,6 +2911,8 @@ const GRN = () => {
         onProceedToInvoice={handleProceedToInvoice}
         activeFilter={activeFilter}
         setActiveFilter={setActiveFilter}
+        dateRange={dateRange}
+        setDateRange={setDateRange}
         currencyLabel={currencyLabel}
         currentPage={0}
         isLoading={isLoading}
@@ -2976,25 +2991,9 @@ const GRN = () => {
           })}
         </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-4 md:grid-cols-4">
-          {grnSummaryCards.map((card) => (
-            <div
-              key={card.label}
-              className={`rounded-xl border px-3 py-2 shadow-sm ${card.tone}`}
-            >
-              <div className="text-[11px] font-medium uppercase tracking-[0.08em] opacity-70">
-                {card.label}
-              </div>
-              <div className="mt-1 text-2xl font-bold leading-none">
-                {card.value}
-              </div>
-            </div>
-          ))}
-        </div>
-
         {activeNavTab === 'list' && (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar mb-4 -mx-4 px-4 md:mx-0 md:px-0">
-            {["All GRNs", "Today", "QC Pending", "Pending Invoice", "With Variance", "Completed", "Reversed"].map((tab) => (
+            {["All GRNs", "QC Pending", "Pending Invoice", "With Variance", "Completed", "Reversed"].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveFilter(tab)}

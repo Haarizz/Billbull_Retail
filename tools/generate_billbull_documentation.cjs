@@ -6,8 +6,8 @@ const repoRoot = path.resolve(__dirname, "..");
 const workspaceRoot = path.resolve(repoRoot, "..");
 const backendRoot = path.join(repoRoot, "billbull-backend");
 const frontendRoot = path.join(repoRoot, "billbull-frontend");
-const templatePath = path.join(workspaceRoot, "API_Task_Sheet_Work.xlsx");
-const outputPath = path.join(workspaceRoot, "BillBull ERP Documentation.xlsx");
+const templatePath = path.join(repoRoot, "BillBull ERP Documentation.xlsx");
+const outputPath = path.join(repoRoot, "BillBull ERP Documentation.xlsx");
 
 const backendSrc = path.join(backendRoot, "src", "main", "java", "com", "billbull", "backend");
 const frontendSrc = path.join(frontendRoot, "src");
@@ -699,6 +699,15 @@ async function main() {
 
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(templatePath);
+  
+  // Remove all worksheets except the first one (API Task Sheet)
+  const sheetsToRemove = [];
+  workbook.eachSheet((sheet, id) => {
+    if (sheet.name !== "API Task Sheet") {
+      sheetsToRemove.push(id);
+    }
+  });
+  sheetsToRemove.forEach(id => workbook.removeWorksheet(id));
   writeSummarySheet(
     workbook,
     {

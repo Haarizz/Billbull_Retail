@@ -90,15 +90,24 @@ public class BarcodeTemplateService {
 
     private final BarcodeTemplateRepository repository;
     private final ObjectMapper objectMapper;
+    // Branch-Level Inventory Phase 9A — template list branch scoping (dormant while toggle off).
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
 
-    public BarcodeTemplateService(BarcodeTemplateRepository repository, ObjectMapper objectMapper) {
+    public BarcodeTemplateService(BarcodeTemplateRepository repository, ObjectMapper objectMapper,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
         this.repository = repository;
         this.objectMapper = objectMapper;
+        this.branchScopeResolver = branchScopeResolver;
     }
 
     public List<BarcodeTemplate> getAll() {
         ensureSystemTemplates();
-        return repository.findAll(Sort.by(Sort.Direction.ASC, "id"));
+        // Phase 9A: when the toggle is on + a branch is active, show the branch's templates PLUS all
+        // global (incl. system) templates; else the existing full list (toggle-off / admin →
+        // byte-identical). Global/system templates stay visible in every branch.
+        return branchScopeResolver.activeListScope()
+                .map(scope -> repository.findInBranchScope(scope.branchIds()))
+                .orElseGet(() -> repository.findAll(Sort.by(Sort.Direction.ASC, "id")));
     }
 
     public BarcodeTemplate create(BarcodeTemplate template) {

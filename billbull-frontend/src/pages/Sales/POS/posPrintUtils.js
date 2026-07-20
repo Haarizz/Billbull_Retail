@@ -1,6 +1,77 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
-import { buildFixedWidthLine, resolveLineDiscount } from '../../../utils/escPosReceipt';
+import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
+import { voidedLineNet } from '../../../utils/documentSummaryUtils';
+
+/**
+ * Build-time cutover switch for the POS <-> Back Office PrintTemplate unification
+ * (Phase 3). Off by default: POS keeps using buildPosA4Template's fabricated
+ * in-memory template. Flip VITE_USE_NEW_POS_PRINT_TEMPLATE=true to resolve real,
+ * branch-scoped PrintTemplate rows instead — an env flag was chosen over a runtime
+ * DB toggle so rollback needs no redeploy of backend state, only a rebuild.
+ */
+export const USE_NEW_POS_PRINT_TEMPLATE = String(import.meta.env.VITE_USE_NEW_POS_PRINT_TEMPLATE || '').toLowerCase() === 'true';
+
+/**
+ * Reconstructs gross (pre-discount) Subtotal / Discount / Taxable Amount from a
+ * persisted invoice the same way for every POS print surface. SalesInvoiceService
+ * #finalizeInvoiceTotals sums (netAmount − taxAmount) per line into invoice.subTotal,
+ * i.e. that field is already the TAXABLE base net of per-item discounts — the entity
+ * stores no top-level gross/discount aggregate at all — so Subtotal must be rebuilt
+ * from each line's own grossAmount, matching Back Office's summarizeSalesItems.
+ */
+export const resolveInvoiceGrossTotals = (invoice = {}) => {
+  const items = invoice.items || [];
+  if (invoice.discountTotal != null) {
+    // Caller already computed an explicit discount total (checkout preview's mock
+    // invoice, Sales Return receipts) — in that shape invoice.subTotal IS the gross
+    // pre-discount amount, so derive the taxable base the old way.
+    const subTotal = invoice.subTotal || 0;
+    const discountTotal = parseFloat(invoice.discountTotal) || 0;
+    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    const netAfterDiscount = subTotal - discountTotal;
+    // Under INCLUSIVE VAT, subTotal/discountTotal are tax-laden figures, so
+    // (subTotal - discountTotal) is the NET INCLUSIVE amount, not the ex-VAT
+    // taxable base — VAT must still be extracted from it (matches the A4
+    // invoice's summarizeSalesItems, which always re-derives taxableAmount
+    // rather than a flat subtraction). Since taxableAmount + taxTotal always
+    // equals netAfterDiscount by definition, subtracting the already-computed
+    // taxTotal is exact and mode/rate-agnostic (works even with mixed VAT
+    // rates across lines, unlike re-deriving from a single item's rate).
+    // EXCLUSIVE mode has no VAT embedded in netAfterDiscount, so the flat
+    // subtraction already IS the taxable amount.
+    const taxTotalForExtraction = parseFloat(invoice.taxTotal || 0) || 0;
+    const taxableAmount = invoice.taxInclusive
+      ? Math.max(0, netAfterDiscount - taxTotalForExtraction)
+      : netAfterDiscount;
+    return {
+      subTotal,
+      discountTotal,
+      lineDiscountTotal: Math.max(0, discountTotal - billDiscountTotal),
+      billDiscountTotal,
+      taxableAmount,
+    };
+  }
+  const taxableAmount = invoice.subTotal || 0;
+  const taxTotal = parseFloat(invoice.taxTotal || 0) || 0;
+  const grossSubtotal = items.reduce((sum, it) => {
+    if (it.voided || it.isVoided) return sum;
+    const qty = it.quantity || 0;
+    const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
+    const gross = parseFloat(it.grossAmount ?? (qty * unit));
+    return sum + (Number.isFinite(gross) ? gross : 0);
+  }, 0);
+  // Line discount, expressed on the same VAT basis as gross so it matches the
+  // Sales Invoice presentation (a "20% off 3,500" line reads as −700, not −636).
+  // INCLUSIVE: gross is VAT-laden, so compare against the VAT-laden net
+  // (taxable + tax). EXCLUSIVE: gross is ex-VAT, compare against taxable.
+  const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+  const netAfterDiscount = invoice.taxInclusive ? (taxableAmount + taxTotal) : taxableAmount;
+  const lineDiscountTotal = Math.max(0, grossSubtotal - netAfterDiscount - billDiscountTotal);
+  const discountTotal = lineDiscountTotal + billDiscountTotal;
+  const subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
+  return { subTotal, discountTotal, lineDiscountTotal, billDiscountTotal, taxableAmount };
+};
 
 export const stripForPreview = (html) => {
   let out = String(html || '').replace(/<script[\s\S]*?<\/script>/gi, '');
@@ -16,13 +87,19 @@ export const stripForPreview = (html) => {
 export const buildDocumentPreviewHtml = (category, { companyName, trn, address, phone, footerNote }, toggles = {}) => {
   const isReturn = category === 'Sales Return';
   const t = toggles;
+  // hasTax=false (POS Receipt designer tab) ⇒ the A4 sample is a plain Sales
+  // Invoice: no TRN, no VAT %/Amount columns, no Taxable/Total-VAT rows, and a
+  // no-tax sample dataset — matching the real no-tax checkout print. Returns are
+  // always taxed. Undefined ⇒ ON (Tax Invoice tab / historical behaviour).
+  const hasTax = isReturn || t.hasTax !== false;
   const salesDesignerSettings = {
     showLogo:              t.showLogo             !== false,
     showCompanyName:       t.showCompanyDetails    !== false,
     showCompanyAddress:    t.showCompanyDetails    !== false,
-    showTRN:               t.showTrn               !== false,
+    showTRN:               hasTax && t.showTrn     !== false,
     showCustomerDetails:   t.showCustomerDetails   !== false,
     showBillTo:            t.showCustomerDetails   !== false,
+    showCustomerTRN:       hasTax,
     showTerms:             t.showTerms             !== false && !!footerNote,
     showNotes:             t.showNotes             !== false,
     showBankDetails:       !!t.showBankDetails,
@@ -35,14 +112,16 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
     showGrandTotalBanner:  t.showGrandTotalBanner  !== false,
     showSummaryBar:        t.showGrandTotalBanner  !== false,
     showSubtotal:          true,
-    showVATTotal:          true,
+    showTaxableTotal:      hasTax,
+    showVATTotal:          hasTax,
     showGrandTotal:        true,
     colProductImage:       !!t.colItemImage,
     colBarcode:            !!t.colBarcode,
     colBatchNumber:        t.colBatchNo      !== false,
     colDiscount:           t.colDiscount     !== false,
-    colVAT:                t.colVatPct       !== false,
-    colVATAmount:          t.colVatAmt       !== false,
+    colTaxableAmount:      hasTax,
+    colVAT:                hasTax && t.colVatPct       !== false,
+    colVATAmount:          hasTax && t.colVatAmt       !== false,
     colItemCode:           t.colItemCode     !== false,
     primaryColor:          '#F5C742',
     accentColor:           '#F5C742',
@@ -56,12 +135,12 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
     description:    true,
     qty:            true,
     unitPrice:      true,
-    taxableAmount:  true,
+    taxableAmount:  hasTax,
     barcode:        !!t.colBarcode,
     batchNumber:    t.colBatchNo      !== false,
     discount:       t.colDiscount     !== false,
-    taxPercent:     t.colVatPct       !== false,
-    tax:            t.colVatAmt       !== false,
+    taxPercent:     hasTax && t.colVatPct       !== false,
+    tax:            hasTax && t.colVatAmt       !== false,
     total:          true,
   });
   const displayOptions = JSON.stringify({
@@ -84,21 +163,29 @@ export const buildDocumentPreviewHtml = (category, { companyName, trn, address, 
     displayOptions,
     salesDesignerSettings,
   };
+  // No-tax sample lines carry no tax rate/amount so the renderer prints no VAT.
   const items = isReturn
     ? [{ code: 'SGAL-A55', name: 'Samsung Galaxy A55', desc: '128GB · Black', qty: 1, price: 1380, disc: 0, tax: 5, taxAmt: 69, total: 1449, batchNumber: 'SGAL-120526' }]
-    : [
+    : hasTax
+    ? [
         { code: 'SGAL-A55', name: 'Samsung Galaxy A55', desc: '128GB · Black', qty: 1, price: 1380, disc: 0, tax: 5, taxAmt: 69, total: 1449, batchNumber: 'SGAL-120526' },
         { code: 'IPH-CASE', name: 'iPhone Leather Case', desc: 'Brown · Genuine leather', qty: 2, price: 22.5, disc: 0, tax: 5, taxAmt: 2.25, total: 47.25, batchNumber: '' },
+      ]
+    : [
+        { code: 'SGAL-A55', name: 'Samsung Galaxy A55', desc: '128GB · Black', qty: 1, price: 1380, disc: 0, tax: 0, taxAmt: 0, total: 1380, batchNumber: 'SGAL-120526' },
+        { code: 'IPH-CASE', name: 'iPhone Leather Case', desc: 'Brown · Genuine leather', qty: 2, price: 22.5, disc: 0, tax: 0, taxAmt: 0, total: 45, batchNumber: '' },
       ];
   const data = {
-    title: isReturn ? 'CREDIT NOTE' : 'TAX INVOICE',
+    title: isReturn ? 'CREDIT NOTE' : hasTax ? 'TAX INVOICE' : 'SALES INVOICE',
     docNo: isReturn ? 'SR-POS-000042' : 'SI-POS-000001',
     date: '22 Jun 2026',
     customer: { name: 'Fatima Hassan', address: 'Dubai, UAE', phone: '+971 50 123 4567' },
     items,
     totals: isReturn
       ? { subTotal: 1380, tax: 69, grandTotal: 1449, discountAmount: 0, billDiscountAmount: 0 }
-      : { subTotal: 1425, tax: 71.25, grandTotal: 1496.25, discountAmount: 0, billDiscountAmount: 0 },
+      : hasTax
+      ? { subTotal: 1425, taxableAmount: 1425, tax: 71.25, grandTotal: 1496.25, discountAmount: 0, billDiscountAmount: 0 }
+      : { subTotal: 1425, taxableAmount: 1425, tax: 0, grandTotal: 1425, discountAmount: 0, billDiscountAmount: 0 },
     meta: { notes: t.showNotes !== false ? (footerNote || 'Sample note line') : '', paymentTerm: '', dueDate: '', salesPerson: '', location: companyName || '' },
   };
   const options = {
@@ -173,6 +260,11 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   stampDataUrl = null,
   showLogo = true, showCompanyDetails = true, showCompanyAddress = true,
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
+  // Whether this sale carries tax (Tax Amount > 0). When false, NO tax content is
+  // printed anywhere: no per-line VAT%, no Taxable Amount row, no VAT summary row,
+  // no TRN — the receipt reads as a plain Sales Invoice. Defaults true to preserve
+  // the historical tax-invoice output for callers that don't pass it.
+  hasTax = true,
   showQRCode = true, showCustomerDetails = true,
   showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
   outletAddress = '', outletPhone = '',
@@ -212,32 +304,7 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const items = invoice.items || [];
   const taxTotal = invoice.taxTotal || 0;
   const grandTotal = invoice.invoiceTotal || 0;
-  let subTotal, discountTotal, taxableAmount;
-  if (invoice.discountTotal != null) {
-    // Caller already computed an explicit discount total (checkout preview's mock
-    // invoice, Sales Return receipts) — in that shape invoice.subTotal IS the gross
-    // pre-discount amount, so derive the taxable base the old way.
-    subTotal = invoice.subTotal || 0;
-    discountTotal = parseFloat(invoice.discountTotal) || 0;
-    taxableAmount = subTotal - discountTotal;
-  } else {
-    // Persisted invoice from the backend: SalesInvoiceService#finalizeInvoiceTotals sums
-    // (netAmount − taxAmount) per line into subTotal, i.e. it's already the TAXABLE base,
-    // net of per-item discounts — and the entity stores no top-level discount aggregate at
-    // all. Reconstruct Subtotal/Discount from each line's own grossAmount instead.
-    taxableAmount = invoice.subTotal || 0;
-    const grossSubtotal = items.reduce((sum, it) => {
-      if (it.voided || it.isVoided) return sum;
-      const qty = it.quantity || 0;
-      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
-      const gross = parseFloat(it.grossAmount ?? (qty * unit));
-      return sum + (Number.isFinite(gross) ? gross : 0);
-    }, 0);
-    const lineDiscountTotal = Math.max(0, grossSubtotal - taxableAmount);
-    const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
-    discountTotal = lineDiscountTotal + billDiscountTotal;
-    subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
-  }
+  const { subTotal, discountTotal, taxableAmount } = resolveInvoiceGrossTotals(invoice);
   const payMode = invoice.paymentMode || '';
   const invDate = invoice.invoiceDate ? new Date(invoice.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const invTime = invoice.createdAt ? new Date(invoice.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -293,11 +360,20 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   // line discount applies (BBQA-5.3-015), show the actual/base unit price, the
   // discount %/amount, and the net (discounted) unit price as separate rows so
   // the discounted price never gets reprinted as if it were the base price. ──
+  // Voided lines are kept on the receipt (audit trail) but shown with a [VOID]
+  // tag + negative amounts and a muted red colour — no strike-through, which
+  // reads poorly on thermal paper. They are excluded from the total; the
+  // "Voided Items" row below discloses what was voided.
+  let voidedLineTotal = 0;
+  let voidedLineCount = 0;
   items.forEach(it => {
     const isVoid = !!it.voided || !!it.isVoided;
     const qty = it.quantity || 0;
     const unit = parseFloat(it.unitPrice || it.price || 0);
-    const total = isVoid ? 0 : (it.netAmount || it.lineTotal || (qty * unit));
+    const total = it.netAmount || it.lineTotal || (qty * unit);
+    if (isVoid) { voidedLineTotal += parseFloat(total) || 0; voidedLineCount += 1; }
+    // Amounts render with a leading "-" for voided lines (informational).
+    const sgn = (text) => (isVoid ? `- ${text}` : text);
     const discountPercent = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
     const grossAmount = parseFloat(it.grossAmount ?? (qty * unit)) || 0;
     // gross × discount% (backend basis), NOT gross − net which understates the
@@ -309,23 +385,26 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     const desc = it.description || '';
     const sku = it.sku || it.itemCode || '';
     const nameDisplay = `${qty}x ${esc(it.itemName || it.productName || it.name || '')}${isVoid ? ' [VOID]' : ''}`;
-    const nameStyle = isVoid ? 'text-align:left; text-decoration:line-through; color:#888;' : 'text-align:left;';
+    const nameStyle = isVoid ? 'text-align:left; color:#dc2626;' : 'text-align:left;';
+    const amtColor = isVoid ? '#dc2626' : '#000';
 
     // Row 1: quantity × product name (name wraps if long).
     html += `<div class="row"><span class="val b" style="${nameStyle}">${nameDisplay}</span></div>`;
-    if (!isVoid && lineDiscountAmount > 0) {
+    if (lineDiscountAmount > 0) {
       // Discounted line: base price, discount detail, and net (discounted) total each on their own row.
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:#000">${cur} ${fmtAmt(grossAmount)}</span></div>`;
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:#000">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
-      html += `<div class="row"><span class="lbl" style="padding-left:8px">Net @ ${cur} ${fmt(netUnit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:${amtColor};padding-left:8px">Price @ ${cur} ${fmt(unit)}</span><span class="num" style="font-size:10px;color:${amtColor}">${sgn(`${cur} ${fmtAmt(grossAmount)}`)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:${amtColor};padding-left:8px">Discount${discountPercent > 0 ? ` (${fmt(discountPercent)}%)` : ''}</span><span class="num" style="font-size:10px;color:${amtColor}">- ${cur} ${fmt(lineDiscountAmount)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="padding-left:8px${isVoid ? `;color:${amtColor}` : ''}">Net @ ${cur} ${fmt(netUnit)}</span><span class="num"${isVoid ? ` style="color:${amtColor}"` : ''}>${sgn(`${cur} ${fmtAmt(total)}`)}</span></div>`;
     } else {
       // Row 2: unit price → line total, right-aligned and aligned with the total column.
-      html += `<div class="row"><span class="lbl" style="font-size:10px;color:#000;padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num">${cur} ${fmtAmt(total)}</span></div>`;
+      html += `<div class="row"><span class="lbl" style="font-size:10px;color:${amtColor};padding-left:8px">@ ${cur} ${fmt(unit)}</span><span class="num"${isVoid ? ` style="color:${amtColor}"` : ''}>${sgn(`${cur} ${fmtAmt(total)}`)}</span></div>`;
     }
-    if (sku) html += `<div style="font-size:10px;color:#000;padding-left:8px">SKU: ${esc(sku)}</div>`;
-    if (desc) html += `<div style="font-size:10px;color:#000;padding-left:8px">${esc(desc)}</div>`;
-    if (serial) html += `<div style="font-size:10px;color:#000;padding-left:8px">S/N: ${esc(serial)}</div>`;
-    else if (batch) html += `<div style="font-size:10px;color:#000;padding-left:8px">Batch: ${esc(batch)}</div>`;
+    const vatRate = parseFloat(it.taxPercent ?? it.taxRate ?? it.vatPercent ?? NaN);
+    if (hasTax && Number.isFinite(vatRate)) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">VAT: ${fmt(vatRate)}%</div>`;
+    if (sku) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">SKU: ${esc(sku)}</div>`;
+    if (desc) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">${esc(desc)}</div>`;
+    if (serial) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">S/N: ${esc(serial)}</div>`;
+    else if (batch) html += `<div style="font-size:10px;color:${amtColor};padding-left:8px">Batch: ${esc(batch)}</div>`;
   });
   html += D;
 
@@ -333,16 +412,23 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   html += `<div class="row"><span class="lbl">Subtotal:</span><span class="num">${cur} ${fmtAmt(subTotal)}</span></div>`;
   if (discountTotal > 0) {
     html += `<div class="row"><span class="lbl">Discount:</span><span class="num">${cur} ${fmtAmt(discountTotal)}</span></div>`;
-    html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(taxableAmount)}</span></div>`;
+    // "Taxable Amount" is a tax-invoice-only label — omit it on a no-tax Sales
+    // Invoice (the discounted Subtotal already ties out to the TOTAL).
+    if (hasTax) html += `<div class="row"><span class="lbl">Taxable Amount:</span><span class="num">${cur} ${fmtAmt(taxableAmount)}</span></div>`;
   }
   if (showServiceCharge && invoice.serviceChargeAmount) html += `<div class="row"><span class="lbl">Service Charge:</span><span class="num">${cur} ${fmtAmt(invoice.serviceChargeAmount)}</span></div>`;
-  if (showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
+  if (hasTax && showVatSummary) html += `<div class="row"><span class="lbl">VAT${invoice.taxInclusive ? ' (incl.)' : ''}:</span><span class="num">${cur} ${fmtAmt(taxTotal)}</span></div>`;
   // Delivery + shipping are flat charges already folded into invoiceTotal; surface them
   // as their own lines so the total always ties out on the printed invoice.
   if (parseFloat(invoice.deliveryCharge || 0) > 0) html += `<div class="row"><span class="lbl">Delivery Charge:</span><span class="num">${cur} ${fmtAmt(invoice.deliveryCharge)}</span></div>`;
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) html += `<div class="row"><span class="lbl">Shipping:</span><span class="num">${cur} ${fmtAmt(shippingCharge)}</span></div>`;
   const roundOffAmt = parseFloat(invoice.roundOff ?? invoice.roundOffAmount ?? 0) || 0;
   if (Math.abs(roundOffAmt) >= 0.005) html += `<div class="row"><span class="lbl">Round Off:</span><span class="num">${cur} ${fmtAmt(roundOffAmt)}</span></div>`;
+  // Informational disclosure of voided lines — excluded from TOTAL, shown only
+  // when at least one line was voided.
+  if (voidedLineCount > 0) {
+    html += `<div class="row" style="color:#dc2626"><span class="lbl">Voided Items (${voidedLineCount}):</span><span class="num">- ${cur} ${fmtAmt(voidedLineTotal)}</span></div>`;
+  }
   html += D;
   html += `<div class="row b" style="font-size:13px"><span>TOTAL:</span><span class="num">${cur} ${fmtAmt(grandTotal)}</span></div>`;
   // Layaway/Hold deposit already paid → show it as a reduction with the balance due.
@@ -606,6 +692,9 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   customerPhone = null,
   customerEmail = null,
   showCustomerDetails = true,
+  // See buildThermalReceiptHtml: false ⇒ no tax content (Taxable Amount / VAT
+  // rows / TRN) is emitted. Defaults true to preserve historical output.
+  hasTax = true,
 } = {}) => {
   const width = String(paperSize || '').includes('58') ? 32 : 42;
   const hr = '-'.repeat(width);
@@ -653,12 +742,18 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     lines.push(hr);
   }
 
+  // Voided lines are kept on the receipt (audit trail) with a [VOID] tag +
+  // negative amounts, but excluded from the total. Tally for the Voided Items row.
+  let voidedTextTotal = 0;
+  let voidedTextCount = 0;
   (invoice.items || []).forEach((item) => {
-    if (item.voided || item.isVoided) return;
+    const isVoid = Boolean(item.voided || item.isVoided);
+    const sgn = (text) => (isVoid ? `- ${text}` : text);
     const qty = item.quantity || 0;
     const name = item.itemName || item.productName || item.name || 'Item';
     const unitPrice = parseFloat(item.unitPrice ?? item.price ?? 0);
     const lineTotal = parseFloat(item.netAmount ?? item.lineTotal ?? (qty * unitPrice));
+    if (isVoid) { voidedTextTotal += Number.isFinite(lineTotal) ? lineTotal : 0; voidedTextCount += 1; }
     // Same per-line discount breakdown as the HTML preview / ESC/POS builder
     // (BBQA-5.3-015) so the text fallback matches the checkout preview too.
     const discountPercent = parseFloat(item.discountPercent ?? item.discount ?? 0) || 0;
@@ -667,13 +762,13 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     // discount by the VAT-on-discount portion in exclusive mode. See resolveLineDiscount.
     const lineDiscountAmount = resolveLineDiscount(item, grossAmount, discountPercent, lineTotal);
     const netUnit = qty > 0 ? lineTotal / qty : unitPrice;
-    lines.push(`${qty}x ${name}`.slice(0, width));
+    lines.push(`${qty}x ${name}${isVoid ? ' [VOID]' : ''}`.slice(0, width));
     if (lineDiscountAmount > 0) {
-      lines.push(buildFixedWidthLine(`Price @ ${fmt(unitPrice)}`, fmt(grossAmount), width));
+      lines.push(buildFixedWidthLine(`Price @ ${fmt(unitPrice)}`, sgn(fmt(grossAmount)), width));
       lines.push(buildFixedWidthLine(`Discount${discountPercent > 0 ? ` (${discountPercent.toFixed(2)}%)` : ''}`, `- ${fmt(lineDiscountAmount)}`, width));
-      lines.push(buildFixedWidthLine(`Net @ ${fmt(netUnit)}`, fmt(lineTotal), width));
+      lines.push(buildFixedWidthLine(`Net @ ${fmt(netUnit)}`, sgn(fmt(lineTotal)), width));
     } else {
-      lines.push(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, fmt(lineTotal), width));
+      lines.push(buildFixedWidthLine(`@ ${fmt(unitPrice)}`, sgn(fmt(lineTotal)), width));
     }
     const sku = item.sku || item.itemCode || '';
     if (sku) lines.push(`SKU: ${sku}`.slice(0, width));
@@ -684,41 +779,31 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   });
 
   lines.push(hr);
-  let resolvedSubTotal, resolvedDiscountTotal, resolvedTaxableAmount;
-  if (invoice.discountTotal != null) {
-    // Caller already computed an explicit discount total — invoice.subTotal IS
-    // the gross pre-discount amount in that shape (see buildThermalReceiptHtml).
-    resolvedSubTotal = invoice.subTotal || 0;
-    resolvedDiscountTotal = parseFloat(invoice.discountTotal) || 0;
-    resolvedTaxableAmount = resolvedSubTotal - resolvedDiscountTotal;
-  } else {
-    // Persisted invoice from the backend: subTotal is already the TAXABLE base
-    // (net of per-item discounts) and there's no top-level discount aggregate at
-    // all. Reconstruct Subtotal/Discount from each line's own grossAmount.
-    resolvedTaxableAmount = invoice.subTotal || 0;
-    const resolvedGrossSubtotal = (invoice.items || []).reduce((sum, it) => {
-      if (it.voided || it.isVoided) return sum;
-      const qty = it.quantity || 0;
-      const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
-      const gross = parseFloat(it.grossAmount ?? (qty * unit));
-      return sum + (Number.isFinite(gross) ? gross : 0);
-    }, 0);
-    const resolvedLineDiscountTotal = Math.max(0, resolvedGrossSubtotal - resolvedTaxableAmount);
-    const resolvedBillDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
-    resolvedDiscountTotal = resolvedLineDiscountTotal + resolvedBillDiscountTotal;
-    resolvedSubTotal = resolvedGrossSubtotal > 0 ? resolvedGrossSubtotal : resolvedTaxableAmount;
-  }
+  // Single source of truth for Subtotal / Discount / Taxable (gross-basis,
+  // VAT-mode aware) — same as the HTML thermal + A4 renderers so all three tie
+  // out identically to the Sales Invoice.
+  const {
+    subTotal: resolvedSubTotal,
+    discountTotal: resolvedDiscountTotal,
+    taxableAmount: resolvedTaxableAmount,
+  } = resolveInvoiceGrossTotals(invoice);
   lines.push(buildFixedWidthLine('Subtotal', fmt(resolvedSubTotal), width));
   if (resolvedDiscountTotal > 0) {
     lines.push(buildFixedWidthLine('Discount', fmt(resolvedDiscountTotal), width));
-    lines.push(buildFixedWidthLine('Taxable Amount', fmt(resolvedTaxableAmount), width));
+    // "Taxable Amount" is a tax-invoice-only label — omit on a no-tax sale.
+    if (hasTax) lines.push(buildFixedWidthLine('Taxable Amount', fmt(resolvedTaxableAmount), width));
   }
-  lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
+  if (hasTax) lines.push(buildFixedWidthLine(invoice.taxInclusive ? 'VAT (incl.)' : 'VAT', fmt(invoice.taxTotal), width));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) {
     lines.push(buildFixedWidthLine('Delivery Charge', fmt(invoice.deliveryCharge), width));
   }
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) {
     lines.push(buildFixedWidthLine('Shipping', fmt(shippingCharge), width));
+  }
+  // Informational disclosure of voided lines — excluded from TOTAL, shown only
+  // when at least one line was voided.
+  if (voidedTextCount > 0) {
+    lines.push(buildFixedWidthLine(`Voided Items (${voidedTextCount})`, `- ${fmt(voidedTextTotal)}`, width));
   }
   lines.push(hr);
   lines.push(buildFixedWidthLine('TOTAL', fmt(invoice.invoiceTotal), width));
@@ -837,7 +922,7 @@ ${footer ? `<div class="c" style="font-size:9px;margin-top:4px">${esc(footer)}</
 </body></html>`;
 };
 
-export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn }) => {
+export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, header, footer, showTrn, omitHeader = false }) => {
   // Usable width after the shared symmetric page inset (see buildReceiptVoucherThermalText).
   const width = String(paperSize || '').includes('58') ? 30 : 46;
   const hr = '-'.repeat(width);
@@ -864,10 +949,16 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
     : '';
   const items = layaway.items || [];
 
-  pushCentered(companyName || 'BillBull');
-  if (showTrn && trn) pushCentered(`TRN: ${trn}`);
-  if (header) pushCentered(header);
-  lines.push(hr);
+  // omitHeader: the branded ESC/POS header (logo + company name/address/TRN,
+  // Arabic-safe via canvas raster) already prints this block — see
+  // buildEscPosDocument / emitEscPosBrandedHeader. Printing it again here in
+  // plain ASCII would duplicate it and mangle any non-Latin-1 text into '?'.
+  if (!omitHeader) {
+    pushCentered(companyName || 'BillBull');
+    if (showTrn && trn) pushCentered(`TRN: ${trn}`);
+    if (header) pushCentered(header);
+    lines.push(hr);
+  }
   pushCentered('NOT A TAX INVOICE');
   pushCentered('LAYAWAY RECEIPT');
   lines.push(hr);
@@ -880,7 +971,12 @@ export const buildLayawayReceiptText = (paperSize, layaway, { companyName, trn, 
     const qty = it.quantity || 0;
     const price = it.price || it.unitPrice || 0;
     const total = it.lineTotal || it.netAmount || (qty * price);
-    lines.push(buildFixedWidthLine(`${it.itemName || ''} x${qty}`, `AED ${fmt(total)}`, width));
+    // Wrap long item names across lines instead of truncating with "…" (matches
+    // the standard invoice's item block — see buildEscPosReceipt).
+    const nameLines = wrapToWidth(`${it.itemName || ''} x${qty}`, width, '  ');
+    nameLines.slice(0, -1).forEach((ln) => lines.push(ln));
+    const lastLine = nameLines[nameLines.length - 1] || '';
+    lines.push(buildFixedWidthLine(lastLine, `AED ${fmt(total)}`, width));
   });
   lines.push(hr);
   lines.push(buildFixedWidthLine('Sale Total', `AED ${fmt(layaway.saleTotal)}`, width));
@@ -928,6 +1024,10 @@ export const buildReceiptVoucherThermalHtml = (paperSize, payment, {
   const bankName = payment?.bankName || '';
   const ref = payment?.referenceNumber || '';
   const amount = payment?.amount || 0;
+  const appliedInvoice = payment?.appliedInvoice || payment?.linkedInvoice || '';
+  // Multiple invoices settled in one transaction (POS multi-invoice payment) —
+  // takes priority over the single appliedInvoice line below.
+  const settledInvoices = Array.isArray(payment?.settledInvoices) ? payment.settledInvoices : [];
   const D = `<div class="d"></div>`;
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
@@ -943,9 +1043,9 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">${esc(documentTitle)}</div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:6px">${esc(documentTitle)}</div>`;
   if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
-  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  html += `<div class="c b" style="font-size:13px;margin-top:4px">${esc(companyName)}</div>`;
   const addrLine = oneLineAddress(address);
   if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
   if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
@@ -959,6 +1059,15 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
   html += `<div class="row"><span class="lbl">Payment Mode:</span><span class="num">${esc(mode)}</span></div>`;
   if (bankName) html += `<div class="row"><span class="lbl">Bank Account:</span><span class="val">${esc(bankName)}</span></div>`;
   if (ref) html += `<div class="row"><span class="lbl">Reference:</span><span class="val">${esc(ref)}</span></div>`;
+  if (settledInvoices.length > 0) {
+    html += D;
+    html += `<div class="c b" style="font-size:9px">INVOICES SETTLED</div>`;
+    settledInvoices.forEach(si => {
+      html += `<div class="row"><span class="lbl">${esc(si.invoiceNumber)}</span><span class="num">${esc(currency)} ${fmt(si.amount)}</span></div>`;
+    });
+  } else if (appliedInvoice) {
+    html += `<div class="row"><span class="lbl">Applied to Invoice:</span><span class="val">${esc(appliedInvoice)}</span></div>`;
+  }
   html += D;
   html += `<div class="row b" style="font-size:14px"><span class="lbl">AMOUNT RECEIVED</span><span class="num">${esc(currency)} ${fmt(amount)}</span></div>`;
   html += D;
@@ -1003,9 +1112,9 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 </style></head><body>`;
 
   if (logoDataUrl) html += `<div class="c" style="margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`;
-  html += `<div class="c b" style="font-size:10px;margin-bottom:2px">CUSTOMER STATEMENT</div>`;
+  html += `<div class="c b" style="font-size:10px;margin-bottom:6px">CUSTOMER STATEMENT</div>`;
   if (header) html += `<div class="c" style="font-size:9px;margin:2px 0">${esc(header)}</div>`;
-  html += `<div class="c b" style="font-size:13px">${esc(companyName)}</div>`;
+  html += `<div class="c b" style="font-size:13px;margin-top:4px">${esc(companyName)}</div>`;
   const addrLine = oneLineAddress(address);
   if (addrLine) html += `<div class="c" style="font-size:9px">${esc(addrLine)}</div>`;
   if (phone) html += `<div class="c" style="font-size:9px">Tel: ${esc(phone)}</div>`;
@@ -1026,7 +1135,8 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
     const credit = parseFloat(e.credit || 0);
     const balance = parseFloat(e.runningBalance || 0);
     html += `<div class="row"><span class="lbl">${esc(e.transactionDate || '')}</span><span class="num">${esc(typeLabel(e.type))}</span></div>`;
-    const descLine = [e.description, e.documentNo].filter(Boolean).join(' — ');
+    const descLine = [e.description, (e.documentNo && !String(e.description || '').includes(e.documentNo)) ? e.documentNo : null]
+      .filter(Boolean).join(' — ');
     if (descLine) html += `<div class="desc">${esc(descLine)}</div>`;
     html += `<div class="row"><span class="lbl">${debit > 0 ? 'Dr ' + fmt(debit) : credit > 0 ? 'Cr ' + fmt(credit) : '—'}</span><span class="num">Bal ${fmt(balance)}</span></div>`;
     html += D;
@@ -1070,6 +1180,8 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
   const bankName = payment?.bankName || '';
   const ref = payment?.referenceNumber || '';
   const amount = payment?.amount || 0;
+  const appliedInvoice = payment?.appliedInvoice || payment?.linkedInvoice || '';
+  const settledInvoices = Array.isArray(payment?.settledInvoices) ? payment.settledInvoices : [];
 
   const lines = [];
   // Center each embedded line separately — multi-line values (e.g. a footer
@@ -1085,6 +1197,7 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
 
   if (!omitHeader) {
     pushCentered(documentTitle);
+    lines.push('');
     if (header) pushCentered(header);
     pushCentered(companyName || '');
     const addrLine = oneLineAddress(address);
@@ -1101,6 +1214,15 @@ export const buildReceiptVoucherThermalText = (paperSize, payment, {
   lines.push(buildFixedWidthLine('Payment Mode:', mode, width));
   if (bankName) lines.push(buildFixedWidthLine('Bank Account:', bankName, width));
   if (ref) lines.push(buildFixedWidthLine('Reference:', ref, width));
+  if (settledInvoices.length > 0) {
+    lines.push(hr);
+    pushCentered('INVOICES SETTLED');
+    settledInvoices.forEach((si) => {
+      lines.push(buildFixedWidthLine(si.invoiceNumber, fmt(si.amount), width));
+    });
+  } else if (appliedInvoice) {
+    lines.push(buildFixedWidthLine('Applied to Invoice:', appliedInvoice, width));
+  }
   lines.push(hr);
   lines.push(buildFixedWidthLine('AMOUNT RECEIVED', fmt(amount), width));
   lines.push(hr);
@@ -1146,6 +1268,7 @@ export const buildStatementThermalText = (paperSize, statement, {
 
   if (!omitHeader) {
     pushCentered('CUSTOMER STATEMENT');
+    lines.push('');
     if (header) pushCentered(header);
     pushCentered(companyName || '');
     const addrLine = oneLineAddress(address);
@@ -1170,7 +1293,8 @@ export const buildStatementThermalText = (paperSize, statement, {
     const credit = parseFloat(e.credit || 0);
     const balance = parseFloat(e.runningBalance || 0);
     lines.push(buildFixedWidthLine(e.transactionDate || '', typeLabel(e.type), width));
-    const descLine = [e.description, e.documentNo].filter(Boolean).join(' — ');
+    const descLine = [e.description, (e.documentNo && !String(e.description || '').includes(e.documentNo)) ? e.documentNo : null]
+      .filter(Boolean).join(' — ');
     if (descLine) lines.push(descLine.slice(0, width));
     lines.push(buildFixedWidthLine(debit > 0 ? `Dr ${fmt(debit)}` : credit > 0 ? `Cr ${fmt(credit)}` : '—', `Bal ${fmt(balance)}`, width));
     lines.push(hr);
@@ -1278,14 +1402,19 @@ export const buildThermalSampleHtml = (paperSize, {
   showCreditBalance = true, showFooterText = true,
   logoDataUrl = null, stampDataUrl = null,
   isReturn = false, qrPlacement = 'before',
+  // false ⇒ no-tax sample (POS Receipt tab): no TRN, no Taxable/VAT rows, plain
+  // "SALES INVOICE" title. Returns are always taxed. Defaults true.
+  hasTax = true,
 }) => {
+  const taxed = hasTax && !isReturn;
   const w = paperSize === '58mm' ? '58mm' : '80mm';
   const pw = paperSize === '58mm' ? '50mm' : '72mm';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const D = `<div style="border-top:2px dashed #444;margin:4px 0"></div>`;
   const sec = t => `<div style="font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#000;margin:4px 0 2px">${t}</div>`;
   const invNo = isReturn ? 'SR-28-042' : 'DI-28-042';
-  const total = isReturn ? 'AED -1,449.00' : 'AED 102.80';
+  // No-tax total = net + service charge only (no VAT): 89.00 + 8.90 = 97.90.
+  const total = isReturn ? 'AED -1,449.00' : taxed ? 'AED 102.80' : 'AED 97.90';
 
   let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>${ROBOTO_MONO_FONT_FACE}
 @page{margin:0;size:${w} auto}
@@ -1304,8 +1433,7 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
       ? `<div style="text-align:center;margin:4px 0 6px"><img src="${logoDataUrl}" style="height:56px;max-width:80%;object-fit:contain;display:block;margin:0 auto" /></div>`
       : `<div style="text-align:center;margin:4px 0 6px"><div style="width:52px;height:52px;border-radius:50%;border:1px solid #ccc;display:inline-flex;align-items:center;justify-content:center;font-size:9px;color:#999">Logo</div></div>`;
   }
-  html += `<div style="text-align:center;font-weight:bold;font-size:10px;margin-bottom:2px">TAX INVOICE</div>`;
-  if (header) html += `<div style="text-align:center;font-size:9px;margin:2px 0">${esc(header)}</div>`;
+  html += `<div style="text-align:center;font-weight:bold;font-size:10px;margin-bottom:2px">${esc(header || (isReturn ? 'CREDIT NOTE' : taxed ? 'TAX INVOICE' : 'SALES INVOICE'))}</div>`;
   html += `<div style="text-align:center;font-size:13px;font-weight:bold">${esc(companyName || 'Branch Name')}</div>`;
   if (showCompanyDetails) {
     html += `<div style="text-align:center;font-size:9px">Shop 12, Dubai Mall, Downtown Dubai, UAE</div>`;
@@ -1335,10 +1463,10 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   }
   html += D;
   html += srow('Subtotal:', isReturn ? '-1,380.00' : 'AED 89.00');
-  if (!isReturn)         html += srow('Discount:', 'AED 0.00');
-  if (!isReturn)         html += srow('Taxable Amount:', 'AED 89.00');
-  if (showServiceCharge) html += srow('Service Charge:', isReturn ? '-138.00' : 'AED 8.90');
-  if (showVatSummary)    html += srow('VAT:', isReturn ? '-69.00' : 'AED 4.90');
+  if (!isReturn)             html += srow('Discount:', 'AED 0.00');
+  if (taxed)                 html += srow('Taxable Amount:', 'AED 89.00');
+  if (showServiceCharge)     html += srow('Service Charge:', isReturn ? '-138.00' : 'AED 8.90');
+  if (showVatSummary && (taxed || isReturn)) html += srow('VAT:', isReturn ? '-69.00' : 'AED 4.90');
   html += D;
   html += `<div class="row" style="font-weight:bold;font-size:13px"><span>TOTAL:</span><span>${total}</span></div>`;
   html += D;
@@ -1398,45 +1526,219 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   return html;
 };
 
-export const buildPosPrintData = (full, footerNote = '') => ({
-  title: 'TAX INVOICE',
-  docNo: full.invoiceNumber || '',
-  date: full.invoiceDate || '',
-  customer: {
-    name: full.customerName || 'Walk-in Customer',
-    address: full.customerAddress || '',
-    phone: full.customerPhone || '',
-    email: full.customerEmail || '',
-    trn: full.customerTrn || '',
-  },
-  items: (full.items || []).filter(it => !it.voided).map(it => ({
-    code: it.itemCode || '',
-    name: it.itemName || it.productName || '',
-    desc: it.description || '',
-    qty: it.quantity || 0,
-    price: it.unitPrice || it.price || 0,
-    disc: it.discountPercent || 0,
-    tax: it.taxPercent || it.taxRate || 5,
-    taxAmt: it.taxAmount || 0,
-    total: it.netAmount || it.lineTotal || 0,
-    batchNumber: it.batchNumber || '',
-    image: it.image || '',
-  })),
-  totals: {
-    subTotal: full.subTotal || 0,
-    tax: full.taxTotal || 0,
-    grandTotal: full.invoiceTotal || 0,
-    discountAmount: full.discountTotal || 0,
-    billDiscountAmount: full.billDiscountAmount || 0,
-    footerDiscountAmount: full.footerDiscountAmount || 0,
-  },
-  meta: {
-    notes: footerNote,
-    paymentMode: full.paymentMode || '',
-    location: full.branchName || '',
-    salesPerson: full.posCounterName || '',
-  },
-});
+/**
+ * @param customersList optional live customer directory (POSSales' customerOptions)
+ *   used to backfill address/phone/email/trn when the invoice's own snapshot fields
+ *   are blank — common for POS walk-in/quick sales that only persist customerName.
+ *   Mirrors the cross-reference Back Office's SalesInvoice print builder already does
+ *   against its own customersList.
+ */
+export const buildPosPrintData = (full, footerNote = '', customersList = [], titleOverride = null) => {
+  const custRec = full.customerCode
+    ? (customersList || []).find(c => c.code === full.customerCode || c.id === full.customerCode)
+    : null;
+  const { subTotal, discountTotal, lineDiscountTotal, billDiscountTotal, taxableAmount } = resolveInvoiceGrossTotals(full);
+  const hasTax = Number(full.taxTotal ?? full.tax ?? 0) > 0;
+  return {
+    // titleOverride lets the caller pass the merchant's SAVED template header
+    // (POS Receipt tab header when no tax, Tax Invoice tab header when taxed) so
+    // the A4 title matches the thermal receipt instead of a generic fixed label.
+    // Falls back to the fixed SALES/TAX INVOICE label when no override is given.
+    title: (titleOverride && String(titleOverride).trim())
+      ? String(titleOverride).trim()
+      : (hasTax ? 'TAX INVOICE' : 'SALES INVOICE'),
+    docNo: full.invoiceNumber || '',
+    date: full.invoiceDate || '',
+    customer: {
+      name: full.customerName || 'Walk-in Customer',
+      code: full.customerCode || custRec?.code || '',
+      address: full.customerAddress || custRec?.address || custRec?.billingAddress || '',
+      phone: full.customerPhone || custRec?.phone || custRec?.mobile || '',
+      email: full.customerEmail || custRec?.email || '',
+      trn: full.customerTrn || custRec?.trn || '',
+    },
+    // Voided lines keep their REAL qty/price/tax/total (no longer zeroed): the
+    // renderer prints them with a leading "-" + [VOID] tag via the `voided`
+    // flag. They're already excluded from subTotal/taxable by
+    // resolveInvoiceGrossTotals and disclosed in the Voided Items totals row.
+    items: (full.items || []).map(it => {
+      const isVoided = Boolean(it.voided ?? it.isVoided ?? false);
+      return {
+        code: it.itemCode || '',
+        name: it.itemName || it.productName || '',
+        desc: it.description || '',
+        unit: it.unit || it.uom || '',
+        qty: it.quantity || 0,
+        price: it.unitPrice || it.price || 0,
+        // Backend persists the line discount rate under `discount` (a percentage);
+        // fall back to discountPercent/disc for cart-shaped inputs.
+        disc: it.discountPercent ?? it.discount ?? it.disc ?? 0,
+        tax: it.taxPercent || it.taxRate || 5,
+        // When a stored voided line came back with taxAmount/netAmount zeroed
+        // (older POS posts), pass them as undefined so the renderer re-derives
+        // taxable/tax/total from qty×price×disc rather than printing 0.00.
+        taxAmt: (Number(it.taxAmount || 0) === 0 && isVoided) ? undefined : (it.taxAmount || 0),
+        total: (Number(it.netAmount || it.lineTotal || 0) === 0 && isVoided) ? undefined : (it.netAmount || it.lineTotal || 0),
+        batchNumber: it.batchNumber || '',
+        image: it.image || '',
+        voided: isVoided,
+      };
+    }),
+    totals: {
+      subTotal,
+      // True ex-VAT taxable base — passed explicitly so the renderer doesn't
+      // (mis)derive it as subTotal − discount under VAT-inclusive pricing.
+      taxableAmount,
+      tax: full.taxTotal || 0,
+      grandTotal: full.invoiceTotal || 0,
+      discountAmount: discountTotal,
+      // Split so the renderer shows distinct Discount (line) + Footer Discount
+      // rows. Line discount is derived VAT-mode-aware in resolveInvoiceGrossTotals;
+      // footer/bill discount comes from the persisted invoice aggregate.
+      itemDiscountAmount: lineDiscountTotal,
+      footerDiscountAmount: billDiscountTotal,
+      billDiscountAmount: billDiscountTotal,
+      // Informational voided-lines disclosure (excluded from grandTotal).
+      voidedCount: (full.items || []).filter(it => Boolean(it.voided ?? it.isVoided ?? false)).length,
+      voidedTotal: (full.items || [])
+        .filter(it => Boolean(it.voided ?? it.isVoided ?? false))
+        .reduce((s, it) => s + voidedLineNet(it), 0),
+    },
+    meta: {
+      notes: footerNote,
+      paymentMode: full.paymentMode || '',
+      location: full.branchName || '',
+      salesPerson: full.posCounterName || '',
+    },
+  };
+};
+
+/**
+ * Builds a POS cart/session-shaped "draft invoice" object from live, pre-payment
+ * checkout state — same field shape as checkoutThermalHtml's mockInvoice in
+ * POSSales.jsx (itemCode/itemName/quantity/unitPrice/netAmount/discountPercent/
+ * taxPercent/taxAmount), which is what buildPosPrintData already expects as input.
+ * Piping this through buildPosPrintData gives an A4 checkout-time preview the exact
+ * same canonical printData shape the real, posted-invoice print/reprint path uses —
+ * without needing a posted SalesInvoice to exist yet.
+ */
+export const buildDraftPrintDataFromCart = (cart = {}, footerNote = '') => {
+  const {
+    invoiceNumber = '',
+    invoiceDate = new Date().toISOString(),
+    customer,
+    saleType = '',
+    terminalId = '',
+    counterName = '',
+    paymentMode = 'Cash',
+    subTotal = 0,
+    taxTotal = 0,
+    taxInclusive = false,
+    invoiceTotal = 0,
+    discountTotal = 0,
+    items = [],
+    branchName = '',
+  } = cart;
+
+  // Route the preview through resolveInvoiceGrossTotals' MAIN branch (not the
+  // explicit-discountTotal early-return) so the checkout preview presents the
+  // SAME gross-basis Subtotal/Discount as the posted invoice & Sales Invoice A4
+  // (e.g. a 20%-off 3,500 line reads Sub Total 3,500 / Discount −700, not the
+  // ex-VAT 3,181.82 / −636 the cart tracks internally). That needs: an ex-VAT
+  // taxable base AFTER discount as subTotal, and per-line grossAmount.
+  const taxableAfterDiscount = Math.max(0, (Number(subTotal) || 0) - (Number(discountTotal) || 0));
+  const mockInvoice = {
+    invoiceNumber,
+    invoiceDate,
+    createdAt: invoiceDate,
+    customerName: customer?.name || 'Walk-in Customer',
+    customerPhone: customer?.phone || '',
+    customerEmail: customer?.email || '',
+    customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
+    customerTrn: customer?.trn || '',
+    customerAddress: customer?.shippingAddress || customer?.address || '',
+    saleType,
+    posTerminalId: terminalId,
+    posCounterName: counterName,
+    paymentMode,
+    subTotal: taxableAfterDiscount,
+    taxTotal,
+    taxInclusive,
+    invoiceTotal,
+    branchName,
+    items: items.map(it => ({
+      itemCode: it.itemCode || it.code || it.productId || it.id || '',
+      itemName: it.itemName || it.name || '',
+      description: it.description || '',
+      unit: it.unit || it.uom || '',
+      quantity: it.quantity || 0,
+      unitPrice: it.unitPrice || it.price || 0,
+      // Pre-discount gross so the renderer/totals derive the gross-basis discount.
+      grossAmount: (Number(it.unitPrice || it.price || 0) * Number(it.quantity || 0)),
+      netAmount: it.netAmount || it.total || 0,
+      discountPercent: it.discountPercent || it.discount || 0,
+      taxPercent: it.taxPercent != null ? it.taxPercent : it.taxRate,
+      taxAmount: it.taxAmount,
+      batches: it.batchNumber ? [{ batchNumber: it.batchNumber }] : (it.batches || []),
+      batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
+      voided: !!it.voided || !!it.isVoided,
+    })),
+  };
+
+  return buildPosPrintData(mockInvoice, footerNote);
+};
+
+/**
+ * Returns a shallow copy of a resolved PrintTemplate with EVERY tax-specific
+ * element forced off when the sale has no tax (Tax Amount = 0), so a no-tax
+ * Sales Invoice prints with no tax content anywhere. This mirrors the hasTax
+ * routing the thermal receipt path applies (Tax Invoice + VAT rows/columns/TRN
+ * only when tax > 0, plain Sales Invoice otherwise), extended to the real A4
+ * template so the SAME resolved template prints correctly either way instead of
+ * needing a second template. The single funnel for the A4 surfaces: POS A4
+ * (checkout/reprint) and Back Office A4 (SalesInvoice.jsx) both call this.
+ *
+ * Suppressed for a no-tax sale (keys map to documentTemplateRenderer's settings):
+ *   - VAT % / VAT Amount columns (colVAT / colVATAmount / showVATPercent / showVATAmount)
+ *   - Taxable Amount column (colTaxableAmount / showTaxableAmount)
+ *   - Total VAT summary row (showVATTotal / showTaxTotal)
+ *   - Taxable Amount summary row (showTaxableTotal)
+ *   - Company TRN (showTRN / showCompanyTaxId) and Customer TRN (showCustomerTRN)
+ *
+ * Never mutates the original template object (the one held in React state / the
+ * designer's cache).
+ */
+export const applyTaxAwareDisplayOptions = (template, hasTax) => {
+  if (!template || hasTax) return template;
+  const TAX_OFF = {
+    // Item-table tax columns
+    colVAT: false,
+    colVATAmount: false,
+    showVATPercent: false,
+    showVATAmount: false,
+    colTaxableAmount: false,
+    showTaxableAmount: false,
+    // Totals-block tax rows
+    showVATTotal: false,
+    showTaxTotal: false,
+    showTaxableTotal: false,
+    // Tax registration numbers — a Sales Invoice (non-tax) carries no TRN
+    showTRN: false,
+    showCompanyTaxId: false,
+    showCustomerTRN: false,
+    showVendorTRN: false,
+  };
+  try {
+    const parsed = JSON.parse(template.displayOptions || '{}');
+    Object.assign(parsed, TAX_OFF);
+    if (parsed.salesDesignerSettings) {
+      parsed.salesDesignerSettings = { ...parsed.salesDesignerSettings, ...TAX_OFF };
+    }
+    return { ...template, displayOptions: JSON.stringify(parsed) };
+  } catch {
+    return template;
+  }
+};
 
 export const buildPosA4Template = (footerNote = '', opts = {}, category = 'Sales Invoice') => {
   const ds = {
@@ -1460,6 +1762,7 @@ export const buildPosA4Template = (footerNote = '', opts = {}, category = 'Sales
     colDiscount:          opts.colDiscount          !== false,
     colVAT:               opts.colVatPct            !== false,
     colVATAmount:         opts.colVatAmt            !== false,
+    colUOM:               opts.colUOM               !== false,
     primaryColor: '#F5C742',
     accentColor:  '#F5C742',
   };

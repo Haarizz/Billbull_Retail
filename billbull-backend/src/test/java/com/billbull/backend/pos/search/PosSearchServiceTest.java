@@ -61,6 +61,8 @@ class PosSearchServiceTest {
         assertEquals(PosResolveResponse.Type.PRODUCT, res.getType());
         assertSame(product, res.getProduct());
         assertNull(res.getPinnedBatchNumber());
+        // Phase 9: branch-scoped POS availability overlay is applied to the resolved product.
+        verify(productService).applyBranchScopedPosStock(product);
         // Barcode hit short-circuits before batch/code/customer lookups.
         verify(batchMasterRepository, never()).findFirstByBatchNumberIgnoreCase(org.mockito.ArgumentMatchers.anyString());
     }

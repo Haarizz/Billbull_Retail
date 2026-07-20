@@ -30,6 +30,9 @@ public class WarehouseService {
     private final BinRepository binRepository;
     private final BranchRepository branchRepository;
     private final BranchAccessService branchAccessService;
+    // Branch-Level Inventory Phase 5: decides whether the branch-user warehouse list should also
+    // include global (null-branch) warehouses. Dormant while inventory.branch-scope.enabled=false.
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
 
     public WarehouseService(
             WarehouseRepository repository,
@@ -37,13 +40,15 @@ public class WarehouseService {
             LocatorRepository locatorRepository,
             BinRepository binRepository,
             BranchRepository branchRepository,
-            BranchAccessService branchAccessService) {
+            BranchAccessService branchAccessService,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
         this.repository = repository;
         this.zoneRepository = zoneRepository;
         this.locatorRepository = locatorRepository;
         this.binRepository = binRepository;
         this.branchRepository = branchRepository;
         this.branchAccessService = branchAccessService;
+        this.branchScopeResolver = branchScopeResolver;
     }
 
     @Transactional(readOnly = true)
@@ -221,6 +226,8 @@ public class WarehouseService {
     }
 
     private List<Warehouse> getAccessibleWarehouses(Long requestedBranchId) {
+        // Admin authority is UNCHANGED (existing role check preserved — see Phase 5 decision):
+        // ADMIN / BRANCH_ADMIN see all warehouses (or a requested branch's) as before.
         if (branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
             if (requestedBranchId != null) {
                 return repository.findByBranch_Id(requestedBranchId);
@@ -232,6 +239,13 @@ public class WarehouseService {
         if (branchId == null) {
             return List.of();
         }
-        return repository.findByBranch_Id(branchId);
+
+        // Phase 5: when branch-scoping is enabled AND a branch is active, a branch user also sees
+        // GLOBAL (null-branch) warehouses — they are shared and usable everywhere. When the toggle
+        // is off (or no active branch), behaviour is byte-identical to today: own branch only,
+        // globals excluded.
+        return branchScopeResolver.activeListScope()
+                .map(scope -> repository.findByBranchIdInOrGlobal(scope.branchIds()))
+                .orElseGet(() -> repository.findByBranch_Id(branchId));
     }
 }

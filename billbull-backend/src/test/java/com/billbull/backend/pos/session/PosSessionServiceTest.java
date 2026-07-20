@@ -29,7 +29,9 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
 import com.billbull.backend.sales.payment.PaymentRepository;
+import com.billbull.backend.sales.returns.SalesReturn;
 import com.billbull.backend.sales.returns.SalesReturnRepository;
+import com.billbull.backend.sales.returns.SalesReturnStatus;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 
@@ -313,6 +315,65 @@ class PosSessionServiceTest {
     }
 
     // ---------------------------------------------------------------------
+    // getXReport() — session isolation (BBQA X-Report leak fix)
+    // ---------------------------------------------------------------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportExcludesReturnsLinkedToAnotherSessionsInvoiceSameBranchAndDay() {
+        // Regression test: cashier closes session #1 on Device A (INV-A-1), then opens
+        // session #2 on Device B and rings INV-B-1. Sales Return rows carry no
+        // posSessionId (only branch+date), so a return posted against the OLD session's
+        // invoice (INV-A-1) must not bleed into the NEW session's X-Report.
+        PosSession session = openSession();
+        session.setId(2L);
+        when(repo.findById(2L)).thenReturn(java.util.Optional.of(session));
+        SalesInvoice ownInvoice = invoiceWithNumber("INV-B-1", 100.0, 0.0);
+        when(invoiceRepo.findByPosSessionIdWithItems(2L)).thenReturn(List.of(ownInvoice));
+
+        SalesReturn otherSessionReturn = salesReturn("INV-A-1", SalesReturnStatus.APPROVED, "Refund", 40.0);
+        SalesReturn ownSessionReturn = salesReturn("INV-B-1", SalesReturnStatus.APPROVED, "Refund", 15.0);
+        when(returnRepository.findByReturnDateAndBranchWithItems(any(), any()))
+                .thenReturn(List.of(otherSessionReturn, ownSessionReturn));
+
+        Map<String, Object> result = service.getXReport(2L);
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+
+        assertEquals(1, summary.get("salesReturnCount"));
+        assertMoney("15", (BigDecimal) summary.get("salesReturnTotal"));
+        assertEquals(1, summary.get("refundCount"));
+        assertMoney("15", (BigDecimal) summary.get("refundTotal"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportIsolatesConcurrentCashiersOnSameBranchAndDay() {
+        // Cashier A (session #1) and Cashier B (session #2) both have OPEN sessions on
+        // the same branch+day. A return is posted against Cashier B's invoice while
+        // Cashier A's X-Report is generated — it must not appear in Cashier A's report,
+        // regardless of which cashier closes/reports first.
+        PosSession sessionA = openSession();
+        sessionA.setId(1L);
+        sessionA.setOpenedBy("cashierA");
+        when(repo.findById(1L)).thenReturn(java.util.Optional.of(sessionA));
+
+        SalesInvoice invoiceA = invoiceWithNumber("INV-A-1", 200.0, 0.0);
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceA));
+
+        SalesReturn returnForCashierB = salesReturn("INV-B-1", SalesReturnStatus.APPROVED, "Credit Note", 60.0);
+        when(returnRepository.findByReturnDateAndBranchWithItems(any(), any()))
+                .thenReturn(List.of(returnForCashierB));
+
+        Map<String, Object> result = service.getXReport(1L);
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+
+        assertEquals(0, summary.get("salesReturnCount"));
+        assertMoney("0", (BigDecimal) summary.get("salesReturnTotal"));
+        assertEquals(0, summary.get("creditNoteCount"));
+        assertMoney("0", (BigDecimal) summary.get("creditNoteTotal"));
+    }
+
+    // ---------------------------------------------------------------------
     // getZReport() — cross-session aggregation
     // ---------------------------------------------------------------------
 
@@ -392,14 +453,27 @@ class PosSessionServiceTest {
     }
 
     private SalesInvoice invoiceWithTax(double total, double tax) {
+        return invoiceWithNumber("INV-" + System.nanoTime(), total, tax);
+    }
+
+    private SalesInvoice invoiceWithNumber(String invoiceNumber, double total, double tax) {
         SalesInvoice inv = new SalesInvoice();
         // A non-blank invoice number is required for tender aggregation to run
         // (aggregateTender skips invoices without a number).
-        inv.setInvoiceNumber("INV-" + System.nanoTime());
+        inv.setInvoiceNumber(invoiceNumber);
         inv.setInvoiceTotal(BigDecimal.valueOf(total));
         inv.setTaxTotal(BigDecimal.valueOf(tax));
         inv.setBillDiscountAmount(BigDecimal.ZERO);
         inv.setPaymentMode("Cash");
         return inv;
+    }
+
+    private SalesReturn salesReturn(String linkedInvoice, SalesReturnStatus status, String action, double amount) {
+        SalesReturn r = new SalesReturn();
+        r.setLinkedInvoice(linkedInvoice);
+        r.setStatus(status);
+        r.setReturnAction(action);
+        r.setTotalAmount(BigDecimal.valueOf(amount));
+        return r;
     }
 }

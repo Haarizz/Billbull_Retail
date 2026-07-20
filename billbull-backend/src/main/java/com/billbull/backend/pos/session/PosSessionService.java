@@ -247,13 +247,13 @@ public class PosSessionService {
     public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
                                    boolean supervisorApproved, String closingDenominationsJson) {
         return closeSession(sessionId, closingCash, notes, supervisorApproved, closingDenominationsJson,
-                null, null, null, null, null);
+                null, null, null, null, null, null);
     }
 
     @Transactional
     public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
                                    boolean supervisorApproved, String closingDenominationsJson,
-                                   String cardBatchNo, Boolean cardSettlementVerified,
+                                   String cardBatchNo, Boolean cardSettlementVerified, BigDecimal cardClosingCash,
                                    String closingCashierName, String closingSupervisorName,
                                    String closingRemarks) {
         PosSession session = getById(sessionId);
@@ -303,7 +303,16 @@ public class PosSessionService {
             session.setClosingDenominationsJson(closingDenominationsJson);
         }
         if (cardBatchNo != null) session.setCardBatchNo(cardBatchNo);
-        if (cardSettlementVerified != null) session.setCardSettlementVerified(cardSettlementVerified);
+        if (cardClosingCash != null) {
+            // Server is authoritative on whether the card settlement actually matches —
+            // don't trust a client-computed boolean once we have the real counted amount.
+            session.setCardClosingCash(cardClosingCash);
+            BigDecimal cardVariance = cardClosingCash.subtract(nz(session.getTotalCardSales()));
+            session.setCardDifference(cardVariance);
+            session.setCardSettlementVerified(cardVariance.abs().compareTo(new BigDecimal("0.01")) <= 0);
+        } else if (cardSettlementVerified != null) {
+            session.setCardSettlementVerified(cardSettlementVerified);
+        }
         if (closingCashierName != null) session.setClosingCashierName(closingCashierName);
         if (closingSupervisorName != null) session.setClosingSupervisorName(closingSupervisorName);
         if (closingRemarks != null) session.setClosingRemarks(closingRemarks);
@@ -429,6 +438,8 @@ public class PosSessionService {
                 + ",\"expectedCash\":" + expectedCash
                 + ",\"closingCash\":" + closingCash
                 + ",\"cashVariance\":" + closingCash.subtract(expectedCash)
+                + ",\"cardClosingCash\":" + nz(s.getCardClosingCash())
+                + ",\"cardVariance\":" + nz(s.getCardDifference())
                 + "}";
     }
 
@@ -563,9 +574,14 @@ public class PosSessionService {
         summary.put("totalRefunds", refunds.total);
         summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
-        // Sales Return module figures for this session's branch+date — same source and
-        // shape as the Z-Report's Returns/Refund Summary, so the two reports agree.
-        ReturnsSummary returns = buildReturnsSummary(session.getBranchId(), session.getSessionDate());
+        // Sales Return module figures for THIS session only — same source and shape as
+        // the Z-Report's Returns/Refund Summary (buildReturnsSummary), but restricted to
+        // returns linked to this session's own invoices. Returns are stored per branch+day
+        // with no posSessionId, so without this filter a same-day return made against a
+        // different session (another device, or another cashier's concurrent session)
+        // would leak into this X-Report. The Z-Report intentionally keeps the unfiltered
+        // branch+day view since it aggregates the whole business day.
+        ReturnsSummary returns = buildSessionReturnsSummary(session.getBranchId(), session.getSessionDate(), invoices);
         summary.put("salesReturnCount", returns.totalCount);
         summary.put("salesReturnTotal", returns.totalAmount);
         summary.put("creditNoteCount", returns.creditNoteCount);
@@ -593,6 +609,29 @@ public class PosSessionService {
         result.put("sessionInfo", buildSessionInfo(session));
         result.put("topSellingItems", buildTopSellingItems(invoices, 5));
         return result;
+    }
+
+    /** Hard gate for the X-Report "print"/"export" actions — as opposed to the on-screen
+     *  preview via {@link #getXReport}, which stays available while the session is open
+     *  so the cashier can review before closing. ERP rule: the shift report can only be
+     *  committed to paper/PDF/Excel once the session is closed. */
+    @Transactional(readOnly = true)
+    public void assertXReportPrintable(Long sessionId) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() != PosSessionStatus.CLOSED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "X-Report can only be printed or exported after the session is closed.");
+        }
+    }
+
+    /** Hard gate for the Z-Report "print"/"export" actions. ERP rule: the day-end report
+     *  can only be committed to paper/PDF/Excel once the business day has been closed. */
+    @Transactional(readOnly = true)
+    public void assertZReportPrintable(Long branchId, LocalDate date) {
+        if (!dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Z-Report can only be printed or exported after the business day is closed.");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -863,8 +902,26 @@ public class PosSessionService {
     }
 
     private ReturnsSummary buildReturnsSummary(Long branchId, LocalDate date) {
+        return aggregateReturns(returnRepository.findByReturnDateAndBranchWithItems(date, branchId));
+    }
+
+    /** Same Sales Return source as {@link #buildReturnsSummary}, but restricted to returns
+     *  linked to invoices belonging to THIS session — required so the X-Report never picks
+     *  up a same-day return posted against another session (different device/terminal, or
+     *  a different cashier's concurrent session) sharing the same branch+date. */
+    private ReturnsSummary buildSessionReturnsSummary(Long branchId, LocalDate date, List<SalesInvoice> sessionInvoices) {
+        java.util.Set<String> sessionInvoiceNumbers = sessionInvoices.stream()
+                .map(SalesInvoice::getInvoiceNumber)
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        List<SalesReturn> returns = returnRepository.findByReturnDateAndBranchWithItems(date, branchId).stream()
+                .filter(r -> sessionInvoiceNumbers.contains(r.getLinkedInvoice()))
+                .toList();
+        return aggregateReturns(returns);
+    }
+
+    private ReturnsSummary aggregateReturns(List<SalesReturn> returns) {
         ReturnsSummary rs = new ReturnsSummary();
-        List<SalesReturn> returns = returnRepository.findByReturnDateAndBranchWithItems(date, branchId);
         for (SalesReturn r : returns) {
             if (r.getStatus() != SalesReturnStatus.APPROVED) continue;
             BigDecimal amount = nz(r.getTotalAmount());
@@ -990,6 +1047,8 @@ public class PosSessionService {
         info.put("closingDenominationsJson", s.getClosingDenominationsJson());
         info.put("cardBatchNo", s.getCardBatchNo());
         info.put("cardSettlementVerified", Boolean.TRUE.equals(s.getCardSettlementVerified()));
+        info.put("cardClosingCash", nz(s.getCardClosingCash()));
+        info.put("cardDifference", nz(s.getCardDifference()));
         info.put("closingCashierName", s.getClosingCashierName());
         info.put("closingSupervisorName", s.getClosingSupervisorName());
         info.put("closingRemarks", s.getClosingRemarks());

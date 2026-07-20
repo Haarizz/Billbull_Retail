@@ -32,16 +32,21 @@ public class InventoryBalanceService {
     private final StockMovementRepository    movementRepository;
     private final ProductRepository          productRepository;
     private final WarehouseRepository        warehouseRepository;
+    // Branch-Level Inventory Phase 4: single decision point for branch-scoped reads (dormant when
+    // inventory.branch-scope.enabled=false → the two cross-warehouse reads use the unscoped path).
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
 
     public InventoryBalanceService(
             InventoryBalanceRepository balanceRepository,
             StockMovementRepository    movementRepository,
             ProductRepository          productRepository,
-            WarehouseRepository        warehouseRepository) {
+            WarehouseRepository        warehouseRepository,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
         this.balanceRepository  = balanceRepository;
         this.movementRepository = movementRepository;
         this.productRepository  = productRepository;
         this.warehouseRepository = warehouseRepository;
+        this.branchScopeResolver = branchScopeResolver;
     }
 
     /**
@@ -80,6 +85,11 @@ public class InventoryBalanceService {
         balance.setTotalValue(totalValue);
         balance.setUpdatedAt(LocalDateTime.now());
 
+        // Branch-Level Inventory Phase 4: stamp branch from the warehouse (denormalization,
+        // mirrors StockMovement stamping). Null-safe: a global/branchless/missing warehouse leaves
+        // branch_id null (= visible to all). Behaviourally inert until a read path scopes on it.
+        balance.setBranchId(warehouseRepository.findBranchIdByWarehouseId(warehouseId));
+
         // Populate denormalized descriptors (one-time; cheap lookup, never null for valid IDs)
         if (balance.getProductName() == null) {
             productRepository.findById(productId).ifPresent(p -> {
@@ -115,15 +125,23 @@ public class InventoryBalanceService {
     }
 
     public List<InventoryBalance> findAll() {
-        return balanceRepository.findAllPositiveStock();
+        // Branch-scoped only when the toggle is on AND a specific branch is active; otherwise the
+        // existing unscoped query (byte-identical behaviour for toggle-off and admin All-Branches).
+        return branchScopeResolver.activeListScope()
+                .map(scope -> balanceRepository.findAllPositiveStockByBranchIdIn(scope.branchIds()))
+                .orElseGet(balanceRepository::findAllPositiveStock);
     }
 
     public List<InventoryBalance> findByWarehouse(Long warehouseId) {
+        // No branch variant needed: a warehouse belongs to exactly one branch, so this is already
+        // branch-correct regardless of the toggle.
         return balanceRepository.findByWarehouseId(warehouseId);
     }
 
     public BigDecimal totalInventoryValue() {
-        return balanceRepository.sumTotalValue();
+        return branchScopeResolver.activeListScope()
+                .map(scope -> balanceRepository.sumTotalValueByBranchIdIn(scope.branchIds()))
+                .orElseGet(balanceRepository::sumTotalValue);
     }
 
     public BigDecimal totalInventoryValueByWarehouse(Long warehouseId) {

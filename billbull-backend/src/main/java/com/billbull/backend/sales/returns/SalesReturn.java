@@ -41,6 +41,11 @@ public class SalesReturn {
     @Column(precision = 15, scale = 2)
     private BigDecimal totalAmount;
 
+    // Snapshot of the linked invoice's VAT mode at return-creation time, so the
+    // UI can restore the correct Inclusive/Exclusive interpretation when a
+    // draft return is reopened for editing without re-fetching the invoice.
+    private Boolean taxInclusive;
+
     private String reason;
     private String returnAction; // Credit Note, Refund, Replacement
 
@@ -132,6 +137,14 @@ public class SalesReturn {
 
     public void setTotalAmount(BigDecimal totalAmount) {
         this.totalAmount = totalAmount;
+    }
+
+    public Boolean getTaxInclusive() {
+        return taxInclusive;
+    }
+
+    public void setTaxInclusive(Boolean taxInclusive) {
+        this.taxInclusive = taxInclusive;
     }
 
     public String getReason() {

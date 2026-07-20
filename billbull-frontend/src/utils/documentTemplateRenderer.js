@@ -14,6 +14,7 @@ import {
 } from './countryCurrencyOptions';
 import { generatePickListHtml } from './pickListPrintTemplate';
 import { INTER_REGULAR_B64, INTER_BOLD_B64 } from './interFontBase64';
+import { computeLineTaxTotals, VAT_MODES } from './vatMath';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -667,20 +668,44 @@ const normaliseDescription = (item = {}) => {
     };
 };
 
-const normaliseItem = (item = {}) => {
+const normaliseItem = (item = {}, vatMode = VAT_MODES.EXCLUSIVE) => {
     const description = normaliseDescription(item);
     const qty = asNumber(item.qty ?? item.quantity ?? 0);
     const price = asNumber(item.price ?? item.unitPrice ?? item.unitCost ?? 0);
     const discountPercent = asNumber(item.disc ?? item.discount ?? item.discountPercent ?? 0);
+    const taxPercent = asNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0);
     const grossAmount = qty * price;
     const discountAmount = asNumber(
         item.discountAmount ?? item.discountAmt ?? item.lineDiscount ?? (grossAmount * (discountPercent || 0) / 100)
     );
-    const taxableAmount = asNumber(
-        item.taxableAmount ?? (grossAmount - discountAmount)
-    );
-    const taxAmount = asNumber(item.taxAmt ?? item.taxAmount ?? 0);
-    const total = asNumber(item.total ?? item.lineAmount ?? (taxableAmount + taxAmount));
+    // A voided line may arrive with taxAmt/total deliberately undefined (older
+    // POS posts stored them as 0); in that case derive both from qty×price×disc
+    // via the shared VAT helper so the printed VAT/Taxable/Total show the real
+    // negative figures instead of 0.00.
+    const taxProvided = (item.taxAmt ?? item.taxAmount) !== undefined && (item.taxAmt ?? item.taxAmount) !== null && (item.taxAmt ?? item.taxAmount) !== '';
+    const explicitTotal = item.total ?? item.lineAmount;
+    const derived = computeLineTaxTotals({
+        netAfterDiscount: grossAmount - discountAmount,
+        taxPercent,
+        vatMode,
+    });
+    const taxAmount = taxProvided ? asNumber(item.taxAmt ?? item.taxAmount) : derived.taxAmount;
+
+    let taxableAmount;
+    if (item.taxableAmount !== null && item.taxableAmount !== undefined && item.taxableAmount !== '') {
+        taxableAmount = asNumber(item.taxableAmount);
+    } else if (explicitTotal !== null && explicitTotal !== undefined && explicitTotal !== '') {
+        // total - tax is always the true ex-VAT base, regardless of VAT mode
+        // (Inclusive: total == gross-of-VAT, so total - tax == ex-VAT taxable.
+        //  Exclusive: total == taxable + tax, so total - tax == taxable.)
+        taxableAmount = asNumber(explicitTotal) - taxAmount;
+    } else {
+        // No pre-computed figures on the item at all — derive from raw price
+        // via the shared VAT helper so an Inclusive-mode raw price isn't
+        // mistaken for an already ex-VAT amount.
+        taxableAmount = derived.taxableAmount;
+    }
+    const total = asNumber(explicitTotal ?? (taxableAmount + taxAmount));
 
     return {
         code: item.code || item.productId || item.itemCode || '',
@@ -698,7 +723,7 @@ const normaliseItem = (item = {}) => {
         price,
         taxableAmount,
         taxAmount,
-        taxPercent: asNumber(item.taxPercent ?? item.taxRate ?? item.tax ?? 0),
+        taxPercent,
         discountPercent,
         discountAmount,
         salesPerson: item.salesPerson || item.salesperson || item.salesPersonName || '',
@@ -886,6 +911,15 @@ const buildDetailsCell = (item, columnOptions = {}) => {
 };
 
 const renderTableCell = (column, item, index, displayOptions = {}, columnOptions = {}) => {
+    // Voided lines are kept on the document for the audit trail but excluded from
+    // the total. Numeric cells render with a leading "-" to signal the line was
+    // pulled out of the sale (informational — the value does not re-enter Total).
+    const isVoided = Boolean(item.voided ?? item.isVoided ?? false);
+    const fmtSigned = (value, decimals) => {
+        const num = asNumber(value);
+        const body = formatNumber(num, decimals);
+        return (isVoided && num !== 0) ? `- ${body}` : body;
+    };
     switch (column.key) {
         case 'index':
             return `<td class="table-cell cell-center cell-index">${index + 1}</td>`;
@@ -957,19 +991,19 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
         case 'qty':
             return `
                 <td class="table-cell cell-right">
-                    <div>${formatNumber(item.qty, 2)}</div>
+                    <div>${fmtSigned(item.qty, 2)}</div>
                 </td>
             `;
         case 'uom':
             return `<td class="table-cell cell-center">${escapeHtml(item.unit || '-')}</td>`;
         case 'unitPrice':
-            return `<td class="table-cell cell-right">${formatNumber(item.price)}</td>`;
+            return `<td class="table-cell cell-right">${fmtSigned(item.price)}</td>`;
         case 'taxableAmount':
             return `
                 <td class="table-cell cell-right">
-                    <div>${formatNumber(item.taxableAmount)}</div>
+                    <div>${fmtSigned(item.taxableAmount)}</div>
                     ${columnOptions.discount && !columnOptions.discountPercent && item.discountPercent > 0
-                    ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${formatNumber(item.discountAmount)}</div>`
+                    ? `<div class="cell-sub">Discount ${formatNumber(item.discountPercent, 0)}%</div><div class="cell-sub">@ ${fmtSigned(item.discountAmount)}</div>`
                     : ''}
                 </td>
             `;
@@ -979,19 +1013,19 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `
                 <td class="table-cell cell-center cell-discount">
                     <div>${item.discountPercent > 0 ? `${formatNumber(item.discountPercent, 0)}%` : '-'}</div>
-                    ${item.discountPercent > 0 ? `<div class="cell-sub">@ ${formatNumber(item.discountAmount)}</div>` : ''}
+                    ${item.discountPercent > 0 ? `<div class="cell-sub">@ ${fmtSigned(item.discountAmount)}</div>` : ''}
                 </td>
             `;
         case 'tax':
             return `
                 <td class="table-cell cell-right">
-                    <div>${formatNumber(item.taxAmount)}</div>
+                    <div>${fmtSigned(item.taxAmount)}</div>
                 </td>
             `;
         case 'taxPercent':
             return `<td class="table-cell cell-center">${item.taxPercent > 0 ? `${formatNumber(item.taxPercent, 0)}%` : '-'}</td>`;
         case 'total':
-            return `<td class="table-cell cell-right cell-strong">${formatNumber(item.total)}</td>`;
+            return `<td class="table-cell cell-right cell-strong">${fmtSigned(item.total)}</td>`;
         case 'lpoQty':
             return `<td class="table-cell cell-right">${formatNumber(item.lpoQty, 0)}</td>`;
         case 'received':
@@ -1081,6 +1115,8 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
     const discountPercent = asNumber(layout.totals.billDiscount ?? 0);
     const deliveryCharge = asNumber(layout.totals.deliveryCharge ?? 0);
     const roundOff = asNumber(layout.totals.roundOff ?? 0);
+    const voidedTotal = asNumber(layout.totals.voidedTotal ?? 0);
+    const voidedCount = asNumber(layout.totals.voidedCount ?? 0);
     const amountPaid = asNumber(layout.totals.amountPaid ?? 0);
     const balanceDue = asNumber(layout.totals.balanceDue ?? Math.max(asNumber(layout.totals.grandTotal) - amountPaid, 0));
     const currency = renderCurrencySymbolHtml(layout.currency);
@@ -1121,6 +1157,14 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
         ? itemDiscountAmount + footerDiscountAmount
         : combinedDiscountAmount;
 
+    // True ex-VAT taxable base. Prefer the explicit value from the summary (which
+    // correctly extracts VAT under inclusive pricing); only fall back to the
+    // (subTotal - discount) derivation for legacy callers that omit it. Under
+    // VAT-inclusive mode subTotal is tax-laden, so the derivation is wrong there.
+    const taxableAmountValue = layout.totals.taxableAmount !== undefined
+        ? layout.totals.taxableAmount
+        : layout.totals.subTotal - totalDiscountForTaxable;
+
     // Order: SubTotal → Item Discount → Footer Discount → Taxable → VAT → Delivery → RoundOff → Total → AmountPaid → BalanceDue
     const discountRows = visibility.discount
         ? hasSeparate
@@ -1133,10 +1177,13 @@ const buildTotalsTable = (layout, amountInWordsText = null) => {
     const rows = [
         visibility.subTotal ? row('Sub Total', layout.totals.subTotal) : '',
         discountRows,
-        visibility.taxable ? row('Taxable Amount', layout.totals.subTotal - totalDiscountForTaxable) : '',
+        visibility.taxable ? row('Taxable Amount', taxableAmountValue) : '',
         visibility.tax ? row('Total VAT', layout.totals.tax) : '',
         visibility.deliveryCharge && deliveryCharge > 0 ? row('Delivery Charge', deliveryCharge) : '',
         visibility.roundOff && roundOff !== 0 ? row('Round Off', roundOff) : '',
+        // Informational: voided lines are excluded from Total; this row just
+        // discloses what was voided. Shown only when at least one line was voided.
+        voidedCount > 0 ? negRow(`Voided Items (${formatNumber(voidedCount, 0)})`, voidedTotal) : '',
         visibility.grandTotal ? row('Total', layout.totals.grandTotal, 'grand-total-row') : '',
         visibility.amountPaid && amountPaid > 0 ? row('Amount Paid', amountPaid) : '',
         visibility.balanceDue && amountPaid > 0 ? row('Balance Due', balanceDue, 'balance-due-row') : '',
@@ -2237,14 +2284,15 @@ const buildCoreStyles = () => `
         letter-spacing: -0.01em;
     }
     .cell-strong { font-weight: 700; }
-    /* Voided line: struck through, muted red, kept for audit but not counted. */
+    /* Voided line: muted red, amounts shown negative, kept for audit but not
+       counted in the total. No strike-through — the [VOID] tag + negative
+       amounts convey the state and print reliably. The .void-badge keeps its
+       own white-on-red styling (excluded below) so it doesn't render as a
+       solid red bar of red-on-red text. */
     .voided-row .table-cell,
-    .voided-row .table-cell * {
+    .voided-row .table-cell *:not(.void-badge) {
         color: #dc2626 !important;
-        text-decoration: line-through;
-        text-decoration-color: #dc2626;
     }
-    .voided-row .void-badge { text-decoration: none; }
     .void-badge {
         display: inline-block;
         margin-left: 6px;
@@ -3569,7 +3617,12 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         .filter((row) => shouldShowPurchaseMetaRow(row, designerSettings)));
 
     const items = enrichItems(
-        Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
+        Array.isArray(data.items)
+            ? data.items.map((item) => normaliseItem(
+                item,
+                data.vatMode === 'INCLUSIVE' || data.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE
+            ))
+            : [],
         documentSalesPerson,
         documentLocation,
         template.category
@@ -3590,8 +3643,16 @@ const normalisePurchaseLayout = (template, data, companyProfile, renderTarget, o
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
         itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
         footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
+        // True ex-VAT taxable base. Passed explicitly because it cannot be derived
+        // from (subTotal - discount) under VAT-inclusive pricing, where subTotal is
+        // tax-laden and the VAT extraction is NOT a discount.
+        taxableAmount: data.totals?.taxableAmount !== undefined ? asNumber(data.totals.taxableAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
-        roundOff: asNumber(data.totals?.roundOff)
+        roundOff: asNumber(data.totals?.roundOff),
+        // Informational voided-lines disclosure (excluded from grandTotal) — the
+        // "Voided Items (N): -X" row in buildTotalsTable reads these.
+        voidedTotal: asNumber(data.totals?.voidedTotal),
+        voidedCount: asNumber(data.totals?.voidedCount)
     };
     const totalVisibility = {
         taxable: pickSetting(designerSettings, ['showTaxableTotal'], false),
@@ -3706,7 +3767,12 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         data.meta?.locationStore, data.meta?.location, data.meta?.branch, data.meta?.branchName, data.meta?.warehouse
     );
     const items = enrichItems(
-        Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
+        Array.isArray(data.items)
+            ? data.items.map((item) => normaliseItem(
+                item,
+                data.vatMode === 'INCLUSIVE' || data.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE
+            ))
+            : [],
         documentSalesPerson,
         documentLocation,
         template.category
@@ -3721,8 +3787,16 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
         itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
         footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
+        // True ex-VAT taxable base. Passed explicitly because it cannot be derived
+        // from (subTotal - discount) under VAT-inclusive pricing, where subTotal is
+        // tax-laden and the VAT extraction is NOT a discount.
+        taxableAmount: data.totals?.taxableAmount !== undefined ? asNumber(data.totals.taxableAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
-        roundOff: asNumber(data.totals?.roundOff)
+        roundOff: asNumber(data.totals?.roundOff),
+        // Informational voided-lines disclosure (excluded from grandTotal) — the
+        // "Voided Items (N): -X" row in buildTotalsTable reads these.
+        voidedTotal: asNumber(data.totals?.voidedTotal),
+        voidedCount: asNumber(data.totals?.voidedCount)
     };
     const totalVisibility = {
         taxable: pickSetting(designerSettings, ['showTaxableTotal'], false),
@@ -3877,7 +3951,12 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
     const documentSalesPerson = firstNonEmpty(data.meta?.salesPerson, data.meta?.salesperson, data.meta?.accountExecutive);
     const documentLocation = firstNonEmpty(data.meta?.location, data.meta?.branch, data.meta?.branchName, data.meta?.warehouse);
     const items = enrichItems(
-        Array.isArray(data.items) ? data.items.map(normaliseItem) : [],
+        Array.isArray(data.items)
+            ? data.items.map((item) => normaliseItem(
+                item,
+                data.vatMode === 'INCLUSIVE' || data.taxInclusive ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE
+            ))
+            : [],
         documentSalesPerson,
         documentLocation,
         template.category
@@ -3892,8 +3971,16 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         billDiscountAmount: asNumber(data.totals?.billDiscountAmount ?? data.totals?.discountAmount),
         itemDiscountAmount: data.totals?.itemDiscountAmount !== undefined ? asNumber(data.totals.itemDiscountAmount) : undefined,
         footerDiscountAmount: data.totals?.footerDiscountAmount !== undefined ? asNumber(data.totals.footerDiscountAmount) : undefined,
+        // True ex-VAT taxable base. Passed explicitly because it cannot be derived
+        // from (subTotal - discount) under VAT-inclusive pricing, where subTotal is
+        // tax-laden and the VAT extraction is NOT a discount.
+        taxableAmount: data.totals?.taxableAmount !== undefined ? asNumber(data.totals.taxableAmount) : undefined,
         deliveryCharge: asNumber(data.totals?.deliveryCharge),
-        roundOff: asNumber(data.totals?.roundOff)
+        roundOff: asNumber(data.totals?.roundOff),
+        // Informational voided-lines disclosure (excluded from grandTotal) — the
+        // "Voided Items (N): -X" row in buildTotalsTable reads these.
+        voidedTotal: asNumber(data.totals?.voidedTotal),
+        voidedCount: asNumber(data.totals?.voidedCount)
     };
     const highlightValue = totals.balanceDue > 0 ? totals.balanceDue : totals.grandTotal;
     // QA-031: pull each linked source-doc number out as its own labeled row

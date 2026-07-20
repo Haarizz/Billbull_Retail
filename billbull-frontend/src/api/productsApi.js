@@ -12,6 +12,13 @@ export const createProduct = async (formData) => {
   return res.data;
 };
 
+export const createProductFromPos = async (formData) => {
+  const res = await api.post("/api/products?source=pos", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+};
+
 // --------------------
 // UPDATE
 // --------------------
@@ -57,6 +64,11 @@ export const searchExactProducts = async (search = "", signal = undefined) => {
 
 export const validateDuplicateProduct = async ({ name = "", code = "", sku = "", barcode = "" }) => {
   const res = await api.get("/api/products/validate-duplicate", { params: { name, code, sku, barcode } });
+  return res.data;
+};
+
+export const validateDuplicateProductFromPos = async ({ name = "", code = "", sku = "", barcode = "" }) => {
+  const res = await api.get("/api/products/validate-duplicate", { params: { name, code, sku, barcode, source: "pos" } });
   return res.data;
 };
 

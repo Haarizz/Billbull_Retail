@@ -71,6 +71,7 @@ import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
+import { applyTaxAwareDisplayOptions } from './POS/posPrintUtils';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import InvoicePreviewModal from './components/InvoicePreviewModal';
@@ -93,6 +94,10 @@ import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import toast from 'react-hot-toast';
+import { fetchInvoicePaymentHistory, useInvoicePaymentHistory } from '../../hooks/useInvoicePaymentHistory';
+import { getInvoiceStatusBadge, resolveInvoiceSourceType, getInvoiceTypeBadge } from './utils/invoiceStatusBadge';
+import { getAvailableInvoiceActions } from './utils/invoiceActionRules';
+import InvoicePreviewSplitView from './components/InvoicePreviewSplitView';
 
 // Round-off adjustment for an exact total, per the Sales Settings rounding rule.
 // Returns (rounded − exact) so net = exact + roundOff lands on a clean figure.
@@ -205,8 +210,17 @@ const SalesInvoice = () => {
     const editorDataLoaded = useRef(false);
     // Capture invoiceId at mount so location.state changes can't lose it
     const pendingOpenIdRef = useRef(location.state?.invoiceId ?? null);
-    const [activeTab, setActiveTab] = useState('list');
+    const [activeTab, setActiveTab] = useState('list'); // 'list' | 'preview' | 'create'
+    // Which invoice the Transaction Preview is showing. Left set after returning to
+    // the list so the row you came from stays highlighted.
+    const [previewInvoiceId, setPreviewInvoiceId] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
+
+    const openInvoicePreview = (inv) => {
+        if (!inv?.id) return;
+        setPreviewInvoiceId(inv.id);
+        setActiveTab('preview');
+    };
 
     // --- DATA LIST STATES ---
     const [invoicesList, setInvoicesList] = useState([]);
@@ -390,11 +404,17 @@ const SalesInvoice = () => {
         qty: i.quantity ?? i.qty ?? 0,
         price: i.price || 0,
         disc: i.discount || i.disc || 0,
-        tax: i.taxRate || i.tax || 5,
+        // Nullish-coalesce, not ||: a genuinely tax-free line (taxRate 0, e.g. no
+        // active tax config) must stay 0 on reload, not collapse to the 5 fallback
+        // just because 0 is falsy. That fallback should only fire when the server
+        // sent no tax field at all (new/legacy rows).
+        tax: i.taxRate ?? i.tax ?? 5,
         taxAmt: i.taxAmount || i.taxAmt || 0,
         gross: i.grossAmount || i.gross || 0,
         net: i.netAmount || i.net || 0,
-        taxableAmount: Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
+        taxableAmount: (i.netAmount != null || i.net != null)
+            ? Math.max(0, (i.netAmount ?? i.net ?? 0) - (i.taxAmount ?? i.taxAmt ?? 0))
+            : Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
         cost: i.cost || 0,
         gp: 0,
         foc: i.foc || 0,
@@ -409,7 +429,8 @@ const SalesInvoice = () => {
         baseRequiredQuantity: Number(i.baseRequiredQuantity) || 0,
         batchSelectedQuantity: Number(i.batchSelectedQuantity) || 0,
         batchSelectionMode: i.batchSelectionMode || 'AUTO_FEFO',
-        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : []
+        batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
+        voided: Boolean(i.voided ?? i.isVoided ?? false),
     });
 
     // Items
@@ -1134,8 +1155,8 @@ const SalesInvoice = () => {
     // ==========================================
     // Total before round-off, used to derive the automatic rounding adjustment.
     const preRoundSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: 0 }),
-        [items, billDiscount, billDiscountType, deliveryCharge]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: 0 }, vatMode),
+        [items, billDiscount, billDiscountType, deliveryCharge, vatMode]
     );
     // Auto round-off per the Sales Settings rule (mode + step). Default NEAREST 1.00.
     const autoRoundOff = useMemo(
@@ -1155,8 +1176,8 @@ const SalesInvoice = () => {
     }, [autoRoundOff, roundOffManual, isReadOnlyInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const invoiceSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: effectiveRoundOff }),
-        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff]
+        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: effectiveRoundOff }, vatMode),
+        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff, vatMode]
     );
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
@@ -1171,6 +1192,12 @@ const SalesInvoice = () => {
     // Calculate Outstanding
     const previousOutstanding = customerOutstanding;
     const newTotalOutstanding = (previousOutstanding + netTotal) - amountCollected;
+
+    // Walk-in is a shared generic customer code, not a real account — it has no
+    // meaningful running balance, so outstanding figures shouldn't be shown for it.
+    const isWalkInCustomer = !!(selectedCustomer?.code === 'WALKIN'
+        || selectedCustomer?.name?.toLowerCase().includes('walk-in')
+        || selectedCustomer?.name?.toLowerCase().includes('walkin'));
 
     // ==========================================
     // HANDLERS
@@ -1359,7 +1386,7 @@ const SalesInvoice = () => {
                         if (soItem) {
                             price = Number(soItem.price) || 0;
                             disc = Number(soItem.discount) || 0;
-                            tax = Number(soItem.taxRate) || 5;
+                            tax = firstPresentNumber(soItem.taxRate, 5);
                             cost = Number(soItem.cost) || 0;
                         }
                     }
@@ -1452,7 +1479,7 @@ const SalesInvoice = () => {
                     price: Number(i.price) || 0,
                     cost: Number(i.cost) || 0,
                     disc: Number(i.discount) || 0,
-                    tax: Number(i.taxRate) || 5,
+                    tax: firstPresentNumber(i.taxRate, 5),
                     taxAmt: Number(i.taxAmount) || 0,
                     gross: Number(i.quantity) * Number(i.price),
                     net: Number(i.lineTotal) || 0,
@@ -1562,7 +1589,7 @@ const SalesInvoice = () => {
                             const qty = Number(si.quantity) || 0;
                             const price = Number(si.price) || 0;
                             const disc = Number(si.discount) || 0;
-                            const tax = Number(si.taxRate) || 5;
+                            const tax = firstPresentNumber(si.taxRate, 5);
                             const cost = Number(si.cost) || 0;
                             const { gross, taxAmt, net, taxableAmount } = calculateLineAmounts({ qty, price, disc, tax });
                             return {
@@ -1680,7 +1707,7 @@ const SalesInvoice = () => {
                     price: Number(i.price) || 0,
                     cost: 0,
                     disc: 0,
-                    tax: Number(i.taxPercent) || 5,
+                    tax: firstPresentNumber(i.taxPercent, 5),
                     taxAmt: 0,
                     gross: Number(i.quantity) * Number(i.price),
                     net: Number(i.lineTotal) || 0,
@@ -1690,7 +1717,8 @@ const SalesInvoice = () => {
         }
     };
 
-    const calculateRow = (item) => {
+    const calculateRow = (item, vatModeOverride) => {
+        const effectiveVatMode = vatModeOverride || vatMode;
         const qty = Number(item.qty) || 0;
         const price = Number(item.price) || 0;
         const focQty = Number(item.foc) || 0;
@@ -1724,7 +1752,7 @@ const SalesInvoice = () => {
         const { taxableAmount, taxAmount, total: netAmount } = computeLineTaxTotals({
             netAfterDiscount,
             taxPercent,
-            vatMode,
+            vatMode: effectiveVatMode,
         });
 
         const salesExTax = taxableAmount;
@@ -1742,6 +1770,7 @@ const SalesInvoice = () => {
             taxAmt: taxAmount,
             gross: grossAmount,
             net: netAmount,
+            taxableAmount,
             gp: gpPercent
         };
     };
@@ -2251,9 +2280,14 @@ const SalesInvoice = () => {
         setSalesType(resolvedTypeUI === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
         setIsGeneratedFromDN(!!invoice.linkedDeliveryNote && invoice.status !== 'CANCELLED');
 
-        // Map items back
+        // Map items back. Recompute each row's derived fields (taxableAmount,
+        // taxAmt, net) against the invoice's OWN vatMode explicitly — the
+        // `vatMode` state var may not have flushed yet (setVatMode above is
+        // async), and mapServerInvoiceItem's stored taxableAmount can be stale
+        // relative to whatever VAT mode the row is now being viewed under.
         if (invoice.items && invoice.items.length > 0) {
-            setItems(invoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
+            const loadedVatMode = invoice.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE';
+            setItems(invoice.items.map((i, index) => calculateRow(mapServerInvoiceItem(i, Date.now() + index), loadedVatMode)));
         } else {
             setItems([createBlankInvoiceItem()]);
         }
@@ -2570,60 +2604,7 @@ const SalesInvoice = () => {
         setIsReceiptsModalOpen(true);
         setReceiptsLoading(true);
         try {
-            const [salesPayments, allReceiptVouchers] = await Promise.all([
-                getSalesPaymentsByInvoice(invoice.invoiceNumber).catch(() => []),
-                receiptVoucherApi.getAll().catch(() => [])
-            ]);
-
-            const paymentRows = (salesPayments || []).map((p) => ({
-                key: `sp-${p.id}`,
-                dbId: p.id,
-                source: 'SALES_PAYMENT',
-                sourceLabel: 'Sales Payment',
-                receiptNumber: p.paymentNumber || `RV-SP-${p.id}`,
-                date: p.paymentDate,
-                customerName: p.customerName || invoice.customerName,
-                amount: Number(p.amount || 0),
-                mode: p.paymentMode || 'Cash',
-                reference: p.referenceNumber || '',
-                bankName: p.bankName || '',
-                status: p.status || 'Completed',
-                notes: p.notes || '',
-                raw: p
-            }));
-
-            // Exclude receipt vouchers that were auto-created by a sales payment
-            // (PaymentService.upsertReceiptVoucher stores the RV id in receiptVoucherRecordId)
-            const autoCreatedRvIds = new Set(
-                (salesPayments || []).map(p => p.receiptVoucherRecordId).filter(Boolean)
-            );
-
-            const rvRows = (allReceiptVouchers || [])
-                .filter((rv) => Number(rv.salesInvoiceId) === Number(invoice.id) && !autoCreatedRvIds.has(rv.id))
-                .map((rv) => ({
-                    key: `rv-${rv.id}`,
-                    dbId: rv.id,
-                    source: 'RECEIPT_VOUCHER',
-                    sourceLabel: 'Receipt Voucher',
-                    receiptNumber: rv.voucherId || `RV-${rv.id}`,
-                    date: rv.date,
-                    customerName: rv.memberName || invoice.customerName,
-                    amount: Number(rv.amount || 0),
-                    mode: rv.paymentMode || 'Cash',
-                    reference: rv.reference || rv.chequeRef || '',
-                    bankName: rv.depositAccount || rv.bankName || '',
-                    branchId: rv.branchId || invoice.branchId,
-                    status: rv.status || 'Completed',
-                    notes: rv.notes || '',
-                    purpose: rv.purpose,
-                    raw: rv
-                }));
-
-            const merged = [...paymentRows, ...rvRows].sort((a, b) => {
-                const da = a.date ? new Date(a.date).getTime() : 0;
-                const db = b.date ? new Date(b.date).getTime() : 0;
-                return db - da;
-            });
+            const merged = await fetchInvoicePaymentHistory(invoice);
             setReceiptsForInvoice(merged);
         } catch (err) {
             console.error('Failed to load receipts for invoice', err);
@@ -2754,12 +2735,13 @@ const SalesInvoice = () => {
         const resolvedSummary = summarizeSalesItems(items || [], makeFooterDiscount(billDiscountType, resolvedBillDiscount), {
             deliveryCharge: resolvedDeliveryCharge,
             roundOff: resolvedRoundOff
-        });
+        }, vatMode);
 
         return {
-            title: 'SALES INVOICE',
+            title: Number(resolvedSummary.tax) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
             docNo: invoiceNo,
             date: invoiceDate,
+            vatMode,
             customer: {
                 name: selectedCustomer?.name || '',
                 address: fullCustomer?.address || fullCustomer?.billingAddress || '',
@@ -2845,7 +2827,10 @@ const SalesInvoice = () => {
         totalTax,
         invoiceTotal: netTotal,
         amountPaid: amountCollected,
+        vatMode,
+        taxInclusive: vatMode === 'INCLUSIVE',
         billDiscount,
+        billDiscountType,
         billDiscountAmount,
         deliveryCharge,
         roundOff: effectiveRoundOff,
@@ -2889,10 +2874,12 @@ const SalesInvoice = () => {
                 : Number(dataToPrint.billDiscountAmount) || 0;
             const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
             const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
+            const resolvedVatMode = dataToPrint.vatMode
+                || (dataToPrint.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
             const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], makeFooterDiscount(resolvedBillDiscountType, resolvedBillDiscount), {
                 deliveryCharge: resolvedDeliveryCharge,
                 roundOff: resolvedRoundOff
-            });
+            }, resolvedVatMode);
 
             {
                 // Find Customer details
@@ -2901,10 +2888,15 @@ const SalesInvoice = () => {
                 const invoiceBranchId = dataToPrint.branchId ?? activeBranch?.id;
                 const printBranch = availableBranches?.find(b => b.id === invoiceBranchId) || activeBranch || {};
 
+                // Tax-aware document title: a taxed invoice is a TAX INVOICE, a
+                // zero-rated/exempt one is a plain SALES INVOICE (matches the POS
+                // rule and the checkout preview). Explicit titleOverride still wins.
+                const invoiceHasTax = Number(resolvedSummary.tax) > 0;
                 const printData = {
-                    title: titleOverride || 'SALES INVOICE',
+                    title: titleOverride || (invoiceHasTax ? 'TAX INVOICE' : 'SALES INVOICE'),
                     docNo: dataToPrint.invoiceNumber,
                     date: dataToPrint.invoiceDate,
+                    vatMode: resolvedVatMode,
                     customer: {
                         name: dataToPrint.customerName || '',
                         code: dataToPrint.customerCode || fullCustomer?.code || '',
@@ -2914,7 +2906,9 @@ const SalesInvoice = () => {
                         email: fullCustomer?.email || '',
                         trn: fullCustomer?.trn
                     },
-                    items: (dataToPrint.items || []).map(i => ({
+                    items: (dataToPrint.items || []).map(i => {
+                        const isVoided = Boolean(i.voided ?? i.isVoided ?? false);
+                        return {
                         code: i.itemCode || i.code,
                         name: i.itemName || i.name || '',
                         desc: i.description || i.shortDescription || i.desc || '',
@@ -2927,12 +2921,20 @@ const SalesInvoice = () => {
                         salesPerson: dataToPrint.salesperson || '',
                         location: dataToPrint.branch || '',
                         unit: i.unit,
+                        // Voided lines keep their REAL values (no longer zeroed): the
+                        // renderer prints them with a leading "-" + [VOID] tag via the
+                        // `voided` flag. They're already excluded from the totals by
+                        // summarizeSalesItems and disclosed in the Voided Items row.
+                        // When a stored voided line came back with netAmount/taxAmount
+                        // zeroed (older POS posts), pass them as undefined so the
+                        // renderer re-derives taxable/tax/total from qty×price×disc
+                        // instead of printing 0.00.
                         qty: Number(i.quantity || i.qty),
                         price: Number(i.price),
                         disc: Number(i.discount || i.disc),
                         tax: Number(i.taxRate || i.tax),
-                        taxAmt: Number(i.taxAmount || i.taxAmt || 0),
-                        total: Number(i.netAmount || i.net),
+                        taxAmt: (Number(i.taxAmount || i.taxAmt || 0) === 0 && isVoided) ? undefined : Number(i.taxAmount || i.taxAmt || 0),
+                        total: (Number(i.netAmount || i.net || 0) === 0 && isVoided) ? undefined : Number(i.netAmount || i.net),
                         image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
                         batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
                         // QA-030: provide both joined (legacy) and singular
@@ -2944,10 +2946,16 @@ const SalesInvoice = () => {
                         batchNumbers: Array.isArray(i.batchSelections)
                             ? i.batchSelections.map(batch => batch.batchNumber).filter(Boolean).join(', ')
                             : '',
-                        expiry: i.expiry || i.expiryDate || ''
-                    })),
+                        expiry: i.expiry || i.expiryDate || '',
+                        voided: isVoided,
+                        };
+                    }),
                     totals: {
                         subTotal: resolvedSummary.grossTotal,
+                        // True ex-VAT taxable base (after item + footer discount). Passed
+                        // explicitly so the renderer doesn't (mis)derive it as
+                        // subTotal − discount, which is wrong under VAT-inclusive pricing.
+                        taxableAmount: Math.max(0, (resolvedSummary.subTotal || 0) - (resolvedSummary.footerDiscountTotal || 0)),
                         tax: resolvedSummary.tax,
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
@@ -2959,7 +2967,10 @@ const SalesInvoice = () => {
                         // Use API-stored amount (always correct AED value) rather than re-computed value.
                         footerDiscountAmount: Number(dataToPrint.billDiscountAmount) || 0,
                         deliveryCharge: resolvedDeliveryCharge,
-                        roundOff: resolvedRoundOff
+                        roundOff: resolvedRoundOff,
+                        // Informational voided-lines disclosure (excluded from grandTotal).
+                        voidedTotal: resolvedSummary.voidedTotal || 0,
+                        voidedCount: resolvedSummary.voidedCount || 0
                     },
                     meta: {
                         status: dataToPrint.status,
@@ -2985,11 +2996,16 @@ const SalesInvoice = () => {
                     branches: availableBranches || [],
                     branchId: invoiceBranchId,
                 });
+                // Drop VAT columns (Tax % / Tax Amount) from the item table when the
+                // invoice carries no tax, so a no-tax SALES INVOICE doesn't print an
+                // empty tax-invoice grid. Overlay templates are fixed-position PDFs
+                // and aren't column-driven, so they're left untouched.
+                const taxAwareTemplate = applyTaxAwareDisplayOptions(defaultTemplate, invoiceHasTax);
                 const html = isOverlayInvoiceTemplate(defaultTemplate)
                     ? generateOverlayInvoiceHtml(defaultTemplate, printData, { companyProfile: branchProfile })
                     : forPdf
-                    ? await generatePdfHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo })
-                    : await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+                    ? await generatePdfHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo })
+                    : await generatePrintHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo });
                 return html;
             }
         }
@@ -3005,8 +3021,9 @@ const SalesInvoice = () => {
             || list.find(t => t.isDefault)
             || list[0];
         if (!defaultTemplate) return null;
+        // buildCurrentInvoicePrintData() already stamps the tax-aware title
+        // (TAX INVOICE when taxed, SALES INVOICE when not) — don't override it.
         const printData = buildCurrentInvoicePrintData();
-        printData.title = 'TAX INVOICE';
         const invoiceBranchId = activeBranch?.id;
         const branchProfile = buildDocumentHeaderProfile({
             company,
@@ -3020,9 +3037,10 @@ const SalesInvoice = () => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
         if (!dataToPrint.items || dataToPrint.items.length === 0) return;
-        // Always stamp the document title as TAX INVOICE — drafts and finalized
-        // invoices alike print/download with the VAT-compliant title.
-        const titleOverride = 'TAX INVOICE';
+        // Tax-aware title: a no-tax invoice downloads as SALES INVOICE, a taxed
+        // one as TAX INVOICE — matches the POS rule. List-row invoices carry
+        // `taxTotal` (backend field); the current-form source carries `totalTax`.
+        const titleOverride = Number(dataToPrint.taxTotal ?? dataToPrint.totalTax ?? 0) > 0 ? 'TAX INVOICE' : 'SALES INVOICE';
         setIsPrinting(true);
         try {
             // forPdf:false -> use the PRINT renderer (real @page / page-break CSS);
@@ -3043,9 +3061,10 @@ const SalesInvoice = () => {
             return;
         }
 
-        // Always stamp the document title as TAX INVOICE — drafts and finalized
-        // invoices alike print with the VAT-compliant title.
-        const titleOverride = 'TAX INVOICE';
+        // Tax-aware title: a no-tax invoice prints as SALES INVOICE, a taxed one
+        // as TAX INVOICE — matches the POS rule. List-row invoices carry
+        // `taxTotal` (backend field); the current-form source carries `totalTax`.
+        const titleOverride = Number(dataToPrint.taxTotal ?? dataToPrint.totalTax ?? 0) > 0 ? 'TAX INVOICE' : 'SALES INVOICE';
 
         setIsPrinting(true);
         try {
@@ -3080,21 +3099,8 @@ const SalesInvoice = () => {
 
     // Helper for Status Badges
     const renderListStatus = (statusVal, inv = null) => {
-        const s = statusVal?.toUpperCase();
-        // Compute overdue: confirmed/partially-paid with outstanding balance past due date
-        if (inv && (s === 'CONFIRMED' || s === 'PARTIALLY_PAID') && inv.dueDate && (inv.balance ?? 0) > 0) {
-            const today = new Date(); today.setHours(0, 0, 0, 0);
-            if (new Date(inv.dueDate) < today) {
-                return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
-            }
-        }
-        if (s === 'PAID') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Paid</span>;
-        if (s === 'OVERDUE') return <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">Overdue</span>;
-        if (s === 'PARTIALLY_PAID') return <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-bold">Partially Paid</span>;
-        if (s === 'CONFIRMED') return <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-[10px] font-bold">Confirmed</span>;
-        if (s === 'COMPLETED') return <span className="bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded text-[10px] font-bold">Completed</span>;
-        if (s === 'POSTED') return <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded text-[10px] font-bold">Posted</span>;
-        return <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold">{statusVal || 'Draft'}</span>;
+        const { label, colorClasses } = getInvoiceStatusBadge(statusVal, inv);
+        return <span className={colorClasses}>{label}</span>;
     };
 
     // Lazily load the invoice template family the first time a print menu opens.
@@ -3169,21 +3175,17 @@ const SalesInvoice = () => {
         </div>
     );
 
-    const resolveSourceType = (inv) => {
-        if (inv.linkedDeliveryNote) return { label: 'Against DN', ref: inv.linkedDeliveryNote, color: 'bg-green-100 text-green-700 border-green-200' };
-        if (inv.linkedSalesOrder) return { label: 'Against SO', ref: inv.linkedSalesOrder, color: 'bg-blue-100 text-blue-700 border-blue-200' };
-        if (inv.linkedProforma) return { label: 'Against PI', ref: inv.linkedProforma, color: 'bg-purple-100 text-purple-700 border-purple-200' };
-        return { label: 'Direct Sale', ref: null, color: 'bg-orange-100 text-orange-700 border-orange-200' };
-    };
+    const resolveSourceType = (inv) => resolveInvoiceSourceType(inv);
 
     const renderTypeBadge = (inv) => {
-        if (inv?.fastSale) return <span className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold border border-red-200 shadow-sm flex items-center gap-1 w-fit"><ShoppingCart size={10} /> Fast Sale</span>;
-        return null;
+        const badge = getInvoiceTypeBadge(inv);
+        if (!badge) return null;
+        return <span className={`${badge.colorClasses} px-2 py-0.5 rounded text-[10px] font-bold shadow-sm flex items-center gap-1 w-fit`}><ShoppingCart size={10} /> {badge.label}</span>;
     };
 
     const MobileCard = ({ inv }) => (
         <div
-            onClick={() => handleLoadInvoice(inv)}
+            onClick={() => openInvoicePreview(inv)}
             className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-all"
         >
             <div className="flex justify-between items-start mb-2">
@@ -3576,7 +3578,7 @@ const SalesInvoice = () => {
                                             </tr>
                                         ))}
                                         {filteredInvoices.map((inv, index) => (
-                                            <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleLoadInvoice(inv)}>
+                                            <tr key={inv.id} className={`hover:bg-slate-50 cursor-pointer group ${inv.id === previewInvoiceId ? 'bg-[#FFF8E7]' : ''}`} onClick={() => openInvoicePreview(inv)}>
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
                                                     {getListSerialNumber(index, {
                                                         documentNumber: inv.invoiceNumber,
@@ -3624,16 +3626,20 @@ const SalesInvoice = () => {
                                                 <td className="px-4 py-3 whitespace-nowrap">
                                                     {(() => {
                                                         const ch = inv.salesChannel || 'Retail';
-                                                        const color = ch === 'POS'       ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                        const color = (ch === 'POS' || ch === 'Retail_POS') ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                                                    : ch === 'Retail_Delivery' ? 'bg-orange-50 text-orange-700 border-orange-200'
                                                                     : ch === 'Wholesale' ? 'bg-blue-50 text-blue-700 border-blue-200'
                                                                     : ch === 'Online'    ? 'bg-cyan-50 text-cyan-700 border-cyan-200'
                                                                     :                      'bg-amber-50 text-amber-700 border-amber-200';
-                                                        return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${color}`}>{ch}</span>;
+                                                        const label = ch === 'Retail_POS' ? 'Retail POS'
+                                                                    : ch === 'Retail_Delivery' ? 'Retail Delivery'
+                                                                    : ch;
+                                                        return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${color}`}>{label}</span>;
                                                     })()}
                                                 </td>
                                                 <td className="px-4 py-3 text-right whitespace-nowrap">
                                                     <div className="flex justify-end gap-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                                        <button onClick={() => handleLoadInvoice(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Edit"><Edit size={14} /></button>
+                                                        <button onClick={() => openInvoicePreview(inv)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="View"><Edit size={14} /></button>
                                                         <button onClick={() => handlePrintClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Print"><Printer size={14} /></button>
                                                         <button onClick={() => handleDownloadClick(inv)} disabled={isPrinting} className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-50" title="Download PDF"><Download size={14} /></button>
                                                         <button
@@ -3685,6 +3691,28 @@ const SalesInvoice = () => {
                             />
                         </div>
                         </div>
+                    )}
+
+                    {/* ================= VIEW: TRANSACTION PREVIEW ================= */}
+                    {activeTab === 'preview' && (
+                        <InvoicePreviewSplitView
+                            invoices={filteredInvoices}
+                            previewInvoiceId={previewInvoiceId}
+                            onSelectInvoice={(inv) => setPreviewInvoiceId(inv.id)}
+                            listLoading={isListLoading}
+                            searchTerm={searchTerm}
+                            onSearchChange={setSearchTerm}
+                            customersList={customersList}
+                            invoiceCurrency={invoiceCurrency}
+                            isPrinting={isPrinting}
+                            onBack={() => setActiveTab('list')}
+                            onEdit={(inv) => handleLoadInvoice(inv)}
+                            onPrint={(inv, template) => handlePrintClick(inv, template)}
+                            onDownload={(inv) => handleDownloadClick(inv)}
+                            onOpenEmailModal={(inv) => { handleLoadInvoice(inv); setIsEmailModalOpen(true); }}
+                            onRecordPayment={(inv) => setSettlementInvoice(inv)}
+                            onPrintVoucher={(receipt, inv) => handlePrintReceipt(receipt, inv)}
+                        />
                     )}
 
                     {/* ================= VIEW: CREATE ================= */}
@@ -3760,195 +3788,176 @@ const SalesInvoice = () => {
                                 </div>
                             )}
 
+                            {/* Invoice Details — responsive grid (Status · No. · Date · Due Date ·
+                                Reference · Payment Terms · Sales Mode · Invoice Type · [linked doc] ·
+                                Branch · Salesperson). Each field is a label-over-control cell so every
+                                column lines up on its own baseline at any viewport width, instead of
+                                the old inline flex-wrap which ragged-wrapped on narrower screens.
+                                Fields/handlers unchanged; only the layout/containers were restyled. */}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-x-4 gap-y-4 items-end bg-white rounded-lg border border-slate-200 p-4">
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Status</label>
+                                    <div>{renderListStatus(status)}</div>
+                                </div>
+                                {isReadOnlyInvoice && (
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate invisible">View</label>
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded border border-slate-200 bg-slate-50 text-slate-600 self-start">
+                                            View Only
+                                        </span>
+                                    </div>
+                                )}
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Invoice No.</label>
+                                    <input
+                                        type="text"
+                                        value={invoiceNo}
+                                        onChange={e => setInvoiceNo(e.target.value)}
+                                        readOnly={isReadOnlyInvoice || invoiceAutoNumbering}
+                                        placeholder={invoiceAutoNumbering ? 'Auto generated' : 'Enter invoice number'}
+                                        title="Invoice Number"
+                                        className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:border-[#F5C742] outline-none"
+                                    />
+                                </div>
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Date</label>
+                                    <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                                </div>
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Due Date</label>
+                                    <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                                </div>
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Reference</label>
+                                    <input type="text" value={reference} onChange={e => setReference(e.target.value)} readOnly={isReadOnlyInvoice} placeholder="e.g. PO Number" className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 focus:border-[#F5C742] outline-none read-only:bg-slate-50 read-only:text-slate-500" />
+                                </div>
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Payment Terms</label>
+                                    <div className="relative">
+                                        <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            <option>Immediate</option>
+                                            <option>Net 15</option>
+                                            <option>Net 30</option>
+                                            <option>Net 45</option>
+                                            <option>Net 60</option>
+                                        </select>
+                                        <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Sales Mode</label>
+                                    <div className="relative">
+                                        <select value={salesChannel} onChange={e => setSalesChannel(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            <option value="Retail">Retail</option>
+                                            <option value="Wholesale">Wholesale</option>
+                                            <option value="POS">POS</option>
+                                            <option value="Retail_POS">Retail POS</option>
+                                            <option value="Retail_Delivery">Retail Delivery</option>
+                                            <option value="Online">Online</option>
+                                        </select>
+                                        <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Invoice Type</label>
+                                    <div className="relative">
+                                        <select
+                                            value={invoiceTypeUI}
+                                            disabled={isReadOnlyInvoice}
+                                            onChange={e => {
+                                                setInvoiceTypeUI(e.target.value);
+                                                setSalesType(e.target.value === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
+                                                // Reset links when switching type
+                                                setLinkedSO(''); setLinkedDN(''); setLinkedPI('');
+                                                setBillDiscount(0);
+                                            }}
+                                            className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            <option>Direct Sale</option>
+                                            <option>Against Sales Order</option>
+                                            <option>Against Delivery Note</option>
+                                            <option>Against Proforma Invoice</option>
+                                        </select>
+                                        <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                    </div>
+                                </div>
+
+                                {/* CONDITIONAL SOURCE DOCUMENT SELECTOR */}
+                                {invoiceTypeUI === 'Against Sales Order' && (
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Sales Order</label>
+                                        <div className="relative">
+                                            <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                <option value="">Select SO...</option>
+                                                {salesOrdersList.filter(s => s.status !== 'CANCELLED').map(s => <option key={s.id} value={s.soNumber}>{s.soNumber} - {s.customerName}</option>)}
+                                            </select>
+                                            <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {invoiceTypeUI === 'Against Delivery Note' && (
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Delivery Note</label>
+                                        <div className="relative">
+                                            <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                <option value="">Select DN...</option>
+                                                {deliveryNotesList.filter(d => d.status !== 'CANCELLED').map(d => <option key={d.id} value={d.dnNumber}>{d.dnNumber} - {d.customerName}</option>)}
+                                            </select>
+                                            <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {invoiceTypeUI === 'Against Proforma Invoice' && (
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Proforma Invoice</label>
+                                        <div className="relative">
+                                            <select value={linkedPI} onChange={e => handlePIChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                                <option value="">Select PI...</option>
+                                                {proformaList.filter(p => p.status !== 'CANCELLED').map(p => <option key={p.id} value={p.proformaNo}>{p.proformaNo} - {p.customerName}</option>)}
+                                            </select>
+                                            <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Branch</label>
+                                    <input
+                                        value={branch || defaultBranch?.name || ''}
+                                        readOnly
+                                        title={branch || defaultBranch?.name || ''}
+                                        className="w-full text-sm p-1.5 border border-slate-200 rounded bg-slate-50 text-slate-600 truncate focus:outline-none"
+                                    />
+                                </div>
+
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Salesperson</label>
+                                    <div className="relative">
+                                        <select value={salesperson} onChange={e => setSalesperson(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            <option value="">Select salesperson...</option>
+                                            {employeesList.map(emp => (
+                                                <option key={emp.id} value={emp.name}>{emp.name}</option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
-                                {/* LEFT COLUMN */}
-                                <div className="xl:col-span-1 space-y-4 min-w-0">
-                                    {/* 1. TOP ACTION BAR */}
-                                    <div className="hidden">
-                                        <div className="flex flex-col md:flex-row items-center gap-4 w-full xl:w-auto">
-                                            <span className="px-3 py-1 rounded bg-slate-100 text-slate-600 text-xs font-bold border border-slate-200 w-full md:w-auto text-center">{status}</span>
-                                            <input
-                                                type="text"
-                                                value={salesType === 'DIRECT_SALE' ? "Tax Invoice – Direct Sale" : "Tax Invoice – Standard VAT"}
-                                                className="text-sm font-medium text-slate-700 bg-transparent border-none focus:ring-0 w-full md:w-64"
-                                                readOnly
-                                            />
-                                        </div>
-                                        <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                                            <button
-                                                onClick={() => openPreview('Draft')}
-                                                className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"
-                                            >
-                                                <Save size={14} /> Save Draft
-                                            </button>
-                                            <button
-                                                onClick={() => openPreview('Confirmed')}
-                                                className="flex items-center justify-center gap-1 px-4 py-1.5 bg-[#F5C742] rounded text-xs font-bold text-slate-900 hover:bg-yellow-400 flex-1 md:flex-none"
-                                            >
-                                                <CheckCircle2 size={14} /> Confirm
-                                            </button>
-                                            <button onClick={() => handlePrintClick()} disabled={isPrinting} className="p-2 hover:bg-slate-50 rounded border border-slate-200 text-slate-600 hidden md:block disabled:opacity-50"><Printer size={16} /></button>
-                                            <button className="flex items-center justify-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 flex-1 md:flex-none"><Mail size={14} /></button>
-                                        </div>
-                                    </div>
-
-                                    {/* 2. INVOICE DETAILS FORM */}
-                                    <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
-                                        <div className="flex items-center justify-between gap-3 mb-4">
-                                            <h3 className="text-sm font-bold text-slate-700">Invoice Details</h3>
-                                            {isReadOnlyInvoice && (
-                                                <span className="text-[10px] font-bold px-2 py-1 rounded border border-slate-200 bg-slate-50 text-slate-600">
-                                                    View Only
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Number</label>
-                                                <input
-                                                    type="text"
-                                                    value={invoiceNo}
-                                                    onChange={e => setInvoiceNo(e.target.value)}
-                                                    readOnly={isReadOnlyInvoice || invoiceAutoNumbering}
-                                                    placeholder={invoiceAutoNumbering ? 'Auto generated' : 'Enter invoice number'}
-                                                    className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:border-[#F5C742] outline-none"
-                                                />
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Date</label>
-                                                <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none disabled:bg-slate-50 disabled:text-slate-500" />
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Due Date</label>
-                                                <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none disabled:bg-slate-50 disabled:text-slate-500" />
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Reference</label>
-                                                <input type="text" value={reference} onChange={e => setReference(e.target.value)} readOnly={isReadOnlyInvoice} placeholder="e.g. PO Number" className="w-full text-xs p-2 border border-slate-200 rounded focus:border-[#F5C742] outline-none read-only:bg-slate-50 read-only:text-slate-500" />
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Payment Terms</label>
-                                                <div className="relative">
-                                                    <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
-                                                        <option>Immediate</option>
-                                                        <option>Net 15</option>
-                                                        <option>Net 30</option>
-                                                        <option>Net 45</option>
-                                                        <option>Net 60</option>
-                                                    </select>
-                                                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                                                </div>
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Sales Mode</label>
-                                                <div className="relative">
-                                                    <select value={salesChannel} onChange={e => setSalesChannel(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
-                                                        <option value="Retail">Retail</option>
-                                                        <option value="Wholesale">Wholesale</option>
-                                                        <option value="POS">POS</option>
-                                                        <option value="Online">Online</option>
-                                                    </select>
-                                                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
-                                                </div>
-                                            </div>
-
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Invoice Type</label>
-                                                <div className="relative">
-                                                    <select
-                                                        value={invoiceTypeUI}
-                                                        disabled={isReadOnlyInvoice}
-                                                        onChange={e => {
-                                                            setInvoiceTypeUI(e.target.value);
-                                                            setSalesType(e.target.value === 'Direct Sale' ? 'DIRECT_SALE' : 'STANDARD_FLOW');
-                                                            // Reset links when switching type
-                                                            setLinkedSO(''); setLinkedDN(''); setLinkedPI('');
-                                                            setBillDiscount(0);
-                                                        }}
-                                                        className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
-                                                        <option>Direct Sale</option>
-                                                        <option>Against Sales Order</option>
-                                                        <option>Against Delivery Note</option>
-                                                        <option>Against Proforma Invoice</option>
-                                                    </select>
-                                                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                                </div>
-                                            </div>
-
-                                            {/* CONDITIONAL SOURCE DOCUMENT SELECTOR */}
-                                            {invoiceTypeUI === 'Against Sales Order' && (
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-700 mb-1">Sales Order</label>
-                                                    <div className="relative">
-                                                        <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
-                                                            <option value="">Select SO...</option>
-                                                            {salesOrdersList.filter(s => s.status !== 'CANCELLED').map(s => <option key={s.id} value={s.soNumber}>{s.soNumber} - {s.customerName}</option>)}
-                                                        </select>
-                                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {invoiceTypeUI === 'Against Delivery Note' && (
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-700 mb-1">Delivery Note</label>
-                                                    <div className="relative">
-                                                        <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
-                                                            <option value="">Select DN...</option>
-                                                            {deliveryNotesList.filter(d => d.status !== 'CANCELLED').map(d => <option key={d.id} value={d.dnNumber}>{d.dnNumber} - {d.customerName}</option>)}
-                                                        </select>
-                                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {invoiceTypeUI === 'Against Proforma Invoice' && (
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-700 mb-1">Proforma Invoice</label>
-                                                    <div className="relative">
-                                                        <select value={linkedPI} onChange={e => handlePIChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
-                                                            <option value="">Select PI...</option>
-                                                            {proformaList.filter(p => p.status !== 'CANCELLED').map(p => <option key={p.id} value={p.proformaNo}>{p.proformaNo} - {p.customerName}</option>)}
-                                                        </select>
-                                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Branch</label>
-                                                <input
-                                                    value={branch || defaultBranch?.name || ''}
-                                                    readOnly
-                                                    className="w-full text-xs p-2 border border-slate-200 rounded bg-slate-50 text-slate-600 focus:outline-none"
-                                                />
-                                            </div>
-
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-700 mb-1">Salesperson</label>
-                                                <div className="relative">
-                                                    <select value={salesperson} onChange={e => setSalesperson(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
-                                                        <option value="">Select salesperson...</option>
-                                                        {employeesList.map(emp => (
-                                                            <option key={emp.id} value={emp.name}>{emp.name}</option>
-                                                        ))}
-                                                    </select>
-                                                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                                </div>
-                                            </div>
-
-                                        </div>
-                                    </div>
-
-                                    {/* 3. CUSTOMER + SHIPPING — unified panel */}
+                                {/* MAIN COLUMN */}
+                                <div className="xl:col-span-3 space-y-4 min-w-0">
+                                    {/* CUSTOMER + SHIPPING — unified panel, side-by-side in a wide card */}
+                                    <div className="bg-white rounded-lg border border-slate-200">
                                     <CustomerShippingPanel
+                                        layout="horizontal"
                                         selectedCustomer={selectedCustomer}
                                         onOpenCustomerSearch={() => { if (!isGeneratedFromDN && !isReadOnlyInvoice) setIsCustomerSearchOpen(true); }}
                                         onCustomerUpdated={setSelectedCustomer}
@@ -3988,6 +3997,7 @@ const SalesInvoice = () => {
                                                 : null
                                         }
                                     />
+                                    </div>
 
                                     {/* CUSTOMER SELECTOR MODAL */}
                                     <CustomerSelector
@@ -4001,11 +4011,8 @@ const SalesInvoice = () => {
                                             setCustomersList(Array.isArray(data) ? data : []);
                                         }}
                                     />
-                                </div>
 
-                                {/* MIDDLE COLUMN */}
-                                <div className="xl:col-span-2 space-y-4 min-w-0">
-                                    {/* 4. INVOICE ITEMS */}
+                                    {/* INVOICE ITEMS */}
                                     <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                         <div className="flex justify-between items-center mb-2">
                                             <h3 className="text-[13px] font-bold text-slate-700 flex items-center gap-2">Invoice Items {isGeneratedFromDN && <span className="ml-2 text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-medium border border-purple-200">Generated from DNs</span>}
@@ -4067,15 +4074,19 @@ const SalesInvoice = () => {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100/50">
-                                                        {[...items].reverse().map((item, index) => (
+                                                        {[...items].reverse().map((item, index) => {
+                                                            const isVoided = Boolean(item.voided ?? item.isVoided ?? false);
+                                                            return (
                                                             <React.Fragment key={item.id}>
-                                                                <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle">
+                                                                <tr className={`group transition-colors align-middle ${isVoided ? 'bg-red-50/50' : 'hover:bg-slate-50/50 bg-white'}`}>
                                                                     {/* Index */}
                                                                     <td className="px-3 py-2 text-center text-slate-400 text-[11px] font-medium">{index + 1}</td>
 
                                                                     {/* Item / Description */}
                                                                     <td className="px-3 py-2">
-
+                                                                        {isVoided && (
+                                                                            <span className="inline-block mb-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-red-100 text-red-600 border border-red-200">VOID</span>
+                                                                        )}
                                                                         {/* QA-FAST-ENTRY: empty rows show inline product-search input */}
                                                                         {(!item.code && !item.name && !item.desc) ? (
                                                                             <InlineProductSearchCell
@@ -4251,11 +4262,12 @@ const SalesInvoice = () => {
 
                                                                     </td>
 
-                                                                    {/* Line Total */}
+                                                                    {/* Line Total — voided lines show the real net as negative (no
+                                                                        strike-through); excluded from the total, disclosed below. */}
                                                                     <td className="px-3 py-2 text-right">
 
-                                                                        <div className="font-bold text-slate-800 text-[13px] flex flex-col items-end">
-                                                                            {((item.net) || (item.total) || 0).toFixed(2)}
+                                                                        <div className={`font-bold text-[13px] flex flex-col items-end ${isVoided ? 'text-red-500' : 'text-slate-800'}`}>
+                                                                            {isVoided ? `- ${((item.net) || (item.total) || 0).toFixed(2)}` : ((item.net) || (item.total) || 0).toFixed(2)}
                                                                         </div>
 
                                                                     </td>
@@ -4322,7 +4334,7 @@ const SalesInvoice = () => {
                                                                     </tr>
                                                                 )}
                                                             </React.Fragment>
-                                                        ))}
+                                                        );})}
                                                     </tbody>
                                                 </table>
                                             </div>
@@ -4343,14 +4355,17 @@ const SalesInvoice = () => {
                                         </div>
                                     </div>
 
-                                    {/* 6. NOTES */}
-                                    <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-                                        <h3 className="text-sm font-bold text-slate-700 mb-3">Notes & Communications</h3>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                            <div>
-                                                <label className="block text-xs text-slate-500 mb-1">Customer Notes (prints on invoice)</label>
+                                    {/* NOTES — Customer Notes | Internal Notes, side by side, matching
+                                        the Quotations reference layout. Fields/handlers unchanged. */}
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        <div className="bg-white rounded-lg border border-slate-200 p-4 h-full">
+                                            <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
+                                                <FileText size={14} className="text-slate-400" /> Customer Notes
+                                            </h3>
+                                            <div className="flex flex-col">
+                                                <label className="text-[10px] font-semibold text-slate-500 mb-1">Notes to Customer (prints on invoice)</label>
                                                 <textarea
-                                                    rows="2"
+                                                    rows="3"
                                                     readOnly={isReadOnlyInvoice}
                                                     value={invoiceNotes}
                                                     onChange={(e) => setInvoiceNotes(e.target.value)}
@@ -4358,13 +4373,23 @@ const SalesInvoice = () => {
                                                     placeholder="Thank you for your business!"
                                                 />
                                             </div>
-                                            <textarea rows="2" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="e.g., Special discount approved by manager"></textarea>
+                                        </div>
+                                        <div className="bg-white rounded-lg border border-slate-200 p-4 h-full">
+                                            <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-2">
+                                                <FileText size={14} className="text-slate-400" /> Internal Notes
+                                            </h3>
+                                            <div className="flex flex-col">
+                                                <label className="text-[10px] font-semibold text-slate-500 mb-1">Internal Notes (only visible to staff)</label>
+                                                <textarea rows="3" readOnly={isReadOnlyInvoice} className="w-full text-xs p-2 border border-slate-200 rounded resize-none focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 read-only:text-slate-500" placeholder="e.g., Special discount approved by manager"></textarea>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
+                                </div> {/* End Main Column */}
 
-                                {/* RIGHT COLUMN */}
-                                <div className="xl:col-span-1 space-y-4">
+                                {/* ======================= RIGHT COLUMN (SUMMARY & SIDEBAR) =======================
+                                    Sticky rail: keeps Totals & Payment Summary, Item Availability and
+                                    Price History visible while the main column scrolls. */}
+                                <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-4 xl:self-start">
                                     {/* 5. TOTALS & PAYMENT SECTION */}
                                     <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
                                         <h3 className="text-sm font-bold text-slate-700 mb-4">Totals & Payment Summary</h3>
@@ -4402,6 +4427,10 @@ const SalesInvoice = () => {
                                                         />
                                                     </span>
                                                     <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={invoiceCurrency} /></span>
+                                                </div>
+                                                <div className="flex justify-between text-xs text-slate-600">
+                                                    <span>Taxable Amount</span>
+                                                    <CurrencyAmount value={Math.max(0, taxableSubTotal - billDiscountAmount)} currency={invoiceCurrency} />
                                                 </div>
                                                 <div className="flex justify-between text-xs text-slate-600">
                                                     <span>Total Tax (VAT)</span>
@@ -4452,6 +4481,15 @@ const SalesInvoice = () => {
                                                         )}
                                                     </span>
                                                 </div>
+                                                {/* Informational: voided lines are excluded from Net Invoice
+                                                    Amount; this row just discloses what was voided. Shown
+                                                    only when at least one line was voided. */}
+                                                {invoiceSummary.voidedCount > 0 && (
+                                                    <div className="flex justify-between text-xs text-red-500">
+                                                        <span>Voided Items ({invoiceSummary.voidedCount})</span>
+                                                        <span className="font-medium">- <CurrencyAmount value={invoiceSummary.voidedTotal} currency={invoiceCurrency} /></span>
+                                                    </div>
+                                                )}
                                                 <div className="flex justify-between text-base font-bold text-slate-800 border-t border-slate-200 pt-2 my-2">
                                                     <span>Net Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
@@ -4460,10 +4498,12 @@ const SalesInvoice = () => {
 
                                             {/* RIGHT: Payment */}
                                             <div className="flex-1 space-y-2" data-bb-skip-aed-symbol="true">
+                                                {!isWalkInCustomer && (
                                                 <div className="flex justify-between text-xs text-slate-600">
                                                     <span>Previous Outstanding</span>
                                                     <CurrencyAmount value={previousOutstanding} currency={invoiceCurrency} />
                                                 </div>
+                                                )}
                                                 <div className="flex justify-between text-xs text-slate-600">
                                                     <span>This Invoice Amount</span>
                                                     <CurrencyAmount value={netTotal} currency={invoiceCurrency} />
@@ -4503,10 +4543,12 @@ const SalesInvoice = () => {
                                                     />
                                                 </div>
 
+                                                {!isWalkInCustomer && (
                                                 <div className="flex justify-between text-base font-bold text-red-600 border-t border-slate-200 pt-2 my-2">
                                                     <span>New Total Outstanding</span>
                                                     <CurrencyAmount value={newTotalOutstanding} currency={invoiceCurrency} />
                                                 </div>
+                                                )}
                                                 {paymentMode && (
                                                 <div>
                                                     <span className={`text-[10px] font-bold px-2 py-1 rounded text-white ${paymentMode === 'Cash' ? 'bg-emerald-500' : 'bg-blue-500'}`}>
@@ -4518,11 +4560,8 @@ const SalesInvoice = () => {
                                         </div>
                                     </div>
 
-                                    {/* BOTTOM SPACE FOR SPACING */}
-                                    <div className="h-4"></div>
-
                                     {/* SIDEBAR - INTELLIGENCE PANELS */}
-                                    <div className="space-y-5 xl:sticky xl:top-6">
+                                    <div className="space-y-4">
                                         <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
                                             <div className="flex items-center gap-2 mb-3 text-slate-700 font-bold text-[11px] uppercase tracking-wider">
                                                 <Package size={14} className="text-[#F5C742]" /> Item Availability
@@ -4944,7 +4983,7 @@ const SalesInvoice = () => {
                     currency={invoiceCurrency}
                     bankAccountOptions={bankAccountOptions}
                     isSaving={isSettlementSaving}
-                    hideCredit={!!(selectedCustomer?.code === 'WALKIN' || selectedCustomer?.name?.toLowerCase().includes('walk-in') || selectedCustomer?.name?.toLowerCase().includes('walkin'))}
+                    hideCredit={isWalkInCustomer}
                     onSkip={handleSettlementSkip}
                     onConfirm={handleSettlementConfirm}
                     onDone={handleSettlementDone}

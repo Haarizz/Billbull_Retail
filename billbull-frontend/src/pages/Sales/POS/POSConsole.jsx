@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers } from 'lucide-react';
+import { UAParser } from 'ua-parser-js';
+import { formatDistanceToNow, parseISO } from 'date-fns';
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '../../../components/ui/tooltip';
 import POSCounters from '../POSCounters';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
 import { Input } from '../../../components/ui/input';
-import { A4LivePreview, ThermalMock, PaperSizePicker } from './POSPrintPreview';
-import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText } from './posPrintUtils';
+import { A4LivePreview, A4PreviewFrame, ThermalMock, PaperSizePicker } from './POSPrintPreview';
+import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText, buildPosPrintData, applyTaxAwareDisplayOptions, USE_NEW_POS_PRINT_TEMPLATE } from './posPrintUtils';
 import { printHtml } from '../../../utils/printGenerator';
+import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { RECEIPT_TEMPLATES, getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './receiptTemplates';
 import { buildSampleTxn } from './receiptTemplates/billBullTaxInvoiceData';
 import { buildSampleInvoice, buildSampleOpts } from './receiptTemplates/sampleInvoice';
@@ -21,17 +25,44 @@ import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
 
+/**
+ * Renders the real, resolved Back Office "Sales Invoice"/"Sales Return" PrintTemplate
+ * through the actual production renderer (generateDocumentPrintHtml), fed with the
+ * same sample invoice data used elsewhere in this designer's Test Print — so this
+ * live preview shows exactly what checkout will print, not a separate approximation
+ * built from this screen's own toggles (which is what A4LivePreview does).
+ */
+// hasTax=false (POS Receipt sub-tab) builds a no-tax Sales Invoice sample AND
+// strips every tax element from the resolved template, so the designer preview
+// matches the real no-tax checkout print. Defaults true (Tax Invoice tab).
+const ResolvedTemplateA4Preview = ({ template, isReturn, hasTax = true, outlet, footerNote, scale }) => {
+  const html = useMemo(() => {
+    const sampleInvoice = buildSampleInvoice({ isReturn, noTax: !hasTax });
+    const data = buildPosPrintData(sampleInvoice, footerNote);
+    const taxAwareTemplate = applyTaxAwareDisplayOptions(template, hasTax);
+    const options = {
+      companyProfile: {
+        companyName: outlet.name, trn: outlet.trn, address: outlet.address, phone: outlet.phone,
+        currency: 'AED', logoUrl: outlet.logoDataUrl || undefined, stampUrl: outlet.stampDataUrl || undefined,
+        showStampInPrint: !!outlet.stampDataUrl,
+      },
+    };
+    return generateDocumentPrintHtml(taxAwareTemplate, data, options);
+  }, [template, isReturn, hasTax, outlet.name, outlet.trn, outlet.address, outlet.phone, outlet.logoDataUrl, outlet.stampDataUrl, footerNote]);
+  return <A4PreviewFrame html={html} scale={scale} />;
+};
+
 const POSConsole = React.memo((props) => {
   const { 
     currentTerminal, setCurrentTerminal, setTerminalsLoading, setTerminalList, setEditingTerminalId, setEditTerminalName, setEditCounterName, setTerminalSaving, editTerminalName, editCounterName, terminalList, 
     setCurrentView, consoleTab, setConsoleTab, settingsSaving, setSettingsSaving, posSettings, setPosSettings, settingsSavedFlash, setSettingsSavedFlash, 
     tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone, 
     tplLogoDataUrl, setTplLogoDataUrl, tplStampDataUrl, setTplStampDataUrl, 
-    tplReceiptHeader, setTplReceiptHeader, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper, 
+    tplReceiptHeader, setTplReceiptHeader, tplReceiptHeaderAr, setTplReceiptHeaderAr, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
     tplReceiptShowLogo, tplReceiptShowTrn, tplReceiptShowStamp, tplReceiptShowBarcode, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, 
     tplReceiptColItemCode, tplReceiptColItemImage, tplReceiptColBatchNo, tplReceiptColDiscount, tplReceiptColVatPct, tplReceiptColVatAmt, 
     tplReceiptShowGrandTotalBanner, tplReceiptShowTerms, tplReceiptShowNotes, tplReceiptShowBankDetails, tplReceiptShowQRCode, tplReceiptShowSignature, 
-    tplInvoiceHeader, tplInvoiceFooter, tplInvoicePaper, 
+    tplInvoiceHeader, tplInvoiceHeaderAr, setTplInvoiceHeaderAr, tplInvoiceFooter, tplInvoicePaper,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails, tplInvoiceShowStamp, tplInvoiceShowSignature, 
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode,
     tplInvoiceQrPlacement, setTplInvoiceQrPlacement,
@@ -48,12 +79,25 @@ const POSConsole = React.memo((props) => {
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
     setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
     setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails, t2ReceiptShowAccountBalance, t2ReceiptShowDelivery,
+    t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails, t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    setT2ReceiptShowLogo, setT2ReceiptShowCompanyDetails, setT2ReceiptShowTrn, setT2ReceiptShowArabic, setT2ReceiptShowCustomerDetails, setT2ReceiptShowAccountBalance, setT2ReceiptShowDelivery,
+    setT2ReceiptShowVatSummary, setT2ReceiptShowPaymentDetails, setT2ReceiptShowLoyalty, setT2ReceiptShowQRCode, setT2ReceiptShowFooterText, setT2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails, t2InvoiceShowAccountBalance, t2InvoiceShowDelivery,
+    t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails, t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
+    setT2InvoiceShowLogo, setT2InvoiceShowCompanyDetails, setT2InvoiceShowTrn, setT2InvoiceShowArabic, setT2InvoiceShowCustomerDetails, setT2InvoiceShowAccountBalance, setT2InvoiceShowDelivery,
+    setT2InvoiceShowVatSummary, setT2InvoiceShowPaymentDetails, setT2InvoiceShowLoyalty, setT2InvoiceShowQRCode, setT2InvoiceShowFooterText, setT2InvoiceShowBarcode,
     posTemplate, setPosTemplate, hideCategoriesPanel, setHideCategoriesPanel, hideItemsPanel, setHideItemsPanel, hiddenPanelButtons, togglePanelButton,
     settingsDraft, setSettingsDraft, handleSaveSettings, beginEditSettings, 
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
-    setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt, 
+    // Phase 3 cutover: real resolved "Sales Invoice"/"Sales Return" PrintTemplate
+    // rows (read-only here — see POSSales.jsx for the fetch). Used so this designer's
+    // live preview shows the SAME template that actually prints at checkout, instead
+    // of a separate approximation built from this screen's own toggles.
+    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
+    setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt, 
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
     setTplJobCardShowLogo, setTplJobCardShowCompanyDetails, setTplJobCardShowTrn, setTplJobCardShowCustomerDetails, setTplJobCardShowSerialNumber, setTplJobCardShowWarranty, setTplJobCardShowTechnician, setTplJobCardShowExpectedDate, setTplJobCardShowCustomerSignature, setTplJobCardShowTerms, setTplJobCardShowStamp,
@@ -63,12 +107,13 @@ const POSConsole = React.memo((props) => {
     setTplJobCardFooter, setTplJobCardPaper,
   } = props;
 
+    // Phase 3 cutover (reworked): POS now resolves the real Back Office "Sales
     const allBtnList = [
       { id:'add-qty',label:'Add Qty' },{ id:'remove',label:'Remove Item' },{ id:'discount',label:'Discount' },
       { id:'layaways',label:'Layaways' },{ id:'save-layaway',label:'Save Layaway' },{ id:'save-order',label:'Save as Order' },
       { id:'add-shipping',label:'Add Shipping' },{ id:'add-customer',label:'Add Customer' },{ id:'coupons',label:'Coupons' },
       { id:'promotions',label:'Promotions' },{ id:'last-receipt',label:'Last Receipt' },{ id:'orders',label:'Orders' },
-      { id:'return',label:'Return' },{ id:'price-chk',label:'Price Check' },
+      { id:'return',label:'Return' },{ id:'search-products',label:'Search Products' },{ id:'price-chk',label:'Price Check' },
       { id:'cash-drop',label:'Cash Drawer' },{ id:'credit-balance',label:'Credit Balance' },
       { id:'z-report',label:'Z-Report' },{ id:'reprint',label:'Reprint' },
       { id:'lock-pos',label:'Lock POS' },{ id:'close-session',label:'Close Session' },
@@ -607,12 +652,12 @@ const POSConsole = React.memo((props) => {
                     const tplConfig = JSON.stringify({
                       outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
                       logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-                      receiptHeader:tplReceiptHeader,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
+                      receiptHeader:tplReceiptHeader,receiptHeaderAr:tplReceiptHeaderAr,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
                       receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
                       receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
                       receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
                       receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
-                      invoiceHeader:tplInvoiceHeader,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
+                      invoiceHeader:tplInvoiceHeader,invoiceHeaderAr:tplInvoiceHeaderAr,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
                       invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
                       invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
                       invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
@@ -632,6 +677,10 @@ const POSConsole = React.memo((props) => {
                       receiptTemplateId,
                       t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
                       t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
+                      t2ReceiptShowLogo,t2ReceiptShowCompanyDetails,t2ReceiptShowTrn,t2ReceiptShowArabic,t2ReceiptShowCustomerDetails,t2ReceiptShowAccountBalance,t2ReceiptShowDelivery,
+                      t2ReceiptShowVatSummary,t2ReceiptShowPaymentDetails,t2ReceiptShowLoyalty,t2ReceiptShowQRCode,t2ReceiptShowFooterText,t2ReceiptShowBarcode,
+                      t2InvoiceShowLogo,t2InvoiceShowCompanyDetails,t2InvoiceShowTrn,t2InvoiceShowArabic,t2InvoiceShowCustomerDetails,t2InvoiceShowAccountBalance,t2InvoiceShowDelivery,
+                      t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
                     });
                     const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
                     setPosSettings(saved);
@@ -1336,6 +1385,7 @@ const POSConsole = React.memo((props) => {
               receipt: {
                 paper: tplReceiptPaper, setPaper: setTplReceiptPaper,
                 header: tplReceiptHeader, setHeader: setTplReceiptHeader,
+                headerAr: tplReceiptHeaderAr, setHeaderAr: setTplReceiptHeaderAr,
                 footer: tplReceiptFooter, setFooter: setTplReceiptFooter,
                 showLogo: tplReceiptShowLogo, setShowLogo: setTplReceiptShowLogo,
                 showTrn: tplReceiptShowTrn, setShowTrn: setTplReceiptShowTrn,
@@ -1362,6 +1412,7 @@ const POSConsole = React.memo((props) => {
               invoice: {
                 paper: tplInvoicePaper, setPaper: setTplInvoicePaper,
                 header: tplInvoiceHeader, setHeader: setTplInvoiceHeader,
+                headerAr: tplInvoiceHeaderAr, setHeaderAr: setTplInvoiceHeaderAr,
                 footer: tplInvoiceFooter, setFooter: setTplInvoiceFooter,
                 showLogo: tplInvoiceShowLogo, setShowLogo: setTplInvoiceShowLogo,
                 showTrn: tplInvoiceShowTrn, setShowTrn: setTplInvoiceShowTrn,
@@ -1450,7 +1501,56 @@ const POSConsole = React.memo((props) => {
               { id:'jobcard', label:'Service Job Card',  icon:<Wrench className="h-3.5 w-3.5" /> },
             ];
 
-            const cfg = tplCfg[templateSubTab] || tplCfg.receipt;
+            const rawCfg = tplCfg[templateSubTab] || tplCfg.receipt;
+            // POS Receipt is the no-tax template — TRN/VAT summary are never
+            // relevant on it (see hasTax routing at checkout), so they're forced
+            // off here once rather than at every Live Preview / Test Print /
+            // Full Preview call site that reads cfg.showTrn / cfg.showVatSummary.
+            const cfg = templateSubTab === 'receipt'
+              ? { ...rawCfg, showTrn: false, showVatSummary: false }
+              : rawCfg;
+            // The POS Receipt sub-tab is the no-tax document; every other sub-tab
+            // (Tax Invoice / Return / Job Card) is taxed. Drives whether the Live
+            // Preview / Full Preview / Test Print builders render any tax content,
+            // mirroring the real checkout's hasTax routing.
+            const hasTaxPreview = templateSubTab !== 'receipt';
+
+            // Template 2 designer state is scoped per sub-tab (POS Receipt vs Tax
+            // Invoice) so toggling it on one tab doesn't bleed into the other —
+            // mirrors the real checkout's hasTax routing in POSSales.jsx. showTrn /
+            // showVatSummary are forced off on the receipt tab — same reasoning as
+            // the native `cfg` override above.
+            const t2State = templateSubTab === 'receipt'
+              ? {
+                  showLogo: t2ReceiptShowLogo, setShowLogo: setT2ReceiptShowLogo,
+                  showCompanyDetails: t2ReceiptShowCompanyDetails, setShowCompanyDetails: setT2ReceiptShowCompanyDetails,
+                  showTrn: false, setShowTrn: setT2ReceiptShowTrn,
+                  showArabic: t2ReceiptShowArabic, setShowArabic: setT2ReceiptShowArabic,
+                  showCustomerDetails: t2ReceiptShowCustomerDetails, setShowCustomerDetails: setT2ReceiptShowCustomerDetails,
+                  showAccountBalance: t2ReceiptShowAccountBalance, setShowAccountBalance: setT2ReceiptShowAccountBalance,
+                  showDelivery: t2ReceiptShowDelivery, setShowDelivery: setT2ReceiptShowDelivery,
+                  showVatSummary: false, setShowVatSummary: setT2ReceiptShowVatSummary,
+                  showPaymentDetails: t2ReceiptShowPaymentDetails, setShowPaymentDetails: setT2ReceiptShowPaymentDetails,
+                  showLoyalty: t2ReceiptShowLoyalty, setShowLoyalty: setT2ReceiptShowLoyalty,
+                  showQRCode: t2ReceiptShowQRCode, setShowQRCode: setT2ReceiptShowQRCode,
+                  showFooterText: t2ReceiptShowFooterText, setShowFooterText: setT2ReceiptShowFooterText,
+                  showBarcode: t2ReceiptShowBarcode, setShowBarcode: setT2ReceiptShowBarcode,
+                }
+              : {
+                  showLogo: t2InvoiceShowLogo, setShowLogo: setT2InvoiceShowLogo,
+                  showCompanyDetails: t2InvoiceShowCompanyDetails, setShowCompanyDetails: setT2InvoiceShowCompanyDetails,
+                  showTrn: t2InvoiceShowTrn, setShowTrn: setT2InvoiceShowTrn,
+                  showArabic: t2InvoiceShowArabic, setShowArabic: setT2InvoiceShowArabic,
+                  showCustomerDetails: t2InvoiceShowCustomerDetails, setShowCustomerDetails: setT2InvoiceShowCustomerDetails,
+                  showAccountBalance: t2InvoiceShowAccountBalance, setShowAccountBalance: setT2InvoiceShowAccountBalance,
+                  showDelivery: t2InvoiceShowDelivery, setShowDelivery: setT2InvoiceShowDelivery,
+                  showVatSummary: t2InvoiceShowVatSummary, setShowVatSummary: setT2InvoiceShowVatSummary,
+                  showPaymentDetails: t2InvoiceShowPaymentDetails, setShowPaymentDetails: setT2InvoiceShowPaymentDetails,
+                  showLoyalty: t2InvoiceShowLoyalty, setShowLoyalty: setT2InvoiceShowLoyalty,
+                  showQRCode: t2InvoiceShowQRCode, setShowQRCode: setT2InvoiceShowQRCode,
+                  showFooterText: t2InvoiceShowFooterText, setShowFooterText: setT2InvoiceShowFooterText,
+                  showBarcode: t2InvoiceShowBarcode, setShowBarcode: setT2InvoiceShowBarcode,
+                };
 
             // ── Receipt template selection (Template 1 / Template 2 Arabic …) ──
             // The alternate (component) templates are 80mm thermal receipts, so the
@@ -1470,20 +1570,24 @@ const POSConsole = React.memo((props) => {
                     // mislabelled as a scannable QR. The designer has no live ZATCA
                     // QR to render, so the component shows its placeholder when QR
                     // is enabled with no stamp — an honest "QR appears here" hint.
-                    logoDataUrl: tplLogoDataUrl, stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
-                    qrPlaceholder: t2ShowQRCode, footerText: cfg.footer,
+                    logoDataUrl: tplLogoDataUrl, stampDataUrl: t2State.showQRCode ? tplStampDataUrl : null,
+                    qrPlaceholder: t2State.showQRCode, footerText: cfg.footer,
+                    titleEn: cfg.header, titleAr: cfg.headerAr,
                   },
                   buildSampleTxn(),
                   {
                     // Template 2's own independent Show/Hide toggles drive which
                     // sections the designer preview (and, at checkout, the real
-                    // receipt) renders.
-                    showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
-                    showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
-                    showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
-                    showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
-                    showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
-                    showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
+                    // receipt) renders. hasTax=false (POS Receipt tab) drops all
+                    // tax content (Taxable/VAT rows, per-line VAT label, Customer
+                    // TRN, VAT summary) — same routing as the real checkout.
+                    hasTax: hasTaxPreview,
+                    showLogo: t2State.showLogo, showCompanyDetails: t2State.showCompanyDetails, showTrn: t2State.showTrn,
+                    showArabic: t2State.showArabic, showCustomerDetails: t2State.showCustomerDetails,
+                    showAccountBalance: t2State.showAccountBalance, showDelivery: t2State.showDelivery,
+                    showVatSummary: t2State.showVatSummary, showPaymentDetails: t2State.showPaymentDetails,
+                    showLoyalty: t2State.showLoyalty, showQRCode: t2State.showQRCode,
+                    showFooterText: t2State.showFooterText, showBarcode: t2State.showBarcode,
                   },
                 )
               : null;
@@ -1492,31 +1596,17 @@ const POSConsole = React.memo((props) => {
             // set — it renders sections Template 1 doesn't (Account Balance,
             // Delivery, Loyalty, bilingual Arabic). When Template 2 is the active
             // component template, the Show/Hide list swaps to this map and binds
-            // to the t2* state instead of the shared native `cfg`.
-            const t2cfg = {
-              showLogo: t2ShowLogo, setShowLogo: setT2ShowLogo,
-              showCompanyDetails: t2ShowCompanyDetails, setShowCompanyDetails: setT2ShowCompanyDetails,
-              showTrn: t2ShowTrn, setShowTrn: setT2ShowTrn,
-              showArabic: t2ShowArabic, setShowArabic: setT2ShowArabic,
-              showCustomerDetails: t2ShowCustomerDetails, setShowCustomerDetails: setT2ShowCustomerDetails,
-              showAccountBalance: t2ShowAccountBalance, setShowAccountBalance: setT2ShowAccountBalance,
-              showDelivery: t2ShowDelivery, setShowDelivery: setT2ShowDelivery,
-              showVatSummary: t2ShowVatSummary, setShowVatSummary: setT2ShowVatSummary,
-              showPaymentDetails: t2ShowPaymentDetails, setShowPaymentDetails: setT2ShowPaymentDetails,
-              showLoyalty: t2ShowLoyalty, setShowLoyalty: setT2ShowLoyalty,
-              showQRCode: t2ShowQRCode, setShowQRCode: setT2ShowQRCode,
-              showFooterText: t2ShowFooterText, setShowFooterText: setT2ShowFooterText,
-              showBarcode: t2ShowBarcode, setShowBarcode: setT2ShowBarcode,
-            };
+            // to the sub-tab-scoped t2State instead of the shared native `cfg`.
+            const t2cfg = t2State;
 
             const fieldToggleSection = (label, items) => (
               <div key={label}>
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">{label}</p>
                 <div className="space-y-1">
-                  {items.map(([lbl, val, setter]) => (
-                    <div key={lbl} className="flex items-center justify-between py-2.5 px-1">
+                  {items.map(([lbl, val, setter, disabled]) => (
+                    <div key={lbl} className={`flex items-center justify-between py-2.5 px-1${disabled ? ' opacity-50' : ''}`}>
                       <span className="text-sm text-[#1E293B]">{lbl}</span>
-                      <Switch checked={!!val} onCheckedChange={setter} />
+                      <Switch checked={!!val} onCheckedChange={setter} disabled={disabled} />
                     </div>
                   ))}
                 </div>
@@ -1535,6 +1625,7 @@ const POSConsole = React.memo((props) => {
                 html = templateSubTab === 'jobcard'
                   ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
                   : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},{
+                      hasTax:hasTaxPreview,
                       showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
                       showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
                       showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
@@ -1546,7 +1637,7 @@ const POSConsole = React.memo((props) => {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
                 html = buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn});
               } else {
-                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement});
+                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement});
               }
               const w = window.open('','_blank');
               w && w.document.write(html);
@@ -1561,7 +1652,7 @@ const POSConsole = React.memo((props) => {
                 printHtml(activeTemplate.buildHtml(componentTemplateData));
                 return;
               }
-              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
+              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
             };
 
             const handleTestPrint = async () => {
@@ -1570,6 +1661,7 @@ const POSConsole = React.memo((props) => {
               // changes the 58mm/80mm receipt path.
               if (cfg.paper === 'A4') {
                 const toggles = {
+                  hasTax:hasTaxPreview,
                   showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
                   showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
                   showQRCode:cfg.showQRCode,showStamp:cfg.showStamp,showSignature:false,showGrandTotalBanner:cfg.showServiceCharge,
@@ -1606,12 +1698,16 @@ const POSConsole = React.memo((props) => {
               }
 
               const isReturn = templateSubTab === 'return';
-              const sampleInvoice = buildSampleInvoice({ isReturn });
+              const sampleInvoice = buildSampleInvoice({ isReturn, noTax: !hasTaxPreview });
               const outlet = { name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl };
               const escPosOpts = {
                 ...buildSampleOpts({ outlet, cfg }),
                 isReturn,
-                documentTitle: isReturn ? 'CREDIT NOTE' : 'TAX INVOICE',
+                // No-tax (POS Receipt) test print drops all tax content and titles
+                // as SALES INVOICE — matches the real no-tax checkout receipt.
+                hasTax: hasTaxPreview,
+                documentTitle: isReturn ? 'CREDIT NOTE' : (cfg.header || (hasTaxPreview ? 'TAX INVOICE' : 'SALES INVOICE')),
+                documentTitleAr: isReturn ? null : (cfg.headerAr || null),
                 showCreditBalance: cfg.showCreditBalance,
                 creditPreviousBalance: cfg.showCreditBalance ? 245.5 : null,
                 creditInvoiceCredit: cfg.showCreditBalance ? sampleInvoice.invoiceTotal : null,
@@ -1743,6 +1839,13 @@ const POSConsole = React.memo((props) => {
                           <textarea value={cfg.header} onChange={e=>cfg.setHeader(e.target.value)} rows={2} placeholder="e.g. Thank you for dining with us!" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors resize-none" readOnly={templateSubTab==='jobcard'} />
                           <p className="text-[10px] text-gray-400 mt-1">Supports: branch name, address, phone, TRN, cashier, table/order ref — use branch info section above for those.</p>
                         </div>
+                        {useComponentTemplate && cfg.setHeaderAr && (
+                          <div>
+                            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Header Text (Arabic) — Template 2 only</label>
+                            <input dir="rtl" value={cfg.headerAr} onChange={e=>cfg.setHeaderAr(e.target.value)} placeholder="فاتورة ضريبية" className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                            <p className="text-[10px] text-gray-400 mt-1">Arabic title shown alongside the English header above on the bilingual (Template 2) receipt.</p>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1834,7 +1937,10 @@ const POSConsole = React.memo((props) => {
                           {fieldToggleSection('HEADER', [
                             ['Show Logo', t2cfg.showLogo, t2cfg.setShowLogo],
                             ['Show Company Name & Address', t2cfg.showCompanyDetails, t2cfg.setShowCompanyDetails],
-                            ['Show TRN', t2cfg.showTrn, t2cfg.setShowTrn],
+                            // POS Receipt is the no-tax template — t2cfg.showTrn is
+                            // already forced false above; disable so it reads as
+                            // locked rather than merely unchecked.
+                            ['Show TRN', t2cfg.showTrn, t2cfg.setShowTrn, templateSubTab === 'receipt'],
                             ['Show Arabic (Bilingual) Text', t2cfg.showArabic, t2cfg.setShowArabic],
                           ])}
                           {fieldToggleSection('CUSTOMER DETAILS', [
@@ -1847,7 +1953,7 @@ const POSConsole = React.memo((props) => {
                             ['Show Delivery Address', t2cfg.showDelivery, t2cfg.setShowDelivery],
                           ])}
                           {fieldToggleSection('TRANSACTION', [
-                            ['Show VAT Summary', t2cfg.showVatSummary, t2cfg.setShowVatSummary],
+                            ['Show VAT Summary', t2cfg.showVatSummary, t2cfg.setShowVatSummary, templateSubTab === 'receipt'],
                             ['Show Payment Details (Mode / Paid / Change)', t2cfg.showPaymentDetails, t2cfg.setShowPaymentDetails],
                           ])}
                           {fieldToggleSection('LOYALTY', [
@@ -1864,12 +1970,15 @@ const POSConsole = React.memo((props) => {
                           {fieldToggleSection('HEADER', [
                             ['Show Logo', cfg.showLogo, cfg.setShowLogo],
                             ['Show Company Name & Address', cfg.showCompanyDetails, cfg.setShowCompanyDetails],
-                            ['Show TRN', cfg.showTrn, cfg.setShowTrn],
+                            // POS Receipt is the no-tax template — cfg.showTrn is
+                            // already forced false above; disable so it reads as
+                            // locked rather than merely unchecked.
+                            ['Show TRN', cfg.showTrn, cfg.setShowTrn, templateSubTab === 'receipt'],
                             ...(cfg.paper !== 'A4' ? [] : [['Show Stamp / Seal', cfg.showStamp, cfg.setShowStamp]]),
                           ])}
                           {cfg.paper !== 'A4' && fieldToggleSection('TRANSACTION', [
                             ['Show Service Charge', cfg.showServiceCharge, cfg.setShowServiceCharge],
-                            ['Show VAT Summary', cfg.showVatSummary, cfg.setShowVatSummary],
+                            ['Show VAT Summary', cfg.showVatSummary, cfg.setShowVatSummary, templateSubTab === 'receipt'],
                             ['Show Payment Details (Cash / Change / Mode)', cfg.showPaymentDetails, cfg.setShowPaymentDetails],
                           ])}
                           {cfg.paper !== 'A4' && fieldToggleSection('AFTER PAYMENT', [
@@ -1950,12 +2059,22 @@ const POSConsole = React.memo((props) => {
                               );
                             })()
                           : cfg.paper === 'A4'
-                          ? <A4LivePreview
+                          ? (USE_NEW_POS_PRINT_TEMPLATE && (templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate))
+                            ? <ResolvedTemplateA4Preview
+                                template={templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate}
+                                isReturn={templateSubTab==='return'}
+                                hasTax={hasTaxPreview}
+                                outlet={{ name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl }}
+                                footerNote={cfg.footer}
+                                scale={0.42}
+                              />
+                            : <A4LivePreview
                               category={templateSubTab==='return'?'Sales Return':'Sales Invoice'}
                               companyName={tplOutletName} trn={tplOutletTrn}
                               address={tplOutletAddress} phone={tplOutletPhone}
                               footerNote={cfg.footer} scale={0.42}
                               toggles={{
+                                hasTax: hasTaxPreview,
                                 showLogo: cfg.showLogo, showCompanyDetails: cfg.showCompanyDetails,
                                 showTrn: cfg.showTrn, showCustomerDetails: cfg.showCustomerDetails,
                                 showTerms: cfg.showFooterText, showNotes: cfg.showLoyaltyPoints,
@@ -2028,12 +2147,12 @@ const POSConsole = React.memo((props) => {
                       const tplConfig = JSON.stringify({
                         outletName:tplOutletName,outletTrn:tplOutletTrn,outletAddress:tplOutletAddress,outletPhone:tplOutletPhone,
                         logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
-                        receiptHeader:tplReceiptHeader,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
+                        receiptHeader:tplReceiptHeader,receiptHeaderAr:tplReceiptHeaderAr,receiptFooter:tplReceiptFooter,receiptPaper:tplReceiptPaper,
                         receiptShowLogo:tplReceiptShowLogo,receiptShowTrn:tplReceiptShowTrn,receiptShowStamp:tplReceiptShowStamp,receiptShowBarcode:tplReceiptShowBarcode,
                         receiptShowCompanyDetails:tplReceiptShowCompanyDetails,receiptShowCustomerDetails:tplReceiptShowCustomerDetails,
                         receiptColItemCode:tplReceiptColItemCode,receiptColItemImage:tplReceiptColItemImage,receiptColBatchNo:tplReceiptColBatchNo,receiptColDiscount:tplReceiptColDiscount,receiptColVatPct:tplReceiptColVatPct,receiptColVatAmt:tplReceiptColVatAmt,
                         receiptShowGrandTotalBanner:tplReceiptShowGrandTotalBanner,receiptShowTerms:tplReceiptShowTerms,receiptShowNotes:tplReceiptShowNotes,receiptShowBankDetails:tplReceiptShowBankDetails,receiptShowQRCode:tplReceiptShowQRCode,receiptShowSignature:tplReceiptShowSignature,
-                        invoiceHeader:tplInvoiceHeader,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
+                        invoiceHeader:tplInvoiceHeader,invoiceHeaderAr:tplInvoiceHeaderAr,invoiceFooter:tplInvoiceFooter,invoicePaper:tplInvoicePaper,
                         invoiceShowLogo:tplInvoiceShowLogo,invoiceShowCompanyDetails:tplInvoiceShowCompanyDetails,invoiceShowTrn:tplInvoiceShowTrn,
                         invoiceShowCustomerDetails:tplInvoiceShowCustomerDetails,invoiceShowStamp:tplInvoiceShowStamp,invoiceShowSignature:tplInvoiceShowSignature,
                         invoiceShowGrandTotalBanner:tplInvoiceShowGrandTotalBanner,invoiceShowTerms:tplInvoiceShowTerms,invoiceShowNotes:tplInvoiceShowNotes,
@@ -2050,6 +2169,13 @@ const POSConsole = React.memo((props) => {
                         jobCardShowCompanyDetails:tplJobCardShowCompanyDetails,jobCardShowCustomerDetails:tplJobCardShowCustomerDetails,
                         jobCardShowSerialNumber:tplJobCardShowSerialNumber,jobCardShowWarranty:tplJobCardShowWarranty,jobCardShowTechnician:tplJobCardShowTechnician,
                         jobCardShowExpectedDate:tplJobCardShowExpectedDate,jobCardShowCustomerSignature:tplJobCardShowCustomerSignature,jobCardShowTerms:tplJobCardShowTerms,
+                        receiptTemplateId,
+                        t2ShowLogo,t2ShowCompanyDetails,t2ShowTrn,t2ShowArabic,t2ShowCustomerDetails,t2ShowAccountBalance,t2ShowDelivery,
+                        t2ShowVatSummary,t2ShowPaymentDetails,t2ShowLoyalty,t2ShowQRCode,t2ShowFooterText,t2ShowBarcode,
+                        t2ReceiptShowLogo,t2ReceiptShowCompanyDetails,t2ReceiptShowTrn,t2ReceiptShowArabic,t2ReceiptShowCustomerDetails,t2ReceiptShowAccountBalance,t2ReceiptShowDelivery,
+                        t2ReceiptShowVatSummary,t2ReceiptShowPaymentDetails,t2ReceiptShowLoyalty,t2ReceiptShowQRCode,t2ReceiptShowFooterText,t2ReceiptShowBarcode,
+                        t2InvoiceShowLogo,t2InvoiceShowCompanyDetails,t2InvoiceShowTrn,t2InvoiceShowArabic,t2InvoiceShowCustomerDetails,t2InvoiceShowAccountBalance,t2InvoiceShowDelivery,
+                        t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
                       });
                       const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
                       setPosSettings(saved);
@@ -2101,25 +2227,36 @@ const POSConsole = React.memo((props) => {
 
             const formatLastSeen = (ts) => {
               if (!ts) return null;
-              const d = new Date(ts);
-              const now = new Date();
-              const diffMs = now - d;
-              const diffMin = Math.floor(diffMs / 60000);
+              let s = String(ts);
+              const tIdx = s.indexOf('T');
+              if (tIdx !== -1 && !s.endsWith('Z')) {
+                const timePart = s.slice(tIdx);
+                if (!timePart.includes('+') && !timePart.includes('-')) {
+                  s += 'Z';
+                }
+              }
+              const d = parseISO(s);
+              if (isNaN(d.getTime())) return null;
+              
+              const diffMin = (new Date() - d) / 60000;
               if (diffMin < 2) return 'Just now';
-              if (diffMin < 60) return `${diffMin}m ago`;
-              const diffH = Math.floor(diffMin / 60);
-              if (diffH < 24) return `${diffH}h ago`;
-              return d.toLocaleDateString();
+              return formatDistanceToNow(d, { addSuffix: true });
             };
 
             const parseDeviceInfo = (info) => {
               if (!info) return null;
-              // deviceInfo is typically a User-Agent string
-              if (info.includes('Chrome')) return 'Chrome';
-              if (info.includes('Firefox')) return 'Firefox';
-              if (info.includes('Safari') && !info.includes('Chrome')) return 'Safari';
-              if (info.includes('Edge')) return 'Edge';
-              return info.length > 30 ? info.substring(0, 28) + '…' : info;
+              try {
+                const parser = new UAParser(info);
+                const result = parser.getResult();
+                const os = result.os.name;
+                const browser = result.browser.name;
+                if (os && browser) return `${os} - ${browser}`;
+                if (os) return os;
+                if (browser) return browser;
+                return info.length > 30 ? info.substring(0, 28) + '…' : info;
+              } catch (e) {
+                return info.length > 30 ? info.substring(0, 28) + '…' : info;
+              }
             };
 
             const statusConfig = {
@@ -2166,7 +2303,19 @@ const POSConsole = React.memo((props) => {
               {/* ── Slot usage bar ── */}
               <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-[#1E293B]">Terminal Slots</span>
+                  <span className="text-xs font-bold text-[#1E293B] flex items-center gap-1.5">
+                    Terminal Slots
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3.5 w-3.5 text-gray-400 hover:text-gray-600 cursor-help" tabIndex={0} />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          Clearing browser data may remove this terminal's saved identity. When POS is opened again, the browser may register as a new terminal and consume another slot.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </span>
                   <span className={`text-xs font-bold ${slotNearFull ? 'text-red-500' : 'text-gray-500'}`}>
                     {slotUsed} / {maxSlots} used{slotNearFull && slotUsed < maxSlots ? ' — almost full' : slotUsed >= maxSlots ? ' — at capacity' : ''}
                   </span>
@@ -2293,6 +2442,11 @@ const POSConsole = React.memo((props) => {
                                   {isRecentlyActive && t.status === 'ACTIVE' && !isThisDevice && (
                                     <span className="text-[10px] font-bold bg-green-50 text-green-600 px-2 py-0.5 rounded-full flex items-center gap-1">
                                       <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" /> Online
+                                    </span>
+                                  )}
+                                  {t.currentOpenSessionId && (
+                                    <span className="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-0.5 rounded-full border border-green-200/50 flex items-center gap-1">
+                                      ● Shift Open
                                     </span>
                                   )}
                                 </div>

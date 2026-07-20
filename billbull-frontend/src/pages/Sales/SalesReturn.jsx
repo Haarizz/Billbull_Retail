@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
+import { computeLineTaxTotals } from '../../utils/vatMath';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { buildSalesReturnThermalHtml } from './POS/posPrintUtils';
@@ -109,6 +110,9 @@ const SalesReturn = () => {
 
    // Linking & Customer
    const [linkedInvoice, setLinkedInvoice] = useState('');
+   // VAT mode of the linked invoice — a return must match the original sale's
+   // Inclusive/Exclusive treatment, not be chosen independently.
+   const [linkedInvoiceVatMode, setLinkedInvoiceVatMode] = useState('EXCLUSIVE');
    const [customerCode, setCustomerCode] = useState('');
    const [customerName, setCustomerName] = useState('');
    const [isInvoiceOpen, setIsInvoiceOpen] = useState(false);
@@ -240,6 +244,7 @@ const SalesReturn = () => {
       setLinkedInvoice(inv.invoiceNumber);
       setCustomerCode(inv.customerCode);
       setCustomerName(inv.customerName);
+      setLinkedInvoiceVatMode(inv.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
       setIsInvoiceOpen(false);
 
       // Auto-populate items with return qty 0
@@ -332,7 +337,9 @@ const SalesReturn = () => {
          }
       }
 
-      // Calculations
+      // Calculations — must match the linked invoice's VAT mode, or a return
+      // against a VAT-inclusive sale double-counts VAT on top of the
+      // already-inclusive price.
       const qty = Number(item.returnQty) || 0;
       const price = Number(item.price) || 0;
       const taxR = Number(item.taxRate) || 0;
@@ -340,11 +347,15 @@ const SalesReturn = () => {
 
       const gross = qty * price;
       const discA = gross * (discP / 100);
-      const base = gross - discA;
-      const taxA = base * (taxR / 100);
+      const { taxableAmount, taxAmount: taxA, total } = computeLineTaxTotals({
+         netAfterDiscount: gross - discA,
+         taxPercent: taxR,
+         vatMode: linkedInvoiceVatMode,
+      });
 
       item.discountAmount = discA;
-      item.total = base + taxA;
+      item.taxableAmount = taxableAmount;
+      item.total = total;
       item.taxAmount = taxA;
 
       updatedItems[index] = item;
@@ -352,10 +363,11 @@ const SalesReturn = () => {
    };
 
    const calculateTotals = () => {
-      const sub = items.reduce((acc, i) => acc + (Number(i.returnQty) * Number(i.price) || 0), 0);
+      const sub = items.reduce((acc, i) => acc + (Number(i.taxableAmount) || 0), 0);
       const discount = items.reduce((acc, i) => acc + (Number(i.discountAmount) || 0), 0);
       const tax = items.reduce((acc, i) => acc + (Number(i.taxAmount) || 0), 0);
-      return { sub, discount, tax, total: sub - discount + tax };
+      // sub is already post-item-discount (taxableAmount), so total = sub + tax.
+      return { sub, discount, tax, total: sub + tax };
    };
 
    const { sub: subTotal, tax: taxAmtTotal, total: grandTotal } = calculateTotals();
@@ -377,6 +389,7 @@ const SalesReturn = () => {
       setReturnDate(ret.returnDate);
       setReturnStatus(ret.status);
       setLinkedInvoice(ret.linkedInvoice);
+      setLinkedInvoiceVatMode(ret.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
       setCustomerCode(ret.customerCode);
       setCustomerName(ret.customerName);
       setReason(ret.reason);
@@ -445,8 +458,13 @@ const SalesReturn = () => {
       const price = Number(it.price) || 0;
       const taxR = Number(it.taxRate) || 0;
       const base = totalSel * price;
-      const taxA = base * (taxR / 100);
-      it.total = base + taxA;
+      const { taxableAmount, taxAmount: taxA, total } = computeLineTaxTotals({
+         netAfterDiscount: base,
+         taxPercent: taxR,
+         vatMode: linkedInvoiceVatMode,
+      });
+      it.taxableAmount = taxableAmount;
+      it.total = total;
       it.taxAmount = taxA;
       setItems(updated);
       closeBatchModal();
@@ -526,6 +544,7 @@ const SalesReturn = () => {
          customerCode,
          customerName,
          linkedInvoice,
+         taxInclusive: linkedInvoiceVatMode === 'INCLUSIVE',
          subTotal,
          taxAmount: taxAmtTotal,
          totalAmount: grandTotal,
@@ -592,8 +611,9 @@ const SalesReturn = () => {
          items: (ret.items || []).map(item => {
             const qty = Number(item.returnQty);
             const price = Number(item.price);
-            const gross = qty * price;
             const discountAmount = Number(item.discountAmount) || 0;
+            const taxAmt = Number(item.taxAmount) || 0;
+            const total = Number(item.total);
             return {
                name: item.itemName || item.itemCode || '',
                description: { title: item.itemName || item.itemCode || '', details: item.itemCode ? [`Code: ${item.itemCode}`] : [] },
@@ -603,10 +623,12 @@ const SalesReturn = () => {
                price,
                discountPercent: Number(item.discountPercent) || 0,
                discountAmount,
-               taxableAmount: gross - discountAmount,
-               taxAmt: Number(item.taxAmount) || 0,
+               // total - tax is always the true ex-VAT base, regardless of the
+               // original sale's VAT mode (see computeLineTaxTotals).
+               taxableAmount: total - taxAmt,
+               taxAmt,
                taxPercent: Number(item.taxRate) || 0,
-               total: Number(item.total),
+               total,
             };
          }),
          totals: {

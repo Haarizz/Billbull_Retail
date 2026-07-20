@@ -74,10 +74,14 @@ export const code128Svg = (text, { height = 46 } = {}) => {
 // ── Renderer ────────────────────────────────────────────────────────────────
 export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   companyName, trn, header, footer,
-  showTrn = true, isReprint = false, isReturn = false, documentTitle = null,
+  showTrn = true, isReprint = false, isReturn = false, documentTitle = null, documentTitleAr = null,
   showCompanyDetails = true,
   showLogo = true, logoDataUrl = null,
   showServiceCharge = false, showVatSummary = true, showPaymentDetails = true,
+  // No-tax sale ⇒ suppress ALL tax content (Taxable row, VAT row, VAT-summary
+  // section). TRN is separately gated by showTrn. Defaults true to preserve the
+  // historical tax-invoice output.
+  hasTax = true,
   showQRCode = true, qrContent = null,
   showCustomerDetails = true,
   showLoyaltyPoints = false,
@@ -109,7 +113,12 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   const fmtBare = (n) => (parseFloat(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const oneLine = (a) => String(a || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
 
-  const items = (invoice.items || []).filter((it) => !it.voided && !it.isVoided);
+  // Voided lines are kept on the receipt (audit trail) and drawn with a [VOID]
+  // tag + negative amounts, but excluded from every total. `isVoid` gates the
+  // per-line rendering; the totals reconstruction below filters them out too.
+  const items = invoice.items || [];
+  const isVoid = (it) => Boolean(it.voided || it.isVoided);
+  const activeItems = items.filter((it) => !isVoid(it));
 
   // Generous height estimate, cropped to the cursor at the end.
   const estH = Math.round((2600 + items.length * 200 + (showQRCode ? 500 : 0)) * S) + 800;
@@ -238,7 +247,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   // ── Header: title, company, address, TRN ──────────────────────────────────
   const title = documentTitle
-    ? { en: documentTitle, ar: isReturn ? L.CREDIT_NOTE.ar : L.TAX_INVOICE.ar }
+    ? { en: documentTitle, ar: documentTitleAr || (isReturn ? L.CREDIT_NOTE.ar : L.TAX_INVOICE.ar) }
     : (isReturn ? L.CREDIT_NOTE : L.TAX_INVOICE);
   centerEn(title.en, 24, true);
   centerAr(title.ar, 22, true);
@@ -302,33 +311,42 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   // ── Items table ───────────────────────────────────────────────────────────
   sectionTitle(L.ITEM_DETAILS);
-  // Column x-positions (right edges for numeric cols). AMT column removed —
-  // RATE takes the rightmost slot, QTY sits to its left, freeing name width.
-  const colRateX = W - M;
-  const colQtyX = W - M - Math.round(120 * S);
+  // Column x-positions (right edges for numeric cols).
+  const colAmtX = W - M;
+  const colRateX = W - M - Math.round(120 * S);
+  const colQtyX = colRateX - Math.round(90 * S);
   const nameMax = colQtyX - M - Math.round(40 * S);
   // Bilingual table head.
   drawEn(L.ITEM.en, M, 16, { bold: true });
   drawEn(L.QTY.en, colQtyX, 16, { bold: true, align: 'right' });
   drawEn(L.RATE.en, colRateX, 16, { bold: true, align: 'right' });
+  drawEn(L.AMT.en, colAmtX, 16, { bold: true, align: 'right' });
   y += lineH(16);
   if (showArabic) {
     drawAr(L.ITEM.ar, M, 16, { align: 'left' });
     drawAr(L.QTY.ar, colQtyX, 16);
     drawAr(L.RATE.ar, colRateX, 16);
+    drawAr(L.AMT.ar, colAmtX, 16);
     y += lineH(16);
   }
   solid(2);
   y += Math.round(4 * S);
 
   let totalQty = 0;
+  let voidedTotal = 0;
+  let voidedCount = 0;
   for (const it of items) {
+    const voided = isVoid(it);
+    // Voided amounts print with a leading "-" to signal the line was pulled from
+    // the sale (informational — excluded from the totals below).
+    const sgn = (text) => (voided ? `- ${text}` : text);
     const qty = it.quantity || 0;
-    totalQty += qty;
+    if (!voided) totalQty += qty;
     const name = it.itemName || it.productName || it.name || 'Item';
     const nameAr = it.localName || it.nameAr || it.arabicName || '';
     const unit = parseFloat(it.unitPrice ?? it.price ?? 0);
     const lineTotal = parseFloat(it.netAmount ?? it.lineTotal ?? (qty * unit));
+    if (voided) { voidedTotal += Number.isFinite(lineTotal) ? lineTotal : 0; voidedCount += 1; }
     const gross = parseFloat(it.grossAmount ?? (qty * unit)) || 0;
     const discPct = parseFloat(it.discountPercent ?? it.discount ?? 0) || 0;
     // gross × discount% (backend basis) — NOT gross − net, which understates the
@@ -338,7 +356,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
       : (discPct > 0 ? gross * (discPct / 100) : Math.max(0, gross - lineTotal));
 
     const rowY = y;
-    for (const ln of wrap(name, 19, true, nameMax)) { drawEn(ln, M, 19, { bold: true }); y += lineH(19); }
+    for (const ln of wrap(`${name}${voided ? ` [${L.VOID_TAG.en}]` : ''}`, 19, true, nameMax)) { drawEn(ln, M, 19, { bold: true }); y += lineH(19); }
     if (showArabic && nameAr) for (const ln of wrap(nameAr, 18, false, nameMax, true)) { drawAr(ln, M, 18, { align: 'left' }); y += lineH(18); }
     const metaBits = [it.sku || it.itemCode ? `SKU ${it.sku || it.itemCode}` : '', disc > 0 && discPct > 0 ? `Disc ${discPct.toFixed(discPct % 1 ? 2 : 0)}%` : ''].filter(Boolean);
     const serial = it.serialNumber ? `S/N ${it.serialNumber}` : (it.batchNumber || it.pinnedBatchNumber ? `Batch ${it.batchNumber || it.pinnedBatchNumber}` : '');
@@ -348,8 +366,9 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     // Numeric columns on the first row line.
     const numY = y;
     y = rowY;
-    drawEn(String(qty), colQtyX, 18, { align: 'right' });
-    drawEn(fmtBare(unit), colRateX, 18, { bold: true, align: 'right' });
+    drawEn(sgn(String(qty)), colQtyX, 18, { align: 'right' });
+    drawEn(sgn(fmtBare(unit)), colRateX, 18, { align: 'right' });
+    drawEn(sgn(fmtBare(qty * unit)), colAmtX, 18, { bold: true, align: 'right' });
     y = numY + Math.round(6 * S);
   }
 
@@ -358,8 +377,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   const dotW = Math.max(2, Math.round(2 * S));
   for (let x = M; x < W - M; x += dotW * 3) ctx.fillRect(x, y, dotW, dotW);
   y += dotW + Math.round(6 * S);
-  drawEn(`${L.TOTAL_ITEMS.en}: ${items.length}`, M, 16);
-  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colRateX, 16, { align: 'right' });
+  drawEn(`${L.TOTAL_ITEMS.en}: ${activeItems.length}`, M, 16);
+  drawEn(`${L.TOTAL_QTY.en}: ${totalQty}`, colAmtX, 16, { align: 'right' });
   y += lineH(16);
 
   dashed();
@@ -370,10 +389,18 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (invoice.discountTotal != null) {
     subTotal = parseFloat(invoice.subTotal || 0) || 0;
     discountTotal = parseFloat(invoice.discountTotal) || 0;
-    taxableAmount = subTotal - discountTotal;
+    const netAfterDiscount = subTotal - discountTotal;
+    // Under INCLUSIVE VAT, netAfterDiscount is still tax-laden — extract VAT
+    // out of it via the already-computed taxTotal (exact, mode/rate-agnostic)
+    // rather than treating it directly as the ex-VAT taxable base. See
+    // posPrintUtils.js's resolveInvoiceGrossTotals for the matching fix.
+    const taxTotalForExtraction = parseFloat(invoice.taxTotal || 0) || 0;
+    taxableAmount = invoice.taxInclusive
+      ? Math.max(0, netAfterDiscount - taxTotalForExtraction)
+      : netAfterDiscount;
   } else {
     taxableAmount = parseFloat(invoice.subTotal || 0) || 0;
-    const grossSubtotal = items.reduce((sum, it) => {
+    const grossSubtotal = activeItems.reduce((sum, it) => {
       const q = it.quantity || 0;
       const gross = parseFloat(it.grossAmount ?? (q * parseFloat(it.unitPrice ?? it.price ?? 0)));
       return sum + (Number.isFinite(gross) ? gross : 0);
@@ -387,14 +414,20 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   kv2(L.SUBTOTAL, fmt(subTotal));
   if (discountTotal > 0) {
     kv2(L.DISCOUNT, `- ${fmt(discountTotal)}`);
-    kv2(L.TAXABLE, fmt(taxableAmount));
   }
+  // "Taxable Amount" is a tax-invoice-only label — omit on a no-tax sale.
+  if (hasTax) kv2(L.TAXABLE, fmt(taxableAmount));
   if (showServiceCharge && invoice.serviceChargeAmount) kv2(L.SERVICE_CHARGE, fmt(invoice.serviceChargeAmount));
-  if (showVatSummary) kv2(invoice.taxInclusive ? L.VAT_INCL : L.VAT, fmt(invoice.taxTotal));
+  if (hasTax && showVatSummary) kv2(invoice.taxInclusive ? L.VAT_INCL : L.VAT, fmt(invoice.taxTotal));
   if (parseFloat(invoice.deliveryCharge || 0) > 0) kv2(L.DELIVERY_CHARGE, fmt(invoice.deliveryCharge));
   if (shippingCharge != null && parseFloat(shippingCharge) > 0) kv2(L.SHIPPING, fmt(shippingCharge));
   const roundOff = parseFloat(invoice.roundOff ?? invoice.roundOffAmount ?? 0) || 0;
   if (Math.abs(roundOff) >= 0.005) kv2(L.ROUND_OFF, fmt(roundOff));
+  // Informational disclosure of voided lines — excluded from TOTAL TO PAY below,
+  // shown only when at least one line was voided.
+  if (voidedCount > 0) {
+    kv2({ en: `${L.VOIDED_ITEMS.en} (${voidedCount})`, ar: L.VOIDED_ITEMS.ar }, `- ${fmt(voidedTotal)}`);
+  }
 
   // ── TOTAL TO PAY block: double rule, stacked bilingual label, big amount ──
   y += Math.round(4 * S);
@@ -461,7 +494,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   }
 
   // ── VAT summary (compliance): per-rate split when the lines carry tax data ─
-  if (showVatSummary && parseFloat(invoice.taxTotal || 0) >= 0) {
+  // Entirely omitted on a no-tax sale — a Sales Invoice has no VAT breakdown.
+  if (hasTax && showVatSummary && parseFloat(invoice.taxTotal || 0) >= 0) {
     dashed();
     sectionTitle(L.VAT_SUMMARY);
     // A line carries a rate under any of taxRate / taxPercent / vatPercent —

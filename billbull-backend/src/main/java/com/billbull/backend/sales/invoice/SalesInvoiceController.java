@@ -97,6 +97,14 @@ public class SalesInvoiceController {
         return service.getById(id);
     }
 
+    /** Activity timeline for the Transaction Preview's Invoice History modal. */
+    @GetMapping("/{id}/history")
+    @PreAuthorize("isAuthenticated()")
+    public List<com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryResponse> getHistory(@PathVariable Long id) {
+        modulePermissionService.requireCanView("sales");
+        return service.getHistory(id);
+    }
+
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public SalesInvoice save(@RequestBody SalesInvoice invoice) {
@@ -149,12 +157,36 @@ public class SalesInvoiceController {
     /**
      * Open (balance > 0) invoices for a customer, oldest first — lets a payment
      * be targeted at a specific invoice instead of the default oldest-first sweep.
+     * Returns a lightweight projection rather than the entity: SalesInvoice.items
+     * is lazy and open-in-view is disabled, so serializing the entity directly
+     * throws a LazyInitializationException once the session closes.
      */
     @GetMapping("/open")
     @PreAuthorize("isAuthenticated()")
-    public List<SalesInvoice> getOpenInvoices(@RequestParam String customerCode) {
+    public List<OpenInvoiceSummary> getOpenInvoices(@RequestParam String customerCode) {
         modulePermissionService.requireCanView("sales");
-        return service.getOpenInvoicesForCustomer(customerCode);
+        return service.getOpenInvoicesForCustomer(customerCode).stream()
+                .map(OpenInvoiceSummary::from)
+                .toList();
+    }
+
+    /** Minimal fields the payment-allocation picker needs — avoids serializing lazy collections. */
+    public static class OpenInvoiceSummary {
+        public Long id;
+        public String invoiceNumber;
+        public java.time.LocalDate invoiceDate;
+        public java.math.BigDecimal invoiceTotal;
+        public java.math.BigDecimal balance;
+
+        static OpenInvoiceSummary from(SalesInvoice inv) {
+            OpenInvoiceSummary dto = new OpenInvoiceSummary();
+            dto.id = inv.getId();
+            dto.invoiceNumber = inv.getInvoiceNumber();
+            dto.invoiceDate = inv.getInvoiceDate();
+            dto.invoiceTotal = inv.getInvoiceTotal();
+            dto.balance = inv.getBalance();
+            return dto;
+        }
     }
 
     @PutMapping("/{id}/status")

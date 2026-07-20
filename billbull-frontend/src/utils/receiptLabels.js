@@ -44,6 +44,8 @@ export const RECEIPT_LABELS = {
   RATE:              { en: 'RATE',                   ar: 'السعر' },
   AMT:               { en: 'AMT',                    ar: 'المبلغ' },
   DISCOUNT_LINE:     { en: 'Discount',               ar: 'خصم' },
+  VOID_TAG:          { en: 'VOID',                   ar: 'ملغى' },
+  VOIDED_ITEMS:      { en: 'Voided Items',           ar: 'الأصناف الملغاة' },
   TOTAL_ITEMS:       { en: 'Total Items',            ar: 'عدد الأصناف' },
   TOTAL_QTY:         { en: 'Total Qty',              ar: 'إجمالي الكمية' },
 

@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle, Eye } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
-import { toNumber } from './posUtils';
+import { toNumber, getCartPriceWarning } from './posUtils';
+import { computeLineTaxTotals } from '../../../utils/vatMath';
 
 const POSTouchScreen = React.memo((props) => {
   const {
@@ -15,6 +16,8 @@ const POSTouchScreen = React.memo((props) => {
     setCurrentView,
     // session
     currentSession,
+    // settings
+    posSettings,
     // invoice
     currentInvoice, currentInvoiceRef, invoiceCounter,
     // products
@@ -24,11 +27,12 @@ const POSTouchScreen = React.memo((props) => {
     // search / barcode
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
     scannerConfig,
     // customers
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
-    filteredCustomerOptions, customerHistory, customerHistoryLoading,
+    filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
     // cart actions
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
@@ -55,7 +59,8 @@ const POSTouchScreen = React.memo((props) => {
     setShowPOSConfig, setShowCashDropDialog, setShowLastReceiptDialog,
     setShowReprintModal, setShowSaveOrderDialog, setShowLayawaysList, setShowSaveLayaway, setShowOrdersListDialog,
     setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,
-    setPriceCheckResult, setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
+    setPriceCheckResult, setShowProductSearch, setProductSearchQuery, setProductSearchResults,
+    setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
     setShowSerialBatch, setSerialBatchQuery, setSerialBatchResult, setSerialBatchSubView,
     setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,
     setShowServiceRepair, setServiceView, setShowReturn, setReturnStep, setReturnInvoiceQuery,
@@ -165,6 +170,19 @@ const POSTouchScreen = React.memo((props) => {
     }, 300);
   }, [toggleFavourite]);
 
+  // Selecting a suggestion from the Cart Focus scan/search dropdown adds it straight
+  // to the cart, same as scanning its barcode.
+  const selectBarcodeSuggestion = useCallback((product) => {
+    const res = addToInvoice(product, 1);
+    if (res && res.ok === false) {
+      showFeedback('error', res.reason || 'Could not add this item.');
+      return;
+    }
+    showFeedback('success', `${product.name} added`);
+    setBarcodeInput('');
+    setBarcodeSuggestions([]);
+  }, [addToInvoice, showFeedback, setBarcodeInput, setBarcodeSuggestions]);
+
   // Shared, template-independent Actions/Functions buttons. Defined once so the
   // Classic and Cart Focus panels render the same set, labels, icons and colours
   // and never drift apart. Interaction-specific buttons (Add Qty / Discount /
@@ -179,7 +197,8 @@ const POSTouchScreen = React.memo((props) => {
     { id: 'coupons', label: 'Coupons', icon: <Tag className={iconCls} />, color: 'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700', action: () => setShowCouponsDialog(true) },
     { id: 'promotions', label: 'Promotions', icon: <Zap className={iconCls} />, color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800', action: () => setShowPromotionsDialog(true) },
     { id: 'return', label: 'Return', icon: <RotateCcw className={iconCls} />, color: 'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700', action: () => { setReturnStep(1); setReturnInvoiceQuery(''); setReturnInvoiceFound(null); setReturnSelectedItems({}); setReturnReasons({}); setShowReturn(true); } },
-    { id: 'price-chk', label: 'Price Check', icon: <Search className={iconCls} />, color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700', action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },
+    { id: 'search-products', label: 'Search Products', icon: <Search className={iconCls} />, color: 'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700', action: () => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); } },
+    { id: 'price-chk', label: 'Price Check', icon: <Calculator className={iconCls} />, color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700', action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },
     { id: 'credit-balance', label: 'Credit Balance', icon: <CreditCard className={iconCls} />, color: 'bg-violet-50 hover:bg-violet-100 border-violet-200 text-violet-700', action: () => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },
     { id: 'serial-batch', label: 'Serial/Batch Check', icon: <Hash className={iconCls} />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700', action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },
     { id: 'cash-drop', label: 'Cash Drawer', icon: <DollarSign className={iconCls} />, color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowCashDropDialog(true) },
@@ -230,10 +249,10 @@ const POSTouchScreen = React.memo((props) => {
 
       {/* Cart Focus: three-equal-column layout — saffron gradient + white theme */}
       {posTemplate === 'focus' ? (
-        <div className="flex-1 flex overflow-hidden bg-white">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-white">
 
           {/* ══ COL 1: Cart / Bill ══════════════════════════════ */}
-          <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white">
+          <div className="flex-1 flex flex-col lg:border-r-2 border-b-2 lg:border-b-0 border-[#327F74]/30 min-w-0 min-h-0 bg-white">
 
             {/* Customer bar */}
             <div className="bg-[#F5C742] px-3 py-2.5 flex-shrink-0 relative border-b border-[#327F74]/30">
@@ -317,12 +336,15 @@ const POSTouchScreen = React.memo((props) => {
                   currentInvoice.items.map((item, idx) => {
                     return (
                       <div key={item.id} onClick={() => { if (posActionMode !== 'none' && !item.isVoided) setSelectedFocusItemId(item.id); }}
-                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
+                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
                         <div className="col-span-6 min-w-0">
-                          <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
-                          {item.isVoided
-                            ? <p className="text-[9px] font-bold text-red-500">VOIDED</p>
-                            : item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null}
+                          {/* Voided line: muted red + [VOID] tag + negative amounts (no
+                              strike-through). Excluded from the total; disclosed below. */}
+                          <p className={`text-xs font-semibold leading-tight break-words ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
+                            {item.name}
+                            {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
+                          </p>
+                          {!item.isVoided && (item.nameAr ? <p className="text-[10px] text-gray-400 leading-tight break-words" dir="rtl">{item.nameAr}</p> : null)}
                           {!item.isVoided && (cartViewDetailed ? (
                             <div className="mt-0.5 space-y-px">
                               {cartLineDetails(item).map(d => (
@@ -343,12 +365,20 @@ const POSTouchScreen = React.memo((props) => {
                         <div className="col-span-2 flex items-center justify-center gap-0.5 pt-0.5">
                           {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
                             className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">−</button>}
-                          <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                          <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
                           {!item.isVoided && !item.batchControlled && <button type="button" onClick={(e) => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                             className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742] hover:text-white text-gray-600 text-xs font-bold flex items-center justify-center transition-colors">+</button>}
                         </div>
-                        <span className={`col-span-2 text-[10px] text-right pt-1 ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-400'}`}>{formatCurrency(item.price)}</span>
-                        <span className={`col-span-1 text-xs font-bold text-right pt-1 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#F5C742]'}`}>{formatCurrency(item.total)}</span>
+                        <span className={`col-span-2 flex items-center justify-end gap-0.5 text-[10px] text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-gray-400'}`}>
+                          {(() => {
+                            const priceWarning = getCartPriceWarning(item);
+                            return priceWarning && (
+                              <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
+                            );
+                          })()}
+                          {item.isVoided ? <CurrencyAmount amount={item.price} prefix="- " /> : formatCurrency(item.price)}
+                        </span>
+                        <span className={`col-span-1 text-xs font-bold text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#F5C742]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
                         <button type="button" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
                           className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
                           <XCircle className="h-3.5 w-3.5" />
@@ -391,7 +421,7 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 2: Last Item + Barcode Scan + Keypad + Total ═ */}
-          <div className="flex-1 flex flex-col border-r-2 border-[#327F74]/30 min-w-0 bg-white overflow-hidden">
+          <div className="flex-1 flex flex-col lg:border-r-2 border-b-2 lg:border-b-0 border-[#327F74]/30 min-w-0 min-h-0 bg-white overflow-hidden">
 
             {/* Last scanned item panel */}
             <div className="border-b border-[#327F74]/20 flex-shrink min-h-0 max-h-[30vh] flex flex-col justify-center bg-white overflow-y-auto">
@@ -404,8 +434,11 @@ const POSTouchScreen = React.memo((props) => {
                   const discountPct = cartItem?.discount || matchingProduct?.defaultDiscount || 0;
                   const taxRate = cartItem?.taxRate ?? matchingProduct?.salesTax ?? 5;
                   const discountedUnitPrice = unitPrice * (1 - discountPct / 100);
-                  const netPrice = discountedUnitPrice / (1 + taxRate / 100);
-                  const vatAmount = discountedUnitPrice - netPrice;
+                  const { taxableAmount: netPrice, taxAmount: vatAmount } = computeLineTaxTotals({
+                    netAfterDiscount: discountedUnitPrice,
+                    taxPercent: taxRate,
+                    vatMode: posSettings?.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE',
+                  });
                   const stockQty = matchingProduct?.stock ?? 25;
 
                   return (
@@ -503,7 +536,7 @@ const POSTouchScreen = React.memo((props) => {
               )}
 
               {/* Input Box & Scanner Status */}
-              <div className="mb-3">
+              <div className="mb-3 relative">
                 {scannerReady && (
                   <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-green-700 border border-green-200">
                     <span className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
@@ -517,6 +550,10 @@ const POSTouchScreen = React.memo((props) => {
                     value={barcodeInput}
                     onChange={e => setBarcodeInput(e.target.value)}
                     onKeyDown={e => {
+                      if (e.key === 'Escape') {
+                        setBarcodeSuggestions([]);
+                        return;
+                      }
                       if (e.key === 'Enter') {
                         if (posActionMode === 'qty' && selectedFocusItemId) {
                           const qty = parseInt(barcodeInput, 10);
@@ -539,6 +576,7 @@ const POSTouchScreen = React.memo((props) => {
                           updateItemPrice(selectedFocusItemId, val);
                           resetFocusMode();
                         } else {
+                          setBarcodeSuggestions([]);
                           handleBarcodeScan(barcodeInput);
                         }
                       }
@@ -547,11 +585,45 @@ const POSTouchScreen = React.memo((props) => {
                     className="w-full bg-transparent text-[#1E293B] placeholder-gray-300 px-1 text-sm font-mono focus:outline-none"
                     autoFocus
                   />
-                  <button type="button" onClick={() => handleBarcodeScan(barcodeInput)}
+                  <button type="button" onClick={() => { setBarcodeSuggestions([]); handleBarcodeScan(barcodeInput); }}
                     className="bg-[#F5C742] hover:opacity-90 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm flex-shrink-0 ml-2">
                     ADD
                   </button>
                 </div>
+
+                {/* Live "select item" suggestions — item code, barcode, or product name,
+                    matched anywhere in the string. Hidden while the field is repurposed
+                    as a qty/discount/price numpad. */}
+                {posActionMode === 'none' && barcodeInput.trim() && (barcodeSuggestionsLoading || barcodeSuggestions.length > 0) && (
+                  <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-white rounded-xl border border-gray-200 shadow-lg max-h-72 overflow-y-auto">
+                    {barcodeSuggestionsLoading && barcodeSuggestions.length === 0 ? (
+                      <div className="flex items-center justify-center gap-2 py-4 text-xs text-gray-400">
+                        <div className="w-3.5 h-3.5 border-2 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin" />
+                        Searching…
+                      </div>
+                    ) : (
+                      barcodeSuggestions.map(product => (
+                        <button
+                          key={product.id}
+                          type="button"
+                          onClick={() => selectBarcodeSuggestion(product)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[#F5C742]/10 transition-colors text-left border-b border-gray-50 last:border-b-0"
+                        >
+                          <div className="w-8 h-8 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                            {product.image
+                              ? <img src={product.image} className="w-full h-full object-cover" alt="" />
+                              : <Package className="w-3.5 h-3.5 text-gray-300" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
+                            <p className="text-[10px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
+                          </div>
+                          <p className="text-xs font-bold text-[#327F74] shrink-0">{formatCurrency(product.price)}</p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
                 {barcodeScanFeedback && (
                   <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${barcodeScanFeedback.type === 'success' ? 'bg-green-500/20 text-green-700' :
                       barcodeScanFeedback.type === 'customer' ? 'bg-blue-500/20 text-blue-700' : 'bg-red-500/20 text-red-700'
@@ -638,7 +710,7 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 3: Tabbed Panel ════════════════════════════ */}
-          <div className="flex-1 flex flex-col min-w-0 bg-white border-l-2 border-[#327F74]/30">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-white lg:border-l-2 border-[#327F74]/30">
 
             {/* Tab bar */}
             <div className="flex flex-shrink-0 border-b-2 border-[#327F74]/20 bg-white">
@@ -668,38 +740,18 @@ const POSTouchScreen = React.memo((props) => {
                   ];
                   const allBtns = [...interactive, ...commonActionButtons('h-5 w-5')];
                   const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
+                  // Held bills are managed from the Layaways list (Save Layaway /
+                  // Layaways action) — not duplicated here as a separate notifier.
                   return (
-                    <>
-                      <div className="grid grid-cols-2 gap-2">
-                        {visible.map(btn => (
-                          <button key={btn.id} type="button" onClick={btn.action}
-                            className={`flex flex-col items-center justify-center gap-1.5 h-[72px] rounded-xl border transition-colors ${btn.color}`}>
-                            {btn.icon}
-                            <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                      {heldSales.length > 0 && (
-                        <div className="mt-3">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-[#F5C742] mb-2">Held Bills</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {heldSales.map((h) => (
-                              <div key={h.id} className="flex items-center gap-0.5">
-                                <button type="button" onClick={() => recallInvoice(h.id)}
-                                  className="px-3 py-1.5 text-xs font-bold text-amber-800 bg-[#F5C742]/10 hover:bg-amber-100 rounded-l-lg border border-r-0 border-[#327F74]/30 transition-colors">
-                                  {h.label} · {formatCurrency(h.total)}
-                                </button>
-                                <button type="button" onClick={(e) => { e.stopPropagation(); deleteHeldBill(h.id); }}
-                                  title="Delete held bill"
-                                  className="px-1.5 py-1.5 text-red-400 hover:text-white hover:bg-red-500 bg-red-50 border border-red-200 rounded-r-lg transition-colors">
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2">
+                      {visible.map(btn => (
+                        <button key={btn.id} type="button" onClick={btn.action}
+                          className={`flex flex-col items-center justify-center gap-1.5 min-h-[72px] py-2 rounded-xl border transition-colors ${btn.color}`}>
+                          {btn.icon}
+                          <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
+                        </button>
+                      ))}
+                    </div>
                   );
                 })()}
               </div>
@@ -740,7 +792,8 @@ const POSTouchScreen = React.memo((props) => {
                         ? new Date(inv.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                         : '—';
                       return (
-                        <div key={inv.id} className="px-3 py-2.5 hover:bg-[#327F74]/5 transition-colors">
+                        <button type="button" key={inv.id} onClick={() => openCustomerHistoryPreview(inv)}
+                          className="group w-full text-left px-3 py-2.5 hover:bg-[#327F74]/5 transition-colors">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-bold text-[#1E293B] leading-tight">{inv.invoiceNumber}</p>
@@ -751,14 +804,19 @@ const POSTouchScreen = React.memo((props) => {
                                 }`}>{mode}</span>
                             </div>
                             <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                              <span className="text-sm font-black text-[#327F74]">{formatCurrency(inv.invoiceTotal)}</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm font-black text-[#327F74] leading-none">{formatCurrency(inv.invoiceTotal)}</span>
+                                <span className="flex items-center justify-center w-6 h-6 rounded-md bg-white border border-gray-200 text-gray-400 group-hover:border-[#327F74]/40 group-hover:text-[#327F74] transition-colors">
+                                  <Eye className="h-3.5 w-3.5" />
+                                </span>
+                              </div>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${inv.status === 'PAID' ? 'bg-green-50 text-green-700 border-green-200' :
                                   inv.status === 'PARTIALLY_PAID' ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
                                     'bg-gray-50 text-gray-500 border-gray-200'
                                 }`}>{inv.status?.replace('_', ' ')}</span>
                             </div>
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -807,10 +865,10 @@ const POSTouchScreen = React.memo((props) => {
         /* ═══════════════════════════════════════════════════════════
            CLASSIC LAYOUT  —  3-column: Cart | Categories+Items | Functions
            ═══════════════════════════════════════════════════════════ */
-        <div className="flex-1 flex overflow-hidden bg-[#F7F7FA]">
+        <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-[#F7F7FA]">
 
           {/* ══ COL 1: CART ════════════════════════════════════════ */}
-          <div className="w-[260px] lg:w-[340px] xl:w-[440px] shrink-0 flex flex-col border-r-2 border-[#F5C742]/30 bg-white">
+          <div className="w-full lg:w-[260px] xl:w-[340px] 2xl:w-[440px] shrink-0 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 lg:border-r-2 border-b-2 lg:border-b-0 border-[#F5C742]/30 bg-white">
 
             {/* Customer bar — gold, matches Cart Focus */}
             <div className="bg-[#F5C742] px-3 py-2.5 shrink-0 relative border-b border-[#e6b838]">
@@ -910,11 +968,15 @@ const POSTouchScreen = React.memo((props) => {
                 ) : (
                   currentInvoice.items.map((item, idx) => (
                     <div key={item.id}
-                      className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70 opacity-60' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
+                      className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
                       onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
                       <div className="col-span-5 min-w-0 pr-1">
-                        <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}`}>{item.name}</p>
-                        {item.isVoided && <p className="text-[9px] text-red-500 font-bold">VOIDED</p>}
+                        {/* Voided line: muted red + [VOID] tag + negative amounts (no
+                            strike-through). Excluded from the total; disclosed below. */}
+                        <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
+                          {item.name}
+                          {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
+                        </p>
                         {!item.isVoided && (cartViewDetailed ? (
                           cartLineDetails(item).map(d => (
                             <p key={d.label} className="text-[8px] font-mono text-gray-500 leading-tight break-all">
@@ -935,14 +997,22 @@ const POSTouchScreen = React.memo((props) => {
                             <Minus className="h-2.5 w-2.5" />
                           </button>
                         </>}
-                        <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{item.quantity}</span>
+                        <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
                         {!item.isVoided && !item.batchControlled && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
                           className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
                           <Plus className="h-2.5 w-2.5" />
                         </button>}
                       </div>
-                      <span className={`col-span-2 text-[10px] text-right ${item.isVoided ? 'text-red-300 line-through' : 'text-gray-500'}`}>{item.price.toFixed(0)}</span>
-                      <span className={`col-span-2 text-[11px] font-bold text-right pr-2 ${item.isVoided ? 'text-red-400 line-through' : 'text-[#1E293B]'}`}>{formatCurrency(item.total)}</span>
+                      <span className={`col-span-2 flex items-center justify-end gap-0.5 text-[10px] text-right ${item.isVoided ? 'text-red-500' : 'text-gray-500'}`}>
+                        {(() => {
+                          const priceWarning = getCartPriceWarning(item);
+                          return priceWarning && (
+                            <AlertTriangle title={priceWarning.message} className={`h-2.5 w-2.5 shrink-0 ${priceWarning.level === 'error' ? 'text-red-500' : 'text-amber-500'}`} />
+                          );
+                        })()}
+                        {item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}
+                      </span>
+                      <span className={`col-span-2 text-[11px] font-bold text-right pr-2 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
                       <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
                         className={`col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
                         <XCircle className="h-3 w-3" />
@@ -976,6 +1046,13 @@ const POSTouchScreen = React.memo((props) => {
                     return currentInvoice.taxInclusive ? `${base} incl.` : base;
                   })()}</span><span>{formatCurrency(currentInvoice.tax)}</span>
                 </div>
+                {/* Informational: voided lines excluded from TOTAL, shown only
+                    when at least one line was voided. */}
+                {currentInvoice.voidedCount > 0 && (
+                  <div className="flex justify-between text-xs text-red-500">
+                    <span>Voided Items ({currentInvoice.voidedCount})</span><span>− {formatCurrency(currentInvoice.voidedTotal)}</span>
+                  </div>
+                )}
                 {(Number(shippingCharge) || 0) > 0 && (
                   <div className="flex justify-between text-xs text-gray-500">
                     <span>Shipping</span><span>{formatCurrency(Number(shippingCharge) || 0)}</span>
@@ -1014,36 +1091,19 @@ const POSTouchScreen = React.memo((props) => {
                   </button>
                 </div>
               </div>
-              {/* Held recall pills */}
-              {heldSales.length > 0 && (
-                <div className="px-3 py-1.5 bg-amber-50 border-t border-[#F5C742]/20 flex flex-wrap gap-1">
-                  {heldSales.map((h) => (
-                    <div key={h.id} className="flex items-center">
-                      <button type="button" onClick={() => recallInvoice(h.id)}
-                        className="px-2 py-0.5 text-[10px] font-bold text-amber-800 bg-[#F5C742]/20 hover:bg-amber-200 rounded-l-full border border-r-0 border-[#F5C742]/30 transition-colors">
-                        {h.label} · {formatCurrency(h.total)}
-                      </button>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); deleteHeldBill(h.id); }}
-                        title="Delete held bill"
-                        className="px-1 py-0.5 text-red-400 hover:text-white hover:bg-red-500 bg-red-50 border border-red-200 rounded-r-full transition-colors">
-                        <X className="h-2.5 w-2.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+              {/* Held bills are recalled from the Layaways list, not shown here. */}
             </div>
           </div>
 
           {/* ══ COL 2: CATEGORIES + ITEMS ══════════════════════════ */}
-          <div className="flex-1 flex overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-w-0 min-h-0">
 
             {/* Category sidebar */}
             {!hideCategoriesPanel && (
-              <div className="w-[110px] lg:w-[130px] xl:w-[148px] shrink-0 bg-white border-r border-gray-200 overflow-y-auto">
+              <div className="w-full md:w-[110px] lg:w-[130px] xl:w-[148px] shrink-0 max-h-[30vh] md:max-h-none bg-white border-b md:border-b-0 md:border-r border-gray-200 overflow-y-auto">
                 <div className="p-2.5">
                   <p className="text-[9px] font-black uppercase tracking-widest text-gray-300 px-1 pb-1.5">Categories</p>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-2 gap-2">
                     {productCategories.map(cat => (
                       <button key={cat.id} type="button" onClick={() => setSelectedCategory(cat.id)}
                         className={`w-full min-h-[84px] flex flex-col items-center justify-center gap-1.5 px-1.5 py-2 rounded-2xl border transition-all text-center ${selectedCategory === cat.id ? 'border-[#F5C742] bg-[#F5C742]/10 shadow-[0_4px_12px_rgba(245,199,66,0.18)]' : 'border-gray-100 hover:bg-gray-50 hover:border-gray-200'}`}>
@@ -1063,12 +1123,12 @@ const POSTouchScreen = React.memo((props) => {
 
             {/* Items area */}
             {!hideItemsPanel && (
-              <div className="flex-1 flex flex-col overflow-hidden bg-[#F7F7FA]">
+              <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[#F7F7FA]">
                 {/* Search bar */}
                 <div className="bg-white border-b border-gray-200 px-3 py-2 shrink-0">
                   {/* Unified search + scan: type to filter the grid, Enter / scan to add */}
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative flex-1 min-w-[140px]">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                       <input
                         placeholder="Scan or search — item, barcode, batch, customer…"
@@ -1093,7 +1153,7 @@ const POSTouchScreen = React.memo((props) => {
                     </div>
                   )}
                   {/* Horizontal category pill strip — All Items | Favourites | Recently Sold | Top Sold */}
-                  <div className="flex gap-1.5 mt-2 pb-0.5">
+                  <div className="flex gap-1.5 mt-2 pb-0.5 overflow-x-auto">
                     {(horizontalCategories || []).map(cat => (
                       <button key={cat.id} type="button" onClick={() => setSelectedCategory(cat.id)}
                         className={`shrink-0 px-3 py-1 rounded-full text-[10px] font-bold border transition-all ${selectedCategory === cat.id ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-500 hover:border-[#F5C742]/50 bg-white'}`}>
@@ -1235,7 +1295,7 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
           {/* ══ COL 3: FUNCTIONS (Cart Focus style) ════════════════ */}
-          <div className="w-[180px] lg:w-[210px] xl:w-[250px] shrink-0 bg-white border-l-2 border-[#F5C742]/30 flex flex-col overflow-hidden">
+          <div className="w-full lg:w-[180px] xl:w-[210px] 2xl:w-[250px] shrink-0 bg-white lg:border-l-2 border-t-2 lg:border-t-0 border-[#F5C742]/30 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 overflow-hidden">
 
             {/* Tab bar */}
             <div className="flex border-b border-gray-100 shrink-0">
@@ -1380,10 +1440,10 @@ const POSTouchScreen = React.memo((props) => {
                     const allBtns = [...interactive, ...commonActionButtons('h-4 w-4')];
                     const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
                     return (
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-2 gap-1.5">
                         {visible.map(btn => (
                           <button key={btn.id} type="button" onClick={btn.action}
-                            className={`flex flex-col items-center justify-center gap-1 h-[60px] rounded-xl border transition-colors ${btn.color}`}>
+                            className={`flex flex-col items-center justify-center gap-1 min-h-[60px] py-1.5 rounded-xl border transition-colors ${btn.color}`}>
                             {btn.icon}
                             <span className="text-[9px] font-bold leading-tight text-center px-0.5">{btn.label}</span>
                           </button>
@@ -1424,13 +1484,19 @@ const POSTouchScreen = React.memo((props) => {
                         ? new Date(inv.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
                         : '—';
                       return (
-                        <div key={inv.id} className="flex items-center justify-between px-2.5 py-2 bg-gray-50 rounded-xl border border-gray-100 text-xs">
-                          <div>
-                            <p className="font-semibold text-[#1E293B]">{inv.invoiceNumber}</p>
-                            <p className="text-[9px] text-gray-400">{fmtDate} · {inv.itemCount} items</p>
+                        <button type="button" key={inv.id} onClick={() => openCustomerHistoryPreview(inv)}
+                          className="group w-full flex items-center justify-between gap-2 px-2.5 py-2 bg-gray-50 hover:bg-[#F5C742]/10 rounded-xl border border-gray-100 hover:border-[#F5C742]/40 text-xs transition-colors text-left">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-[#1E293B] leading-tight">{inv.invoiceNumber}</p>
+                            <p className="text-[9px] text-gray-400 leading-tight mt-0.5">{fmtDate} · {inv.itemCount} items</p>
                           </div>
-                          <span className="font-bold text-[#327F74]">{formatCurrency(inv.invoiceTotal)}</span>
-                        </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="font-bold text-[#327F74] leading-none">{formatCurrency(inv.invoiceTotal)}</span>
+                            <span className="flex items-center justify-center w-6 h-6 rounded-md bg-white border border-gray-200 text-gray-400 group-hover:border-[#327F74]/40 group-hover:text-[#327F74] transition-colors">
+                              <Eye className="h-3.5 w-3.5" />
+                            </span>
+                          </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -1544,8 +1610,8 @@ const POSTouchScreen = React.memo((props) => {
               )}
 
               {/* Form Fields */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="col-span-1 sm:col-span-2">
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Full Name <span className="text-red-500">*</span></label>
                   <input type="text" value={quickCustomerForm.name || ''}
                     onChange={e => setQuickCustomerForm({ ...quickCustomerForm, name: e.target.value })}
@@ -1728,8 +1794,8 @@ const POSTouchScreen = React.memo((props) => {
               )}
 
               {/* Form Fields */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="col-span-1 sm:col-span-2">
                   <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Product Name <span className="text-red-500">*</span></label>
                   <input type="text" value={quickProductForm.name || ''}
                     onChange={e => setQuickProductForm({ ...quickProductForm, name: e.target.value })}

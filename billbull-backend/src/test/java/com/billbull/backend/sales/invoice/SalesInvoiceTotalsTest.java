@@ -187,6 +187,7 @@ class SalesInvoiceTotalsTest {
                 mock(com.billbull.backend.sales.payment.PaymentService.class),
                 mock(com.billbull.backend.notification.NotificationEventPublisher.class),
                 mock(com.billbull.backend.pos.dayclose.PosDayCloseRepository.class),
-                mock(com.billbull.backend.sales.advance.AdvanceApplicationService.class));
+                mock(com.billbull.backend.sales.advance.AdvanceApplicationService.class),
+                mock(com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService.class));
     }
 }

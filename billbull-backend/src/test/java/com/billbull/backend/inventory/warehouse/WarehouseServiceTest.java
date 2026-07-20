@@ -45,6 +45,9 @@ class WarehouseServiceTest {
     @Mock
     private BranchAccessService branchAccessService;
 
+    @Mock
+    private com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
+
     private WarehouseService warehouseService;
 
     @BeforeEach
@@ -55,7 +58,8 @@ class WarehouseServiceTest {
                 locatorRepository,
                 binRepository,
                 branchRepository,
-                branchAccessService);
+                branchAccessService,
+                branchScopeResolver);
     }
 
     @Test
@@ -143,6 +147,92 @@ class WarehouseServiceTest {
         assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
         assertEquals("You can only modify warehouses in your assigned branch.", ex.getReason());
         verify(repository, never()).save(any(Warehouse.class));
+    }
+
+    // ---------- Phase 5: branch-scoped list behaviour ----------
+
+    @Test
+    void listBranchUserToggleOffUsesOwnBranchOnly() {
+        // Toggle off (resolver empty) → today's exact behaviour: own branch only, globals excluded.
+        Warehouse wh = warehouseEntity(1L, branch(11L, "North"));
+        stubCountsLenient(1L);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(false);
+        when(branchAccessService.getCurrentUserBranchId()).thenReturn(11L);
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.empty());
+        when(repository.findByBranch_Id(11L)).thenReturn(List.of(wh));
+
+        List<WarehouseResponse> result = warehouseService.list(null);
+
+        assertEquals(1, result.size());
+        verify(repository).findByBranch_Id(11L);
+        verify(repository, never()).findByBranchIdInOrGlobal(any());
+    }
+
+    @Test
+    void listBranchUserToggleOnIncludesGlobals() {
+        // Toggle on + active branch → own branch PLUS global (null-branch) warehouses.
+        var scope = new BranchAccessService.ListScope(false, java.util.Set.of(11L));
+        Warehouse own = warehouseEntity(1L, branch(11L, "North"));
+        Warehouse global = warehouseEntity(2L, null); // a global (null-branch) warehouse
+        stubCountsLenient(1L);
+        stubCountsLenient(2L);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(false);
+        when(branchAccessService.getCurrentUserBranchId()).thenReturn(11L);
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.of(scope));
+        when(repository.findByBranchIdInOrGlobal(scope.branchIds())).thenReturn(List.of(own, global));
+
+        List<WarehouseResponse> result = warehouseService.list(null);
+
+        assertEquals(2, result.size());
+        verify(repository).findByBranchIdInOrGlobal(scope.branchIds());
+        verify(repository, never()).findByBranch_Id(any());
+    }
+
+    @Test
+    void listAdminNoBranchReturnsAllAndIgnoresResolver() {
+        // Admin authority unchanged: sees everything; resolver is not consulted on the admin path.
+        Warehouse wh = warehouseEntity(1L, branch(11L, "North"));
+        stubCountsLenient(1L);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(true);
+        when(repository.findAll()).thenReturn(List.of(wh));
+
+        List<WarehouseResponse> result = warehouseService.list(null);
+
+        assertEquals(1, result.size());
+        verify(repository).findAll();
+        verify(branchScopeResolver, never()).activeListScope();
+    }
+
+    @Test
+    void listAdminWithRequestedBranchFiltersToThatBranch() {
+        Warehouse wh = warehouseEntity(3L, branch(22L, "South"));
+        stubCountsLenient(3L);
+        when(branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")).thenReturn(true);
+        when(repository.findByBranch_Id(22L)).thenReturn(List.of(wh));
+
+        List<WarehouseResponse> result = warehouseService.list(22L);
+
+        assertEquals(1, result.size());
+        verify(repository).findByBranch_Id(22L);
+        verify(branchScopeResolver, never()).activeListScope();
+    }
+
+    private Warehouse warehouseEntity(Long id, Branch branch) {
+        Warehouse w = new Warehouse();
+        w.setId(id);
+        w.setName("WH-" + id);
+        w.setType("Warehouse");
+        w.setAddress("Area");
+        w.setStatus("Active");
+        w.setBranch(branch);
+        return w;
+    }
+
+    /** list() → mapToResponse() calls the count repos per warehouse; stub them leniently. */
+    private void stubCountsLenient(Long warehouseId) {
+        org.mockito.Mockito.lenient().when(zoneRepository.findByWarehouseId(warehouseId)).thenReturn(List.of());
+        org.mockito.Mockito.lenient().when(locatorRepository.countByWarehouseId(warehouseId)).thenReturn(0L);
+        org.mockito.Mockito.lenient().when(binRepository.countByWarehouseId(warehouseId)).thenReturn(0L);
     }
 
     private WarehouseRequestDto warehouseRequest() {

@@ -26,18 +26,39 @@ public class InventoryReportService {
     private final ProductInventoryPolicyRepository inventoryRepo;
     private final StockMovementRepository stockRepo;
     private final WarehouseRepository warehouseRepo;
+    // Branch-Level Inventory Phase 10 — report branch scoping (dormant while toggle off).
+    private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
 
     public InventoryReportService(
             ProductRepository productRepo,
             ProductPricingRepository pricingRepo,
             ProductInventoryPolicyRepository inventoryRepo,
             StockMovementRepository stockRepo,
-            WarehouseRepository warehouseRepo) {
+            WarehouseRepository warehouseRepo,
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.inventoryRepo = inventoryRepo;
         this.stockRepo = stockRepo;
         this.warehouseRepo = warehouseRepo;
+        this.branchScopeResolver = branchScopeResolver;
+    }
+
+    /**
+     * Phase 10 — decide whether an all-warehouses report should be branch-scoped. Returns the active
+     * branch ids to filter by, or empty for the CONSOLIDATED (company-wide) path. Consolidated when:
+     * toggle off, admin All-Branches, or the caller explicitly requested branchScope=all. Otherwise
+     * (toggle on + a branch active + branchScope=active) → scope to the active branch (+ global).
+     * Preserves existing report calculations — only the source aggregate query is swapped.
+     *
+     * @param allBranchesRequested true when an admin passed branchScope=all (force consolidated).
+     */
+    private java.util.Optional<java.util.Collection<Long>> reportBranchScope(boolean allBranchesRequested) {
+        if (allBranchesRequested) {
+            return java.util.Optional.empty(); // admin drill: consolidated across branches
+        }
+        return branchScopeResolver.activeListScope()
+                .map(scope -> (java.util.Collection<Long>) scope.branchIds());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -52,11 +73,19 @@ public class InventoryReportService {
     // STOCK ON HAND
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getStockOnHand(Long warehouseId) {
+        return getStockOnHand(warehouseId, false);
+    }
 
-        // 1. Fetch stock movements aggregated by product (and warehouse if scoped)
+    public List<StockReportResponse> getStockOnHand(Long warehouseId, boolean allBranches) {
+
+        // 1. Fetch stock movements aggregated by product (and warehouse if scoped).
+        //    Phase 10: a specific warehouse is already branch-correct; the all-warehouses path is
+        //    branch-scoped when the toggle is on + a branch is active + branchScope=active.
+        java.util.Optional<java.util.Collection<Long>> scope = reportBranchScope(allBranches);
         List<Object[]> stockRows = (warehouseId != null)
                 ? stockRepo.findStockByWarehouseAndBatch(warehouseId)
-                : stockRepo.findAllStockGroupedByProductWarehouseAndBatch();
+                : scope.map(stockRepo::findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn)
+                       .orElseGet(stockRepo::findAllStockGroupedByProductWarehouseAndBatch);
 
         if (stockRows == null || stockRows.isEmpty())
             return Collections.emptyList();
@@ -135,7 +164,11 @@ public class InventoryReportService {
     // LOW STOCK — delegates to SOH then filters
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getLowStock(Long warehouseId) {
-        return getStockOnHand(warehouseId).stream().filter(r -> r.getOnHand() != null
+        return getLowStock(warehouseId, false);
+    }
+
+    public List<StockReportResponse> getLowStock(Long warehouseId, boolean allBranches) {
+        return getStockOnHand(warehouseId, allBranches).stream().filter(r -> r.getOnHand() != null
                 && r.getOnHand().compareTo(BigDecimal.TEN) < 0
                 && r.getOnHand().compareTo(BigDecimal.ZERO) > 0).collect(Collectors.toList());
     }
@@ -144,6 +177,10 @@ public class InventoryReportService {
     // OUT OF STOCK
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getOutOfStock(Long warehouseId) {
+        return getOutOfStock(warehouseId, false);
+    }
+
+    public List<StockReportResponse> getOutOfStock(Long warehouseId, boolean allBranches) {
 
         // Load all active products (just basics for fast report generation)
         List<Object[]> productBasicsRows = productRepo.findActiveProductReportBasics();
@@ -159,10 +196,13 @@ public class InventoryReportService {
             productMap.put(pId, row);
         }
 
-        // Get total stock per product
+        // Get total stock per product. Phase 10: a specific warehouse is already branch-correct; the
+        // all-warehouses path is branch-scoped when scoping is active + branchScope=active.
+        java.util.Optional<java.util.Collection<Long>> scope = reportBranchScope(allBranches);
         List<Object[]> stockRows = (warehouseId != null)
                 ? stockRepo.findStockByWarehouse(warehouseId)
-                : stockRepo.getTotalAvailableStockForProducts(productIds);
+                : scope.map(ids -> stockRepo.getTotalAvailableStockForProductsAndBranchIdIn(productIds, ids))
+                       .orElseGet(() -> stockRepo.getTotalAvailableStockForProducts(productIds));
 
         Map<Long, BigDecimal> stockMap = new HashMap<>();
         for (Object[] row : stockRows) {
@@ -247,11 +287,20 @@ public class InventoryReportService {
     // display method-specific comparison totals in the summary cards.
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getStockValuation(Long warehouseId) {
+        return getStockValuation(warehouseId, false);
+    }
 
-        // 1. Fetch stock movements aggregated by product (and warehouse)
+    public List<StockReportResponse> getStockValuation(Long warehouseId, boolean allBranches) {
+
+        // 1. Fetch stock movements aggregated by product (and warehouse). Phase 10: a specific
+        //    warehouse is already branch-correct; the all-warehouses path is branch-scoped when
+        //    scoping is active + branchScope=active. Per-warehouse cost maps below then naturally
+        //    cover only in-branch warehouses (warehouseIdSet is derived from the scoped rows).
+        java.util.Optional<java.util.Collection<Long>> scope = reportBranchScope(allBranches);
         List<Object[]> stockRows = (warehouseId != null)
                 ? stockRepo.findStockByWarehouseAndBatch(warehouseId)
-                : stockRepo.findAllStockGroupedByProductWarehouseAndBatch();
+                : scope.map(stockRepo::findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn)
+                       .orElseGet(stockRepo::findAllStockGroupedByProductWarehouseAndBatch);
 
         if (stockRows == null || stockRows.isEmpty())
             return Collections.emptyList();

@@ -53,8 +53,11 @@ export const DenominationLabel = ({ value, className = '' }) => (
   </Label>
 );
 
-export const CurrencyAmount = ({ amount, className = '' }) => (
+// `prefix` (e.g. "- ") renders before the currency symbol — used to show a
+// voided line's amount as negative without changing the underlying value.
+export const CurrencyAmount = ({ amount, className = '', prefix = '' }) => (
   <span className={`inline-flex items-center gap-1 whitespace-nowrap ${className}`}>
+    {prefix ? <span className="shrink-0">{prefix}</span> : null}
     <DirhamSymbol className="shrink-0" />
     <span>{Number(amount || 0).toFixed(2)}</span>
   </span>

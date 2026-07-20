@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull: Systemd → Kubernetes Migration Guide</title>
+<style>
+  :root { --bg:#f4f7fb; --card:#fff; --text:#182230; --muted:#667085; --accent:#175cd3; --code:#101828; --codeText:#e6edf3; --border:#d0d5dd; --ok:#12742f; --okbg:#e9f9ee; --warnbg:#fff4e5; --warnborder:#f79009; --dangerbg:#fef3f2; --dangerborder:#b42318; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:Inter,Segoe UI,Arial,sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
+  .container { max-width:1150px; margin:40px auto; padding:0 20px 70px; }
+  h1 { margin-bottom:6px; }
+  h2 { margin-top:0; color:var(--accent); }
+  h3 { margin-bottom:8px; }
+  .subtitle { color:var(--muted); margin-bottom:10px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:26px; margin:18px 0; box-shadow:0 4px 14px rgba(16,24,40,.05); }
+  table { width:100%; border-collapse:collapse; margin:10px 0; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid #eaecf0; vertical-align:top; }
+  th { background:#f9fafb; }
+  code { font-family:Consolas,Monaco,monospace; background:#eef2f6; padding:1px 5px; border-radius:4px; }
+  pre { background:var(--code); color:var(--codeText); padding:18px; border-radius:10px; overflow:auto; line-height:1.6; font-size:13.5px; }
+  pre code { background:none; padding:0; color:inherit; }
+  .note { border-left:4px solid var(--accent); padding:12px 16px; background:#eff8ff; border-radius:6px; margin:12px 0; }
+  .ok { border-left:4px solid var(--ok); padding:12px 16px; background:var(--okbg); border-radius:6px; margin:12px 0; }
+  .warn { border-left:4px solid var(--warnborder); padding:12px 16px; background:var(--warnbg); border-radius:6px; margin:12px 0; }
+  .danger { border-left:4px solid var(--dangerborder); padding:12px 16px; background:var(--dangerbg); border-radius:6px; margin:12px 0; }
+  .toc { columns:2; gap:30px; }
+  .toc a { color:var(--accent); text-decoration:none; }
+  .toc li { margin-bottom:6px; }
+  .badge { display:inline-block; font-size:11.5px; font-weight:700; padding:2px 9px; border-radius:99px; letter-spacing:.3px; }
+  .badge.phase { background:#eef2ff; color:#3538cd; }
+  .step-num { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; background:var(--accent); color:#fff; font-weight:700; font-size:13px; margin-right:8px; }
+  .mapping-old { color:#b42318; }
+  .mapping-new { color:var(--ok); }
+  @media print { body{background:#fff} .container{margin:0;max-width:none} .card{box-shadow:none;break-inside:avoid} }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>BillBull: Systemd &rarr; Kubernetes Migration Guide</h1>
+  <p class="subtitle">How to move from the current two-VPS / systemd / nginx setup (see <code>BillBull_Server_Deployment_Guide_v2.html</code>) to a k3s Kubernetes deployment &mdash; worked end-to-end with one real client.</p>
+
+  <div class="card">
+    <h2>Contents</h2>
+    <ul class="toc">
+      <li><a href="#today">0. What we run today</a></li>
+      <li><a href="#gaps">1. Gaps this guide fixes vs. a generic k8s doc</a></li>
+      <li><a href="#dockerfiles">2. Containerize: Dockerfiles</a></li>
+      <li><a href="#uploads">3. Decide the <code>/uploads</code> strategy</a></li>
+      <li><a href="#k3s">4. Install k3s + cert-manager on one server</a></li>
+      <li><a href="#worked-example">5. Worked example: migrate <code>geebu</code> end-to-end</a></li>
+      <li><a href="#verify">6. Verify the migrated client</a></li>
+      <li><a href="#helm">7. Template it: Helm chart for the rest</a></li>
+      <li><a href="#rollout">8. Roll out remaining clients &amp; retire systemd</a></li>
+      <li><a href="#twoserver">9. Two-server topology decision</a></li>
+      <li><a href="#cheatsheet">10. Day-2 cheat sheet (old vs. new)</a></li>
+    </ul>
+  </div>
+
+  <section class="card" id="today">
+    <h2>0. What we run today</h2>
+    <p>One shared React frontend build served by nginx per server; one systemd unit + dedicated port per client backend; each client backend reads its own Postgres DB and its own <code>/uploads/&lt;client&gt;</code> folder on local disk.</p>
+    <table>
+      <thead><tr><th>Server</th><th>Port</th><th>Domain</th><th>Spring profile</th><th>Systemd service</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="8">62.72.59.119</td><td>8080</td><td>royaltools.billbull.app</td><td>royaltools</td><td>billbull-royaltools</td></tr>
+        <tr><td>8081</td><td>leroyalflowers.billbull.app</td><td>leroyalflowers</td><td>billbull-leroyalflowers</td></tr>
+        <tr><td>8082</td><td>leroyalgifts.billbull.app</td><td>leroyalgifts</td><td>billbull-leroyalgifts</td></tr>
+        <tr><td>8083</td><td>demo.billbull.app</td><td>demo</td><td>billbull-demo</td></tr>
+        <tr><td>8085</td><td>agi.billbull.app</td><td>agi</td><td>billbull-agi</td></tr>
+        <tr><td>8086</td><td>helenz.billbull.app</td><td>helenz</td><td>billbull-helenz</td></tr>
+        <tr><td>8087</td><td>qa.billbull.app</td><td>qa</td><td>billbull-qa</td></tr>
+        <tr><td>8088</td><td>geebu.billbull.app</td><td>geebu</td><td>billbull-geebu</td></tr>
+        <tr><td rowspan="4">77.37.49.42</td><td>8081</td><td>nest.billbull.app</td><td>client1</td><td>billbull-nest</td></tr>
+        <tr><td>8082</td><td>max.billbull.app</td><td>client2</td><td>billbull-max</td></tr>
+        <tr><td>8083</td><td>hilite.billbull.app</td><td>hilite</td><td>billbull-hilite</td></tr>
+        <tr><td>8084</td><td>albadar.billbull.app</td><td>client4</td><td>billbull-albadar</td></tr>
+      </tbody>
+    </table>
+    <p>Confirmed from the codebase (<code>application.properties</code>): DB URL/user/password and <code>JWT_SECRET</code> are already externalized via environment variables per systemd unit, and <code>upload.path=uploads/</code> is a relative local-disk path served at <code>/uploads/**</code>. This matters below &mdash; the DB/JWT config translates directly into a k8s <code>Secret</code> with no code changes; the uploads path is the one piece that needs a decision.</p>
+  </section>
+
+  <section class="card" id="gaps">
+    <h2>1. Gaps this guide fixes vs. a generic k8s doc</h2>
+    <p>A generic "install k3s, apply some YAML" guide misses things that will actually break this app. This guide addresses them directly:</p>
+    <table>
+      <thead><tr><th>Gap</th><th>Why it matters here</th></tr></thead>
+      <tbody>
+        <tr><td>Product/document images on local disk</td><td><code>upload.path=uploads/</code> is per-client local disk. A naive PVC + multi-replica Deployment loses files or corrupts writes. Addressed in <a href="#uploads">Section 3</a>.</td></tr>
+        <tr><td>Playwright/Chromium PDF engine</td><td>Needs specific base-image deps and a bigger <code>/dev/shm</code> than k8s's 64MB default, or invoice/report PDF generation crashes silently. Addressed in <a href="#dockerfiles">Section 2</a> and the Deployment spec in <a href="#worked-example">Section 5</a>.</td></tr>
+        <tr><td>12 near-identical client deployments</td><td>Hand-writing 12&times;(Deployment+Service+Ingress+Secret) doesn't scale. Templated with Helm from the start &mdash; <a href="#helm">Section 7</a>.</td></tr>
+        <tr><td>External Postgres reachability</td><td>Postgres is not containerized; pods must reach the host's existing DB, not a k8s-internal one. Addressed in <a href="#worked-example">Section 5</a>.</td></tr>
+        <tr><td><code>ddl-auto=update</code> + rolling deploys</td><td>Overlapping old/new pod versions during a rolling update is riskier than today's single-instance systemd restart. Mitigated with <code>replicas: 1</code> + <code>strategy: Recreate</code>, matching current behavior exactly.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card" id="dockerfiles">
+    <h2>2. Containerize: Dockerfiles</h2>
+    <p><span class="badge phase">One-time</span> Build once per app, reuse the same image for every client (config, not code, differs between clients).</p>
+
+    <h3>Backend &mdash; <code>billbull-backend/Dockerfile</code></h3>
+    <pre><code>FROM maven:3.9-eclipse-temurin-17 AS build
+WORKDIR /app
+COPY pom.xml .
+RUN mvn -o -B dependency:go-offline || mvn -B dependency:go-offline
+COPY src ./src
+RUN mvn -B clean package -DskipTests
+
+FROM eclipse-temurin:17-jre-jammy
+WORKDIR /app
+
+# Playwright/Chromium needs these system libs on a bare JRE image
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libnss3 libatk-bridge2.0-0 libx11-xcb1 libxcomposite1 libxdamage1 \
+    libxrandr2 libgbm1 libasound2 libpangocairo-1.0-0 libgtk-3-0 fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app/target/billbull-backend-*.jar app.jar
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN java -cp app.jar com.microsoft.playwright.CLI install --with-deps chromium
+
+EXPOSE 8080
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-jar", "app.jar"]</code></pre>
+    <div class="note">Playwright install moves from a manual per-server step (see the old guide's "Playwright / PDF Engine Note") into the image build, once. No client deploy ever needs to remember it again.</div>
+
+    <h3>Frontend &mdash; <code>billbull-frontend/Dockerfile</code></h3>
+    <pre><code>FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:1.27-alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80</code></pre>
+    <p><code>nginx.conf</code> is the same SPA-fallback config you'd use today &mdash; serve static files, fall back to <code>index.html</code> for client-side routing:</p>
+    <pre><code>server {
+  listen 80;
+  root /usr/share/nginx/html;
+  index index.html;
+  location / { try_files $uri $uri/ /index.html; }
+}</code></pre>
+
+    <h3>Build and push</h3>
+    <pre><code>docker build -t ghcr.io/billbull/backend:2026.07.16 billbull-backend/
+docker build -t ghcr.io/billbull/frontend:2026.07.16 billbull-frontend/
+
+docker push ghcr.io/billbull/backend:2026.07.16
+docker push ghcr.io/billbull/frontend:2026.07.16</code></pre>
+    <div class="warn">Use GitHub Container Registry (or another private registry) from day one, not <code>k3s ctr images import</code>. The import approach means every rebuild requires manual copying to the server &mdash; no real CI/CD, and it doesn't scale to two servers.</div>
+  </section>
+
+  <section class="card" id="uploads">
+    <h2>3. Decide the <code>/uploads</code> strategy</h2>
+    <p>This is the one decision that affects every client manifest below. Two options:</p>
+    <table>
+      <thead><tr><th></th><th>Option A: PVC (local-path), no code change</th><th>Option B: Object storage (MinIO/S3), code change</th></tr></thead>
+      <tbody>
+        <tr><td>Effort</td><td>Low &mdash; infra only</td><td>Medium &mdash; swap <code>FileUploadUtil</code> to write/read via S3 client</td></tr>
+        <tr><td>Constraint</td><td>Must pin <code>replicas: 1</code> + <code>strategy: Recreate</code> per client backend forever</td><td>None &mdash; any replica count, any node</td></tr>
+        <tr><td>Node mobility</td><td>Pod tied to whichever node holds the PVC's local disk</td><td>Any node, any cluster</td></tr>
+        <tr><td>Matches today's behavior</td><td>Yes &mdash; you already run exactly 1 backend instance per client</td><td>Improves on today</td></tr>
+      </tbody>
+    </table>
+    <div class="ok"><strong>Recommendation: start with Option A.</strong> It's a direct lift of what you run today (one instance per client, brief downtime on redeploy, same as a <code>systemctl restart</code>) and requires zero backend code changes. Move to Option B (MinIO) as a follow-up phase once the cluster itself is proven, not as a blocker to migrating. The worked example below uses Option A; the manifest is written so swapping to Option B later only means dropping the <code>PersistentVolumeClaim</code>/<code>volumeMounts</code> block, not touching anything else.</div>
+  </section>
+
+  <section class="card" id="k3s">
+    <h2>4. Install k3s + cert-manager on one server</h2>
+    <p><span class="badge phase">One-time per server</span> Do this on <strong>62.72.59.119</strong> first (8 clients). Repeat later on 77.37.49.42 (see <a href="#twoserver">Section 9</a> for whether that becomes a second node or a second cluster).</p>
+    <pre><code>curl -sfL https://get.k3s.io | sh -
+sudo systemctl status k3s
+
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown $(id -u):$(id -g) ~/.kube/config
+kubectl get nodes
+
+# cert-manager for automatic Let's Encrypt certs (replaces certbot)
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+kubectl get pods -n cert-manager --watch</code></pre>
+    <p>Create a <code>ClusterIssuer</code> (one-time, cluster-wide):</p>
+    <pre><code>cat &lt;&lt;'EOF' | kubectl apply -f -
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ae@geebu.io
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            class: traefik
+EOF</code></pre>
+    <p>k3s ships with Traefik as its built-in Ingress controller &mdash; no separate nginx-ingress install needed. It listens on ports 80/443, same as nginx does today.</p>
+  </section>
+
+  <section class="card" id="worked-example">
+    <h2>5. Worked example: migrate <code>geebu</code> end-to-end</h2>
+    <p><span class="badge phase">Per client, first time</span> Chosen because it's a real, low-traffic client, currently on port 8088 / server 62.72.59.119. Every step below is <code>geebu</code>-specific; Section 7 turns this into a template for the other 11.</p>
+
+    <h3><span class="step-num">1</span>Namespace</h3>
+    <pre><code>kubectl create namespace billbull</code></pre>
+    <p>All clients share one namespace (matches today's model &mdash; all clients already share one server/nginx instance). Use per-client namespaces only if you later want hard RBAC isolation between clients.</p>
+
+    <h3><span class="step-num">2</span>Secret &mdash; DB credentials + JWT secret</h3>
+    <p>Maps directly from today's systemd unit's <code>Environment=</code> lines for <code>billbull-geebu</code>:</p>
+    <pre><code>kubectl create secret generic geebu-backend-secret \
+  --namespace billbull \
+  --from-literal=SPRING_DATASOURCE_URL='jdbc:postgresql://localhost:5432/geebu_db' \
+  --from-literal=SPRING_DATASOURCE_USERNAME='postgres' \
+  --from-literal=SPRING_DATASOURCE_PASSWORD='&lt;actual-password&gt;' \
+  --from-literal=JWT_SECRET='&lt;actual-jwt-secret&gt;'</code></pre>
+    <div class="danger">Substitute the real values from the current <code>/etc/systemd/system/billbull-geebu.service</code> <code>Environment=</code> lines on 62.72.59.119. Never commit this command with real values to Git &mdash; run it directly on the server, or generate the Secret YAML into a file that's gitignored.</div>
+    <p>Postgres is <strong>not</strong> in the cluster &mdash; it stays exactly where it is today. <code>localhost:5432</code> from the old systemd unit becomes the server's real LAN/host IP from inside the pod (k3s pods don't share the host network namespace). Find it with <code>ip addr</code> on the host, or use the k3s host-gateway alias:</p>
+    <pre><code># if Postgres listens on the host's normal interface, use that IP directly, e.g.:
+SPRING_DATASOURCE_URL=jdbc:postgresql://10.0.0.5:5432/geebu_db
+
+# or, if you want a portable "the host machine" reference, add to the Deployment pod spec:
+#   hostAliases:
+#     - ip: "<host-LAN-IP>"
+#       hostnames: ["dbhost"]
+# then use jdbc:postgresql://dbhost:5432/geebu_db</code></pre>
+    <p>Also confirm Postgres's <code>pg_hba.conf</code>/<code>listen_addresses</code> accepts connections from the pod network CIDR (k3s default is <code>10.42.0.0/16</code>), not just <code>127.0.0.1</code>.</p>
+
+    <h3><span class="step-num">3</span>ConfigMap &mdash; non-secret config</h3>
+    <pre><code>cat &lt;&lt;'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: geebu-backend-config
+  namespace: billbull
+data:
+  SPRING_PROFILES_ACTIVE: "geebu"
+  SERVER_PORT: "8080"
+EOF</code></pre>
+
+    <h3><span class="step-num">4</span>PersistentVolumeClaim for <code>/uploads</code> (Option A from Section 3)</h3>
+    <pre><code>cat &lt;&lt;'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: geebu-uploads-pvc
+  namespace: billbull
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+EOF</code></pre>
+    <div class="note">Before first boot, copy the existing files across so the client doesn't lose history: <code>kubectl cp /root/Billbull/billbull-backend/uploads/ billbull/&lt;geebu-pod&gt;:/app/uploads/</code> (run after the pod exists once, or mount the PVC via a throwaway pod first and <code>rsync</code> into it).</div>
+
+    <h3><span class="step-num">5</span>Deployment</h3>
+    <pre><code>cat &lt;&lt;'EOF' | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: geebu-backend
+  namespace: billbull
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate        # matches today's single-instance systemctl restart; no split-brain on the PVC
+  selector:
+    matchLabels: { app: geebu-backend }
+  template:
+    metadata:
+      labels: { app: geebu-backend }
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/billbull/backend:2026.07.16
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: geebu-backend-config }
+            - secretRef: { name: geebu-backend-secret }
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads
+            - name: dshm
+              mountPath: /dev/shm
+          readinessProbe:
+            httpGet: { path: /actuator/health, port: 8080 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: uploads
+          persistentVolumeClaim: { claimName: geebu-uploads-pvc }
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 512Mi }   # Chromium/Playwright needs more than k8s's 64MB default
+EOF</code></pre>
+    <div class="warn">If Spring Boot Actuator's <code>/actuator/health</code> isn't exposed in this app, swap the <code>readinessProbe</code> for a <code>tcpSocket: { port: 8080 }</code> check instead &mdash; confirm which is available before applying.</div>
+
+    <h3><span class="step-num">6</span>Service</h3>
+    <pre><code>cat &lt;&lt;'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: geebu-backend
+  namespace: billbull
+spec:
+  selector: { app: geebu-backend }
+  ports: [{ port: 8080, targetPort: 8080 }]
+EOF</code></pre>
+
+    <h3><span class="step-num">7</span>Frontend (shared, deploy once &mdash; not per client)</h3>
+    <pre><code>cat &lt;&lt;'EOF' | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billbull-frontend
+  namespace: billbull
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: billbull-frontend } }
+  template:
+    metadata: { labels: { app: billbull-frontend } }
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/billbull/frontend:2026.07.16
+          ports: [{ containerPort: 80 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: billbull-frontend
+  namespace: billbull
+spec:
+  selector: { app: billbull-frontend }
+  ports: [{ port: 80, targetPort: 80 }]
+EOF</code></pre>
+    <p>This one frontend Deployment/Service is reused by every client's Ingress below &mdash; same as today, where every client hits the same <code>/var/www/billbull/dist</code> build.</p>
+
+    <h3><span class="step-num">8</span>Ingress &mdash; routes the domain to frontend, <code>/api</code> to backend</h3>
+    <pre><code>cat &lt;&lt;'EOF' | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: geebu-ingress
+  namespace: billbull
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: ["geebu.billbull.app"]
+      secretName: geebu-tls
+  rules:
+    - host: geebu.billbull.app
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: geebu-backend, port: { number: 8080 } }
+          - path: /uploads
+            pathType: Prefix
+            backend:
+              service: { name: geebu-backend, port: { number: 8080 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: billbull-frontend, port: { number: 80 } }
+EOF</code></pre>
+    <div class="note">Adjust the path list to whatever the frontend's <code>axiosConfig.js</code> actually calls (likely <code>/api/**</code> and possibly others like <code>/uploads/**</code>, <code>/ws/**</code> if used) &mdash; check <code>VITE_API_BASE_URL</code> handling and confirm no other backend-served paths are missing before cutover.</div>
+    <p>DNS: point <code>geebu.billbull.app</code> at the k3s server's IP (same IP it points at today if you're keeping it on 62.72.59.119) &mdash; cert-manager will provision the TLS cert automatically via HTTP-01 once Traefik is reachable on that domain.</p>
+  </section>
+
+  <section class="card" id="verify">
+    <h2>6. Verify the migrated client</h2>
+    <pre><code>kubectl get pods -n billbull -l app=geebu-backend --watch
+kubectl logs -n billbull deploy/geebu-backend -f
+kubectl get certificate -n billbull geebu-tls
+kubectl describe ingress geebu-ingress -n billbull</code></pre>
+    <p>Functional checklist before pointing DNS at it for real (or before disabling the old systemd unit):</p>
+    <table>
+      <tbody>
+        <tr><td>&#9744;</td><td>App loads at <code>https://geebu.billbull.app</code>, cert is valid</td></tr>
+        <tr><td>&#9744;</td><td>Login works (JWT issuance/validation &mdash; confirms <code>JWT_SECRET</code> Secret is correct)</td></tr>
+        <tr><td>&#9744;</td><td>Existing data visible (confirms DB connectivity to the external Postgres)</td></tr>
+        <tr><td>&#9744;</td><td>Invoice/report PDF generates (confirms Playwright/Chromium + <code>/dev/shm</code> sizing)</td></tr>
+        <tr><td>&#9744;</td><td>Product image upload + display works (confirms PVC mount + copied files)</td></tr>
+        <tr><td>&#9744;</td><td>Flyway ran clean on boot (<code>kubectl logs</code> shows migration success, no baseline errors like the earlier Hilite incident)</td></tr>
+      </tbody>
+    </table>
+    <div class="note">Keep the old <code>billbull-geebu</code> systemd service running (just stop pointing DNS/traffic at it) until this checklist passes. Don't decommission it same-day.</div>
+  </section>
+
+  <section class="card" id="helm">
+    <h2>7. Template it: Helm chart for the rest</h2>
+    <p><span class="badge phase">One-time</span> Once <code>geebu</code> is verified, convert the manifests above into a Helm chart with per-client values, instead of hand-writing this 11 more times.</p>
+    <pre><code>billbull-chart/
+  Chart.yaml
+  templates/
+    secret.yaml
+    configmap.yaml
+    pvc.yaml
+    deployment.yaml
+    service.yaml
+    ingress.yaml
+  values-geebu.yaml
+  values-royaltools.yaml
+  values-qa.yaml
+  ... one values file per client</code></pre>
+    <p><code>values-geebu.yaml</code> (the only file that changes per client):</p>
+    <pre><code>client: geebu
+domain: geebu.billbull.app
+springProfile: geebu
+dbUrl: jdbc:postgresql://10.0.0.5:5432/geebu_db
+uploadsSizeGi: 10</code></pre>
+    <p>Install/upgrade a client:</p>
+    <pre><code>helm upgrade --install geebu ./billbull-chart -n billbull -f values-geebu.yaml \
+  --set-string secrets.dbPassword=$GEEBU_DB_PASS \
+  --set-string secrets.jwtSecret=$GEEBU_JWT_SECRET</code></pre>
+    <p>New backend image release, all clients at once:</p>
+    <pre><code>for f in values-*.yaml; do
+  client=$(basename "$f" .yaml | sed 's/values-//')
+  helm upgrade "$client" ./billbull-chart -n billbull -f "$f" \
+    --reuse-values --set image.tag=2026.07.20
+done</code></pre>
+  </section>
+
+  <section class="card" id="rollout">
+    <h2>8. Roll out remaining clients &amp; retire systemd</h2>
+    <p>Go client-by-client, not big-bang. For each:</p>
+    <ol>
+      <li><code>helm install</code> with that client's values (Secret populated from its current systemd unit's env vars)</li>
+      <li>Copy its <code>/uploads</code> folder into the new PVC</li>
+      <li>Run the <a href="#verify">verification checklist</a> against a temporary hostname or by editing <code>/etc/hosts</code> locally before flipping real DNS</li>
+      <li>Flip DNS for that client's domain to the k3s server</li>
+      <li>Watch logs/traffic for 24&ndash;48h</li>
+      <li>Only then: <code>systemctl stop billbull-&lt;client&gt; && systemctl disable billbull-&lt;client&gt;</code> on the old server</li>
+    </ol>
+    <div class="warn">Do not batch-disable multiple systemd services in one pass, even after everything "looks fine" &mdash; each client is an independent DNS cutover with its own blast radius.</div>
+  </section>
+
+  <section class="card" id="twoserver">
+    <h2>9. Two-server topology decision</h2>
+    <p>62.72.59.119 (8 clients) and 77.37.49.42 (4 clients) are physically separate today. Two options once both are on k3s:</p>
+    <table>
+      <thead><tr><th></th><th>A: Two independent single-node clusters</th><th>B: One multi-node cluster (join 77 as a k3s agent to 62)</th></tr></thead>
+      <tbody>
+        <tr><td>Setup</td><td><code>curl ... | sh -</code> on each, independently</td><td><code>curl ... | K3S_URL=https://62...:6443 K3S_TOKEN=&lt;token&gt; sh -</code> on 77</td></tr>
+        <tr><td>Uploads PVC (Option A)</td><td>Safe &mdash; pod always lands on the node whose local disk actually holds that client's files</td><td><strong>Unsafe without care</strong> &mdash; scheduler could place a client's pod on the wrong node, away from its PVC's disk, unless pinned with <code>nodeSelector</code>/node affinity per client</td></tr>
+        <tr><td>Shared Ingress/DNS mgmt</td><td>Two separate configs to maintain</td><td>One Ingress config, easier long-term ops</td></tr>
+      </tbody>
+    </table>
+    <div class="ok"><strong>Recommendation:</strong> keep them as two independent single-node clusters (Option A) for now &mdash; it exactly matches today's physical/data boundary and needs no extra pinning logic. Revisit joining them into one cluster only after <code>/uploads</code> moves to shared object storage (Section 3, Option B), at which point node placement no longer matters.</div>
+  </section>
+
+  <section class="card" id="cheatsheet">
+    <h2>10. Day-2 cheat sheet: old vs. new</h2>
+    <table>
+      <thead><tr><th>Task</th><th class="mapping-old">Today</th><th class="mapping-new">Kubernetes</th></tr></thead>
+      <tbody>
+        <tr><td>Deploy new backend code for one client</td><td><code>mvn clean package && systemctl restart billbull-geebu</code></td><td><code>helm upgrade geebu ./billbull-chart -f values-geebu.yaml --set image.tag=&lt;new&gt;</code></td></tr>
+        <tr><td>Deploy to all clients</td><td>Loop of 12 <code>systemctl restart</code> commands</td><td>Loop of 12 <code>helm upgrade</code> commands, or a CI job</td></tr>
+        <tr><td>Deploy frontend</td><td><code>npm run build && cp -r dist/* /var/www/billbull/ && systemctl reload nginx</code></td><td>Rebuild frontend image, <code>kubectl set image deploy/billbull-frontend ...</code> (one deploy serves all clients, same as today)</td></tr>
+        <tr><td>Check a client is up</td><td><code>systemctl status billbull-geebu</code></td><td><code>kubectl get pods -n billbull -l app=geebu-backend</code></td></tr>
+        <tr><td>Tail logs</td><td><code>journalctl -u billbull-geebu -f</code></td><td><code>kubectl logs -n billbull deploy/geebu-backend -f</code></td></tr>
+        <tr><td>Renew TLS cert</td><td><code>certbot renew</code> (manual/cron)</td><td>Automatic via cert-manager</td></tr>
+        <tr><td>Add a brand-new client</td><td>Copy a systemd unit file, pick a free port, add an nginx server block</td><td><code>cp values-template.yaml values-newclient.yaml</code>, edit 5 fields, <code>helm install</code></td></tr>
+        <tr><td>Fix a bad email/data issue (e.g. Hilite duplicate-email incident)</td><td><code>psql</code> directly on host, then <code>systemctl restart</code></td><td>Same <code>psql</code> fix against the (unchanged) external DB, then <code>kubectl rollout restart deploy/&lt;client&gt;-backend</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <p class="warning" style="color:#b42318;font-weight:600;">Security note: never commit real DB passwords or JWT secrets into Secret manifests checked into Git. Generate them via <code>kubectl create secret</code> run directly on the server, or use a sealed-secrets/external-secrets operator if GitOps is adopted later.</p>
+
+</div>
+</body>
+</html>

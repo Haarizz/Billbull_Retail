@@ -12,10 +12,10 @@ import { Separator } from '../../components/ui/separator';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
-import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct } from '../../api/productsApi';
+import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';
 import { getDepartments } from '../../api/departmentsApi';
 import { getUnits } from '../../api/unitsApi';
-import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields } from '../../api/customerledgerApi';
+import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields, addCustomerSavedAddress } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
 import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
@@ -27,15 +27,19 @@ import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
   getPosSessionById,
   closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
+  checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
+  reprintPosReceipt,
 } from '../../api/posApi';
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
+import { resolvePrintTemplate } from '../../api/printTemplateApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
+import { computeLineTaxTotals } from '../../utils/vatMath';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -141,6 +145,7 @@ import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
   buildPosPrintData, buildPosA4Template, buildThermalReceiptText,
   buildDocumentPreviewHtml, buildThermalPrintHtml, buildServiceJobA4Html,
+  USE_NEW_POS_PRINT_TEMPLATE, buildDraftPrintDataFromCart, applyTaxAwareDisplayOptions,
 } from './POS/posPrintUtils';
 import {
   ThermalMock, useA4BlobUrl, A4PreviewFrame, A4LivePreview,
@@ -159,7 +164,7 @@ import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
-import { buildEscPosReceiptBase64, buildEscPosFromPlainTextBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
+import { buildEscPosReceiptBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
 import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
 import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
 import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
@@ -399,6 +404,9 @@ export default function POSSales() {
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
+  // Live Session quick-view — dashboard tile that pops the current session's
+  // sales/cash figures without navigating away (X-Report is the full page version).
+  const [showLiveSessionDialog, setShowLiveSessionDialog] = useState(false);
 
   // Session opening/closing states
   const [openingCash, setOpeningCash] = useState('');
@@ -438,6 +446,12 @@ export default function POSSales() {
   const [deliveryPersons, setDeliveryPersons] = useState([]);
   const [deliveryPersonsLoading, setDeliveryPersonsLoading] = useState(false);
   const [deliveryValidationErrors, setDeliveryValidationErrors] = useState({});
+  // Saved shipping-address picker for the delivery modal (QA-028 pattern reused from CustomerShippingPanel)
+  const [deliveryShowAddressPicker, setDeliveryShowAddressPicker] = useState(false);
+  const [deliveryShowAddAddressModal, setDeliveryShowAddAddressModal] = useState(false);
+  const [deliveryNewAddress, setDeliveryNewAddress] = useState({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
+  const [deliveryAddressSaving, setDeliveryAddressSaving] = useState(false);
+  const [deliveryAddressError, setDeliveryAddressError] = useState('');
 
   // Quick Customer Creation Modal State
   const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
@@ -475,6 +489,11 @@ export default function POSSales() {
   const [deliverySettleLoading, setDeliverySettleLoading] = useState(false);
   const [customerHistory, setCustomerHistory] = useState([]);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
+  // Customer History pane — invoice preview modal
+  const [showCustomerHistoryPreview, setShowCustomerHistoryPreview] = useState(false);
+  const [customerHistoryPreviewInvoice, setCustomerHistoryPreviewInvoice] = useState(null);
+  const [customerHistoryPreviewLoading, setCustomerHistoryPreviewLoading] = useState(false);
+  const [customerHistoryPreviewError, setCustomerHistoryPreviewError] = useState('');
 
   // Checkout pay mode
   const [checkoutPayMode, setCheckoutPayMode] = useState('cash');
@@ -588,6 +607,11 @@ export default function POSSales() {
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeScanFeedback, setBarcodeScanFeedback] = useState(null);
   const barcodeInputRef = useRef(null);
+  // Live autocomplete for the Cart Focus scan/search box — shows a "select item"
+  // dropdown of matching products as the cashier types, so a name/code/barcode
+  // search works even when the Items Panel is hidden.
+  const [barcodeSuggestions, setBarcodeSuggestions] = useState([]);
+  const [barcodeSuggestionsLoading, setBarcodeSuggestionsLoading] = useState(false);
   const [invoiceCounter, setInvoiceCounter] = useState(0);
   // Real next invoice number previewed from the backend numbering sequence
   // (GET /api/sales-invoices/next-number). POS checkout posts through the same
@@ -660,6 +684,14 @@ export default function POSSales() {
   const [showPriceCheck, setShowPriceCheck] = useState(false);
   const [priceCheckQuery, setPriceCheckQuery] = useState('');
   const [priceCheckResult, setPriceCheckResult] = useState(null);
+  // Search Products modal — dedicated multi-result lookup by item code, barcode, or
+  // product name (substring match anywhere, backed by the same server-side LIKE
+  // search as the items grid) so cashiers can find and add items even when the Items
+  // Panel is hidden in Cart Focus.
+  const [showProductSearch, setShowProductSearch] = useState(false);
+  const [productSearchQuery, setProductSearchQuery] = useState('');
+  const [productSearchResults, setProductSearchResults] = useState([]);
+  const [productSearchLoading, setProductSearchLoading] = useState(false);
   // Credit Balance modal
   const [showCreditBalance, setShowCreditBalance] = useState(false);
   const [creditBalanceQuery, setCreditBalanceQuery] = useState('');
@@ -797,17 +829,52 @@ export default function POSSales() {
     notes: '',
   }), [currentTerminal?.terminalId, currentTerminal?.terminalName]);
   const [tplReceiptHeader, setTplReceiptHeader] = useState('Thank you for shopping with us!');
+  // Template 2's Arabic title override for the POS Receipt tab (no-tax checkout
+  // path). Template 1's header field above already covers English for both.
+  const [tplReceiptHeaderAr, setTplReceiptHeaderAr] = useState('فاتورة مبيعات');
   const [tplReceiptFooter, setTplReceiptFooter] = useState('Returns accepted within 7 days with receipt.');
   const [tplReceiptPaper, setTplReceiptPaper] = useState('80mm');
   const [tplReceiptShowLogo, setTplReceiptShowLogo] = useState(true);
   const [tplReceiptShowTrn, setTplReceiptShowTrn] = useState(true);
   const [tplReceiptShowBarcode, setTplReceiptShowBarcode] = useState(true);
   const [tplInvoiceHeader, setTplInvoiceHeader] = useState('TAX INVOICE');
+  // Template 2's Arabic title override for the Tax Invoice tab — default matches
+  // Template 2's current hardcoded Arabic title so hasTax=true output is unchanged.
+  const [tplInvoiceHeaderAr, setTplInvoiceHeaderAr] = useState('فاتورة ضريبية');
   const [tplInvoiceFooter, setTplInvoiceFooter] = useState('All prices inclusive of VAT at 5%.');
   const [tplInvoicePaper, setTplInvoicePaper] = useState('A4');
   const [tplReturnHeader, setTplReturnHeader] = useState('SALES RETURN / CREDIT NOTE');
   const [tplReturnFooter, setTplReturnFooter] = useState('Refund processed within 3–5 business days.');
   const [tplReturnPaper, setTplReturnPaper] = useState('A4');
+  // Phase 3 cutover (USE_NEW_POS_PRINT_TEMPLATE): resolved branch-scoped PrintTemplate
+  // rows, fetched once per session when the flag is on. buildPosA4Template's fabricated
+  // in-memory template remains the fallback whenever these are null — see
+  // resolvedPosInvoiceTemplate below, which every print call site now goes through.
+  const [resolvedPosInvoiceTemplate, setResolvedPosInvoiceTemplate] = useState(null);
+  const [resolvedPosCreditNoteTemplate, setResolvedPosCreditNoteTemplate] = useState(null);
+
+  // Effective-template resolvers used by every A4 print call site: prefer the real,
+  // branch-scoped PrintTemplate (Phase 3 cutover) when the flag is on and one resolved
+  // successfully; otherwise fall back to buildPosA4Template's fabricated in-memory
+  // template exactly as before. footerNote/opts/category match buildPosA4Template's
+  // own signature so calling code doesn't need to branch. hasTax defaults to true
+  // (the historical always-Tax-Invoice behavior) — callers that know the actual
+  // sale's tax state pass it explicitly to get the Tax Invoice/Sales Invoice split
+  // that buildPosPrintData's title already applies to the printed data.
+  const resolveInvoiceA4Template = useCallback((footerNote, opts, hasTax = true) => {
+    if (USE_NEW_POS_PRINT_TEMPLATE && resolvedPosInvoiceTemplate) {
+      return applyTaxAwareDisplayOptions(resolvedPosInvoiceTemplate, hasTax);
+    }
+    // Fallback path (flag off or DB template unresolved): the fabricated in-memory
+    // template must be tax-aware too, so a no-tax A4 never leaks VAT columns/rows
+    // or TRN regardless of which template source is in play.
+    return applyTaxAwareDisplayOptions(buildPosA4Template(footerNote, opts), hasTax);
+  }, [resolvedPosInvoiceTemplate]);
+
+  const resolveCreditNoteA4Template = useCallback((footerNote, opts) => {
+    if (USE_NEW_POS_PRINT_TEMPLATE && resolvedPosCreditNoteTemplate) return resolvedPosCreditNoteTemplate;
+    return buildPosA4Template(footerNote, opts, 'Sales Return');
+  }, [resolvedPosCreditNoteTemplate]);
   const [tplJobCardFooter, setTplJobCardFooter] = useState('We are not responsible for data loss during repair.');
   const [tplJobCardPaper, setTplJobCardPaper] = useState('A4');
   const [tplOutletName, setTplOutletName] = useState('BillBull Trading LLC');
@@ -908,6 +975,41 @@ export default function POSSales() {
   const [t2ShowFooterText, setT2ShowFooterText] = useState(true);
   const [t2ShowBarcode, setT2ShowBarcode] = useState(true);
 
+  // ── Template 2 toggles, split per sub-tab ────────────────────────────────
+  // The single t2Show* set above still drives the Print Templates designer
+  // (both sub-tabs' Live Preview/Test Print, wired through POSConsole's tplCfg)
+  // and stays untouched so that plumbing doesn't need to change. At real
+  // checkout, Template 2 needs an INDEPENDENT toggle set per sub-tab (POS
+  // Receipt vs Tax Invoice) so a no-tax sale doesn't inherit the tax-invoice
+  // tab's Show/Hide choices. Same fields, same defaults as t2Show* above.
+  const [t2ReceiptShowLogo, setT2ReceiptShowLogo] = useState(true);
+  const [t2ReceiptShowCompanyDetails, setT2ReceiptShowCompanyDetails] = useState(true);
+  const [t2ReceiptShowTrn, setT2ReceiptShowTrn] = useState(true);
+  const [t2ReceiptShowArabic, setT2ReceiptShowArabic] = useState(true);
+  const [t2ReceiptShowCustomerDetails, setT2ReceiptShowCustomerDetails] = useState(true);
+  const [t2ReceiptShowAccountBalance, setT2ReceiptShowAccountBalance] = useState(true);
+  const [t2ReceiptShowDelivery, setT2ReceiptShowDelivery] = useState(true);
+  const [t2ReceiptShowVatSummary, setT2ReceiptShowVatSummary] = useState(true);
+  const [t2ReceiptShowPaymentDetails, setT2ReceiptShowPaymentDetails] = useState(true);
+  const [t2ReceiptShowLoyalty, setT2ReceiptShowLoyalty] = useState(true);
+  const [t2ReceiptShowQRCode, setT2ReceiptShowQRCode] = useState(false);
+  const [t2ReceiptShowFooterText, setT2ReceiptShowFooterText] = useState(true);
+  const [t2ReceiptShowBarcode, setT2ReceiptShowBarcode] = useState(true);
+
+  const [t2InvoiceShowLogo, setT2InvoiceShowLogo] = useState(true);
+  const [t2InvoiceShowCompanyDetails, setT2InvoiceShowCompanyDetails] = useState(true);
+  const [t2InvoiceShowTrn, setT2InvoiceShowTrn] = useState(true);
+  const [t2InvoiceShowArabic, setT2InvoiceShowArabic] = useState(true);
+  const [t2InvoiceShowCustomerDetails, setT2InvoiceShowCustomerDetails] = useState(true);
+  const [t2InvoiceShowAccountBalance, setT2InvoiceShowAccountBalance] = useState(true);
+  const [t2InvoiceShowDelivery, setT2InvoiceShowDelivery] = useState(true);
+  const [t2InvoiceShowVatSummary, setT2InvoiceShowVatSummary] = useState(true);
+  const [t2InvoiceShowPaymentDetails, setT2InvoiceShowPaymentDetails] = useState(true);
+  const [t2InvoiceShowLoyalty, setT2InvoiceShowLoyalty] = useState(true);
+  const [t2InvoiceShowQRCode, setT2InvoiceShowQRCode] = useState(false);
+  const [t2InvoiceShowFooterText, setT2InvoiceShowFooterText] = useState(true);
+  const [t2InvoiceShowBarcode, setT2InvoiceShowBarcode] = useState(true);
+
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
   const togglePanelButton = (id) => setHiddenPanelButtons(prev => {
     const next = new Set(prev);
@@ -977,8 +1079,14 @@ export default function POSSales() {
       // Real next number from the backend sequence; blank until fetched so the
       // preview never shows a fabricated SI-POS-000001.
       const invoiceNo = previewInvoiceNo || '';
-      const stampAvailable = tplInvoiceShowQRCode && !!tplStampDataUrl;
-      const showQrInPreview = tplInvoiceShowQRCode && !stampAvailable;
+      // Pre-payment preview must resolve the same Tax Invoice vs POS Receipt
+      // template the real checkout print will use (see buildThermalReceiptArtifacts'
+      // hasTax routing) — otherwise a no-tax cart would preview "TAX INVOICE" and
+      // then print "SALES INVOICE", confusing the cashier before they even tender.
+      const previewHasTax = Number(currentInvoice.tax) > 0;
+      const previewShowQRCodeToggle = previewHasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
+      const stampAvailable = previewShowQRCodeToggle && !!tplStampDataUrl;
+      const showQrInPreview = previewShowQRCodeToggle && !stampAvailable;
       // Use the same authoritative resolution the printed receipt + backend payload
       // use (selectedCustomerData) so the preview never disagrees with the actual
       // print — in Credit mode this honours the credit-box selection.
@@ -1028,6 +1136,42 @@ export default function POSSales() {
       const previewDeposit = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const previewGrand = (currentInvoice.total || 0) + previewShipping;
 
+      const previewHeader = previewHasTax ? tplInvoiceHeader : tplReceiptHeader;
+      const previewHeaderAr = previewHasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr;
+      const previewFooter = previewHasTax ? tplInvoiceFooter : tplReceiptFooter;
+      // Forced off on the no-tax path — see activeShowTrn's note in
+      // buildThermalReceiptArtifacts for why this isn't just defaulted off.
+      const previewShowTrn = previewHasTax ? tplInvoiceShowTrn : false;
+      const previewShowVatSummary = previewHasTax ? tplInvoiceColVatAmt : false;
+      const previewShowFooterText = previewHasTax ? tplInvoiceShowTerms : tplReceiptShowTerms;
+      const previewShowLogo = previewHasTax ? tplInvoiceShowLogo : tplReceiptShowLogo;
+      const previewShowCompanyDetails = previewHasTax ? tplInvoiceShowCompanyDetails : tplReceiptShowCompanyDetails;
+      const previewShowCustomerDetails = previewHasTax ? tplInvoiceShowCustomerDetails : tplReceiptShowCustomerDetails;
+      const previewShowQRCode = previewHasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
+      const previewShowPaymentDetails = previewHasTax ? tplInvoiceColDiscount : tplReceiptColDiscount;
+      const previewShowLoyaltyPoints = previewHasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
+      const previewShowCreditBalance = previewHasTax ? tplInvoiceShowBankDetails : tplReceiptShowBankDetails;
+      const previewT2 = previewHasTax
+        ? {
+            hasTax: true,
+            showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
+            showArabic: t2InvoiceShowArabic, showCustomerDetails: t2InvoiceShowCustomerDetails,
+            showAccountBalance: t2InvoiceShowAccountBalance, showDelivery: t2InvoiceShowDelivery,
+            showVatSummary: t2InvoiceShowVatSummary, showPaymentDetails: t2InvoiceShowPaymentDetails,
+            showLoyalty: t2InvoiceShowLoyalty, showQRCode: t2InvoiceShowQRCode,
+            showFooterText: t2InvoiceShowFooterText, showBarcode: t2InvoiceShowBarcode,
+          }
+        : {
+            // No-tax preview: drop all tax content (matches the real print path).
+            hasTax: false,
+            showLogo: t2ReceiptShowLogo, showCompanyDetails: t2ReceiptShowCompanyDetails, showTrn: false,
+            showArabic: t2ReceiptShowArabic, showCustomerDetails: t2ReceiptShowCustomerDetails,
+            showAccountBalance: t2ReceiptShowAccountBalance, showDelivery: t2ReceiptShowDelivery,
+            showVatSummary: false, showPaymentDetails: t2ReceiptShowPaymentDetails,
+            showLoyalty: t2ReceiptShowLoyalty, showQRCode: t2ReceiptShowQRCode,
+            showFooterText: t2ReceiptShowFooterText, showBarcode: t2ReceiptShowBarcode,
+          };
+
       // Mixed (cash + card) split for the receipt preview — only when the mode is
       // Mixed and both portions were entered, so cash/card/credit sales don't show
       // an empty split. Passed to BOTH template renderers below.
@@ -1040,19 +1184,12 @@ export default function POSSales() {
       // as the ESC/POS print path below already does (see buildReceiptEscPosBase64).
       if (receiptTemplateId === 'billbull-ar') {
         const isWalkInPreview = !customer || customer.id === 'walk-in';
-        // Template 2 has its OWN Show/Hide toggles (independent of Template 1's
-        // invoice toggles). The preview honours them so what the merchant sees
-        // here matches what the till prints at checkout.
-        const t2Toggles = {
-          showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
-          showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
-          showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
-          showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
-          showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
-          showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
-        };
-        const t2StampAvailable = t2ShowQRCode && !!tplStampDataUrl;
-        const t2ShowQr = t2ShowQRCode && !t2StampAvailable;
+        // Template 2's Show/Hide toggles are split per sub-tab (previewT2 already
+        // resolved above by previewHasTax) so the preview honours whichever tab's
+        // settings the till will actually print.
+        const t2Toggles = previewT2;
+        const t2StampAvailable = previewT2.showQRCode && !!tplStampDataUrl;
+        const t2ShowQr = previewT2.showQRCode && !t2StampAvailable;
         const txn = mapInvoiceToTxn(mockInvoice, {
           currency: activeCurrency,
           terminalId: currentTerminal?.terminalId,
@@ -1065,7 +1202,7 @@ export default function POSSales() {
           // non-walk-in customer. Invoice Credit = grand total, Amount Paid = 0
           // (nothing collected yet in the preview), New Balance = prev + this.
           // Additionally gated by Template 2's own Account Balance toggle.
-          showCreditBalance: t2ShowAccountBalance && !isWalkInPreview && checkoutPreviewCreditBalance != null,
+          showCreditBalance: previewT2.showAccountBalance && !isWalkInPreview && checkoutPreviewCreditBalance != null,
           creditPreviousBalance: checkoutPreviewCreditBalance,
           creditInvoiceCredit: previewGrand,
           creditAmountPaid: 0,
@@ -1081,25 +1218,29 @@ export default function POSSales() {
           // image shown separately when uploaded (parity with Template 1 preview).
           qrDataUrl: t2ShowQr ? checkoutPreviewQrDataUrl : null,
           stampDataUrl: t2StampAvailable ? tplStampDataUrl : null,
-          footerText: tplInvoiceFooter,
+          footerText: previewFooter,
+          titleEn: previewHeader,
+          titleAr: previewHeaderAr,
         };
         const html = buildTemplate2Html(mapToTemplate2Data(outlet, txn, t2Toggles));
         checkoutPreviewFreezeRef.current = html;
         return html;
       }
 
+      const activeThermalPaper = previewHasTax ? tplInvoicePaper : tplReceiptPaper;
+      // User request: always use 80mm print preview in the checkout window.
       const html = buildThermalReceiptHtml('80mm', mockInvoice, {
         shippingCharge: previewShipping > 0 ? previewShipping : null,
         depositApplied: previewDeposit > 0 ? previewDeposit : null,
         balanceDue: previewDeposit > 0 ? Math.max(0, previewGrand - previewDeposit) : null,
-        companyName: tplOutletName, trn: tplOutletTrn, header: tplInvoiceHeader, footer: tplInvoiceFooter,
-        showTrn: tplInvoiceShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
+        companyName: tplOutletName, trn: tplOutletTrn, documentTitle: previewHeader, footer: previewFooter,
+        showTrn: previewShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
-        showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails,
+        showLogo: previewShowLogo, showCompanyDetails: previewShowCompanyDetails,
         outletAddress: tplOutletAddress, outletPhone: tplOutletPhone, showServiceCharge: tplInvoiceShowGrandTotalBanner,
-        showVatSummary: tplInvoiceColVatAmt, showPaymentDetails: tplInvoiceColDiscount, showQRCode: showQrInPreview,
-        showCustomerDetails: tplInvoiceShowCustomerDetails, showLoyaltyPoints: tplInvoiceShowNotes,
-        showCreditBalance: tplInvoiceShowBankDetails, showFooterText: tplInvoiceShowTerms,
+        showVatSummary: previewShowVatSummary, hasTax: previewHasTax, showPaymentDetails: previewShowPaymentDetails, showQRCode: showQrInPreview,
+        showCustomerDetails: previewShowCustomerDetails, showLoyaltyPoints: previewShowLoyaltyPoints,
+        showCreditBalance: previewShowCreditBalance, showFooterText: previewShowFooterText,
         creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
         currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
@@ -1116,15 +1257,90 @@ export default function POSSales() {
     }
   }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
     checkoutPayMode, checkoutCardType, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
-    tplInvoiceHeader, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
+    tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
     tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
     tplInvoiceColDiscount, tplInvoiceQrPlacement, checkoutPreviewCreditBalance, receiptTemplateId, currentSession,
-    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
-    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode]);
+    tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
+    tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
+    tplReceiptColDiscount, tplReceiptShowNotes,
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails,
+    t2ReceiptShowAccountBalance, t2ReceiptShowDelivery, t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails,
+    t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails,
+    t2InvoiceShowAccountBalance, t2InvoiceShowDelivery, t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails,
+    t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode]);
 
   const checkoutPreviewBlobUrl = useA4BlobUrl(checkoutThermalHtml);
+
+  // Phase 3 cutover: A4 checkout-time preview — net-new capability, gated on both
+  // USE_NEW_POS_PRINT_TEMPLATE and the invoice being configured for A4 paper (the
+  // thermal preview above never checked paper size; this one must, so a thermal-only
+  // branch never sees an A4 preview attempt). Uses the same draft-cart -> printData
+  // pipeline the real print/reprint path already uses via buildPosPrintData, so the
+  // checkout preview and the actual printed A4 output are guaranteed to agree.
+  const _previewHasTax = currentInvoice ? Number(currentInvoice.tax) > 0 : false;
+  const _activePreviewPaper = _previewHasTax ? tplInvoicePaper : tplReceiptPaper;
+  // User request: always use 80mm print preview in the checkout window.
+  const showA4CheckoutPreview = false;
+  const checkoutA4Html = useMemo(() => {
+    if (!showA4CheckoutPreview) return '';
+    if (checkoutSettling) return checkoutPreviewFreezeRef.current || '';
+    if (!currentInvoice) return '';
+    try {
+      const customer = selectedCustomerData;
+      const previewShipping = Number(shippingCharge) || 0;
+      const draftData = buildDraftPrintDataFromCart({
+        invoiceNumber: previewInvoiceNo || '',
+        invoiceDate: new Date().toISOString(),
+        customer,
+        saleType: currentInvoice.saleType || '',
+        terminalId: currentTerminal?.terminalId || '',
+        counterName: currentTerminal?.counterName || '',
+        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
+        subTotal: currentInvoice.subtotal || 0,
+        taxTotal: currentInvoice.tax || 0,
+        taxInclusive: !!currentInvoice.taxInclusive,
+        invoiceTotal: (currentInvoice.total || 0) + previewShipping,
+        discountTotal: currentInvoice.totalDiscount || 0,
+        branchName: currentTerminal?.branchName || currentSession?.branchName || '',
+        items: (currentInvoice.items || []).map(it => ({
+          itemCode: it.code || it.productId || it.id || '',
+          itemName: it.name || '',
+          description: it.description || '',
+          quantity: it.quantity || 0,
+          unitPrice: it.price || 0,
+          netAmount: it.total || 0,
+          discountPercent: it.discount || 0,
+          taxPercent: it.taxRate,
+          taxAmount: it.taxAmount,
+          batchNumber: it.pinnedBatchNumber || it.batchNumber || '',
+          voided: !!it.isVoided,
+        })),
+      }, tplInvoiceFooter);
+      const template = resolveInvoiceA4Template(tplInvoiceFooter, {
+        showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn,
+        showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes,
+        showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp,
+        showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner,
+        colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode,
+        colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt,
+      }, Number(currentInvoice.tax) > 0);
+      const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: activeCurrency || 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+      return generateDocumentPrintHtml(template, draftData, options);
+    } catch (e) {
+      console.warn('A4 checkout preview failed:', e);
+      return '';
+    }
+  }, [showA4CheckoutPreview, checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, shippingCharge,
+    checkoutPayMode, checkoutCardType, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
+    tplInvoiceFooter, tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
+    tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, tplInvoiceShowStamp,
+    tplInvoiceShowSignature, tplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode, tplInvoiceColItemImage,
+    tplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt,
+    tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, tplStampDataUrl]);
+  const checkoutA4BlobUrl = useA4BlobUrl(checkoutA4Html);
 
   // Heartbeat — keeps the terminal ACTIVE on the server
   useHeartbeat(
@@ -1142,9 +1358,17 @@ export default function POSSales() {
   });
 
   // Fetch the selected customer's outstanding balance for the checkout preview's
-  // Credit Account section — same lookup used at actual print time.
+  // Credit Account / Account Balance section — same lookup used at actual print
+  // time. Gated on ANY of the four toggles that could end up driving the actual
+  // print (Template 1 receipt/invoice tab, Template 2 receipt/invoice tab) since
+  // which one applies depends on hasTax/receiptTemplateId, resolved later in the
+  // preview builder — checking only tplInvoiceShowBankDetails here meant the
+  // balance never got fetched (and the section never rendered) whenever the
+  // active toggle was the POS Receipt tab's or Template 2's own toggle.
+  const needsCreditBalancePreview = tplInvoiceShowBankDetails || tplReceiptShowBankDetails
+    || t2InvoiceShowAccountBalance || t2ReceiptShowAccountBalance;
   useEffect(() => {
-    if (!tplInvoiceShowBankDetails || !showPaymentDialog || !selectedCustomerData || selectedCustomerData.id === 'walk-in') {
+    if (!needsCreditBalancePreview || !showPaymentDialog || !selectedCustomerData || selectedCustomerData.id === 'walk-in') {
       setCheckoutPreviewCreditBalance(null);
       return;
     }
@@ -1165,7 +1389,7 @@ export default function POSSales() {
       .then(cr => { if (!cancelled) setCheckoutPreviewCreditBalance(cr?.found ? (cr.outstanding ?? 0) : 0); })
       .catch(() => { if (!cancelled) setCheckoutPreviewCreditBalance(0); });
     return () => { cancelled = true; };
-  }, [tplInvoiceShowBankDetails, showPaymentDialog, selectedCustomerData]);
+  }, [needsCreditBalancePreview, showPaymentDialog, selectedCustomerData]);
 
   // Credit Balance function-button modal: auto-load the currently selected POS
   // customer's due/credit balance on open, and refresh if the selection changes
@@ -1320,6 +1544,83 @@ export default function POSSales() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  // Search Products modal — live, debounced lookup as the cashier types. Reuses the
+  // paginated product list endpoint, which already matches item code, SKU, barcode,
+  // and product name anywhere in the string (not just a prefix).
+  useEffect(() => {
+    if (!showProductSearch) return undefined;
+    const query = productSearchQuery.trim();
+    if (!query) {
+      setProductSearchResults([]);
+      setProductSearchLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setProductSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await getProductsList(0, 30, query, controller.signal, null, null, null, true);
+        const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
+        mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
+        setProductSearchResults(mapped);
+      } catch (error) {
+        if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+        console.error('Product search failed', error);
+        setProductSearchResults([]);
+      } finally {
+        setProductSearchLoading(false);
+      }
+    }, 300);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [productSearchQuery, showProductSearch]);
+
+  // Cart Focus scan/search box — live "select item" suggestions as the cashier
+  // types. Suppressed while the same field is repurposed as a qty/discount/price
+  // numpad (posActionMode !== 'none'), where its value is a number, not a search.
+  useEffect(() => {
+    const query = barcodeInput.trim();
+    if (posActionMode !== 'none' || !query) {
+      setBarcodeSuggestions([]);
+      setBarcodeSuggestionsLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setBarcodeSuggestionsLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await getProductsList(0, 8, query, controller.signal, null, null, null, true);
+        const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
+        mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
+        setBarcodeSuggestions(mapped);
+      } catch (error) {
+        if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
+        setBarcodeSuggestions([]);
+      } finally {
+        setBarcodeSuggestionsLoading(false);
+      }
+    }, 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [barcodeInput, posActionMode]);
+
+  // Customer History pane — fetch the full invoice (with line items) for preview.
+  // The history list only carries summary fields, so this pulls the complete
+  // record the same way Reprint/Last Receipt do.
+  const openCustomerHistoryPreview = useCallback(async (inv) => {
+    setShowCustomerHistoryPreview(true);
+    setCustomerHistoryPreviewInvoice(null);
+    setCustomerHistoryPreviewError('');
+    if (!inv?.id) { setCustomerHistoryPreviewError('This invoice has no details to preview.'); return; }
+    setCustomerHistoryPreviewLoading(true);
+    try {
+      const full = await getSalesInvoiceById(inv.id);
+      setCustomerHistoryPreviewInvoice(full);
+    } catch (err) {
+      setCustomerHistoryPreviewError(err?.response?.data?.message || 'Failed to load invoice details.');
+    } finally {
+      setCustomerHistoryPreviewLoading(false);
+    }
+  }, []);
+
   const loadPosCustomers = useCallback(async () => {
     setPosCustomersLoading(true);
     setPosCustomersError('');
@@ -1386,6 +1687,7 @@ export default function POSSales() {
               if (tpl.logoDataUrl != null) setTplLogoDataUrl(tpl.logoDataUrl);
               if (tpl.stampDataUrl != null) setTplStampDataUrl(tpl.stampDataUrl);
               if (tpl.receiptHeader != null) setTplReceiptHeader(tpl.receiptHeader);
+              if (tpl.receiptHeaderAr != null) setTplReceiptHeaderAr(tpl.receiptHeaderAr);
               if (tpl.receiptFooter != null) setTplReceiptFooter(tpl.receiptFooter);
               if (tpl.receiptPaper != null) setTplReceiptPaper(tpl.receiptPaper);
               if (tpl.receiptShowLogo != null) setTplReceiptShowLogo(tpl.receiptShowLogo);
@@ -1407,6 +1709,7 @@ export default function POSSales() {
               if (tpl.receiptShowQRCode != null) setTplReceiptShowQRCode(tpl.receiptShowQRCode);
               if (tpl.receiptShowSignature != null) setTplReceiptShowSignature(tpl.receiptShowSignature);
               if (tpl.invoiceHeader != null) setTplInvoiceHeader(tpl.invoiceHeader);
+              if (tpl.invoiceHeaderAr != null) setTplInvoiceHeaderAr(tpl.invoiceHeaderAr);
               if (tpl.invoiceFooter != null) setTplInvoiceFooter(tpl.invoiceFooter);
               if (tpl.invoicePaper != null) setTplInvoicePaper(tpl.invoicePaper);
               if (tpl.invoiceShowLogo != null) setTplInvoiceShowLogo(tpl.invoiceShowLogo);
@@ -1475,6 +1778,33 @@ export default function POSSales() {
               if (tpl.t2ShowQRCode != null) setT2ShowQRCode(tpl.t2ShowQRCode);
               if (tpl.t2ShowFooterText != null) setT2ShowFooterText(tpl.t2ShowFooterText);
               if (tpl.t2ShowBarcode != null) setT2ShowBarcode(tpl.t2ShowBarcode);
+              // Template 2 toggles, split per sub-tab (POS Receipt vs Tax Invoice)
+              if (tpl.t2ReceiptShowLogo != null) setT2ReceiptShowLogo(tpl.t2ReceiptShowLogo);
+              if (tpl.t2ReceiptShowCompanyDetails != null) setT2ReceiptShowCompanyDetails(tpl.t2ReceiptShowCompanyDetails);
+              if (tpl.t2ReceiptShowTrn != null) setT2ReceiptShowTrn(tpl.t2ReceiptShowTrn);
+              if (tpl.t2ReceiptShowArabic != null) setT2ReceiptShowArabic(tpl.t2ReceiptShowArabic);
+              if (tpl.t2ReceiptShowCustomerDetails != null) setT2ReceiptShowCustomerDetails(tpl.t2ReceiptShowCustomerDetails);
+              if (tpl.t2ReceiptShowAccountBalance != null) setT2ReceiptShowAccountBalance(tpl.t2ReceiptShowAccountBalance);
+              if (tpl.t2ReceiptShowDelivery != null) setT2ReceiptShowDelivery(tpl.t2ReceiptShowDelivery);
+              if (tpl.t2ReceiptShowVatSummary != null) setT2ReceiptShowVatSummary(tpl.t2ReceiptShowVatSummary);
+              if (tpl.t2ReceiptShowPaymentDetails != null) setT2ReceiptShowPaymentDetails(tpl.t2ReceiptShowPaymentDetails);
+              if (tpl.t2ReceiptShowLoyalty != null) setT2ReceiptShowLoyalty(tpl.t2ReceiptShowLoyalty);
+              if (tpl.t2ReceiptShowQRCode != null) setT2ReceiptShowQRCode(tpl.t2ReceiptShowQRCode);
+              if (tpl.t2ReceiptShowFooterText != null) setT2ReceiptShowFooterText(tpl.t2ReceiptShowFooterText);
+              if (tpl.t2ReceiptShowBarcode != null) setT2ReceiptShowBarcode(tpl.t2ReceiptShowBarcode);
+              if (tpl.t2InvoiceShowLogo != null) setT2InvoiceShowLogo(tpl.t2InvoiceShowLogo);
+              if (tpl.t2InvoiceShowCompanyDetails != null) setT2InvoiceShowCompanyDetails(tpl.t2InvoiceShowCompanyDetails);
+              if (tpl.t2InvoiceShowTrn != null) setT2InvoiceShowTrn(tpl.t2InvoiceShowTrn);
+              if (tpl.t2InvoiceShowArabic != null) setT2InvoiceShowArabic(tpl.t2InvoiceShowArabic);
+              if (tpl.t2InvoiceShowCustomerDetails != null) setT2InvoiceShowCustomerDetails(tpl.t2InvoiceShowCustomerDetails);
+              if (tpl.t2InvoiceShowAccountBalance != null) setT2InvoiceShowAccountBalance(tpl.t2InvoiceShowAccountBalance);
+              if (tpl.t2InvoiceShowDelivery != null) setT2InvoiceShowDelivery(tpl.t2InvoiceShowDelivery);
+              if (tpl.t2InvoiceShowVatSummary != null) setT2InvoiceShowVatSummary(tpl.t2InvoiceShowVatSummary);
+              if (tpl.t2InvoiceShowPaymentDetails != null) setT2InvoiceShowPaymentDetails(tpl.t2InvoiceShowPaymentDetails);
+              if (tpl.t2InvoiceShowLoyalty != null) setT2InvoiceShowLoyalty(tpl.t2InvoiceShowLoyalty);
+              if (tpl.t2InvoiceShowQRCode != null) setT2InvoiceShowQRCode(tpl.t2InvoiceShowQRCode);
+              if (tpl.t2InvoiceShowFooterText != null) setT2InvoiceShowFooterText(tpl.t2InvoiceShowFooterText);
+              if (tpl.t2InvoiceShowBarcode != null) setT2InvoiceShowBarcode(tpl.t2InvoiceShowBarcode);
             } catch (e) { /* stale/malformed config — fall through to defaults */ }
           }
         }
@@ -1516,6 +1846,29 @@ export default function POSSales() {
     init();
     return () => { cancelled = true; };
   }, []);
+
+  // Phase 3 cutover: resolve the real Back Office "Sales Invoice"/"Sales Return"
+  // PrintTemplate rows when USE_NEW_POS_PRINT_TEMPLATE is on — POS now shares the
+  // exact same template Back Office's Sales Invoice designer edits, not a separate
+  // POS-only category. buildPosA4Template's fabricated template remains authoritative
+  // until both resolve successfully — a failed/partial fetch here simply leaves
+  // resolvedPos*Template null, and every call site already falls back to
+  // buildPosA4Template in that case.
+  useEffect(() => {
+    if (!USE_NEW_POS_PRINT_TEMPLATE) return;
+    const branchId = currentTerminal?.branchId || currentSession?.branchId || null;
+    let cancelled = false;
+    (async () => {
+      const [invoiceTpl, creditNoteTpl] = await Promise.all([
+        resolvePrintTemplate('Sales Invoice', branchId).catch(() => null),
+        resolvePrintTemplate('Sales Return', branchId).catch(() => null),
+      ]);
+      if (cancelled) return;
+      if (invoiceTpl) setResolvedPosInvoiceTemplate(invoiceTpl);
+      if (creditNoteTpl) setResolvedPosCreditNoteTemplate(creditNoteTpl);
+    })();
+    return () => { cancelled = true; };
+  }, [currentTerminal?.branchId, currentSession?.branchId]);
 
   // Auto-load report data when entering report views
   useEffect(() => {
@@ -1853,6 +2206,7 @@ export default function POSSales() {
             notes: xReportVarianceRemarks,
             cardBatchNo: xReportCardBatchNo,
             cardSettlementVerified: xReportCardVerified,
+            cardClosingCash: cardSettlementAmount !== '' ? (parseFloat(cardSettlementAmount) || 0) : null,
             closingCashierName: xReportCashierName,
             closingSupervisorName: xReportSupervisorName,
             closingRemarks: xReportClosingRemarks,
@@ -1964,6 +2318,9 @@ export default function POSSales() {
           code: product.code || '',
           image: product.image || null,
           price: unitPrice,
+          minPrice: product.minPrice != null && product.minPrice !== '' ? toNumber(product.minPrice) : null,
+          maxPrice: product.maxPrice != null && product.maxPrice !== '' ? toNumber(product.maxPrice) : null,
+          retailPrice: product.retailPrice != null && product.retailPrice !== '' ? toNumber(product.retailPrice) : null,
           quantity: qtyToAdd,
           discount: toNumber(product.defaultDiscount, 0),
           taxRate: product.salesTax != null ? product.salesTax : toNumber(posSettings?.defaultTaxRate, 5),
@@ -2332,24 +2689,50 @@ export default function POSSales() {
     const taxInclusive = !!posSettings?.taxInclusive;
     const fallbackRate = toNumber(posSettings?.defaultTaxRate, 5);
 
-    let subtotal = 0;       // net (ex-VAT) line value before line discount
-    let totalDiscount = 0;  // line discount on the same net basis
+    let subtotal = 0;       // gross line value (entered price x qty) before discount —
+                             // matches the backoffice invoice's "Sub Total" presentation
+    let totalDiscount = 0;  // line discount, as a straight % of the entered price
     let tax = 0;            // extracted/added VAT after line discount
 
     activeItems.forEach(item => {
       const rate = toNumber(item.taxRate, fallbackRate) / 100;
       const disc = (item.discount || 0) / 100;
       const lineValue = item.price * item.quantity;
-      // In inclusive mode the price carries VAT, so strip it to get the net base.
-      const net = taxInclusive ? lineValue / (1 + rate) : lineValue;
-      subtotal += net;
-      totalDiscount += net * disc;
-      tax += net * (1 - disc) * rate;
+      // Discount is a percentage OFF THE ENTERED PRICE (tax-inclusive when
+      // taxInclusive, ex-VAT otherwise) — e.g. "20% off AED 3,500" is AED 700,
+      // not AED 700 further reduced by the VAT divisor. Computing the discount
+      // on an already-VAT-stripped net (net/1+rate first, then *disc) silently
+      // deflates it by the same factor (700 -> 636.36 at 10% VAT), which
+      // desynced this cart-total preview from the backoffice/print totals that
+      // discount the entered price directly.
+      const discountAmount = lineValue * disc;
+      const netAfterDiscount = lineValue - discountAmount;
+      // In inclusive mode the discounted price still carries VAT, so strip it
+      // out now to get the net (ex-VAT) base; in exclusive mode it already is one.
+      const net = taxInclusive ? netAfterDiscount / (1 + rate) : netAfterDiscount;
+      const taxOnLine = taxInclusive ? (netAfterDiscount - net) : net * rate;
+      subtotal += lineValue;
+      totalDiscount += discountAmount;
+      tax += taxOnLine;
     });
 
-    const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + tax);
+    // Under INCLUSIVE VAT, netAfterDiscount (= subtotal - totalDiscount) already
+    // carries the tax, so `tax` must not be added again on top — only EXCLUSIVE
+    // mode adds it. Bill-level discount is subtracted flat either way (matches
+    // prior behavior).
+    const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + (taxInclusive ? 0 : tax));
 
-    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive };
+    // Voided lines are excluded from the total but disclosed separately in the
+    // cart summary. Value uses the same discounted line formula the cart's
+    // line-total cell shows, so the "Voided Items" figure matches the rows.
+    const voidedItems = items.filter(i => i.isVoided);
+    const voidedCount = voidedItems.length;
+    const voidedTotal = voidedItems.reduce(
+      (s, i) => s + (i.quantity * i.price * (1 - (i.discount || 0) / 100)),
+      0,
+    );
+
+    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive, voidedTotal, voidedCount };
   };
 
   const clearInvoice = () => {
@@ -2520,9 +2903,9 @@ export default function POSSales() {
 
       try {
         if (tplInvoicePaper === 'A4') {
-          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
-          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(savedInvoice?.taxTotal) > 0);
+          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, Number(savedInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
           printHtml(await generatePrintHtmlAsync(template, data, options));
         } else {
           const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
@@ -2606,6 +2989,48 @@ export default function POSSales() {
     }
     setShowDeliveryModal(true);
   }, [selectedCustomerData]);
+
+  // Add a new saved shipping address for the customer selected in the delivery
+  // modal, then select it as the active delivery address. Mirrors
+  // CustomerShippingPanel.handleSaveNewAddress (QA-028) — same endpoint/shape,
+  // adapted to update posCustomers instead of a single selectedCustomer prop.
+  const handleSaveDeliveryNewAddress = useCallback(async () => {
+    if (!deliveryCustomerId) return;
+    if (!deliveryNewAddress.name.trim() || !deliveryNewAddress.address1.trim()) {
+      setDeliveryAddressError('Address label and address are required');
+      return;
+    }
+    setDeliveryAddressSaving(true);
+    setDeliveryAddressError('');
+    try {
+      const updatedAddresses = await addCustomerSavedAddress(deliveryCustomerId, {
+        name: deliveryNewAddress.name.trim(),
+        address1: deliveryNewAddress.address1.trim(),
+        city: deliveryNewAddress.city.trim(),
+        country: deliveryNewAddress.country.trim(),
+        // Stash contact details on address2 — entity has no dedicated contact fields.
+        address2: [deliveryNewAddress.contactName, deliveryNewAddress.contactPhone]
+          .filter(v => v && v.trim()).join(' · '),
+      });
+
+      setPosCustomers(prev => prev.map(c =>
+        String(c.id) === String(deliveryCustomerId) ? { ...c, savedAddresses: updatedAddresses } : c
+      ));
+
+      const added = updatedAddresses[updatedAddresses.length - 1];
+      if (added) {
+        setDeliveryAddress([added.address1, added.address2, added.city, added.country].filter(Boolean).join(', '));
+      }
+      setDeliveryValidationErrors(prev => ({ ...prev, address: '' }));
+      setDeliveryNewAddress({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
+      setDeliveryShowAddAddressModal(false);
+    } catch (err) {
+      console.error(err);
+      setDeliveryAddressError('Failed to save address. Please try again.');
+    } finally {
+      setDeliveryAddressSaving(false);
+    }
+  }, [deliveryCustomerId, deliveryNewAddress]);
 
   // ── Hold (persisted, session-scoped) ───────────────────────────────────────
   const sessionId = currentSession?.id && typeof currentSession.id === 'number' ? currentSession.id : null;
@@ -2836,9 +3261,24 @@ export default function POSSales() {
               notifyPrintFallback('No receipt printer is configured for this terminal — the layaway was saved, but the slip did not print. Set one up in Settings → Devices.');
             } else {
               try {
-                const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
-                const escPosBase64 = buildEscPosFromPlainTextBase64(layawayText, tplReceiptPaper);
-                await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: layawayText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
+                // Same branded-header bridge as the X/Z reports (see
+                // buildReportEscPosWithBrandedHeader): the body is generated with
+                // omitHeader so the standard logo/company/TRN block (Arabic-safe
+                // canvas raster) isn't duplicated by this plain-text builder.
+                const layawayText = buildLayawayReceiptText(tplReceiptPaper, saved, { ...layawayHtmlOpts, omitHeader: true });
+                const escPosBase64 = await buildEscPosDocumentBase64(layawayText, {
+                  paperSize: tplReceiptPaper,
+                  documentTitle: 'LAYAWAY RECEIPT',
+                  companyName: tplOutletName,
+                  header: tplReceiptHeader,
+                  trn: tplOutletTrn,
+                  outletAddress: tplOutletAddress,
+                  outletPhone: tplOutletPhone,
+                  logoDataUrl: tplLogoDataUrl,
+                  showTrn: tplReceiptShowTrn,
+                });
+                const fallbackText = buildLayawayReceiptText(tplReceiptPaper, saved, layawayHtmlOpts);
+                await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: fallbackText, title: `Layaway ${saved.layawayNumber || ''}`.trim() });
               } catch (err) {
                 console.warn('ESC/POS print failed for layaway receipt', err);
                 notifyPrintFallback(`The layaway was saved, but the slip didn't print: ${err?.message || 'printer error'}.`);
@@ -2894,7 +3334,7 @@ export default function POSSales() {
       const storedBillDiscount = ly.billDiscountAmount || 0;
       // Prefer the stored billDiscountAmount; if the recalculated total still doesn't
       // match saleTotal (e.g. items were saved differently), derive the diff as extra discount.
-      const derivedBillDiscount = Math.max(0, tempInvoice.subtotal - tempInvoice.totalDiscount + tempInvoice.tax - storedTotal);
+      const derivedBillDiscount = Math.max(0, (tempInvoice.subtotal - tempInvoice.totalDiscount + (tempInvoice.taxInclusive ? 0 : tempInvoice.tax)) - storedTotal);
       const billDiscountAmount = storedBillDiscount > 0 ? storedBillDiscount : derivedBillDiscount;
       setCurrentInvoice(recalculateInvoice(items, billDiscountAmount));
       // Select the layaway's customer if we have it loaded.
@@ -3086,9 +3526,6 @@ export default function POSSales() {
     // while a Delivery Settlement print shows it. null = defer to template toggle.
     showCreditBalanceOverride = null,
   }) => {
-    const resolvedShowCreditBalance = showCreditBalanceOverride != null
-      ? showCreditBalanceOverride
-      : tplInvoiceShowBankDetails;
     // Customer name (client item 3): the printed receipt must show the SAME
     // customer the checkout preview shows. The preview reads the selected customer
     // object directly (customer.name), while the print path was reading it off the
@@ -3099,7 +3536,66 @@ export default function POSSales() {
     const full = (customerNameOverride && customerNameOverride.trim())
       ? { ...fullArg, customerName: customerNameOverride.trim() }
       : fullArg;
-    const qrContent = buildQrContent(buildPosPrintData(full, tplInvoiceFooter), tplOutletName);
+    // Tax-registered sales keep today's Tax Invoice template untouched; a
+    // no-tax sale (e.g. a zero-rated/exempt walk-in) prints the POS Receipt
+    // tab's own header/footer/TRN/VAT-summary config instead. Computed here
+    // (not hoisted to the caller) because `full` — and therefore its tax
+    // total — is only known once the customerName override above is applied.
+    // Read BOTH field names: a round-tripped backend invoice carries `taxTotal`
+    // (SalesInvoice entity), while a live cart/draft object carries `tax`. Reading
+    // only `full.tax` yielded NaN>0=false on every posted invoice, so the real
+    // print/reprint always fell back to the POS Receipt tab config regardless of
+    // tax — diverging from the checkout preview (which reads currentInvoice.tax)
+    // and from buildPosPrintData/the A4 sites (which already read taxTotal).
+    const hasTax = Number(full.taxTotal ?? full.tax ?? 0) > 0;
+    // Credit/Account Balance toggle is per-sub-tab too (POS Receipt tab's
+    // tplReceiptShowBankDetails vs Tax Invoice tab's tplInvoiceShowBankDetails) —
+    // same rule as activeShowLogo etc. below. Previously this always read the
+    // Tax Invoice tab's toggle even for a no-tax POS Receipt print, so enabling
+    // "Credit Balance" on the POS Receipt tab never showed up at checkout/print.
+    const resolvedShowCreditBalance = showCreditBalanceOverride != null
+      ? showCreditBalanceOverride
+      : (hasTax ? tplInvoiceShowBankDetails : tplReceiptShowBankDetails);
+    const activeHeader = hasTax ? tplInvoiceHeader : tplReceiptHeader;
+    const activeHeaderAr = hasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr;
+    const activeFooter = hasTax ? tplInvoiceFooter : tplReceiptFooter;
+    // A no-tax sale never shows TRN/VAT summary, regardless of the (disabled)
+    // POS Receipt tab toggle state — these aren't just defaulted off, they're
+    // structurally irrelevant once hasTax is false, so force them here rather
+    // than trusting whatever tplReceiptShowTrn/tplReceiptColVatAmt happen to hold.
+    const activeShowTrn = hasTax ? tplInvoiceShowTrn : false;
+    const activeShowVatSummary = hasTax ? tplInvoiceColVatAmt : false;
+    const activeShowFooterText = hasTax ? tplInvoiceShowTerms : tplReceiptShowTerms;
+    const activeShowLogo = hasTax ? tplInvoiceShowLogo : tplReceiptShowLogo;
+    const activeShowCompanyDetails = hasTax ? tplInvoiceShowCompanyDetails : tplReceiptShowCompanyDetails;
+    const activeShowCustomerDetails = hasTax ? tplInvoiceShowCustomerDetails : tplReceiptShowCustomerDetails;
+    const activeShowQRCode = hasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
+    const activeShowPaymentDetails = hasTax ? tplInvoiceColDiscount : tplReceiptColDiscount;
+    const activeShowLoyaltyPoints = hasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
+    const activeT2 = hasTax
+      ? {
+          hasTax: true,
+          showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
+          showArabic: t2InvoiceShowArabic, showCustomerDetails: t2InvoiceShowCustomerDetails,
+          showAccountBalance: t2InvoiceShowAccountBalance, showDelivery: t2InvoiceShowDelivery,
+          showVatSummary: t2InvoiceShowVatSummary, showPaymentDetails: t2InvoiceShowPaymentDetails,
+          showLoyalty: t2InvoiceShowLoyalty, showQRCode: t2InvoiceShowQRCode,
+          showFooterText: t2InvoiceShowFooterText, showBarcode: t2InvoiceShowBarcode,
+        }
+      : {
+          // hasTax:false drops ALL tax content (Taxable/VAT rows, per-line VAT
+          // label, Customer TRN, VAT summary) in both the canvas (ESC/POS) and
+          // HTML renderers. showTrn/showVatSummary also forced off — see
+          // activeShowTrn note above; same rule applies to Template 2's no-tax path.
+          hasTax: false,
+          showLogo: t2ReceiptShowLogo, showCompanyDetails: t2ReceiptShowCompanyDetails, showTrn: false,
+          showArabic: t2ReceiptShowArabic, showCustomerDetails: t2ReceiptShowCustomerDetails,
+          showAccountBalance: t2ReceiptShowAccountBalance, showDelivery: t2ReceiptShowDelivery,
+          showVatSummary: false, showPaymentDetails: t2ReceiptShowPaymentDetails,
+          showLoyalty: t2ReceiptShowLoyalty, showQRCode: t2ReceiptShowQRCode,
+          showFooterText: t2ReceiptShowFooterText, showBarcode: t2ReceiptShowBarcode,
+        };
+    const qrContent = buildQrContent(buildPosPrintData(full, activeFooter), tplOutletName);
 
     // The QR *image* (for the HTML/browser path) and the ESC/POS build (which only
     // needs the raw qrContent *string* — the printer renders its own QR natively, and
@@ -3107,35 +3603,38 @@ export default function POSSales() {
     // concurrently instead of one-after-the-other roughly halves the wait before the
     // preferred, fastest print path (ESC/POS, no OS print dialog at all) is ready.
     // QR image is needed when the ACTIVE template's QR toggle is on — Template 2
-    // has its own (t2ShowQRCode); Template 1 uses the invoice toggle.
-    const qrToggleOn = receiptTemplateId === 'billbull-ar' ? t2ShowQRCode : tplInvoiceShowQRCode;
+    // has its own (per sub-tab); Template 1 uses the invoice/receipt toggle.
+    const qrToggleOn = receiptTemplateId === 'billbull-ar' ? activeT2.showQRCode : activeShowQRCode;
     const qrDataUrlPromise = qrToggleOn
       ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
       : Promise.resolve(null);
     const escPosOpts = {
       companyName: tplOutletName,
       trn: tplOutletTrn,
-      header: tplInvoiceHeader,
-      footer: tplInvoiceFooter,
-      showTrn: tplInvoiceShowTrn,
+      header: activeHeader,
+      footer: activeFooter,
+      showTrn: activeShowTrn,
       isReprint,
       logoDataUrl: tplLogoDataUrl,
-      showLogo: tplInvoiceShowLogo,
-      showCompanyDetails: tplInvoiceShowCompanyDetails,
+      showLogo: activeShowLogo,
+      showCompanyDetails: activeShowCompanyDetails,
       outletAddress: tplOutletAddress,
       outletPhone: tplOutletPhone,
       showServiceCharge: tplInvoiceShowGrandTotalBanner,
-      showVatSummary: tplInvoiceColVatAmt,
-      showPaymentDetails: tplInvoiceColDiscount,
-      showQRCode: tplInvoiceShowQRCode,
-      qrContent: tplInvoiceShowQRCode ? qrContent : null,
+      showVatSummary: activeShowVatSummary,
+      // No-tax sale ⇒ suppress ALL tax content on the ESC/POS (raw thermal) path
+      // too, matching the HTML preview and text fallback.
+      hasTax,
+      showPaymentDetails: activeShowPaymentDetails,
+      showQRCode: activeShowQRCode,
+      qrContent: activeShowQRCode ? qrContent : null,
       // Social/stamp image + placement — same values the HTML preview below gets,
       // so a merchant-uploaded social image prints (and suppresses the QR) on the
       // ESC/POS path too, honouring the configured before/after-footer placement.
-      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
+      stampDataUrl: activeShowQRCode ? tplStampDataUrl : null,
       qrPlacement: tplInvoiceQrPlacement,
-      showCustomerDetails: tplInvoiceShowCustomerDetails,
-      showFooterText: tplInvoiceShowTerms,
+      showCustomerDetails: activeShowCustomerDetails,
+      showFooterText: activeShowFooterText,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
@@ -3144,7 +3643,7 @@ export default function POSSales() {
       branchName: full.branchName || currentTerminal?.branchName || currentSession?.branchName || '',
       saleType: full.salesType || full.saleType || '',
       showBarcode: tplReceiptShowBarcode !== false,
-      showLoyaltyPoints: tplInvoiceShowNotes,
+      showLoyaltyPoints: activeShowLoyaltyPoints,
       deliveryAddress: full.shippingAddress || null,
       cashGiven,
       changeAmount,
@@ -3165,38 +3664,40 @@ export default function POSSales() {
     };
 
     // Template 2 (Arabic/bilingual) carries its OWN independent Show/Hide
-    // toggles. When it's the active template, override the shared opts bag's
-    // toggle flags with the t2* values so the real checkout print honours the
-    // Template 2 designer settings — not Template 1's invoice toggles. These
-    // keys are consumed by the bilingual canvas renderer (ESC/POS) and, below,
-    // by mapToTemplate2Data (HTML fallback).
-    const t2Toggles = {
-      showLogo: t2ShowLogo, showCompanyDetails: t2ShowCompanyDetails, showTrn: t2ShowTrn,
-      showArabic: t2ShowArabic, showCustomerDetails: t2ShowCustomerDetails,
-      showAccountBalance: t2ShowAccountBalance, showDelivery: t2ShowDelivery,
-      showVatSummary: t2ShowVatSummary, showPaymentDetails: t2ShowPaymentDetails,
-      showLoyalty: t2ShowLoyalty, showQRCode: t2ShowQRCode,
-      showFooterText: t2ShowFooterText, showBarcode: t2ShowBarcode,
-    };
+    // toggles, now split per sub-tab (activeT2 already resolved above by
+    // hasTax). When it's the active template, override the shared opts bag's
+    // toggle flags with the activeT2 values so the real checkout print honours
+    // the Template 2 designer settings for the sub-tab that applies to THIS
+    // invoice — not always the Tax Invoice tab's. These keys are consumed by
+    // the bilingual canvas renderer (ESC/POS) and, below, by mapToTemplate2Data
+    // (HTML fallback).
+    const t2Toggles = activeT2;
     if (receiptTemplateId === 'billbull-ar') {
-      escPosOpts.showLogo = t2ShowLogo;
-      escPosOpts.showCompanyDetails = t2ShowCompanyDetails;
-      escPosOpts.showTrn = t2ShowTrn;
-      escPosOpts.showArabic = t2ShowArabic;
-      escPosOpts.showCustomerDetails = t2ShowCustomerDetails;
-      escPosOpts.showVatSummary = t2ShowVatSummary;
-      escPosOpts.showPaymentDetails = t2ShowPaymentDetails;
-      escPosOpts.showLoyaltyPoints = t2ShowLoyalty;
-      escPosOpts.showDelivery = t2ShowDelivery;
-      escPosOpts.showFooterText = t2ShowFooterText;
-      escPosOpts.showBarcode = t2ShowBarcode;
-      escPosOpts.showQRCode = t2ShowQRCode;
-      escPosOpts.qrContent = t2ShowQRCode ? qrContent : null;
-      escPosOpts.stampDataUrl = t2ShowQRCode ? tplStampDataUrl : null;
-      // Account Balance section is data-gated (showCreditBalance) — respect the
-      // T2 toggle on top of the existing credit-block resolution.
-      escPosOpts.showCreditBalance = resolvedShowCreditBalance && t2ShowAccountBalance;
+      escPosOpts.showLogo = activeT2.showLogo;
+      escPosOpts.showCompanyDetails = activeT2.showCompanyDetails;
+      escPosOpts.showTrn = activeT2.showTrn;
+      escPosOpts.showArabic = activeT2.showArabic;
+      escPosOpts.showCustomerDetails = activeT2.showCustomerDetails;
+      escPosOpts.showVatSummary = activeT2.showVatSummary;
+      escPosOpts.showPaymentDetails = activeT2.showPaymentDetails;
+      escPosOpts.showLoyaltyPoints = activeT2.showLoyalty;
+      escPosOpts.showDelivery = activeT2.showDelivery;
+      escPosOpts.showFooterText = activeT2.showFooterText;
+      escPosOpts.showBarcode = activeT2.showBarcode;
+      escPosOpts.showQRCode = activeT2.showQRCode;
+      escPosOpts.qrContent = activeT2.showQRCode ? qrContent : null;
+      escPosOpts.stampDataUrl = activeT2.showQRCode ? tplStampDataUrl : null;
+      // Template 2 has its own independent Account Balance toggle — don't AND it
+      // with Template 1's (unrelated) resolvedShowCreditBalance, or enabling ONLY
+      // the Template 2 toggle (leaving Template 1's off, its default) silently
+      // suppresses the section again.
+      escPosOpts.showCreditBalance = activeT2.showAccountBalance;
     }
+    // documentTitle/documentTitleAr drive Template 2's canvas (ESC/POS) title;
+    // Template 1 ignores these keys (it reads `header` instead), so it's safe
+    // to always set them on the shared opts bag.
+    escPosOpts.documentTitle = activeHeader;
+    escPosOpts.documentTitleAr = activeHeaderAr;
     // Whichever template is SAVED in Print Templates (Template 1 "native" vs
     // Template 2 "billbull-ar") drives the actual checkout print — not just the
     // designer's own Test Print. Both builders share the same
@@ -3222,9 +3723,11 @@ export default function POSSales() {
             // an uploaded stamp replaces the QR (same rule as Template 1). Kept
             // separate so the component prints a genuine verifiable QR, not the
             // stamp image mislabelled as a QR. Gated by Template 2's own QR toggle.
-            qrDataUrl: t2ShowQRCode && !tplStampDataUrl ? qrDataUrl : null,
-            stampDataUrl: t2ShowQRCode ? tplStampDataUrl : null,
-            footerText: tplInvoiceFooter,
+            qrDataUrl: activeT2.showQRCode && !tplStampDataUrl ? qrDataUrl : null,
+            stampDataUrl: activeT2.showQRCode ? tplStampDataUrl : null,
+            footerText: activeFooter,
+            titleEn: activeHeader,
+            titleAr: activeHeaderAr,
           },
           mapInvoiceToTxn(full, {
             ...escPosOpts,
@@ -3238,25 +3741,31 @@ export default function POSSales() {
       : buildThermalReceiptHtml(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
-      header: tplInvoiceHeader,
-      footer: tplInvoiceFooter,
-      showTrn: tplInvoiceShowTrn,
+      // documentTitle is the bold receipt title (defaults to 'TAX INVOICE'
+      // otherwise); pass activeHeader there instead of `header` so a no-tax
+      // sale's "SALES INVOICE" replaces it instead of printing underneath it.
+      documentTitle: activeHeader,
+      footer: activeFooter,
+      showTrn: activeShowTrn,
       isReprint,
       zatcaQrDataUrl: qrDataUrl,
       logoDataUrl: tplLogoDataUrl,
-      stampDataUrl: tplInvoiceShowQRCode ? tplStampDataUrl : null,
-      showLogo: tplInvoiceShowLogo,
-      showCompanyDetails: tplInvoiceShowCompanyDetails,
+      stampDataUrl: activeShowQRCode ? tplStampDataUrl : null,
+      showLogo: activeShowLogo,
+      showCompanyDetails: activeShowCompanyDetails,
       outletAddress: tplOutletAddress,
       outletPhone: tplOutletPhone,
       showServiceCharge: tplInvoiceShowGrandTotalBanner,
-      showVatSummary: tplInvoiceColVatAmt,
-      showPaymentDetails: tplInvoiceColDiscount,
-      showQRCode: tplInvoiceShowQRCode,
-      showCustomerDetails: tplInvoiceShowCustomerDetails,
-      showLoyaltyPoints: tplInvoiceShowNotes,
+      showVatSummary: activeShowVatSummary,
+      // No-tax sale ⇒ suppress ALL tax content (per-line VAT%, Taxable Amount
+      // row, VAT summary row) so the receipt reads as a plain Sales Invoice.
+      hasTax,
+      showPaymentDetails: activeShowPaymentDetails,
+      showQRCode: activeShowQRCode,
+      showCustomerDetails: activeShowCustomerDetails,
+      showLoyaltyPoints: activeShowLoyaltyPoints,
       showCreditBalance: resolvedShowCreditBalance,
-      showFooterText: tplInvoiceShowTerms,
+      showFooterText: activeShowFooterText,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
@@ -3281,9 +3790,9 @@ export default function POSSales() {
     const text = buildThermalReceiptText(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
-      header: tplInvoiceHeader,
-      footer: tplInvoiceFooter,
-      showTrn: tplInvoiceShowTrn,
+      documentTitle: activeHeader,
+      footer: activeFooter,
+      showTrn: activeShowTrn,
       cashierName: cashierNameOverride || cashierDisplayName,
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
@@ -3294,20 +3803,31 @@ export default function POSSales() {
       shippingCharge,
       customerPhone,
       customerEmail,
-      showCustomerDetails: tplInvoiceShowCustomerDetails,
+      showCustomerDetails: activeShowCustomerDetails,
+      // Match the HTML/ESC-POS path: no tax content on a no-tax sale.
+      hasTax,
       currency: activeCurrency,
     });
     return { html, text, escPosBase64 };
   }, [
     activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
-    tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoicePaper,
+    tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoicePaper,
     tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails, tplInvoiceShowCustomerDetails,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
     tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl, receiptTemplateId,
     tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
+    tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
+    tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
+    tplReceiptColDiscount, tplReceiptShowNotes,
     t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails,
+    t2ReceiptShowAccountBalance, t2ReceiptShowDelivery, t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails,
+    t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails,
+    t2InvoiceShowAccountBalance, t2InvoiceShowDelivery, t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails,
+    t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
   ]);
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
@@ -3594,9 +4114,9 @@ export default function POSSales() {
 
           try {
             if (printPaper === 'A4') {
-              const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter);
-              const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+              const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(savedInvoice?.taxTotal) > 0);
+              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, Number(savedInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+              const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
               printHtml(await generatePrintHtmlAsync(template, data, options));
               openCashDrawer('RECEIPT_PRINT');
             } else {
@@ -3746,11 +4266,22 @@ export default function POSSales() {
     try {
       const inv = reprintInvoices.find(i => i.invoiceNumber === reprintSelectedInvoice);
       if (inv?.id) {
-        const full = await getSalesInvoiceById(inv.id);
-        const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+        // reprintPosReceipt (not getSalesInvoiceById) both fetches the invoice AND
+        // logs a RECEIPT_REPRINTED audit entry + bumps reprintCount/lastReprintedBy/At
+        // server-side, so the Audit / Reprint History panel reflects reality.
+        const reprintResult = await reprintPosReceipt(inv.id, {
+          sessionId: currentSession?.id,
+          terminalId: currentTerminal?.terminalId,
+          branchId: currentTerminal?.branchId || currentSession?.branchId,
+        });
+        const full = reprintResult.invoice;
+        setReprintInvoices(prev => prev.map(i => i.id === inv.id
+          ? { ...i, reprintCount: full.reprintCount, lastReprintedBy: full.lastReprintedBy, lastReprintedAt: full.lastReprintedAt }
+          : i));
+        const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
-          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-          const data = buildPosPrintData(full, tplInvoiceFooter);
+          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
+          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
           const html = await generatePrintHtmlAsync(template, data, companyOptions);
           if (reprintPrintMode === 'pdf') {
             const filename = `${full.invoiceNumber || reprintSelectedInvoice}.pdf`;
@@ -4786,6 +5317,33 @@ export default function POSSales() {
           </CardContent>
         </Card>
 
+        {/* Live Session Tile — quick-view popup of current session sales/cash figures */}
+        <Card
+          className={`${posDashboardTileClass}${isSessionActive ? '' : ' opacity-50 cursor-not-allowed'}`}
+          onClick={() => {
+            if (!isSessionActive) return;
+            setShowLiveSessionDialog(true);
+            loadXReport();
+          }}
+        >
+          <CardHeader>
+            <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg w-fit">
+              <Activity className="h-8 w-8 text-white" />
+            </div>
+            <CardTitle className="mt-4">Live Session</CardTitle>
+            <CardDescription>
+              Quick view of current session values
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-600">
+              {isSessionActive
+                ? 'Sales, cash drop, cash out & drawer total at a glance'
+                : 'Start a session to view live session values'}
+            </p>
+          </CardContent>
+        </Card>
+
         {/* BillBull Console Tile */}
         <Card
           className={posDashboardTileClass}
@@ -5642,8 +6200,22 @@ export default function POSSales() {
     }
   };
 
-  const handleZReportPrint = () => {
-    if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
+  // ERP rule: Z-Report print/PDF/Excel export requires the business day to already be
+  // closed (matches the backend gate in PosSessionController#checkZReportPrintable).
+  const assertZReportPrintable = async () => {
+    if (!zReportData) { alert('Please generate the Z-Report first.'); return false; }
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    try {
+      await checkPosZReportPrintable(branchId, zReportDate);
+      return true;
+    } catch (err) {
+      alert(err?.response?.data?.message || 'Z-Report can only be printed or exported after the business day is closed.');
+      return false;
+    }
+  };
+
+  const handleZReportPrint = async () => {
+    if (!(await assertZReportPrintable())) return;
     const vm = buildZReportViewModel();
     const cp = reportCompanyProfile();
     printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: zReportDate }] });
@@ -5659,7 +6231,7 @@ export default function POSSales() {
   };
 
   const handleZReportExportPDF = async () => {
-    if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
+    if (!(await assertZReportPrintable())) return;
     const vm = buildZReportViewModel();
     const cp = reportCompanyProfile();
     // PDF export always uses the A4 template (a thermal roll PDF is not useful here).
@@ -5672,7 +6244,7 @@ export default function POSSales() {
   };
 
   const handleZReportExportExcel = async () => {
-    if (!zReportData) { alert('Please generate the Z-Report first.'); return; }
+    if (!(await assertZReportPrintable())) return;
     const rows = buildZReportExcelSections();
     const cols = [
       { header: 'Section', key: 'Section', width: 22 },
@@ -5689,7 +6261,23 @@ export default function POSSales() {
     });
   };
 
-  const handleXReportPrint = () => {
+  // ERP rule: X-Report print/PDF/Excel export requires the session to already be closed
+  // (matches the backend gate in PosSessionController#checkXReportPrintable). Viewing the
+  // report on screen — Preview, and the report page itself — stays available while open.
+  const assertXReportPrintable = async () => {
+    const sessId = xReportData?.session?.id || currentSession?.id;
+    if (!sessId) { alert('No session to report on.'); return false; }
+    try {
+      await checkPosXReportPrintable(sessId);
+      return true;
+    } catch (err) {
+      alert(err?.response?.data?.message || 'X-Report can only be printed or exported after the session is closed.');
+      return false;
+    }
+  };
+
+  const handleXReportPrint = async () => {
+    if (!(await assertXReportPrintable())) return;
     const vm = buildXReportViewModel();
     const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
@@ -5706,6 +6294,7 @@ export default function POSSales() {
   };
 
   const handleXReportExportPDF = async () => {
+    if (!(await assertXReportPrintable())) return;
     const vm = buildXReportViewModel();
     const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
@@ -5719,6 +6308,7 @@ export default function POSSales() {
   };
 
   const handleXReportExportExcel = async () => {
+    if (!(await assertXReportPrintable())) return;
     const rows = buildXReportExcelRows();
     const cols = [
       { header: 'Section', key: 'Section', width: 22 },
@@ -5914,9 +6504,9 @@ export default function POSSales() {
                 <option value="58mm">Thermal 58mm</option>
               </select>
               <button onClick={handleZReportPreview} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-              <button onClick={handleZReportPrint} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
-              <button onClick={handleZReportExportPDF} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-              <button onClick={handleZReportExportExcel} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+              <button onClick={handleZReportPrint} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to print the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={handleZReportExportPDF} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+              <button onClick={handleZReportExportExcel} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
               <button
                 onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
                 disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
@@ -6342,9 +6932,9 @@ export default function POSSales() {
                 <option value="58mm">Thermal 58mm</option>
               </select>
               <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-              <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-              <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
-              <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={handleXReportExportPDF} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+              <button onClick={handleXReportExportExcel} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+              <button onClick={handleXReportPrint} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to print the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
               <button onClick={loadXReport} disabled={xReportLoading} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
                 {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
               </button>
@@ -6908,9 +7498,9 @@ export default function POSSales() {
           <button onClick={() => setCurrentView('dashboard')} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3 w-3 rotate-180" />Back to POS</button>
           <div className="flex items-center gap-2">
             <button onClick={handleXReportPreview} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Eye className="h-3 w-3" />Preview Report</button>
-            <button onClick={handleXReportExportPDF} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-            <button onClick={handleXReportExportExcel} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
-            <button onClick={handleXReportPrint} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
+            <button onClick={handleXReportExportPDF} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
+            <button onClick={handleXReportExportExcel} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+            <button onClick={handleXReportPrint} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to print the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
             {!isBalanced && actualCash > 0 ? (
               <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
             ) : (
@@ -6935,11 +7525,11 @@ export default function POSSales() {
     setCurrentView, consoleTab, setConsoleTab, settingsSaving, setSettingsSaving, posSettings, setPosSettings, settingsSavedFlash, setSettingsSavedFlash,
     tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone,
     tplLogoDataUrl, setTplLogoDataUrl, tplStampDataUrl, setTplStampDataUrl,
-    tplReceiptHeader, setTplReceiptHeader, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
+    tplReceiptHeader, setTplReceiptHeader, tplReceiptHeaderAr, setTplReceiptHeaderAr, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
     tplReceiptShowLogo, tplReceiptShowTrn, tplReceiptShowStamp, tplReceiptShowBarcode, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails,
     tplReceiptColItemCode, tplReceiptColItemImage, tplReceiptColBatchNo, tplReceiptColDiscount, tplReceiptColVatPct, tplReceiptColVatAmt,
     tplReceiptShowGrandTotalBanner, tplReceiptShowTerms, tplReceiptShowNotes, tplReceiptShowBankDetails, tplReceiptShowQRCode, tplReceiptShowSignature,
-    tplInvoiceHeader, setTplInvoiceHeader, tplInvoiceFooter, setTplInvoiceFooter, tplInvoicePaper, setTplInvoicePaper,
+    tplInvoiceHeader, setTplInvoiceHeader, tplInvoiceHeaderAr, setTplInvoiceHeaderAr, tplInvoiceFooter, setTplInvoiceFooter, tplInvoicePaper, setTplInvoicePaper,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails, tplInvoiceShowStamp, tplInvoiceShowSignature,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode,
     tplInvoiceQrPlacement, setTplInvoiceQrPlacement,
@@ -6958,6 +7548,7 @@ export default function POSSales() {
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
+    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
@@ -6967,6 +7558,17 @@ export default function POSSales() {
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
     setT2ShowLogo, setT2ShowCompanyDetails, setT2ShowTrn, setT2ShowArabic, setT2ShowCustomerDetails, setT2ShowAccountBalance, setT2ShowDelivery,
     setT2ShowVatSummary, setT2ShowPaymentDetails, setT2ShowLoyalty, setT2ShowQRCode, setT2ShowFooterText, setT2ShowBarcode,
+    // Template 2 toggles split per sub-tab (POS Receipt / Tax Invoice) — drive the
+    // real checkout print (see buildThermalReceiptArtifacts' hasTax routing); the
+    // designer UI binds these when Template 2 is active on each respective tab.
+    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails, t2ReceiptShowAccountBalance, t2ReceiptShowDelivery,
+    t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails, t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
+    setT2ReceiptShowLogo, setT2ReceiptShowCompanyDetails, setT2ReceiptShowTrn, setT2ReceiptShowArabic, setT2ReceiptShowCustomerDetails, setT2ReceiptShowAccountBalance, setT2ReceiptShowDelivery,
+    setT2ReceiptShowVatSummary, setT2ReceiptShowPaymentDetails, setT2ReceiptShowLoyalty, setT2ReceiptShowQRCode, setT2ReceiptShowFooterText, setT2ReceiptShowBarcode,
+    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails, t2InvoiceShowAccountBalance, t2InvoiceShowDelivery,
+    t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails, t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
+    setT2InvoiceShowLogo, setT2InvoiceShowCompanyDetails, setT2InvoiceShowTrn, setT2InvoiceShowArabic, setT2InvoiceShowCustomerDetails, setT2InvoiceShowAccountBalance, setT2InvoiceShowDelivery,
+    setT2InvoiceShowVatSummary, setT2InvoiceShowPaymentDetails, setT2InvoiceShowLoyalty, setT2InvoiceShowQRCode, setT2InvoiceShowFooterText, setT2InvoiceShowBarcode,
     editingTerminalId, terminalsLoading, terminalSaving,
   };
 
@@ -7080,7 +7682,7 @@ export default function POSSales() {
       setQuickProductError(null);
 
       if (!overrideDuplicate) {
-        const duplicates = await validateDuplicateProduct({
+        const duplicates = await validateDuplicateProductFromPos({
           name: quickProductForm.name,
           code: quickProductForm.code,
           sku: quickProductForm.sku,
@@ -7106,25 +7708,25 @@ export default function POSSales() {
           code: quickProductForm.code || `PRD-${Date.now().toString().slice(-6)}`,
           sku: quickProductForm.sku || `SKU-${Date.now().toString().slice(-6)}`,
           category: quickProductForm.category || 'General',
-          status: quickProductForm.status === 'Active' ? 'ACTIVE' : 'DRAFT',
+          status: 'ACTIVE',
           productType: 'STOCK',
-          isBatch: quickProductForm.isBatch,
-          isSerial: quickProductForm.isSerial,
-          isDiscountAllowed: quickProductForm.isDiscountAllowed,
+          isBatch: false,
+          isSerial: false,
+          isDiscountAllowed: true,
           availableInPos: true,
           detailedDesc: quickProductForm.description,
           brand: { id: 1 }
         },
         pricing: {
-          retailPrice: parseFloat(quickProductForm.salesPrice) || 0,
-          cost: parseFloat(quickProductForm.costPrice) || 0,
+          retailPrice: parseFloat(quickProductForm.sellingPrice) || 0,
+          cost: parseFloat(quickProductForm.purchasePrice) || 0,
           purchasePrice: parseFloat(quickProductForm.purchasePrice) || 0
         },
         inventory: {
-          openingStock: parseFloat(quickProductForm.openingStock) || 0,
-          minStock: parseFloat(quickProductForm.lowStockAlert) || 0,
-          trackInventory: quickProductForm.trackInventory,
-          allowNegativeStock: quickProductForm.allowNegativeStock,
+          openingStock: parseFloat(quickProductForm.initialStock) || 0,
+          minStock: parseFloat(quickProductForm.alertQuantity) || 0,
+          trackInventory: quickProductForm.trackInventory || false,
+          allowNegativeStock: true,
           defaultUnit: { id: defaultUnit.id },
           packings: [
             {
@@ -7135,8 +7737,8 @@ export default function POSSales() {
               isSale: true,
               isPurchase: true,
               isLPO: false,
-              cost: parseFloat(quickProductForm.costPrice) || 0,
-              price: parseFloat(quickProductForm.salesPrice) || 0,
+              cost: parseFloat(quickProductForm.purchasePrice) || 0,
+              price: parseFloat(quickProductForm.sellingPrice) || 0,
               barcode: quickProductForm.barcode || ''
             }
           ]
@@ -7145,12 +7747,13 @@ export default function POSSales() {
 
       formData.append('data', JSON.stringify(productReq));
 
-      const newProdRes = await createProduct(formData);
+      const newProdRes = await createProductFromPos(formData);
       await loadPosProducts(0, false);
 
       if (newProdRes && newProdRes.product) {
-        addToInvoice(newProdRes.product);
-        showFeedback('success', `${newProdRes.product.name} created and added to cart!`);
+        const mappedProduct = mapPosProductAggregateItem(newProdRes);
+        addToInvoice(mappedProduct);
+        showFeedback('success', `${mappedProduct.name} created and added to cart!`);
       }
 
       setShowQuickProductModal(false);
@@ -7164,17 +7767,18 @@ export default function POSSales() {
   const touchScreenProps = {
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
     showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
-    setCurrentView, currentSession, sessionId,
+    setCurrentView, currentSession, sessionId, posSettings,
     currentInvoice, currentInvoiceRef, invoiceCounter,
     posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
     scannerConfig,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
-    filteredCustomerOptions, customerHistory, customerHistoryLoading,
+    filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
     addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
@@ -7203,7 +7807,8 @@ export default function POSSales() {
       } catch { setOrdersList([]); } finally { setOrdersListLoading(false); }
     },
     setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,
-    setPriceCheckResult, setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
+    setPriceCheckResult, setShowProductSearch, setProductSearchQuery, setProductSearchResults,
+    setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
     setShowSerialBatch, setSerialBatchQuery, setSerialBatchResult, setSerialBatchSubView,
     setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,
     setShowServiceRepair, setServiceView, setShowReturn, setReturnStep, setReturnInvoiceQuery,
@@ -7217,7 +7822,7 @@ export default function POSSales() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F7F7FA]">
+    <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
       {/* ─── IDLE LOCK OVERLAY ─── */}
       {isIdleLocked && (
         <div className="fixed inset-0 z-[600] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4">
@@ -7925,9 +8530,9 @@ export default function POSSales() {
                       try {
                         const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
                         if (tplInvoicePaper === 'A4') {
-                          const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-                          const data = buildPosPrintData(full, tplInvoiceFooter);
-                          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+                          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
+                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+                          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
                           // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
@@ -8064,12 +8669,25 @@ export default function POSSales() {
         const alphaRows = [['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'], ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'], ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '⌫']];
 
         return (
-          <div className="fixed inset-0 z-[60] flex bg-[#1a1f2e]">
+          <div className="fixed inset-0 z-[60] flex flex-col lg:flex-row bg-[#1a1f2e]">
 
             {/* ══ LEFT: Invoice Preview ════════════════════════════════ */}
-            <div className="w-[280px] lg:w-[340px] xl:w-[400px] shrink-0 flex flex-col bg-white border-r-4 border-[#F5C742]">
-              {checkoutPreviewBlobUrl ? (
-                <ThermalScaledPreview src={checkoutPreviewBlobUrl} />
+            <div className={`w-full shrink-0 flex flex-col max-h-[40vh] lg:max-h-none min-h-0 bg-white border-b-4 lg:border-b-0 lg:border-r-4 border-[#F5C742] transition-all duration-300 ${
+              showA4CheckoutPreview ? 'lg:w-[400px] xl:w-[500px] 2xl:w-[600px]' :
+              'lg:w-[280px] xl:w-[340px] 2xl:w-[400px]'
+            }`}>
+              {showA4CheckoutPreview ? (
+                checkoutA4Html ? (
+                  <A4ScaledPreview src={checkoutA4BlobUrl} fillWidth />
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
+                    <ShoppingCart className="h-10 w-10 mb-2" />
+                    <p className="text-xs">Add items to preview</p>
+                  </div>
+                )
+              ) : checkoutPreviewBlobUrl ? (
+                // User request: always use 80mm print preview in the checkout window.
+                <ThermalScaledPreview src={checkoutPreviewBlobUrl} paperSize="80mm" />
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
                   <ShoppingCart className="h-10 w-10 mb-2" />
@@ -8079,10 +8697,10 @@ export default function POSSales() {
             </div>
 
             {/* ══ RIGHT: Payment & Settlement ═══════════════════════ */}
-            <div className="flex-1 flex flex-col bg-[#F7F7FA] overflow-hidden">
+            <div className="flex-1 flex flex-col bg-[#F7F7FA] overflow-hidden min-h-0">
 
               {/* Right header */}
-              <div className="bg-[#1E293B] px-6 py-3.5 flex items-center justify-between shrink-0">
+              <div className="bg-[#1E293B] px-3 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-[#F5C742] flex items-center justify-center">
                     <CreditCard className="h-5 w-5 text-[#1E293B]" />
@@ -8169,26 +8787,21 @@ export default function POSSales() {
                       {/* Smart dynamic tender buttons based on invoice amount */}
                       <div className="flex flex-wrap gap-1.5">
                         {(() => {
-                          // Generate smart denominations based on the amount actually due now
+                          // Generate smart denominations based on the amount actually due now.
+                          // Every suggestion must be >= total (equal only for "Exact"); round-ups
+                          // snap to practical AED note denominations (50/100/200/500/1000), plus
+                          // one extra round-1000 note further out so a couple of real choices show up.
                           const total = effectiveDue;
-                          const rounds = [];
-                          // Exact total
-                          rounds.push(total);
-                          // Next 5 AED round-up
-                          const r5 = Math.ceil(total / 5) * 5;
-                          if (r5 !== total) rounds.push(r5);
-                          // Next 10 AED round-up
-                          const r10 = Math.ceil(total / 10) * 10;
-                          if (!rounds.includes(r10)) rounds.push(r10);
-                          // Next 50 AED round-up
-                          const r50 = Math.ceil(total / 50) * 50;
-                          if (!rounds.includes(r50)) rounds.push(r50);
-                          // Next 100 AED round-up
-                          const r100 = Math.ceil(total / 100) * 100;
-                          if (!rounds.includes(r100)) rounds.push(r100);
-                          // Standard 500, 1000 only if applicable
-                          if (total > 100 && !rounds.includes(500)) rounds.push(500);
-                          if (total > 400 && !rounds.includes(1000)) rounds.push(1000);
+                          const rounds = [total];
+                          for (const step of [50, 100, 200, 500, 1000]) {
+                            const rounded = Math.ceil(total / step) * step;
+                            if (rounded > total && !rounds.includes(rounded)) rounds.push(rounded);
+                          }
+                          const nearestAbove = Math.min(...rounds.filter(r => r > total));
+                          const nextThousand = Math.ceil((nearestAbove + 1) / 1000) * 1000;
+                          if (nextThousand > nearestAbove && !rounds.includes(nextThousand)) rounds.push(nextThousand);
+                          // Always offer at least one note above the exact amount, even for tiny totals.
+                          if (rounds.length === 1) rounds.push(Math.ceil((total + 1) / 50) * 50);
                           return [...new Set(rounds)].sort((a, b) => a - b).slice(0, 6).map(d => (
                             <button key={d} type="button" onClick={() => { setTenderedAmount(d === total ? String(total.toFixed(2)) : String(d)); setCheckoutKeypadTarget('tender'); }}
                               className={`px-3 py-1.5 text-sm font-bold rounded-lg border-2 transition-all ${parseFloat(tenderedAmount) === d ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-[#F5C742]/40 text-gray-700 hover:bg-[#F5C742]/10'}`}>
@@ -8336,7 +8949,7 @@ export default function POSSales() {
                       {creditCustomerData && (
                         <div className="space-y-3 border-t border-gray-100 pt-3">
                           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Received Now (optional)</p>
-                          <div className="grid grid-cols-4 gap-2">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                             {['Cash', 'Card', 'Online', 'Bank'].map(m => (
                               <button key={m} type="button"
                                 onClick={() => setCheckoutCreditReceivedMode(prev => prev === m ? '' : m)}
@@ -8675,7 +9288,7 @@ export default function POSSales() {
               </div>
 
               {/* ── Settlement footer ── */}
-              <div className="bg-white border-t-2 border-[#F5C742]/30 px-5 py-4 shrink-0">
+              <div className="bg-white border-t-2 border-[#F5C742]/30 px-3 sm:px-5 py-4 shrink-0">
                 {/* Summary row */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                   <div className="bg-[#F5C742]/10 border border-[#F5C742]/40 rounded-xl p-3 text-center">
@@ -8713,16 +9326,16 @@ export default function POSSales() {
                   </div>
                 )}
                 {/* Action buttons */}
-                <div className="flex gap-3">
+                <div className="flex gap-2 sm:gap-3">
                   <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
-                    className="flex-none px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
+                    className="flex-none px-3 sm:px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
                   <button type="button" onClick={processPayment} disabled={!canSettle || currentInvoice.items.length === 0 || checkoutLoading}
-                    className={`flex-1 py-3.5 rounded-xl font-black text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 && !checkoutLoading ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+                    className={`flex-1 min-w-0 py-3.5 rounded-xl font-black text-sm sm:text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 && !checkoutLoading ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
                     {checkoutLoading
-                      ? <><div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />Processing...</>
-                      : <><CheckCircle className="h-5 w-5" />Settle Payment · <DirhamSymbol /> {effectiveDue.toFixed(2)}</>
+                      ? <><div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin shrink-0" />Processing...</>
+                      : <><CheckCircle className="h-5 w-5 shrink-0" /><span className="truncate">Settle Payment · <DirhamSymbol /> {effectiveDue.toFixed(2)}</span></>
                     }
                   </button>
                 </div>
@@ -8901,6 +9514,107 @@ export default function POSSales() {
         </DialogContent>
       </Dialog>
 
+      {/* Live Session Quick View — dashboard tile popup showing current session
+          sales/cash figures, sourced from the same X-Report summary the full
+          X-Report page uses so the numbers never disagree. */}
+      <Dialog open={showLiveSessionDialog} onOpenChange={setShowLiveSessionDialog}>
+        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
+          {(() => {
+            const xSummary = xReportData?.summary || {};
+            const sess = xReportData?.session || currentSession;
+            const totalSales = Number(xSummary.totalSales ?? 0);
+            const txCount = Number(xSummary.invoiceCount ?? 0);
+            const openingCash = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
+            const cashSales = Number(xSummary.cashSales ?? 0);
+            const cardSales = Number(xSummary.cardSales ?? 0);
+            const walletSales = Number(xSummary.walletSales ?? 0);
+            const dropIn = Number(xSummary.cashDropIn ?? 0);
+            const dropOut = Number(xSummary.cashDropOut ?? 0);
+            const expectedCash = Number(xSummary.expectedCash ?? (openingCash + cashSales + dropIn - dropOut));
+            const sessionStart = sess?.openedAt ? parseUTCDate(sess.openedAt) : (sess?.startTime ? parseUTCDate(sess.startTime) : null);
+            const diffMin = sessionStart ? Math.floor((sessionNowMs - sessionStart.getTime()) / 60000) : 0;
+            const durH = Math.floor(diffMin / 60);
+            const durM = diffMin % 60;
+            const duration = sessionStart ? (durH > 0 ? `${durH}h ${durM}m` : `${durM}m`) : '—';
+            const loading = xReportLoading || xReportData === null;
+
+            const rows = [
+              { label: "Today's Sales", value: <CurrencyAmount amount={totalSales} />, accent: '#327F74' },
+              { label: 'Transactions', value: txCount, accent: '#6366F1' },
+              { label: 'Cash Sales', value: <CurrencyAmount amount={cashSales} />, accent: '#1E293B' },
+              { label: 'Card Sales', value: <CurrencyAmount amount={cardSales} />, accent: '#1E293B' },
+              { label: 'Wallet Sales', value: <CurrencyAmount amount={walletSales} />, accent: '#1E293B' },
+              { label: 'Opening Cash', value: <CurrencyAmount amount={openingCash} />, accent: '#1E293B' },
+              { label: 'Cash Drop In', value: <CurrencyAmount amount={dropIn} />, accent: '#327F74' },
+              { label: 'Cash Out', value: dropOut > 0 ? <>(<CurrencyAmount amount={dropOut} />)</> : <CurrencyAmount amount={0} />, accent: '#EF4444' },
+              { label: 'Expected Cash in Drawer', value: <CurrencyAmount amount={expectedCash} />, accent: '#F5C742' },
+            ];
+
+            return (
+              <>
+                <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-[#F5C742]/15">
+                        <Activity className="h-5 w-5 text-[#b8920e]" />
+                      </div>
+                      <div>
+                        <h2 className="text-base font-bold text-[#1E293B]">Live Session</h2>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {sess?.id ? `Session #${sess.id}` : 'Current session'} · {duration} elapsed
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={loadXReport} disabled={xReportLoading} title="Refresh"
+                        className="text-gray-400 hover:text-[#327F74] transition-colors mt-0.5 disabled:opacity-40">
+                        <RefreshCw className={`h-4 w-4 ${xReportLoading ? 'animate-spin' : ''}`} />
+                      </button>
+                      <button onClick={() => setShowLiveSessionDialog(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="px-6 py-5">
+                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 mb-4">
+                    <p>Cashier: <span className="text-[#1E293B] font-medium">{sess?.openedBy || '—'}</span></p>
+                    <p>Terminal: <span className="text-[#1E293B] font-medium">{sess?.terminalId || currentTerminal?.terminalId || '—'}</span></p>
+                  </div>
+                  <div className="rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
+                    {rows.map(row => (
+                      <div key={row.label} className="flex items-center justify-between px-4 py-2.5">
+                        <span className="text-sm text-gray-600">{row.label}</span>
+                        <span className="text-sm font-bold" style={{ color: row.accent }}>
+                          {loading ? <span className="inline-block h-4 w-16 bg-gray-200 rounded animate-pulse" /> : row.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="px-6 pb-6 flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => setShowLiveSessionDialog(false)}
+                    className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={() => { setShowLiveSessionDialog(false); setCurrentView('x-report'); }}
+                    className="h-10 px-6 text-sm font-semibold rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] flex items-center gap-2 transition-colors"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Full X-Report
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* Close Day Reconciliation Variance Dialog */}
       <Dialog open={!!closeDayVariance} onOpenChange={(open) => { if (!open) setCloseDayVariance(null); }}>
         <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
@@ -9050,12 +9764,17 @@ export default function POSSales() {
             <Button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]" disabled={!lastPaidInvoice?.invoice?.id} onClick={async () => {
               if (!lastPaidInvoice?.invoice?.id) return;
               try {
-                const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
+                const reprintResult = await reprintPosReceipt(lastPaidInvoice.invoice.id, {
+                  sessionId: currentSession?.id,
+                  terminalId: currentTerminal?.terminalId,
+                  branchId: currentTerminal?.branchId || currentSession?.branchId,
+                });
+                const full = reprintResult.invoice;
                 openCashDrawer('RECEIPT_PRINT');
                 if (tplInvoicePaper === 'A4') {
-                  const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-                  const data = buildPosPrintData(full, tplInvoiceFooter);
-                  const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+                  const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
+                  const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+                  const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                   printHtml(await generatePrintHtmlAsync(template, data, options));
                 } else {
                   // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
@@ -9090,6 +9809,192 @@ export default function POSSales() {
         </DialogContent>
       </Dialog>
 
+      {/* Customer History — Invoice Preview Modal */}
+      <Dialog open={showCustomerHistoryPreview} onOpenChange={(open) => { setShowCustomerHistoryPreview(open); if (!open) { setCustomerHistoryPreviewInvoice(null); setCustomerHistoryPreviewError(''); } }}>
+        <DialogContent className="sm:max-w-xl border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden max-h-[88vh] flex flex-col">
+          {(() => {
+            const inv = customerHistoryPreviewInvoice;
+            const statusMeta = {
+              PAID: { label: 'Paid', cls: 'bg-green-100 text-green-700 border-green-200' },
+              POSTED: { label: 'Posted', cls: 'bg-green-100 text-green-700 border-green-200' },
+              PARTIALLY_PAID: { label: 'Partially Paid', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+              DRAFT: { label: 'Draft', cls: 'bg-gray-100 text-gray-600 border-gray-200' },
+              CANCELLED: { label: 'Cancelled', cls: 'bg-red-100 text-red-700 border-red-200' },
+            }[inv?.status] || { label: inv?.status || '—', cls: 'bg-gray-100 text-gray-600 border-gray-200' };
+
+            return (
+              <>
+                <div className="px-4 sm:px-6 pt-6 pb-4 border-b border-gray-100 shrink-0 bg-gradient-to-r from-[#327F74]/5 to-transparent">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="p-2.5 rounded-xl bg-[#327F74]/10 shrink-0">
+                        <Receipt className="h-5 w-5 text-[#327F74]" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h2 className="text-base font-bold text-[#1E293B] truncate">{inv?.invoiceNumber || 'Invoice Preview'}</h2>
+                          {inv && <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full border shrink-0 ${statusMeta.cls}`}>{statusMeta.label}</span>}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate">{inv?.branchName || 'BillBull Retail'}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => setShowCustomerHistoryPreview(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5 shrink-0">
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="px-4 sm:px-6 py-5 overflow-y-auto flex-1">
+                  {customerHistoryPreviewLoading && (
+                    <div className="flex flex-col items-center justify-center h-48 text-center">
+                      <RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" />
+                      <p className="text-sm text-gray-400">Loading invoice…</p>
+                    </div>
+                  )}
+                  {!customerHistoryPreviewLoading && customerHistoryPreviewError && (
+                    <div className="flex flex-col items-center justify-center h-48 text-center">
+                      <AlertTriangle className="h-8 w-8 text-red-300 mb-3" />
+                      <p className="text-sm text-red-500">{customerHistoryPreviewError}</p>
+                    </div>
+                  )}
+                  {!customerHistoryPreviewLoading && !customerHistoryPreviewError && inv && (() => {
+                    const items = (inv.items || []).filter(it => !it.voided);
+                    const itemDiscountTotal = items.reduce((s, it) => s + (Number(it.discountAmount) || (Number(it.discountPercent) || 0) * (Number(it.unitPrice ?? it.price ?? 0)) * (Number(it.quantity) || 0) / 100), 0);
+                    const billDiscount = Number(inv.billDiscountAmount) || 0;
+                    const totalDiscount = Number(inv.discountTotal) || (itemDiscountTotal + billDiscount) || 0;
+                    const amountPaid = inv.amountPaid ?? (inv.invoiceTotal - (inv.balance || 0));
+                    const cashierName = inv.createdBy ? formatUserDisplayName(inv.createdBy.includes('@') ? inv.createdBy.split('@')[0] : inv.createdBy) : (inv.posCounterName || '—');
+                    const invoiceTime = inv.createdAt ? new Date(inv.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : null;
+
+                    return (
+                      <div className="space-y-4">
+                        {/* Meta info card */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2.5 text-xs bg-gray-50 border border-gray-100 rounded-xl p-4">
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Date &amp; Time</span><span className="text-[#1E293B] font-semibold">{inv.invoiceDate || '—'}{invoiceTime ? ` · ${invoiceTime}` : ''}</span></div>
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Payment Mode</span><span className="text-[#1E293B] font-semibold">{inv.paymentMode || '—'}</span></div>
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Customer</span><span className="text-[#1E293B] font-semibold truncate">{inv.customerName || 'Walk-in Customer'}</span></div>
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Cashier</span><span className="text-[#1E293B] font-semibold truncate">{cashierName}</span></div>
+                          {inv.posCounterName && (
+                            <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Terminal</span><span className="text-[#1E293B] font-semibold">{inv.posCounterName}</span></div>
+                          )}
+                          <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Items</span><span className="text-[#1E293B] font-semibold">{items.length} item{items.length !== 1 ? 's' : ''}</span></div>
+                        </div>
+
+                        {/* Line items — internally scrollable so a long invoice doesn't push
+                            the totals/footer off screen; header stays pinned while scrolling. */}
+                        <div className="border border-gray-100 rounded-xl overflow-hidden">
+                          <div className="overflow-x-auto">
+                            <div className="max-h-64 overflow-y-auto">
+                              <table className="w-full text-xs min-w-[420px]">
+                                <thead className="bg-gray-50 sticky top-0 z-10">
+                                  <tr className="text-gray-500">
+                                    <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-[10px]">Item</th>
+                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Qty</th>
+                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Price</th>
+                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Total</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50">
+                                  {items.length === 0 ? (
+                                    <tr><td colSpan={4} className="px-3 py-4 text-center text-gray-400">No line items on this invoice.</td></tr>
+                                  ) : items.map((it, i) => {
+                                    const imgSrc = it.image
+                                      ? (it.image.startsWith('data:') || it.image.startsWith('http') ? it.image : `data:image/jpeg;base64,${it.image}`)
+                                      : null;
+                                    return (
+                                      <tr key={i} className={i % 2 === 1 ? 'bg-gray-50/60' : ''}>
+                                        <td className="px-3 py-2.5 text-[#1E293B] align-top">
+                                          <div className="flex items-start gap-2.5">
+                                            <div className="w-9 h-9 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                                              {imgSrc
+                                                ? <img src={imgSrc} alt="" className="w-full h-full object-cover" />
+                                                : <Package className="w-4 h-4 text-gray-300" />}
+                                            </div>
+                                            <div className="min-w-0">
+                                              <p className="font-medium leading-tight">{it.itemName || it.itemCode}</p>
+                                              <p className="text-[10px] font-mono text-gray-400 mt-0.5 flex items-center gap-1 flex-wrap">
+                                                {it.itemCode && <span>{it.itemCode}</span>}
+                                                {(it.pinnedBatchNumber || it.batchNumber) && (
+                                                  <span className="text-amber-600 font-sans font-semibold">⛓ {it.pinnedBatchNumber || it.batchNumber}</span>
+                                                )}
+                                                {(it.discountPercent > 0) && (
+                                                  <span className="text-orange-500 font-sans font-semibold">−{it.discountPercent}%</span>
+                                                )}
+                                              </p>
+                                            </div>
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5 text-right text-[#1E293B] align-top">{it.quantity}</td>
+                                        <td className="px-3 py-2.5 text-right text-[#1E293B] align-top">{formatCurrency(it.unitPrice ?? it.price ?? 0)}</td>
+                                        <td className="px-3 py-2.5 text-right font-semibold text-[#1E293B] align-top">{formatCurrency(it.netAmount ?? it.lineTotal ?? 0)}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Totals */}
+                        <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-1.5 text-xs">
+                          <div className="flex justify-between"><span className="text-gray-500">Subtotal</span><span className="text-[#1E293B] font-medium">{formatCurrency(inv.subTotal || 0)}</span></div>
+                          {totalDiscount > 0 && (
+                            <div className="flex justify-between"><span className="text-gray-500">Discount</span><span className="text-orange-600 font-medium">−{formatCurrency(totalDiscount)}</span></div>
+                          )}
+                          <div className="flex justify-between"><span className="text-gray-500">VAT</span><span className="text-[#1E293B] font-medium">{formatCurrency(inv.taxTotal || 0)}</span></div>
+                          <div className="flex items-center justify-between border-t border-gray-200 pt-2 mt-1">
+                            <span className="text-sm font-bold text-[#1E293B]">Grand Total</span>
+                            <span className="text-lg font-black text-[#327F74]">{formatCurrency(inv.invoiceTotal || 0)}</span>
+                          </div>
+                          {(inv.balance || 0) > 0 && (
+                            <div className="flex justify-between pt-1.5 border-t border-gray-200 mt-1">
+                              <span className="text-gray-500">Amount Paid</span>
+                              <span className="text-[#1E293B] font-medium">{formatCurrency(amountPaid)}</span>
+                            </div>
+                          )}
+                          {(inv.balance || 0) > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-red-500 font-semibold">Balance Due</span>
+                              <span className="text-red-500 font-bold">{formatCurrency(inv.balance)}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="px-4 sm:px-6 pb-6 pt-2 flex items-center justify-end gap-3 flex-wrap shrink-0 border-t border-gray-100">
+                  <button
+                    onClick={() => setShowCustomerHistoryPreview(false)}
+                    className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+                  >
+                    Close
+                  </button>
+                  <button
+                    disabled={!inv}
+                    onClick={() => {
+                      const invNo = inv?.invoiceNumber;
+                      const invDate = inv?.invoiceDate;
+                      setShowCustomerHistoryPreview(false);
+                      if (invDate) { setReprintFilterDateFrom(invDate); setReprintFilterDateTo(invDate); }
+                      setReprintFilterInvoiceNo(invNo || '');
+                      setShowReprintModal(true);
+                      setReprintSelectedInvoice(invNo || null);
+                    }}
+                    className="h-10 px-6 text-sm font-semibold rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] disabled:opacity-40 flex items-center gap-2 transition-colors"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Print / Reprint
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* Reprint Invoice Modal */}
       {showReprintModal && (() => {
         const toDisplayStatus = (s) => {
@@ -9112,7 +10017,11 @@ export default function POSSales() {
           items: (inv.items || []).filter(i => !i.voided).length,
           amount: inv.invoiceTotal || 0,
           status: toDisplayStatus(inv.status),
-          reprints: 0,
+          reprints: inv.reprintCount || 0,
+          lastReprintedBy: inv.lastReprintedBy || null,
+          lastReprintedTime: inv.lastReprintedAt
+            ? new Date(inv.lastReprintedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+            : null,
         }));
         const filtered = mapped.filter(inv => {
           if (reprintFilterInvoiceNo && !inv.id?.toLowerCase().includes(reprintFilterInvoiceNo.toLowerCase())) return false;
@@ -9167,9 +10076,9 @@ export default function POSSales() {
               </div>
 
               {/* Main body: list + preview */}
-              <div className="flex flex-1 min-h-0">
+              <div className="flex flex-col lg:flex-row flex-1 min-h-0">
                 {/* Invoice List */}
-                <div className={`flex flex-col ${selected ? 'w-1/2 lg:w-[55%]' : 'w-full'} border-r border-[#327F74]/10 overflow-hidden`}>
+                <div className={`flex flex-col w-full min-h-0 ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#327F74]/10 overflow-hidden`}>
                   <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
                     <span className="text-xs text-gray-500">{filtered.length} invoice{filtered.length !== 1 ? 's' : ''} found</span>
                     <span className="text-xs text-[#327F74]">Latest first</span>
@@ -9186,7 +10095,8 @@ export default function POSSales() {
                         <p className="text-xs text-gray-400 mt-1">Try adjusting the filters above.</p>
                       </div>
                     ) : (
-                      <table className="w-full text-xs">
+                      <div className="overflow-x-auto">
+                      <table className="w-full min-w-[820px] text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10">
                           <tr className="text-gray-500 border-b border-[#327F74]/10">
                             {['Invoice No.', 'Date & Time', 'Customer', 'Cashier', 'Terminal', 'Pay Mode', 'Items', 'Amount', 'Status', 'Action'].map((h, i) => (
@@ -9224,13 +10134,14 @@ export default function POSSales() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     )}
                   </div>
                 </div>
 
                 {/* Receipt Preview Panel */}
                 {selected && (
-                  <div className="w-1/2 lg:w-[45%] flex flex-col overflow-hidden bg-white">
+                  <div className="w-full lg:w-[45%] flex flex-col overflow-hidden min-h-0 bg-white">
                     <div className="px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">Receipt Preview — {selected.id}</span>
                       <button onClick={() => setReprintSelectedInvoice(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -9664,9 +10575,9 @@ export default function POSSales() {
               </div>
 
               {/* Body — split layout */}
-              <div className="flex flex-1 min-h-0">
+              <div className="flex flex-col md:flex-row flex-1 min-h-0">
                 {/* Left: list */}
-                <div className="w-64 border-r border-gray-100 flex flex-col bg-gray-50 shrink-0">
+                <div className="w-full md:w-64 max-h-[35vh] md:max-h-none min-h-0 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col bg-gray-50 shrink-0">
                   <div className="p-3 border-b border-gray-100">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
@@ -9723,7 +10634,7 @@ export default function POSSales() {
                 </div>
 
                 {/* Right: detail */}
-                <div className="flex-1 flex flex-col min-w-0">
+                <div className="flex-1 flex flex-col min-w-0 min-h-0">
                   {!selOrder ? (
                     <div className="flex-1 flex flex-col items-center justify-center text-gray-300 gap-2">
                       <Package className="h-12 w-12" />
@@ -9747,8 +10658,8 @@ export default function POSSales() {
                           </div>
                         </div>
                         {/* Items table */}
-                        <div className="rounded-xl border border-gray-100 overflow-hidden mb-4">
-                          <table className="w-full text-xs">
+                        <div className="rounded-xl border border-gray-100 overflow-hidden mb-4 overflow-x-auto">
+                          <table className="w-full min-w-[420px] text-xs">
                             <thead className="bg-gray-50">
                               <tr>
                                 <th className="text-left px-3 py-2 font-semibold text-gray-500 uppercase text-[10px] tracking-wide">Item</th>
@@ -9796,7 +10707,7 @@ export default function POSSales() {
                         </div>
                       </div>
                       {/* Actions */}
-                      <div className="border-t border-gray-100 px-5 py-3 flex gap-2 bg-gray-50 shrink-0">
+                      <div className="border-t border-gray-100 px-5 py-3 flex flex-wrap gap-2 bg-gray-50 shrink-0">
                         <button
                           type="button"
                           onClick={handleCancelOrder}
@@ -9873,7 +10784,7 @@ export default function POSSales() {
           } catch { setPriceCheckResult('notfound'); }
         };
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowPriceCheck(false)} />
             <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
@@ -9958,7 +10869,7 @@ export default function POSSales() {
                   <div className="space-y-4">
                     <div className="bg-white border border-[#327F74]/20 rounded-2xl p-5 flex flex-col md:flex-row gap-6 shadow-sm">
                       {/* Left: Image & Details */}
-                      <div className="flex flex-1 gap-5">
+                      <div className="flex flex-col sm:flex-row flex-1 gap-5">
                         <div className="w-28 h-28 shrink-0 rounded-xl overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
                           {foundProduct.image
                             ? <img src={foundProduct.image} className="w-full h-full object-cover" alt={foundProduct.name} />
@@ -9969,7 +10880,7 @@ export default function POSSales() {
                             <h3 className="text-lg font-bold text-[#1E293B] leading-tight">{foundProduct.name}</h3>
                             <p className="text-sm text-gray-500 mt-1">{foundProduct.departmentName || 'General Department'}</p>
                           </div>
-                          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
                             <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Item Code</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.code}</span></div>
                             <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Barcode</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.barcode}</span></div>
                           </div>
@@ -10009,7 +10920,7 @@ export default function POSSales() {
                   </div>
                 )}
               </div>
-              <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex justify-end gap-3 shrink-0">
+              <div className="bg-gray-50 border-t border-gray-200 px-3 sm:px-6 py-4 flex flex-wrap justify-end gap-3 shrink-0">
                 <button onClick={() => setShowPriceCheck(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
                 {foundProduct && (
                   <button onClick={() => { addToInvoice(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
@@ -10022,6 +10933,93 @@ export default function POSSales() {
           </div>
         );
       })()}
+
+      {/* ─── SEARCH PRODUCTS MODAL ─── */}
+      {showProductSearch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setShowProductSearch(false)} />
+          <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
+              <div>
+                <div className="flex items-center gap-2.5"><Search className="h-5 w-5 text-cyan-600" /><span className="text-lg font-bold text-[#1E293B]">Search Products</span></div>
+                <p className="text-sm text-gray-500 mt-1">Search by item code, barcode, or product name — matches anywhere in the name.</p>
+              </div>
+              <button onClick={() => setShowProductSearch(false)} className="text-gray-400 hover:text-[#1E293B] transition-colors"><X className="h-6 w-6" /></button>
+            </div>
+            <div className="bg-white border-b border-gray-100 px-6 py-4 shrink-0">
+              <div className="relative">
+                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  autoFocus
+                  type="text"
+                  value={productSearchQuery}
+                  onChange={e => setProductSearchQuery(e.target.value)}
+                  placeholder="Type an item code, barcode, or any part of a product name..."
+                  className="w-full pl-10 pr-3 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-[#F5C742] focus:bg-white"
+                />
+              </div>
+            </div>
+            <div className="overflow-auto flex-1 p-6">
+              {!productSearchQuery.trim() && (
+                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                  <Search className="h-12 w-12 text-gray-300 mb-4" />
+                  <p className="text-sm font-medium text-gray-500">Start typing to search the product catalogue.</p>
+                </div>
+              )}
+              {productSearchQuery.trim() && productSearchLoading && (
+                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                  <div className="w-10 h-10 border-4 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin mb-4" />
+                  <p className="text-sm font-medium text-gray-500">Searching...</p>
+                </div>
+              )}
+              {productSearchQuery.trim() && !productSearchLoading && productSearchResults.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
+                  <AlertCircle className="h-12 w-12 text-red-300 mb-4" />
+                  <p className="text-sm font-medium text-gray-500">No products match "{productSearchQuery.trim()}".</p>
+                </div>
+              )}
+              {!productSearchLoading && productSearchResults.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {productSearchResults.map(product => (
+                    <button
+                      key={product.id}
+                      type="button"
+                      onClick={() => {
+                        const res = addToInvoice(product, 1);
+                        if (res && res.ok === false) {
+                          showFeedback('error', res.reason || 'Could not add this item.');
+                          return;
+                        }
+                        showFeedback('success', `${product.name} added`);
+                      }}
+                      className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-[#F5C742] hover:shadow-md transition-all text-left"
+                    >
+                      <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
+                        {product.image
+                          ? <img src={product.image} className="w-full h-full object-cover" alt={product.name} />
+                          : <Package className="w-5 h-5 text-gray-300" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
+                        <p className="text-[11px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-sm font-bold text-[#327F74]">{formatCurrency(product.price)}</p>
+                        <p className={`text-[10px] font-bold ${product.stock > 10 ? 'text-green-600' : product.stock > 0 ? 'text-amber-600' : 'text-red-500'}`}>
+                          {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex justify-end shrink-0">
+              <button onClick={() => setShowProductSearch(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── CREDIT BALANCE MODAL ─── */}
       {showCreditBalance && (() => {
@@ -10037,7 +11035,7 @@ export default function POSSales() {
           } catch { setCreditBalanceResult('notfound'); }
         };
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowCreditBalance(false)} />
             <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
@@ -10125,7 +11123,7 @@ export default function POSSales() {
                   </div>
                 )}
               </div>
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                 <button onClick={() => setShowCreditBalance(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
               </div>
             </div>
@@ -10183,8 +11181,8 @@ export default function POSSales() {
                 <button onClick={() => { setLayawaysFilterStatus('All'); setLayawaysFilterCustomer(''); setLayawaysFilterNo(''); setTimeout(loadLayaways, 0); }} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
                 <button onClick={() => { setShowLayawaysList(false); setShowSaveLayaway(true); }} className="mt-auto ml-auto bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />New Layaway</button>
               </div>
-              <div className="flex flex-1 min-h-0">
-                <div className={`flex flex-col overflow-hidden ${selected ? 'w-1/2 lg:w-[55%]' : 'w-full'} border-r border-[#327F74]/10`}>
+              <div className="flex flex-col lg:flex-row flex-1 min-h-0">
+                <div className={`flex flex-col w-full min-h-0 overflow-hidden ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#327F74]/10`}>
                   <div className="overflow-auto flex-1">
                     {layawaysLoading ? (
                       <div className="flex flex-col items-center justify-center h-48 text-center"><RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" /><p className="text-sm text-gray-400">Loading layaways…</p></div>
@@ -10193,7 +11191,8 @@ export default function POSSales() {
                     ) : filtered.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-48 text-center"><Archive className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">No layaways found.</p></div>
                     ) : (
-                      <table className="w-full text-xs">
+                      <div className="overflow-x-auto">
+                      <table className="w-full min-w-[900px] text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10 border-b border-[#327F74]/10">
                           <tr className="text-gray-500">{['Layaway No.', 'Date & Time', 'Customer', 'Cashier', 'Items', 'Sale Amt', 'Deposit', 'Balance', 'Due Date', 'Status', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2 text-left font-medium ${i >= 4 && i <= 7 ? 'text-right' : ''} ${i === 10 ? 'text-center' : ''}`}>{h}</th>)}</tr>
                         </thead>
@@ -10225,11 +11224,12 @@ export default function POSSales() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     )}
                   </div>
                 </div>
                 {selected && (
-                  <div className="w-1/2 lg:w-[45%] flex flex-col bg-white overflow-hidden">
+                  <div className="w-full lg:w-[45%] flex flex-col bg-white overflow-hidden min-h-0">
                     <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">{selected.id}</span>
                       <button onClick={() => setSelectedLayawayId(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -10327,7 +11327,7 @@ export default function POSSales() {
         // Can't create a new layaway while converting an existing one.
         if (activeLayawayId) {
           return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
               <div className="absolute inset-0 bg-black/50" onClick={() => setShowSaveLayaway(false)} />
               <div className="relative bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center space-y-4">
                 <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto" />
@@ -10345,7 +11345,7 @@ export default function POSSales() {
         const activeCartItems = currentInvoice.items.filter(i => !i.isVoided);
         const canSave = hasCustomer && activeCartItems.length > 0 && !saveLayawayBusy;
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowSaveLayaway(false)} />
             <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden">
               <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
@@ -10376,22 +11376,25 @@ export default function POSSales() {
                     <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
                       <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">Cart Items</div>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-xs">
+                        <table className="w-full min-w-[480px] text-xs">
                           <thead><tr className="text-gray-400 border-b border-gray-100">{['Item', 'Qty', 'Rate', 'Disc', 'VAT', 'Total'].map(h => <th key={h} className={`px-3 py-1.5 text-left ${h !== 'Item' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
                           <tbody>
                             {activeCartItems.length === 0 && currentInvoice.items.filter(i => i.isVoided).length === 0 ? (
                               <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">No items in cart</td></tr>
                             ) : currentInvoice.items.map((item, i) => (
-                              <tr key={i} className={`border-b border-gray-50 ${item.isVoided ? 'bg-red-50/60 opacity-70' : ''}`}>
+                              // Voided line: muted red + [VOID] tag + negative amounts (no
+                              // strike-through). Excluded from the total; disclosed in the
+                              // Voided Items summary row below.
+                              <tr key={i} className={`border-b border-gray-50 ${item.isVoided ? 'bg-red-50/60' : ''}`}>
                                 <td className="px-3 py-1.5">
-                                  <span className={item.isVoided ? 'line-through text-red-400' : 'text-[#1E293B]'}>{item.name}</span>
-                                  {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">VOIDED</span>}
+                                  <span className={item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}>{item.name}</span>
+                                  {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
                                 </td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{item.quantity}</td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.price} /></td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-300' : 'text-red-500'}`}>{item.discount > 0 ? `${item.discount}%` : '—'}</td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'line-through text-red-400' : ''}`}>{toNumber(item.taxRate, 5)}%</td>
-                                <td className={`px-3 py-1.5 text-right font-semibold ${item.isVoided ? 'line-through text-red-400' : ''}`}><CurrencyAmount amount={item.isVoided ? 0 : item.quantity * item.price * (1 - item.discount / 100)} /></td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}><CurrencyAmount amount={item.price} prefix={item.isVoided ? '- ' : ''} /></td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : 'text-red-500'}`}>{item.discount > 0 ? `${item.discount}%` : '—'}</td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}>{toNumber(item.taxRate, 5)}%</td>
+                                <td className={`px-3 py-1.5 text-right font-semibold ${item.isVoided ? 'text-red-500' : ''}`}><CurrencyAmount amount={item.quantity * item.price * (1 - item.discount / 100)} prefix={item.isVoided ? '- ' : ''} /></td>
                               </tr>
                             ))}
                           </tbody>
@@ -10472,7 +11475,7 @@ export default function POSSales() {
               {saveLayawayError && (
                 <div className="bg-red-50 border-t border-red-200 px-5 py-2 text-xs text-red-600 shrink-0">{saveLayawayError}</div>
               )}
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                 <button onClick={() => setShowSaveLayaway(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                 <button disabled={!canSave} onClick={() => saveCurrentLayaway(false)} className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Archive className="h-3.5 w-3.5" />{saveLayawayBusy ? 'Saving…' : 'Save Layaway'}</button>
                 <button disabled={!canSave} onClick={() => saveCurrentLayaway(true)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"><Printer className="h-3.5 w-3.5" />Save &amp; Print Receipt</button>
@@ -10484,23 +11487,28 @@ export default function POSSales() {
 
       {/* ─── SALES RETURN MODAL ─── */}
       {showReturn && (() => {
-        // Compute totals from real returnable items
+        // Compute totals from real returnable items. Must match the linked
+        // invoice's VAT mode, or a return against a VAT-inclusive sale
+        // double-counts VAT on top of the already-inclusive price.
+        const returnVatMode = returnInvoiceFound?.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE';
         const activeItems = returnableItems.filter(it => (returnSelectedItems[it.itemCode] || 0) > 0);
-        const returnSubtotal = returnableItems.reduce((s, it) => {
-          const qty = returnSelectedItems[it.itemCode] || 0;
-          return s + qty * parseFloat(it.unitPrice || 0);
-        }, 0);
         const returnDiscount = returnableItems.reduce((s, it) => {
           const qty = returnSelectedItems[it.itemCode] || 0;
           return s + qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.discountPercent || 0) / 100);
         }, 0);
-        const returnVAT = returnableItems.reduce((s, it) => {
+        const returnLineTotals = returnableItems.map((it) => {
           const qty = returnSelectedItems[it.itemCode] || 0;
           const gross = qty * parseFloat(it.unitPrice || 0);
           const disc = gross * (parseFloat(it.discountPercent || 0) / 100);
-          return s + (gross - disc) * (parseFloat(it.taxRate || 5) / 100);
-        }, 0);
-        const returnNet = returnSubtotal - returnDiscount + returnVAT;
+          return computeLineTaxTotals({
+            netAfterDiscount: gross - disc,
+            taxPercent: parseFloat(it.taxRate || 5),
+            vatMode: returnVatMode,
+          });
+        });
+        const returnSubtotal = returnLineTotals.reduce((s, r) => s + r.taxableAmount, 0);
+        const returnVAT = returnLineTotals.reduce((s, r) => s + r.taxAmount, 0);
+        const returnNet = returnSubtotal + returnVAT;
         const anyItemSelected = activeItems.length > 0;
 
         const doSearchInvoice = async () => {
@@ -10605,9 +11613,11 @@ export default function POSSales() {
                 const itemStatus = returnItemConditions[it.itemCode] || 'Good';
                 const grossAmt = qty * parseFloat(it.unitPrice || 0);
                 const discountAmt = grossAmt * (parseFloat(it.discountPercent || 0) / 100);
-                const netAmt = grossAmt - discountAmt;
-                const taxAmt = netAmt * (parseFloat(it.taxRate || 5) / 100);
-                const itemTotal = netAmt + taxAmt;
+                const { taxAmount: taxAmt, total: itemTotal } = computeLineTaxTotals({
+                  netAfterDiscount: grossAmt - discountAmt,
+                  taxPercent: parseFloat(it.taxRate || 5),
+                  vatMode: returnVatMode,
+                });
                 const batchesForItem = it.batches.slice(0, qty).map(b => ({
                   originalAllocationId: b.allocationId, batchMasterId: b.batchMasterId,
                   batchNumber: b.batchNumber, binCode: b.binCode, quantity: 1, expiryDate: b.expiryDate,
@@ -10623,6 +11633,7 @@ export default function POSSales() {
             const payload = {
               linkedInvoice: inv.invoiceNumber, returnDate: new Date().toISOString().split('T')[0],
               customerCode: inv.customerCode, customerName: inv.customerName,
+              taxInclusive: returnVatMode === 'INCLUSIVE',
               subTotal: returnSubtotal, taxAmount: returnVAT, totalAmount: returnNet,
               reason: Object.values(returnReasons).filter(Boolean).join(', ') || 'POS Return',
               returnAction: returnRefundMethod === 'Credit Voucher' ? 'Credit Note' : 'Refund',
@@ -10675,7 +11686,7 @@ export default function POSSales() {
                 meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
               };
               if (tplReturnPaper === 'A4') {
-                const returnA4Template = buildPosA4Template(tplReturnFooter, {
+                const returnA4Template = resolveCreditNoteA4Template(tplReturnFooter, {
                   showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
                   showTrn: tplReturnShowTrn, showCustomerDetails: tplReturnShowCustomerDetails,
                   showTerms: tplReturnShowTerms, showNotes: tplReturnShowNotes,
@@ -10683,8 +11694,8 @@ export default function POSSales() {
                   showSignature: tplReturnShowSignature, showGrandTotalBanner: tplReturnShowGrandTotalBanner,
                   colItemCode: tplReturnColItemCode, colBatchNo: tplReturnColBatchNo,
                   colDiscount: tplReturnColDiscount, colVatPct: tplReturnColVatPct, colVatAmt: tplReturnColVatAmt,
-                }, 'Sales Return');
-                const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplReturnShowStamp } };
+                });
+                const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplReturnShowStamp } };
                 printHtml(await generatePrintHtmlAsync(returnA4Template, returnA4Data, returnA4Options));
               } else {
                 const returnPrinter = resolvePrinterForContext(printerConfigs, {
@@ -10769,14 +11780,14 @@ export default function POSSales() {
                 <button onClick={() => setShowReturn(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
               </div>
               {/* Step Progress */}
-              <div className="bg-white border-b border-gray-100 px-5 py-3 flex items-center gap-0 shrink-0">
+              <div className="bg-white border-b border-gray-100 px-3 sm:px-5 py-3 flex items-center gap-0 shrink-0 overflow-x-auto">
                 {steps.map((s, i) => (
                   <React.Fragment key={s}>
-                    <div className="flex items-center gap-2">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${returnStep > i + 1 ? 'bg-[#327F74] text-white' : returnStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{returnStep > i + 1 ? '✓' : i + 1}</div>
-                      <span className={`text-xs ${returnStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${returnStep > i + 1 ? 'bg-[#327F74] text-white' : returnStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{returnStep > i + 1 ? '✓' : i + 1}</div>
+                      <span className={`hidden sm:inline text-xs whitespace-nowrap ${returnStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
                     </div>
-                    {i < steps.length - 1 && <div className="flex-1 h-px bg-gray-200 mx-2" />}
+                    {i < steps.length - 1 && <div className="w-6 sm:flex-1 h-px bg-gray-200 mx-1.5 sm:mx-2 shrink-0 sm:shrink" />}
                   </React.Fragment>
                 ))}
               </div>
@@ -10888,7 +11899,8 @@ export default function POSSales() {
                           {returnableItems.length === 0 ? (
                             <div className="p-6 text-center text-sm text-gray-400">No returnable items found for this invoice.</div>
                           ) : (
-                            <table className="w-full text-xs">
+                            <div className="overflow-x-auto">
+                            <table className="w-full min-w-[920px] text-xs">
                               <thead>
                                 <tr className="text-gray-500 border-b border-[#327F74]/10">
                                   {['Code', 'Item', 'Sold', 'Returned', 'Returnable', 'Return Qty', 'Rate', 'VAT', 'Return Amt', 'Condition', 'Reason'].map(h => (
@@ -10942,6 +11954,7 @@ export default function POSSales() {
                                 })}
                               </tbody>
                             </table>
+                            </div>
                           )}
                         </div>
                         <div className="bg-[#FFF8DC] border border-[#F5C742]/40 rounded-lg p-3 flex items-center justify-between text-sm">
@@ -11068,12 +12081,12 @@ export default function POSSales() {
                 )}
               </div>
               {/* Footer */}
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex items-center justify-between shrink-0">
-                <div className="flex gap-2">
+              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <div className="flex flex-wrap gap-2">
                   {returnStep > 1 && !returnSaving && <button onClick={() => setReturnStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
                   <button onClick={() => setShowReturn(false)} disabled={returnSaving} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-50">Cancel</button>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {returnStep === 1 && (
                     <button onClick={doAdvanceToItems} disabled={!returnInvoiceFound || returnInvoiceFound === false || returnInvoiceLoading}
                       className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-5 py-2 rounded">Next →</button>
@@ -11377,9 +12390,9 @@ export default function POSSales() {
                       <button onClick={resetBatchSearch} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1 shrink-0"><RotateCcw className="h-3 w-3" />Reset</button>
                     </div>
                   </div>
-                  <div className="flex flex-1 min-h-0 overflow-hidden">
+                  <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
                     {/* Results list */}
-                    <div className={`flex flex-col overflow-hidden ${selectedItem ? 'w-1/2 lg:w-[45%] border-r border-[#327F74]/10' : 'w-full'}`}>
+                    <div className={`flex flex-col w-full min-h-0 overflow-hidden ${selectedItem ? 'lg:w-[45%] max-h-[50vh] lg:max-h-none border-b lg:border-b-0 lg:border-r border-[#327F74]/10' : 'lg:w-full'}`}>
                       <div className="overflow-auto flex-1 p-5">
                         {serialBatchResult === null && (
                           <div className="flex flex-col items-center justify-center h-48 text-center"><Hash className="h-12 w-12 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Scan or enter a batch number or invoice to search sold items.</p></div>
@@ -11416,7 +12429,7 @@ export default function POSSales() {
                     </div>
                     {/* Detail panel */}
                     {selectedItem && (
-                      <div className="flex-1 flex flex-col bg-white overflow-hidden">
+                      <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
                         <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
                           <span className="text-xs font-semibold text-[#1E293B]">{selectedItem.itemName}</span>
                           <button onClick={() => setSerialBatchSelectedItem(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
@@ -11447,7 +12460,7 @@ export default function POSSales() {
                     )}
                   </div>
                   {!selectedItem && (
-                    <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+                    <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                       <button onClick={() => setShowSerialBatch(false)} className="border border-gray-300 text-gray-500 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
                     </div>
                   )}
@@ -11513,7 +12526,7 @@ export default function POSSales() {
                       <span className="font-bold text-[#1E293B]"><CurrencyAmount amount={((selectedItem?.itemNetAmount || 0) / (selectedItem?.soldQty || 1)) * serialBatchReturnQty} /></span>
                     </div>
                   </div>
-                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                     <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><RotateCcw className="h-3.5 w-3.5" />Confirm Return</button>
                     <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Confirm &amp; Print</button>
@@ -11574,7 +12587,7 @@ export default function POSSales() {
                       Item is Under Warranty. This repair may be eligible for free service. Warranty coverage will be verified by the technician.
                     </div>
                   </div>
-                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex justify-end gap-2 shrink-0">
+                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
                     <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                     <button onClick={() => { setShowSerialBatch(false); setShowServiceRepair(true); setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Wrench className="h-3.5 w-3.5" />Create Service Job</button>
                   </div>
@@ -11620,13 +12633,13 @@ export default function POSSales() {
         return (
           <div className="fixed inset-0 z-50 flex flex-col bg-[#F7F7FA]">
             {/* Top Bar */}
-            <div className="bg-[#1E293B] border-b border-[#327F74]/30 px-6 py-3 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-3">
-                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm"><ChevronRight className="h-4 w-4 rotate-180" />POS</button>
-                <span className="text-gray-600">/</span>
-                <span className="text-white flex items-center gap-2"><Wrench className="h-4 w-4 text-[#F5C742]" />Service &amp; Repair Management</span>
+            <div className="bg-[#1E293B] border-b border-[#327F74]/30 px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm shrink-0"><ChevronRight className="h-4 w-4 rotate-180" />POS</button>
+                <span className="text-gray-600 hidden sm:inline">/</span>
+                <span className="text-white flex items-center gap-2 min-w-0"><Wrench className="h-4 w-4 text-[#F5C742] shrink-0" /><span className="truncate">Service &amp; Repair Management</span></span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {serviceView !== 'new-job' && <button onClick={() => { setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-1.5 rounded flex items-center gap-1"><Plus className="h-3.5 w-3.5" />New Service Job</button>}
                 {serviceView !== 'settings' && <button onClick={() => setServiceView('settings')} className="border border-gray-600 text-gray-300 text-sm px-3 py-1.5 rounded hover:border-gray-400 flex items-center gap-1"><Settings className="h-3.5 w-3.5" />Settings</button>}
                 <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white"><X className="h-5 w-5" /></button>
@@ -11677,7 +12690,8 @@ export default function POSSales() {
                 </div>
                 {/* Table */}
                 <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
-                  <table className="w-full text-xs">
+                  <div className="overflow-x-auto">
+                  <table className="w-full min-w-[1000px] text-xs">
                     <thead className="bg-[#F7F7FA] border-b border-[#327F74]/10">
                       <tr className="text-gray-500">{['Job No.', 'Job Date', 'Customer', 'Item Name', 'Serial/Batch', 'Warranty', 'Problem', 'Technician', 'Est. Amt', 'Status', 'Delivery Date', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2.5 text-left font-medium ${i === 11 ? 'text-center' : ''}`}>{h}</th>)}</tr>
                     </thead>
@@ -11706,6 +12720,7 @@ export default function POSSales() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -11714,14 +12729,14 @@ export default function POSSales() {
             {serviceView === 'new-job' && (
               <div className="flex-1 overflow-auto">
                 {/* Step bar */}
-                <div className="bg-white border-b border-gray-100 px-6 py-3 flex items-center gap-0 shrink-0">
+                <div className="bg-white border-b border-gray-100 px-3 sm:px-6 py-3 flex items-center gap-0 shrink-0 overflow-x-auto">
                   {serviceSteps.map((s, i) => (
                     <React.Fragment key={s}>
-                      <div className="flex items-center gap-2 cursor-pointer" onClick={() => setServiceJobStep(i + 1)}>
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${serviceJobStep > i + 1 ? 'bg-[#327F74] text-white' : serviceJobStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{serviceJobStep > i + 1 ? '✓' : i + 1}</div>
-                        <span className={`text-xs ${serviceJobStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
+                      <div className="flex items-center gap-1.5 sm:gap-2 cursor-pointer shrink-0" onClick={() => setServiceJobStep(i + 1)}>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${serviceJobStep > i + 1 ? 'bg-[#327F74] text-white' : serviceJobStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{serviceJobStep > i + 1 ? '✓' : i + 1}</div>
+                        <span className={`hidden md:inline text-xs whitespace-nowrap ${serviceJobStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
                       </div>
-                      {i < serviceSteps.length - 1 && <div className="flex-1 h-px bg-gray-200 mx-2" />}
+                      {i < serviceSteps.length - 1 && <div className="w-6 sm:flex-1 h-px bg-gray-200 mx-1.5 sm:mx-2 shrink-0 sm:shrink" />}
                     </React.Fragment>
                   ))}
                 </div>
@@ -11844,7 +12859,8 @@ export default function POSSales() {
                           <div className="flex items-center gap-2"><Package className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">F. Parts / Spare Items</p></div>
                           <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />Add Part</button>
                         </div>
-                        <table className="w-full text-xs">
+                        <div className="overflow-x-auto">
+                        <table className="w-full min-w-[640px] text-xs">
                           <thead><tr className="bg-[#F7F7FA] text-gray-500 border-b border-[#327F74]/10">{['Part Code', 'Part Name', 'Stock Avail.', 'Qty', 'Unit Price', 'Disc.', 'VAT', 'Net Amt', ''].map(h => <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>)}</tr></thead>
                           <tbody>
                             <tr className="border-b border-gray-50">
@@ -11860,6 +12876,7 @@ export default function POSSales() {
                             </tr>
                           </tbody>
                         </table>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -11935,12 +12952,12 @@ export default function POSSales() {
                   )}
                 </div>
                 {/* Step nav footer */}
-                <div className="bg-white border-t border-gray-100 px-6 py-3 flex justify-between items-center shrink-0 sticky bottom-0">
-                  <div className="flex gap-2">
+                <div className="bg-white border-t border-gray-100 px-3 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2 shrink-0 sticky bottom-0">
+                  <div className="flex flex-wrap gap-2">
                     {serviceJobStep > 1 && <button onClick={() => setServiceJobStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
                     <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5">Save Draft</button>
                     {serviceJobStep < serviceSteps.length ? <button onClick={() => setServiceJobStep(s => s + 1)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
                       : <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Complete Job</button>}
@@ -11952,20 +12969,20 @@ export default function POSSales() {
             {/* ─ DETAIL VIEW ─ */}
             {serviceView === 'detail' && (
               <div className="flex-1 overflow-auto p-6">
-                <div className="flex items-center gap-3 mb-4">
+                <div className="flex flex-wrap items-center gap-3 mb-4">
                   <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back to List</button>
                   <span className="text-[#1E293B] font-semibold">Service Job</span>
                   <span className="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5">—</span>
-                  <div className="ml-auto flex gap-2">
+                  <div className="sm:ml-auto flex flex-wrap gap-2">
                     <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Print Job Card</button>
                     <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-3 py-1.5 rounded flex items-center gap-1"><FileText className="h-3.5 w-3.5" />Create Invoice</button>
                   </div>
                 </div>
                 {/* Tabs */}
-                <div className="flex gap-0 border-b border-[#327F74]/20 mb-4">
+                <div className="flex gap-0 border-b border-[#327F74]/20 mb-4 overflow-x-auto">
                   {detailTabs.map(t => (
                     <button key={t} onClick={() => setServiceDetailTab(t)}
-                      className={`px-4 py-2 text-xs capitalize border-b-2 transition-colors ${serviceDetailTab === t ? 'border-[#F5C742] text-[#1E293B] font-semibold' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                      className={`shrink-0 px-4 py-2 text-xs capitalize border-b-2 transition-colors ${serviceDetailTab === t ? 'border-[#F5C742] text-[#1E293B] font-semibold' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                       {t === 'activity' ? 'Activity Log' : t}
                     </button>
                   ))}
@@ -12047,7 +13064,7 @@ export default function POSSales() {
                     </div>
                   ))}
                 </div>
-                <div className="mt-4 flex justify-end gap-2">
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
                   <button className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
                   <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Save Settings</button>
                 </div>
@@ -12061,7 +13078,7 @@ export default function POSSales() {
       {showPOSConfig && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/30" onClick={() => setShowPOSConfig(false)} />
-          <div className="relative bg-white w-80 h-full shadow-2xl flex flex-col overflow-hidden">
+          <div className="relative bg-white w-full sm:w-80 h-full shadow-2xl flex flex-col overflow-hidden">
             {/* Header */}
             <div className="p-5 border-b border-gray-100 bg-gradient-to-r from-[#1E293B] to-[#334155] flex items-center justify-between">
               <div>
@@ -12257,7 +13274,7 @@ export default function POSSales() {
                   <p className="text-sm font-black text-[#1E293B]">{currentInvoice.items.length} items • {formatCurrency(currentInvoice.total)}</p>
                 </div>
               </div>
-              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryCustomerSearch(''); }} className="text-[#1E293B]/60 hover:text-[#1E293B]">
+              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryCustomerSearch(''); setDeliveryShowAddressPicker(false); setDeliveryShowAddAddressModal(false); }} className="text-[#1E293B]/60 hover:text-[#1E293B]">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -12278,7 +13295,7 @@ export default function POSSales() {
                           {c.tier ? <span className="ml-2 text-[#327F74] font-medium">· {c.tier}</span> : null}
                         </p>
                       </div>
-                      <button type="button" onClick={() => { setDeliveryCustomerId(''); setDeliveryCustomerSearch(''); }}
+                      <button type="button" onClick={() => { setDeliveryCustomerId(''); setDeliveryCustomerSearch(''); setDeliveryShowAddressPicker(false); }}
                         className="text-xs text-[#327F74] hover:underline font-bold px-2 py-1 bg-white rounded-lg border border-[#327F74]/20 shadow-sm">
                         Change
                       </button>
@@ -12338,6 +13355,53 @@ export default function POSSales() {
 
               <div>
                 <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Address <span className="text-red-500">*</span></label>
+
+                {/* Saved shipping-address picker — only once a real customer is selected */}
+                {deliveryCustomerId && (() => {
+                  const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId));
+                  const savedAddresses = c?.savedAddresses || [];
+                  return (
+                    <div className="relative mb-2">
+                      <button type="button"
+                        onClick={() => setDeliveryShowAddressPicker(p => !p)}
+                        className="w-full flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-left hover:border-[#327F74] transition-colors bg-white">
+                        <MapPin className="h-4 w-4 text-[#327F74] shrink-0" />
+                        <span className="flex-1 text-gray-600 truncate">
+                          {savedAddresses.length > 0 ? 'Choose a saved shipping address…' : 'No saved addresses for this customer'}
+                        </span>
+                        <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                      </button>
+                      {deliveryShowAddressPicker && (
+                        <div className="absolute z-10 top-full left-0 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 overflow-hidden max-h-56 overflow-y-auto">
+                          {savedAddresses.map((addr, i) => (
+                            <button key={addr.id ?? i} type="button"
+                              onClick={() => {
+                                setDeliveryAddress([addr.address1, addr.address2, addr.city, addr.country].filter(Boolean).join(', '));
+                                setDeliveryValidationErrors(prev => ({ ...prev, address: '' }));
+                                setDeliveryShowAddressPicker(false);
+                              }}
+                              className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-gray-50 border-b border-gray-50 transition-colors">
+                              <MapPin className="h-3.5 w-3.5 text-[#327F74] mt-0.5 shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-gray-700 flex items-center gap-1 truncate">
+                                  {addr.name}
+                                  {addr.isDefault && <Star className="h-2.5 w-2.5 text-[#F5C742] fill-[#F5C742] shrink-0" />}
+                                </p>
+                                <p className="text-xs text-gray-500 truncate">{[addr.address1, addr.city, addr.country].filter(Boolean).join(', ')}</p>
+                              </div>
+                            </button>
+                          ))}
+                          <button type="button"
+                            onClick={() => { setDeliveryShowAddressPicker(false); setDeliveryAddressError(''); setDeliveryShowAddAddressModal(true); }}
+                            className="w-full px-3 py-2.5 text-xs flex items-center justify-center gap-1.5 text-[#327F74] hover:bg-[#f0faf8] border-t border-dashed border-gray-200 font-bold">
+                            <Plus className="h-3.5 w-3.5" /> Add New Address
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <textarea rows={3} value={deliveryAddress} onChange={e => { setDeliveryAddress(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, address: '' })); }}
                   placeholder="Building, street, area, city..."
                   className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none ${deliveryValidationErrors.address ? 'border-red-300' : 'border-gray-200'}`} />
@@ -12416,7 +13480,7 @@ export default function POSSales() {
               </div>
             )}
             <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
-              <button type="button" onClick={() => setShowDeliveryModal(false)}
+              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryShowAddressPicker(false); setDeliveryShowAddAddressModal(false); }}
                 className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors">
                 Cancel
               </button>
@@ -12426,6 +13490,96 @@ export default function POSSales() {
                 className="flex-1 py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2">
                 <Truck className="h-4 w-4" />
                 {deliveryOutLoading ? 'Saving…' : 'Out for Delivery'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══ Add New Shipping Address modal (nested within New Delivery Order) ══ */}
+      {showDeliveryModal && deliveryShowAddAddressModal && (
+        <div className="fixed inset-0 z-[210] bg-black/40 flex items-center justify-center p-4"
+          onClick={() => !deliveryAddressSaving && setDeliveryShowAddAddressModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-base font-bold text-gray-800">Add Shipping Address</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Add a new shipping address for {customerOptions.find(x => String(x.id) === String(deliveryCustomerId))?.name || 'this customer'}
+                </p>
+              </div>
+              <button type="button"
+                onClick={() => !deliveryAddressSaving && setDeliveryShowAddAddressModal(false)}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Address Label <span className="text-red-500">*</span></label>
+                <input type="text" value={deliveryNewAddress.name}
+                  onChange={e => setDeliveryNewAddress(p => ({ ...p, name: e.target.value }))}
+                  placeholder="e.g., Home, Office, Warehouse..."
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">Address <span className="text-red-500">*</span></label>
+                <textarea rows={3} value={deliveryNewAddress.address1}
+                  onChange={e => setDeliveryNewAddress(p => ({ ...p, address1: e.target.value }))}
+                  placeholder="Building, street, area..."
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:border-[#327F74]" />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">City</label>
+                  <input type="text" value={deliveryNewAddress.city}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, city: e.target.value }))}
+                    placeholder="e.g., Dubai"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Country</label>
+                  <input type="text" value={deliveryNewAddress.country}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, country: e.target.value }))}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Person</label>
+                  <input type="text" value={deliveryNewAddress.contactName}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, contactName: e.target.value }))}
+                    placeholder="Contact name"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Phone</label>
+                  <input type="text" value={deliveryNewAddress.contactPhone}
+                    onChange={e => setDeliveryNewAddress(p => ({ ...p, contactPhone: e.target.value }))}
+                    placeholder="+971 XX XXX XXXX"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
+                </div>
+              </div>
+              {deliveryAddressError && <p className="text-[11px] text-red-500">{deliveryAddressError}</p>}
+            </div>
+
+            <div className="flex justify-end gap-2 mt-5">
+              <button type="button"
+                onClick={() => {
+                  setDeliveryNewAddress({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
+                  setDeliveryAddressError('');
+                  setDeliveryShowAddAddressModal(false);
+                }}
+                disabled={deliveryAddressSaving}
+                className="px-4 py-2 text-xs font-semibold text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button type="button"
+                onClick={handleSaveDeliveryNewAddress}
+                disabled={deliveryAddressSaving}
+                className="px-4 py-2 text-xs font-bold text-white bg-[#327F74] hover:bg-[#2a6b61] rounded-xl disabled:opacity-60 flex items-center gap-1.5">
+                <Plus className="h-3.5 w-3.5" /> {deliveryAddressSaving ? 'Saving…' : 'Add Address'}
               </button>
             </div>
           </div>
@@ -12474,9 +13628,9 @@ export default function POSSales() {
               const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
               const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
               if (tplInvoicePaper === 'A4') {
-                const template = buildPosA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt });
-                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter);
-                const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: tplInvoiceShowStamp } };
+                const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(receiptInvoice?.taxTotal) > 0);
+                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, Number(receiptInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+                const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                 printHtml(await generatePrintHtmlAsync(template, data, options));
               } else {
                 // Delivery Settlement receipt: unlike the Out-for-Delivery slip, this
@@ -12560,8 +13714,8 @@ export default function POSSales() {
               </div>
 
               {/* Search + filter */}
-              <div className="px-4 py-3 border-b border-gray-100 flex gap-3">
-                <div className="flex-1 relative">
+              <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-3">
+                <div className="flex-1 min-w-[160px] relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <input type="text" value={deliverySettleSearch} onChange={e => setDeliverySettleSearch(e.target.value)}
                     placeholder="Search by invoice, customer, or mobile..."
@@ -12580,7 +13734,8 @@ export default function POSSales() {
                 ) : filtered.length === 0 ? (
                   <div className="flex items-center justify-center py-12 text-gray-400 text-sm">No pending delivery orders</div>
                 ) : (
-                  <>
+                  <div className="overflow-x-auto">
+                  <div className="min-w-[560px]">
                     <div className="grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-2 bg-gray-50 border-b border-gray-100 text-[10px] font-bold uppercase tracking-wide text-gray-500">
                       <div>Customer / Invoice</div>
                       <div>Person</div>
@@ -12688,7 +13843,8 @@ export default function POSSales() {
                         </div>
                       );
                     })}
-                  </>
+                  </div>
+                  </div>
                 )}
               </div>
             </div>

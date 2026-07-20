@@ -33,7 +33,7 @@ const Sidebar = ({ children }) => {
   const userEmail = rawUsername || "admin@billbull.app";
 
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 1024);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
   // --- DROPDOWN STATES ---
   const [connectOpen, setConnectOpen] = useState(false);
@@ -53,7 +53,7 @@ const Sidebar = ({ children }) => {
   // Responsive Check
   useEffect(() => {
     const handleResize = () => {
-      const mobile = window.innerWidth <= 1024;
+      const mobile = window.innerWidth <= 768;
       setIsMobile(mobile);
       if (!mobile) {
         setMobileOpen(false);
@@ -635,7 +635,7 @@ const Sidebar = ({ children }) => {
       min-width: 0;
     }
 
-    @media (max-width: 1024px) {
+    @media (max-width: 768px) {
       .app-shell { flex-direction: column; }
       .sidebar { 
         position: fixed; left: 0; top: 0; bottom: 0; 

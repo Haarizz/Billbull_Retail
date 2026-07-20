@@ -11,10 +11,26 @@
  * buildThermalSampleHtml) so switching templates doesn't change the numbers
  * the cashier is used to seeing on a test print.
  */
-export function buildSampleInvoice({ isReturn = false } = {}) {
+/**
+ * @param {boolean} isReturn  build a credit-note sample (negative amounts).
+ * @param {boolean} noTax      build a no-tax (plain Sales Invoice) sample: items
+ *   carry no tax rate/amount, taxTotal is 0, and the total is the untaxed net.
+ *   Used by the POS Receipt designer tab so its preview matches the real no-tax
+ *   checkout print (no VAT columns/rows/TRN). Ignored for returns.
+ */
+export function buildSampleInvoice({ isReturn = false, noTax = false } = {}) {
+  const untaxed = noTax && !isReturn;
   const items = isReturn
     ? [
         { itemName: 'Samsung A55', quantity: 1, unitPrice: 1380.0, grossAmount: 1380.0, netAmount: 1380.0, taxAmount: -69.0, taxPercent: 5 },
+      ]
+    : untaxed
+    ? [
+        // No taxPercent / taxAmount ⇒ the renderers print no per-line VAT and no
+        // VAT/Taxable summary rows (a plain Sales Invoice).
+        { itemName: 'Margherita Pizza', quantity: 1, unitPrice: 45.0, grossAmount: 45.0, netAmount: 45.0, sku: '10023' },
+        { itemName: 'Coke', quantity: 2, unitPrice: 8.0, grossAmount: 16.0, netAmount: 16.0, sku: '10981' },
+        { itemName: 'Caesar Salad', quantity: 1, unitPrice: 28.0, grossAmount: 28.0, netAmount: 28.0, sku: '11532' },
       ]
     : [
         { itemName: 'Margherita Pizza', quantity: 1, unitPrice: 45.0, grossAmount: 45.0, netAmount: 45.0, taxAmount: 2.25, taxPercent: 5, sku: '10023' },
@@ -28,11 +44,12 @@ export function buildSampleInvoice({ isReturn = false } = {}) {
     items,
     subTotal: isReturn ? -1380.0 : 89.0,
     discountTotal: 0,
-    taxTotal: isReturn ? -69.0 : 4.9,
+    taxTotal: isReturn ? -69.0 : untaxed ? 0 : 4.9,
     taxInclusive: false,
     serviceChargeAmount: isReturn ? -138.0 : 8.9,
     deliveryCharge: 0,
-    invoiceTotal: isReturn ? -1449.0 : 102.8,
+    // No-tax total = net + service charge only (no VAT): 89.00 + 8.90 = 97.90.
+    invoiceTotal: isReturn ? -1449.0 : untaxed ? 97.9 : 102.8,
     customerName: 'Sarah Johnson',
     paymentMode: isReturn ? 'CASH' : 'CASH',
     loyaltyPointsEarned: isReturn ? 0 : 10,

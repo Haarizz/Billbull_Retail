@@ -59,11 +59,13 @@ public class PosSessionController {
         String closingDenominationsJson = toJson(body != null ? body.get("closingDenominations") : null);
         String cardBatchNo = body != null ? (String) body.get("cardBatchNo") : null;
         Boolean cardSettlementVerified = body != null ? (Boolean) body.get("cardSettlementVerified") : null;
+        BigDecimal cardClosingCash = body != null && body.get("cardClosingCash") != null
+                ? new BigDecimal(body.get("cardClosingCash").toString()) : null;
         String closingCashierName = body != null ? (String) body.get("closingCashierName") : null;
         String closingSupervisorName = body != null ? (String) body.get("closingSupervisorName") : null;
         String closingRemarks = body != null ? (String) body.get("closingRemarks") : null;
         return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson,
-                cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks));
+                cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks));
     }
 
     private String toJson(Object value) {
@@ -107,6 +109,28 @@ public class PosSessionController {
             @RequestParam(required = false) String date) {
         LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
         return ResponseEntity.ok(service.getZReport(branchId, reportDate));
+    }
+
+    /** Hard gate checked before the frontend commits the X-Report to print/PDF/Excel.
+     *  The report may still be viewed on screen while the session is open (see
+     *  {@code getXReport}); this returns 409 unless the session is CLOSED. */
+    @PostMapping("/{id}/x-report/print-check")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> checkXReportPrintable(@PathVariable Long id) {
+        service.assertXReportPrintable(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    /** Hard gate checked before the frontend commits the Z-Report to print/PDF/Excel.
+     *  Returns 409 unless the business day has already been closed. */
+    @GetMapping("/z-report/print-check")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Void> checkZReportPrintable(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String date) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        service.assertZReportPrintable(branchId, reportDate);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/close-day")

@@ -37,6 +37,7 @@ import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { useBranch } from "../../../context/BranchContext";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 import { CurrencySymbol } from "../../../components/CurrencyAmount";
+import { BranchContextIndicator } from "../../../components/inventory/BranchScopeIndicators";
 
 type ReportGroupId =
   | "stock"
@@ -1172,9 +1173,15 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
         >
           <Card className="border border-slate-200 bg-white">
             <CardHeader className="py-3 px-3">
-              <CardTitle className="text-xs font-semibold text-slate-800">
-                Inventory Reports
-              </CardTitle>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-xs font-semibold text-slate-800">
+                  Inventory Reports
+                </CardTitle>
+                {/* Phase 11 — informational branch-context indicator (renders only when the tenant
+                    has inventory branch-scoping enabled). Functional consolidated/active toggle is
+                    deferred with the /data report service. */}
+                <BranchContextIndicator />
+              </div>
               <span className="text-[10px] text-slate-500">
                 Choose a report, set filters, generate and export.
               </span>

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { getBranches, getDefaultBranch, switchBranchSession } from '../api/branchApi';
+import { getBranches, getDefaultBranch, switchBranchSession, getInventoryBranchScopeStatus } from '../api/branchApi';
 import { getUserProfile, getRoles } from '../api/auth';
 
 const BranchContext = createContext(null);
@@ -161,6 +161,9 @@ export const BranchProvider = ({ children }) => {
         return Number.isFinite(parsed) ? parsed : null;
     });
     const [isLoading, setIsLoading] = useState(() => Boolean(sessionStorage.getItem("token")));
+    // Phase 11 — whether inventory branch-scoping is enabled for this tenant. Gates branch labels/
+    // badges so the UI stays unchanged when the backend toggle is off (no cosmetic drift).
+    const [branchScopeEnabled, setBranchScopeEnabled] = useState(false);
 
     const isAdmin = userCanAccessAllBranches();
     const isAllBranches = isAdmin && activeBranchId === 'ALL';
@@ -208,6 +211,13 @@ export const BranchProvider = ({ children }) => {
                 : [];
         } catch {
             allBranches = [];
+        }
+
+        // Phase 11 — fetch the tenant's inventory branch-scope flag (fails soft to false).
+        try {
+            setBranchScopeEnabled(await getInventoryBranchScopeStatus());
+        } catch {
+            setBranchScopeEnabled(false);
         }
 
         let mergedBranches = allBranches;
@@ -319,6 +329,8 @@ export const BranchProvider = ({ children }) => {
             isAllBranches,
             canSwitchBranches: isAdmin,
             switchBranch,
+            // Phase 11 — inventory branch-scope UI gating
+            branchScopeEnabled,
         }}>
             {children}
         </BranchContext.Provider>

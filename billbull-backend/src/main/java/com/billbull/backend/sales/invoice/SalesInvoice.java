@@ -7,6 +7,7 @@ import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -176,6 +177,18 @@ public class SalesInvoice {
 
     @Enumerated(EnumType.STRING)
     private DeliveryStatus deliveryStatus = DeliveryStatus.PENDING;
+
+    /** How many times this invoice's receipt has been reprinted (POS "Reprint Previous Invoices"). */
+    @Column(name = "reprint_count", nullable = false, columnDefinition = "integer default 0")
+    private Integer reprintCount = 0;
+
+    @Column(name = "last_reprinted_by", length = 255)
+    private String lastReprintedBy;
+
+    /** True UTC instant (not server-local wall-clock) so every viewer's browser
+     *  renders it in their own local timezone rather than the server's. */
+    @Column(name = "last_reprinted_at")
+    private Instant lastReprintedAt;
 
     @Transient
     private Boolean requirePickingNote = Boolean.TRUE;
@@ -546,6 +559,30 @@ public class SalesInvoice {
 
     public void setDeliveryStatus(DeliveryStatus deliveryStatus) {
         this.deliveryStatus = deliveryStatus;
+    }
+
+    public Integer getReprintCount() {
+        return reprintCount;
+    }
+
+    public void setReprintCount(Integer reprintCount) {
+        this.reprintCount = reprintCount;
+    }
+
+    public String getLastReprintedBy() {
+        return lastReprintedBy;
+    }
+
+    public void setLastReprintedBy(String lastReprintedBy) {
+        this.lastReprintedBy = lastReprintedBy;
+    }
+
+    public Instant getLastReprintedAt() {
+        return lastReprintedAt;
+    }
+
+    public void setLastReprintedAt(Instant lastReprintedAt) {
+        this.lastReprintedAt = lastReprintedAt;
     }
 
     public Boolean getRequirePickingNote() {

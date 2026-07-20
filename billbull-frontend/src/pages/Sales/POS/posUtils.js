@@ -12,6 +12,13 @@ export const mapPosProductListItem = (d = {}) => ({
   nameAr: d.localName || '',
   barcode: d.barcode || d.packings?.find(p => p?.barcode)?.barcode || d.code || '',
   price: toNumber(d.retailPrice ?? d.maxPrice ?? d.minPrice ?? d.onlinePrice ?? 0),
+  // Kept alongside `price` (rather than folded into it) so the POS cart can warn
+  // the cashier when a line's price is edited outside this range. retailPrice is
+  // kept too because PosCheckoutController's §2.4 gate falls back to it as the
+  // floor when minPrice isn't set — getCartPriceWarning below mirrors that.
+  minPrice: d.minPrice != null && d.minPrice !== '' ? toNumber(d.minPrice) : null,
+  maxPrice: d.maxPrice != null && d.maxPrice !== '' ? toNumber(d.maxPrice) : null,
+  retailPrice: d.retailPrice != null && d.retailPrice !== '' ? toNumber(d.retailPrice) : null,
   stock: toNumber(d.stock ?? 0),
   image: d.image ? getImageUrl(d.image) : null,
   departmentId: d.departmentId || null,
@@ -73,7 +80,31 @@ export const mapPosCustomer = (customer = {}) => ({
   membershipId: customer.membershipId || customer.code || customer.customerCode || '',
   tier: customer.priceList || customer.groupType || customer.group || '',
   loyaltyPoints: toNumber(customer.loyaltyPoints ?? 0),
+  // Full list of saved shipping addresses, so the delivery dialog can offer a
+  // picker instead of just the single default address above.
+  savedAddresses: Array.isArray(customer.savedAddresses) ? customer.savedAddresses : [],
 });
+
+// Non-blocking cart-line warning: below-floor mirrors the backend §2.4 checkout
+// gate (PosCheckoutController) which hard-blocks the sale unless the user holds
+// pos_price_override — surfacing it here lets the cashier fix the price before
+// Settle Payment instead of hitting that 403 cold. The floor is minPrice, but
+// when minPrice isn't set the backend falls back to retailPrice as the floor
+// (see PosCheckoutController §2.4) — mirrored here so a product with no minPrice
+// configured still warns instead of going silent. Above maxPrice is
+// informational only; the backend never blocks on it.
+export const getCartPriceWarning = (item) => {
+  if (!item || item.isVoided) return null;
+  const price = toNumber(item.price, 0);
+  const floor = item.minPrice ?? item.retailPrice ?? null;
+  if (floor != null && price < floor) {
+    return { level: 'error', message: `Below min price (${floor})` };
+  }
+  if (item.maxPrice != null && price > item.maxPrice) {
+    return { level: 'warn', message: `Above max price (${item.maxPrice})` };
+  }
+  return null;
+};
 
 export const cachePosProduct = (cache, product) => {
   if (!cache || !product) return;

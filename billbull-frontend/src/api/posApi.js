@@ -114,11 +114,11 @@ export const touchSessionActivity = async (sessionId) => {
 
 export const closePosSession = async (sessionId, {
   closingCash, notes, closingDenominations, supervisorApproved,
-  cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks,
+  cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
 } = {}) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/close`, {
     closingCash, notes, closingDenominations, supervisorApproved,
-    cardBatchNo, cardSettlementVerified, closingCashierName, closingSupervisorName, closingRemarks,
+    cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
   });
   return res.data;
 };
@@ -154,6 +154,18 @@ export const getPosInvoices = async ({ dateFrom, dateTo, branchId } = {}) => {
 /** Returns { invoice, zatcaQr, sellerName, trn } for receipt rendering. */
 export const getPosReceiptData = async (invoiceId) => {
   const res = await api.get(`${BASE}/checkout/invoices/${invoiceId}/receipt`);
+  return res.data;
+};
+
+/**
+ * Same payload as getPosReceiptData, but also logs a RECEIPT_REPRINTED audit
+ * entry and bumps the invoice's reprintCount/lastReprintedBy/lastReprintedAt.
+ * Call this (not getPosReceiptData) whenever the user reprints an already-issued receipt.
+ */
+export const reprintPosReceipt = async (invoiceId, { sessionId, terminalId, branchId } = {}) => {
+  const res = await api.get(`${BASE}/checkout/invoices/${invoiceId}/reprint`, {
+    params: { sessionId, terminalId, branchId },
+  });
   return res.data;
 };
 
@@ -207,6 +219,25 @@ export const closePosDay = async (branchId, date) => {
     params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
   });
   return res.data;
+};
+
+/**
+ * ERP rule: X-Report print/PDF/Excel export is only allowed once the session is
+ * closed (on-screen preview via getPosXReport stays available while open). Throws
+ * (409) if the session isn't closed yet — callers should catch and surface the message.
+ */
+export const checkPosXReportPrintable = async (sessionId) => {
+  await api.post(`${BASE}/sessions/${sessionId}/x-report/print-check`);
+};
+
+/**
+ * ERP rule: Z-Report print/PDF/Excel export is only allowed once the business day
+ * has been closed. Throws (409) if the day isn't closed yet.
+ */
+export const checkPosZReportPrintable = async (branchId, date) => {
+  await api.get(`${BASE}/sessions/z-report/print-check`, {
+    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+  });
 };
 
 

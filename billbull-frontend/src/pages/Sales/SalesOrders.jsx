@@ -7,6 +7,7 @@ import {
   Smartphone,
   Plus,
   ArrowRight,
+  ArrowLeft,
   ChevronDown,
   User,
   AlertTriangle,
@@ -427,6 +428,18 @@ const SalesOrders = () => {
       : '';
   const hasLinkedDocument = Boolean(linkedQtn || linkedPi);
 
+  // Default to Walk-in Customer on a fresh, unlinked Sales Order (mirrors Quotations.jsx behavior)
+  useEffect(() => {
+    if (customersList.length === 0 || selectedCustomer || orderId) return;
+    if (activeTab !== 'create') return;
+    if (hasLinkedDocument) return;
+    const walkin = customersList.find(c =>
+      c.code === 'WALKIN' || (c.name || '').toLowerCase().includes('walk-in') || (c.name || '').toLowerCase().includes('walkin')
+    );
+    if (walkin) setSelectedCustomer(walkin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customersList, activeTab, hasLinkedDocument]);
+
   const filteredLinkedDocuments = useMemo(() => {
     const query = linkedSourceSearch.trim().toLowerCase();
 
@@ -509,6 +522,23 @@ const SalesOrders = () => {
       }
 
       let validCustomers = Array.isArray(custData) ? custData : [];
+
+      // Ensure a default Walk-in Customer exists in the list for quick selection
+      const hasWalkin = validCustomers.some(c => (c.name || '').toLowerCase().includes('walkin') || (c.name || '').toLowerCase().includes('walk-in'));
+      if (!hasWalkin) {
+        validCustomers = [{
+          id: 'WALKIN-ID',
+          code: 'WALKIN',
+          name: 'Walk-in Customer',
+          mobile: '',
+          phone: '',
+          creditStatus: 'Good',
+          groupType: 'Walk-In',
+          address: '',
+          trn: ''
+        }, ...validCustomers];
+      }
+
       setCustomersList(validCustomers);
 
       setQuotationsList(Array.isArray(qtnData) ? qtnData : []);
@@ -581,7 +611,7 @@ const SalesOrders = () => {
 
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount));
+    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode);
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
@@ -1210,7 +1240,7 @@ const SalesOrders = () => {
       status: targetStatus,
 
       // Map Items
-      items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
+      items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount), vatMode).map(i => {
         const footerDisc = Number(i.allocatedFooterDiscount) || 0;
         const itemNet = Math.max(0, Number(i.total || 0) - (Number(i.taxAmt || 0)) - footerDisc);
         const taxPercent = Number(i.tax) || 0;
@@ -1614,7 +1644,8 @@ const SalesOrders = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 p-4" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); setOverflowMenu(null); }}>
+    <div className="flex min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-[#F7F7FA] font-sans text-slate-900 relative" onClick={() => { setIsCustomerOpen(false); setIsLinkedSourceOpen(false); setOverflowMenu(null); }}>
+    <main className="flex-1 p-4 md:p-6 flex flex-col min-w-0">
 
       {/* ✅ PRODUCT SELECTOR MODAL */}
       <ProductSelector
@@ -1728,61 +1759,97 @@ const SalesOrders = () => {
         </div>
       )}
 
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><FileText className="text-[#F5C742]" size={28} /> Sales Orders</h1>
-          <p className="text-xs text-slate-500">Approved quotations & proforma invoices converted into sales orders.</p>
-        </div>
-        {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
-        {activeTab === 'create' && canExport('sales.order') && (
-          <div className="flex flex-wrap gap-2">
-            <button onClick={() => {
-              if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
-              setIsEmailModalOpen(true);
-            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
-              <Mail size={14} /> Email
-            </button>
-            <button onClick={() => {
-              const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
-              const phone = (fullCustomer?.mobile || fullCustomer?.phone || '').replace(/\D/g, '');
-              if (phone) window.open(`https://wa.me/${phone}`, '_blank');
-              else alert('No phone number found for this customer.');
-            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
-              <MessageCircle size={14} /> WhatsApp
-            </button>
-            <button onClick={() => {
-              const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
-              const phone = fullCustomer?.mobile || fullCustomer?.phone || '';
-              if (phone) window.open(`sms:${phone}`, '_self');
-              else alert('No phone number found for this customer.');
-            }} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm">
-              <Smartphone size={14} /> SMS
-            </button>
-            <button onClick={handlePrintClick} disabled={isPrinting} className="flex items-center gap-1 px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 shadow-sm disabled:opacity-50">
-              <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
-            </button>
+      {/* --- Sticky Header --- */}
+      <div className="bg-white border-b border-slate-200 px-4 md:px-6 py-5 sticky top-0 z-40 shadow-sm mb-6 -mx-4 md:-mx-6 mt-[-16px] md:mt-[-24px]">
+        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4 mb-6">
+          {/* Title and Controls */}
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <span>Customers & Sales</span>
+              <ChevronRight size={12} />
+              <span className="font-medium text-slate-900">Sales Orders</span>
+            </div>
+            <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2"><FileText className="text-[#F5C742]" size={28} /> Sales Orders</h1>
+            <p className="text-sm text-slate-500">Approved quotations & proforma invoices converted into sales orders.</p>
+            {activeTab === 'create' && isLocked && (
+              <div className="flex items-center gap-2 pt-1">
+                <span className="px-2 py-0.5 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-bold text-blue-700">
+                  View Only
+                </span>
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {/* TABS */}
-      <div className="flex flex-wrap gap-1 mb-4 bg-white p-1 rounded-lg w-full md:w-fit border border-slate-200 shadow-sm">
-        <button
-          onClick={() => setActiveTab('list')}
-          className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${activeTab === 'list' ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-        >
-          Sales Order List
-        </button>
-        {/* ── VERTICAL: canCreate('sales') ── */}
-        {canCreate('sales.order') && (
-          <button
-            onClick={handleCreateNew}
-            className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${activeTab === 'create' ? 'bg-white shadow-sm border border-slate-200 text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
-          >
-            Create New Sales Order
-          </button>
-        )}
+          {/* Actions */}
+          {/* ── VERTICAL: canExport('sales') for Print/Email/WhatsApp/SMS ── */}
+          {activeTab === 'create' && canExport('sales.order') && (
+            <div className="flex flex-wrap items-center gap-1.5 w-full xl:w-auto">
+              <button onClick={() => setActiveTab('list')} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                <ArrowLeft className="h-4 w-4" /> Back
+              </button>
+              <button onClick={() => {
+                if (!orderId) { alert('Please save the Sales Order before sending an email.'); return; }
+                setIsEmailModalOpen(true);
+              }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                <Mail className="h-4 w-4" /> Email
+              </button>
+              <button onClick={() => {
+                const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+                const phone = (fullCustomer?.mobile || fullCustomer?.phone || '').replace(/\D/g, '');
+                if (phone) window.open(`https://wa.me/${phone}`, '_blank');
+                else alert('No phone number found for this customer.');
+              }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                <MessageCircle className="h-4 w-4" /> WhatsApp
+              </button>
+              <button onClick={() => {
+                const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
+                const phone = fullCustomer?.mobile || fullCustomer?.phone || '';
+                if (phone) window.open(`sms:${phone}`, '_self');
+                else alert('No phone number found for this customer.');
+              }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
+                <Smartphone className="h-4 w-4" /> SMS
+              </button>
+              <button onClick={handlePrintClick} disabled={isPrinting} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors disabled:opacity-50">
+                <Printer className="h-4 w-4" /> {isPrinting ? 'Printing...' : 'Print'}
+              </button>
+            </div>
+          )}
+          {activeTab === 'list' && canCreate('sales.order') && (
+            <div className="flex flex-wrap items-center gap-1.5 w-full xl:w-auto">
+              <button
+                onClick={handleCreateNew}
+                className="flex-1 sm:flex-none h-8 px-4 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-sm font-bold shadow-sm transition-colors"
+              >
+                <Plus className="h-4 w-4" /> Create New
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Navigation Tabs */}
+        <div className="flex overflow-x-auto no-scrollbar gap-2 mb-4">
+          {[
+            { id: 'list', label: 'Sales Order List', icon: ShoppingCart },
+            { id: 'create', label: 'Sales Order Editor', icon: FileText }
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            if (tab.id === 'create' && !canCreate('sales.order') && activeTab !== 'create') return null;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => tab.id === 'create' ? handleCreateNew() : setActiveTab(tab.id)}
+                className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0 ${isActive
+                  ? "bg-[#F5C742] text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+              >
+                <Icon className="h-4 w-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* ======================= VIEW: LIST ======================= */}
@@ -2060,112 +2127,122 @@ const SalesOrders = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+        {/* Sales Order Details — single inline row (Status · No. · Date · Linked Source ·
+            Linked Document No.) to match the reference layout. Fields/handlers unchanged;
+            only labels/containers restyled inline. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-white rounded-lg border border-slate-200 p-4">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">Status</label>
+            {renderStatusBadge(status)}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">Sales Order No.</label>
+            <input
+              type="text"
+              value={soNumber}
+              onChange={(e) => setSoNumber(e.target.value)}
+              readOnly={isLocked || orderAutoNumbering}
+              placeholder={orderAutoNumbering ? 'Auto generated' : 'Enter sales order number'}
+              title="Sales Order No."
+              className="w-36 text-sm p-1.5 border border-slate-200 rounded text-slate-700 font-medium read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-[#F5C742]"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">Order Date</label>
+            <input type="date" disabled={isLocked} value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed focus:outline-none focus:border-[#F5C742]" />
+          </div>
 
-          {/* LEFT COLUMN */}
-          <div className="xl:col-span-1 space-y-4">
-
-            {/* 1. SALES ORDER DETAILS */}
-            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
-              <h3 className="text-sm font-bold text-slate-800 mb-4">Sales Order Details</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-                <div className="flex flex-col">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Sales Order No.</label>
-                  <input
-                    type="text"
-                    value={soNumber}
-                    onChange={(e) => setSoNumber(e.target.value)}
-                    readOnly={isLocked || orderAutoNumbering}
-                    placeholder={orderAutoNumbering ? 'Auto generated' : 'Enter sales order number'}
-                    className="text-xs p-2 border border-slate-200 rounded text-slate-700 font-medium read-only:bg-slate-50 read-only:text-slate-500 focus:outline-none focus:border-yellow-400"
-                  />
-                </div>
-                <div className="flex flex-col">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Order Date</label>
-                  <input type="date" disabled={isLocked} value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className="text-xs p-2 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400" />
-                </div>
-
-                <div className="flex flex-col">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Source</label>
-                  <div className="relative">
-                    <select
-                      value={linkedSourceType}
-                      disabled={isLocked}
-                      onChange={(e) => handleLinkedSourceTypeChange(e.target.value)}
-                      className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 bg-white appearance-none focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500"
-                    >
-                      <option value="">Direct / No Link</option>
-                      <option value="quotation">Quotation</option>
-                      <option value="proforma">PI / Proforma</option>
-                    </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  </div>
-                </div>
-
-                <div className="flex flex-col relative">
-                  <label className="text-xs font-semibold text-slate-500 mb-1">Linked Document No.</label>
-                  <div className="relative">
-                    <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                    <input
-                      type="text"
-                      value={isLinkedSourceOpen ? linkedSourceSearch : activeLinkedDocumentNumber}
-                      onChange={(e) => handleLinkedSourceSearchChange(e.target.value)}
-                      onClick={handleLinkedSourceSearchFocus}
-                      onFocus={handleLinkedSourceSearchFocus}
-                      placeholder={
-                        !linkedSourceType
-                          ? 'Select source type first'
-                          : linkedSourceType === 'quotation'
-                            ? 'Search quotation number or customer'
-                            : 'Search PI / Proforma number or customer'
-                      }
-                      className="w-full text-xs p-2 pl-8 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-yellow-400 disabled:bg-slate-50 disabled:text-slate-500"
-                      disabled={isLocked || !linkedSourceType}
-                    />
-                  </div>
-                  {isLinkedSourceOpen && linkedSourceType && !isLocked && (
-                    <div
-                      className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-56 overflow-y-auto z-30"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {filteredLinkedDocuments.length > 0 ? (
-                        filteredLinkedDocuments.map((document) => {
-                          const documentNumber = linkedSourceType === 'quotation'
-                            ? document.qtnNo
-                            : document.piNumber;
-                          const customerLabel = linkedSourceType === 'quotation'
-                            ? (document.customer || 'No customer')
-                            : [document.customerCode, document.customerName].filter(Boolean).join(' - ') || document.customerName || 'No customer';
-
-                          return (
-                            <div
-                              key={`${linkedSourceType}-${document.id || documentNumber}`}
-                              className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between gap-3"
-                              onClick={() => {
-                                if (linkedSourceType === 'quotation') {
-                                  handleSelectQuotation(document);
-                                  return;
-                                }
-                                handleSelectProforma(document);
-                              }}
-                            >
-                              <span className="font-bold">{documentNumber}</span>
-                              <span className="text-slate-400 truncate">{customerLabel}</span>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div className="px-3 py-2 text-xs text-slate-400">
-                          {linkedSourceType === 'quotation' ? 'No quotations found' : 'No proforma invoices found'}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">Linked Source</label>
+            <div className="relative">
+              <select
+                value={linkedSourceType}
+                disabled={isLocked}
+                onChange={(e) => handleLinkedSourceTypeChange(e.target.value)}
+                className="w-40 text-sm p-1.5 pr-7 border border-slate-200 rounded text-slate-700 bg-white appearance-none focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
+              >
+                <option value="">Direct / No Link</option>
+                <option value="quotation">Quotation</option>
+                <option value="proforma">PI / Proforma</option>
+              </select>
+              <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             </div>
+          </div>
 
+          <div className="flex items-center gap-2 relative">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">Linked Document No.</label>
+            <div className="relative">
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={isLinkedSourceOpen ? linkedSourceSearch : activeLinkedDocumentNumber}
+                onChange={(e) => handleLinkedSourceSearchChange(e.target.value)}
+                onClick={handleLinkedSourceSearchFocus}
+                onFocus={handleLinkedSourceSearchFocus}
+                placeholder={
+                  !linkedSourceType
+                    ? 'Select source type first'
+                    : linkedSourceType === 'quotation'
+                      ? 'Search quotation number or customer'
+                      : 'Search PI / Proforma number or customer'
+                }
+                className="w-56 text-sm p-1.5 pl-7 border border-slate-200 rounded text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
+                disabled={isLocked || !linkedSourceType}
+              />
+            </div>
+            {isLinkedSourceOpen && linkedSourceType && !isLocked && (
+              <div
+                className="absolute top-full left-0 w-72 bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-56 overflow-y-auto z-30"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {filteredLinkedDocuments.length > 0 ? (
+                  filteredLinkedDocuments.map((document) => {
+                    const documentNumber = linkedSourceType === 'quotation'
+                      ? document.qtnNo
+                      : document.piNumber;
+                    const customerLabel = linkedSourceType === 'quotation'
+                      ? (document.customer || 'No customer')
+                      : [document.customerCode, document.customerName].filter(Boolean).join(' - ') || document.customerName || 'No customer';
+
+                    return (
+                      <div
+                        key={`${linkedSourceType}-${document.id || documentNumber}`}
+                        className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer text-slate-700 border-b border-slate-50 last:border-0 flex justify-between gap-3"
+                        onClick={() => {
+                          if (linkedSourceType === 'quotation') {
+                            handleSelectQuotation(document);
+                            return;
+                          }
+                          handleSelectProforma(document);
+                        }}
+                      >
+                        <span className="font-bold">{documentNumber}</span>
+                        <span className="text-slate-400 truncate">{customerLabel}</span>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="px-3 py-2 text-xs text-slate-400">
+                    {linkedSourceType === 'quotation' ? 'No quotations found' : 'No proforma invoices found'}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
+
+          {/* ======================= MAIN COLUMN =======================
+              Customer+Shipping unified panel, then Sales Order Items, then
+              the bottom sections — stacked full-width, with the summary
+              rail alongside (matches Quotations.jsx layout). */}
+          <div className="xl:col-span-3 space-y-4">
+
+            {/* Customer + Shipping — unified panel, side-by-side in a wide card */}
+            <div className="bg-white rounded-lg border border-slate-200">
             <CustomerShippingPanel
+              layout="horizontal"
               selectedCustomer={selectedCustomer}
               onOpenCustomerSearch={() => { if (!hasLinkedDocument && !isLocked) setIsCustomerSearchOpen(true); }}
               onCustomerUpdated={setSelectedCustomer}
@@ -2207,6 +2284,7 @@ const SalesOrders = () => {
                   : null
               }
             />
+            </div>
 
             {/* CUSTOMER SELECTOR MODAL */}
             <CustomerSelector
@@ -2217,11 +2295,6 @@ const SalesOrders = () => {
               selectedCode={selectedCustomer?.code || ''}
               onCustomerCreated={fetchAllData}
             />
-
-          </div> {/* End Left Column */}
-
-          {/* ======================= MIDDLE COLUMN ======================= */}
-          <div className="xl:col-span-2 space-y-4">
 
             {/* ERROR ALERT */}
             {showItemError && (
@@ -2555,10 +2628,12 @@ const SalesOrders = () => {
               </div>
             </div>
 
-          </div> {/* End Middle Column */}
+          </div> {/* End Main Column */}
 
-          {/* ======================= RIGHT COLUMN ======================= */}
-          <div className="xl:col-span-1 space-y-4">
+          {/* ======================= RIGHT COLUMN (SUMMARY & SIDEBAR) =======================
+              Sticky rail: keeps Order Summary, Item Availability and Margin Summary
+              visible while the main column scrolls (matches Quotations.jsx layout). */}
+          <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-4 xl:self-start">
 
             {/* 8. ORDER SUMMARY */}
             <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
@@ -2952,6 +3027,7 @@ const SalesOrders = () => {
         apiFn={sendSalesOrderEmail}
         buildPayload={buildSoPrintData}
       />
+    </main>
     </div>
   );
 };

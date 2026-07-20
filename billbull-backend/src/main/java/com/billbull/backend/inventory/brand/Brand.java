@@ -1,16 +1,19 @@
 package com.billbull.backend.inventory.brand;
 
 import com.billbull.backend.common.BaseEntity;
+import com.billbull.backend.settings.branch.Branch;
 import jakarta.persistence.*;
 
 import java.util.ArrayList;
 import java.util.List;
 
+// Branch-Level Inventory Phase 6A: the global UNIQUE(code) and UNIQUE(name) constraints were
+// removed here and replaced by DB-level PARTIAL unique indexes (Flyway V37) — per-branch +
+// global-null. The @UniqueConstraint set is intentionally gone so Hibernate does not recreate the
+// global constraints. NOTE: @Column(unique=true) on `barcode` (a generated code, not a per-branch
+// business key) is deliberately KEPT — it is out of the Phase 6A uniqueness scope.
 @Entity
-@Table(name = "brands", uniqueConstraints = {
-        @UniqueConstraint(columnNames = "code"),
-        @UniqueConstraint(columnNames = "name")
-})
+@Table(name = "brands")
 public class Brand extends BaseEntity {
 
     @Column(nullable = false)
@@ -18,6 +21,12 @@ public class Brand extends BaseEntity {
 
     @Column(nullable = false, length = 10)
     private String code;
+
+    // Phase 6A: nullable branch (null = shared/global). Scoping wired in Phase 6B; inert for now.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "branch_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Branch branch;
 
     @Column(length = 500)
     private String description;
@@ -93,6 +102,14 @@ public class Brand extends BaseEntity {
 
     public void setCode(String code) {
         this.code = code;
+    }
+
+    public Branch getBranch() {
+        return branch;
+    }
+
+    public void setBranch(Branch branch) {
+        this.branch = branch;
     }
 
     public String getDescription() {

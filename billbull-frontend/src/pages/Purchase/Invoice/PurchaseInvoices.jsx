@@ -40,6 +40,7 @@ import {
 import ProductSelector from "../../../components/ProductSelector";
 import SearchableDropdown from "../../../components/SearchableDropdown";
 import LocationSelector from "../../../components/common/LocationSelector";
+import DateFilter from "../../../components/common/DateFilter";
 import VendorSelector from "../../../components/VendorSelector";
 import { getImageUrl } from "../../../utils/urlUtils";
 import { getDefaultProductUnit, resolveUnitAmount } from "../../../utils/unitPricing";
@@ -189,7 +190,6 @@ const isOverdueInvoice = (invoice) =>
 
 const PURCHASE_INVOICE_FILTER_TABS = [
   "All Invoices",
-  "Today",
   "Draft",
   "Pending Approval",
   "Posted",
@@ -695,13 +695,14 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
       )}
 
       {/* Table Container */}
-      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-visible">
         <div className="px-4 md:px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-slate-500" />
             <h3 className="text-sm font-semibold text-slate-700">Purchase Invoices</h3>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
+            <DateFilter onChange={(range) => setDateRange({ start: range.fromDate, end: range.toDate })} />
             <div className="relative w-full sm:w-auto flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input type="text" placeholder="Search document no, vendor, invoice no..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 h-9 w-full sm:w-64 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 placeholder:text-slate-400 text-xs" />
@@ -1901,262 +1902,235 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           Viewing purchase invoice in the full GRN-style layout. Barcode details are shown on each item row where available.
         </div>
       )}
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
 
-        {/* --- LEFT SIDEBAR (Invoice Info) --- */}
-        <div className="xl:col-span-1 space-y-4 order-2 xl:order-1">
-          <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm h-full">
-            <div className="flex items-center gap-2 mb-4">
+      {/* Invoice Details — single inline row (Status · Doc No/Date · Type · Vendor Invoice No ·
+          Invoice Date · Due Date), matching the Quotation editor's details bar. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-white rounded-lg border border-slate-200 p-4">
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500 shrink-0">Status</label>
+          <span className="inline-flex items-center px-2 py-1 rounded bg-slate-100 text-slate-700 text-[10px] font-bold border border-slate-200">
+            {formData.status}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500 shrink-0">Document No / Internal Invoice No</label>
+          <input type="text" value={formData.id} readOnly className="w-36 text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-center text-slate-700 font-mono" />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500 shrink-0">Document Date</label>
+          <input type="date" value={formData.date} disabled={isInvoiceLocked} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-36 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+        </div>
+        <div className="flex items-center gap-2 relative">
+          <label className="text-xs font-semibold text-slate-500 shrink-0">Invoice Type</label>
+          <select
+            value={invoiceType}
+            disabled={isInvoiceLocked}
+            onChange={(e) => {
+              const type = e.target.value;
+              setInvoiceType(type);
+
+              // reset everything
+              setSelectedLpo("");
+              setSelectedLpoId(null);
+              setSelectedGrn("");
+              setSelectedGrnNo("");
+              setLandedCostItems([]);
+
+              setFormData(prev => ({
+                ...prev,
+                vendor: "",
+                warehouse: "",
+                warehouseId: null,
+                zoneId: null,
+                locatorId: null,
+                binId: null,
+                items: [],
+                grnSubTotal: 0,
+                grnTaxTotal: 0,
+                grnGrandTotal: 0
+              }));
+            }}
+            className="w-40 text-sm p-1.5 border border-slate-200 rounded text-slate-700 bg-white focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+          >
+            {/* Use Enum for Options */}
+            <option value={SOURCE.DIRECT}>Direct Invoice</option>
+            <option value={SOURCE.LPO}>Against LPO</option>
+            <option value={SOURCE.GRN}>Against GRN</option>
+          </select>
+        </div>
+
+        {invoiceType === SOURCE.LPO && (
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">LPO No</label>
+            <SearchableDropdown
+              options={lpoList.map(lpo => ({
+                value: lpo.lpoNumber || lpo.id,
+                label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName}`
+              }))}
+              value={selectedLpo}
+              onChange={(val) => handleLpoSelect(val)}
+              placeholder="Select LPO..."
+              disabled={isInvoiceLocked}
+              className="w-48"
+            />
+          </div>
+        )}
+
+        {invoiceType === SOURCE.GRN && (
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-semibold text-slate-500 shrink-0">GRN No</label>
+            <SearchableDropdown
+              options={grnList.map(grn => ({
+                value: grn.id,
+                label: `${grn.idDisplay || grn.grnNo} - ${grn.vendorName || grn.vendor || "Vendor"}`
+              }))}
+              value={selectedGrn}
+              onChange={(val) => handleGrnSelect(val)}
+              placeholder="Select GRN..."
+              disabled={isInvoiceLocked}
+              className="w-48"
+            />
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500 shrink-0">
+            Vendor Invoice No <span className="text-red-500">*</span>
+          </label>
+          <div>
+            <input
+              type="text"
+              placeholder="Vendor's invoice #"
+              value={formData.vendorInvoiceNo}
+              readOnly={isInvoiceLocked}
+              onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
+              className={`w-36 text-sm p-1.5 border rounded text-slate-700 focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 ${!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
+                ? "border-red-300 bg-red-50"
+                : "border-slate-200"
+                }`}
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500 shrink-0">Invoice Date</label>
+          <input
+            type="date"
+            value={formData.vendorInvoiceDate}
+            disabled={isInvoiceLocked}
+            onChange={(e) => setFormData({ ...formData, vendorInvoiceDate: e.target.value })}
+            className="w-36 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500 shrink-0">Due Date</label>
+          <input
+            type="date"
+            value={formData.dueDate}
+            disabled={isInvoiceLocked}
+            onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+            className="w-36 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
+          />
+        </div>
+      </div>
+      {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
+        <p className="text-[11px] text-red-500 -mt-2 px-1">Vendor invoice number is required</p>
+      )}
+
+      {/* DIRECT INVOICE MANUAL ENTRY NOTICE */}
+      {invoiceType === SOURCE.DIRECT && (
+        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+          Enter items manually for Direct Invoice. Stock will be added upon approval if no GRN is linked.
+        </div>
+      )}
+      {invoiceType === SOURCE.GRN && selectedGrnNo && (
+        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 flex items-center gap-2 flex-wrap">
+          <span className="font-bold">Selected GRN:</span>
+          <span className="font-mono">{selectedGrnNo}</span>
+          <span>This invoice mirrors GRN financials. Values are locked.</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">
+
+        {/* ======================= MAIN COLUMN =======================
+            Vendor + Warehouse card, then Purchase Invoice Items, then Landed Costs —
+            stacked full-width, with the summary rail alongside. */}
+        <div className="xl:col-span-3 space-y-4">
+
+        {/* --- Vendor + Warehouse — unified panel, side-by-side --- */}
+        <div className="bg-white rounded-lg border border-slate-200 grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+          <div className="p-4">
+            <div className="flex items-center gap-2 mb-3">
               <FileText className="h-4 w-4 text-slate-400" />
-              <h3 className="font-semibold text-sm text-slate-700">Invoice Info</h3>
+              <h3 className="font-semibold text-sm text-slate-700">Vendor</h3>
             </div>
-
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-medium text-slate-500 mb-1 block">Document No / Internal Invoice No</label>
-                  <input type="text" value={formData.id} readOnly className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-600 font-mono" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-medium text-slate-500 mb-1 block">Document Date</label>
-                  <input type="date" value={formData.date} disabled={isInvoiceLocked} onChange={(e) => setFormData({ ...formData, date: e.target.value })} className="w-full text-xs bg-slate-50 border border-slate-200 rounded p-2 text-slate-600 disabled:opacity-70" />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Invoice Type</label>
-                <div className="relative">
-                  <select
-                    value={invoiceType}
-                    disabled={isInvoiceLocked}
-                    onChange={(e) => {
-                      const type = e.target.value;
-                      setInvoiceType(type);
-
-                      // reset everything
-                      setSelectedLpo("");
-                      setSelectedLpoId(null);
-                      setSelectedGrn("");
-                      setSelectedGrnNo("");
-                      setLandedCostItems([]);
-
-                      setFormData(prev => ({
-                        ...prev,
-                        vendor: "",
-                        warehouse: "",
-                        warehouseId: null,
-                        zoneId: null,
-                        locatorId: null,
-                        binId: null,
-                        items: [],
-                        grnSubTotal: 0,
-                        grnTaxTotal: 0,
-                        grnGrandTotal: 0
-                      }));
-                    }}
-
-                    className="w-full appearance-none text-xs border border-slate-200 rounded-md py-2 pl-3 pr-8 bg-white focus:ring-1 focus:ring-[#F5C742] outline-none"
-                  >
-                    {/* Use Enum for Options */}
-                    <option value={SOURCE.DIRECT}>Direct Invoice</option>
-                    <option value={SOURCE.LPO}>Against LPO</option>
-                    <option value={SOURCE.GRN}>Against GRN</option>
-                  </select>
-                  <ChevronDown className="absolute right-3 top-2.5 h-3 w-3 text-slate-400 pointer-events-none" />
-                </div>
-              </div>
-
-              {/* DIRECT INVOICE MANUAL ENTRY NOTICE */}
-              {invoiceType === SOURCE.DIRECT && (
-                <div className="bg-blue-50 border border-blue-100 rounded p-3 text-xs text-blue-700">
-                  Enter items manually for Direct Invoice. Stock will be added upon approval if no GRN is linked.
-                </div>
-              )}
-
-              {invoiceType === SOURCE.LPO && (
-                <div>
-                  <label className="text-xs font-medium text-slate-500 mb-1 block">LPO No</label>
-                  <SearchableDropdown
-                    options={lpoList.map(lpo => ({
-                      value: lpo.lpoNumber || lpo.id,
-                      label: `${lpo.lpoNumber || lpo.id} - ${lpo.vendorName}`
-                    }))}
-                    value={selectedLpo}
-                    onChange={(val) => handleLpoSelect(val)}
-                    placeholder="Select LPO..."
-                    disabled={isInvoiceLocked}
-                    className="w-full"
-                  />
-                </div>
-              )}
-
-              {invoiceType === SOURCE.GRN && (
-                <div>
-                  <label className="text-xs font-medium text-slate-500 mb-1 block">
-                    GRN No
-                  </label>
-                  <SearchableDropdown
-                    options={grnList.map(grn => ({
-                      value: grn.id,
-                      label: `${grn.idDisplay || grn.grnNo} - ${grn.vendorName || grn.vendor || "Vendor"}`
-                    }))}
-                    value={selectedGrn}
-                    onChange={(val) => handleGrnSelect(val)}
-                    placeholder="Select GRN..."
-                    disabled={isInvoiceLocked}
-                    className="w-full"
-                  />
-                </div>
-              )}
-              {invoiceType === SOURCE.GRN && selectedGrnNo && (
-                <div className="mt-1">
-                  <label className="text-[10px] uppercase font-bold text-slate-400 mb-1 block">
-                    Selected GRN
-                  </label>
-                  <div className="text-xs font-mono bg-slate-50 border border-slate-200 rounded p-2 text-slate-700">
-                    {selectedGrnNo}
-                  </div>
-                  {invoiceType === SOURCE.GRN && (
-                    <div className="text-xs text-slate-500 mt-2">
-                      This invoice mirrors GRN financials. Values are locked.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Name</label>
-                {formData.vendor ? (
-                  <div className={`bg-slate-50 border border-slate-200 rounded-md p-4 relative group ${isFormLocked ? 'opacity-70 pointer-events-none' : ''}`}>
-                    <button
-                      onClick={() => !isFormLocked && setIsVendorSearchOpen(true)}
-                      disabled={isFormLocked}
-                      className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-slate-200 rounded-md transition-all text-slate-500"
-                      title="Change Vendor"
-                    >
-                      <Search className="h-4 w-4" />
-                    </button>
-                    <div className="font-bold text-slate-800 text-sm mb-1">{formData.vendor}</div>
-                  </div>
-                ) : (
+            <div>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Name</label>
+              {formData.vendor ? (
+                <div className={`bg-slate-50 border border-slate-200 rounded-md p-4 relative group ${isFormLocked ? 'opacity-70 pointer-events-none' : ''}`}>
                   <button
                     onClick={() => !isFormLocked && setIsVendorSearchOpen(true)}
                     disabled={isFormLocked}
-                    className={`w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors ${isFormLocked ? 'opacity-50 pointer-events-none' : ''}`}
+                    className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-slate-200 rounded-md transition-all text-slate-500"
+                    title="Change Vendor"
                   >
-                    <span className="text-slate-400">Select Vendor...</span>
-                    <Search className="h-4 w-4 text-slate-400" />
+                    <Search className="h-4 w-4" />
                   </button>
-                )}
-
-                <VendorSelector
-                  isOpen={isVendorSearchOpen}
-                  onClose={() => setIsVendorSearchOpen(false)}
-                  onSelect={(v) => setFormData({ ...formData, vendor: v?.name || '' })}
-                  vendors={vendorList}
-                  selectedCode={''}
-                />
-              </div>
-
-              <div className="mt-2">
-                <label className="text-xs font-medium text-slate-500 mb-1 block">
-                  Vendor Invoice No <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="Vendor's invoice #"
-                  value={formData.vendorInvoiceNo}
-                  readOnly={isInvoiceLocked}
-                  onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
-                  className={`w-full text-xs border rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none read-only:bg-slate-50 ${!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
-                    ? "border-red-300 bg-red-50"
-                    : "border-slate-200"
-                    }`}
-                />
-                {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
-                  <p className="text-[10px] text-red-500 mt-0.5">Vendor invoice number is required</p>
-                )}
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Invoice Date</label>
-                <input
-                  type="date"
-                  value={formData.vendorInvoiceDate}
-                  disabled={isInvoiceLocked}
-                  onChange={(e) => setFormData({ ...formData, vendorInvoiceDate: e.target.value })}
-                  className="w-full text-xs border border-slate-200 rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none disabled:opacity-70"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Due Date</label>
-                <input
-                  type="date"
-                  value={formData.dueDate}
-                  disabled={isInvoiceLocked}
-                  onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
-                  className="w-full text-xs border border-slate-200 rounded-md py-2 px-3 focus:ring-1 focus:ring-[#F5C742] outline-none disabled:opacity-70"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-slate-500 mb-1 block">Status</label>
-                <span className="inline-flex items-center px-2 py-1 rounded bg-slate-100 text-slate-700 text-[10px] font-bold border border-slate-200">
-                  {formData.status}
-                </span>
-              </div>
-            </div>
-
-            {/* Vendor Details Section */}
-            <div className="mt-6 pt-4 border-t border-slate-100">
-              <div className="flex items-center gap-2 mb-3">
-                <LayoutDashboard className="h-3 w-3 text-slate-400" />
-                <h3 className="font-semibold text-xs text-slate-700">Vendor Details</h3>
-              </div>
-              <div className="bg-slate-50 rounded p-3 border border-slate-100 text-xs">
-                <div className="flex justify-between mb-2">
-                  <span className="text-slate-500">Vendor</span>
-                  <span className="font-medium text-right ml-2">{formData.vendor || "-"}</span>
+                  <div className="font-bold text-slate-800 text-sm mb-1">{formData.vendor}</div>
                 </div>
-              </div>
-            </div>
+              ) : (
+                <button
+                  onClick={() => !isFormLocked && setIsVendorSearchOpen(true)}
+                  disabled={isFormLocked}
+                  className={`w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors ${isFormLocked ? 'opacity-50 pointer-events-none' : ''}`}
+                >
+                  <span className="text-slate-400">Select Vendor...</span>
+                  <Search className="h-4 w-4 text-slate-400" />
+                </button>
+              )}
 
-            {/* Warehouse Section */}
-            <div className="mt-4 pt-4 border-t border-slate-100">
-              <div className="flex items-center gap-2 mb-3">
-                <LayoutDashboard className="h-3 w-3 text-slate-400" />
-                <h3 className="font-semibold text-xs text-slate-700">Warehouse</h3>
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-[10px] mb-1 flex items-center gap-1">
-                    <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
-                    {locationError && <span className="text-red-500">*</span>}
-                    {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
-                  </label>
-                  <LocationSelector
-                    value={{
-                      warehouseId: formData.warehouseId,
-                      warehouseName: formData.warehouse,
-                      zoneId: formData.zoneId,
-                      locatorId: formData.locatorId,
-                      binId: formData.binId
-                    }}
-                    onChange={handleLocationChange}
-                    disabled={isFormLocked}
-                    className="w-full"
-                    error={locationError}
-                  />
-                </div>
-              </div>
+              <VendorSelector
+                isOpen={isVendorSearchOpen}
+                onClose={() => setIsVendorSearchOpen(false)}
+                onSelect={(v) => setFormData({ ...formData, vendor: v?.name || '' })}
+                vendors={vendorList}
+                selectedCode={''}
+              />
+            </div>
+          </div>
+
+          <div className="p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <LayoutDashboard className="h-4 w-4 text-slate-400" />
+              <h3 className="font-semibold text-sm text-slate-700">Warehouse</h3>
+            </div>
+            <div>
+              <label className="text-[10px] mb-1 flex items-center gap-1">
+                <span className={locationError ? 'text-red-600' : 'text-slate-500'}>Delivery Location</span>
+                {locationError && <span className="text-red-500">*</span>}
+                {!formData.binId && !locationError && <span className="text-slate-400 font-normal">(bin required)</span>}
+              </label>
+              <LocationSelector
+                value={{
+                  warehouseId: formData.warehouseId,
+                  warehouseName: formData.warehouse,
+                  zoneId: formData.zoneId,
+                  locatorId: formData.locatorId,
+                  binId: formData.binId
+                }}
+                onChange={handleLocationChange}
+                disabled={isFormLocked}
+                className="w-full"
+                error={locationError}
+              />
             </div>
           </div>
         </div>
 
-        {/* --- MIDDLE COLUMN (Items & Landed Cost) --- */}
-        <div className="xl:col-span-2 space-y-4 order-1 xl:order-2">
-          <div className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col h-full min-h-[400px] xl:min-h-[600px]">
+        {/* --- Purchase Invoice Items & Landed Cost --- */}
+        <div className="bg-white border border-slate-200 rounded-lg shadow-sm flex flex-col">
             {/* Table Toolbar */}
             <div className="px-4 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:justify-between items-start sm:items-center bg-slate-50/50 gap-3">
               <div className="flex items-center gap-2">
@@ -2496,10 +2470,12 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
             {/* NLC Second Section Removed */}
           </div>
-        </div>
+        </div> {/* End Main Column */}
 
-        {/* --- RIGHT SIDEBAR (Summary & Actions) --- */}
-        <div className="xl:col-span-1 space-y-4 order-3">
+        {/* ======================= RIGHT COLUMN (SUMMARY & SIDEBAR) =======================
+            Sticky rail: keeps Invoice Summary and Accounting visible while the main
+            column scrolls, matching the Quotation editor's summary rail. */}
+        <div className="xl:col-span-1 space-y-4 xl:sticky xl:top-4 xl:self-start">
 
           {/* Invoice Summary */}
           <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-sm">
@@ -2973,7 +2949,8 @@ const PurchaseInvoices = () => {
   const [editorMode, setEditorMode] = useState("edit");
   const pendingDraftRef = useRef(null);
 
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const _today = new Date().toISOString().slice(0, 10);
+  const [dateRange, setDateRange] = useState({ start: _today, end: _today });
   const [vendorFilter, setVendorFilter] = useState("");
 
   // REAL STATE (No Mocks)
