@@ -3790,22 +3790,27 @@ const SalesInvoice = () => {
                                 </div>
                             )}
 
-                            {/* Invoice Details — single inline row (Status · No. · Date · Due Date ·
+                            {/* Invoice Details — responsive grid (Status · No. · Date · Due Date ·
                                 Reference · Payment Terms · Sales Mode · Invoice Type · [linked doc] ·
-                                Branch · Salesperson) to match the Quotations reference layout.
-                                Fields/handlers unchanged; only labels/containers restyled inline. */}
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 bg-white rounded-lg border border-slate-200 p-4">
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Status</label>
-                                    {renderListStatus(status)}
+                                Branch · Salesperson). Each field is a label-over-control cell so every
+                                column lines up on its own baseline at any viewport width, instead of
+                                the old inline flex-wrap which ragged-wrapped on narrower screens.
+                                Fields/handlers unchanged; only the layout/containers were restyled. */}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-x-4 gap-y-4 items-end bg-white rounded-lg border border-slate-200 p-4">
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Status</label>
+                                    <div>{renderListStatus(status)}</div>
                                 </div>
                                 {isReadOnlyInvoice && (
-                                    <span className="text-[10px] font-bold px-2 py-1 rounded border border-slate-200 bg-slate-50 text-slate-600">
-                                        View Only
-                                    </span>
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate invisible">View</label>
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded border border-slate-200 bg-slate-50 text-slate-600 self-start">
+                                            View Only
+                                        </span>
+                                    </div>
                                 )}
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Invoice No.</label>
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Invoice No.</label>
                                     <input
                                         type="text"
                                         value={invoiceNo}
@@ -3813,29 +3818,29 @@ const SalesInvoice = () => {
                                         readOnly={isReadOnlyInvoice || invoiceAutoNumbering}
                                         placeholder={invoiceAutoNumbering ? 'Auto generated' : 'Enter invoice number'}
                                         title="Invoice Number"
-                                        className="w-36 text-sm p-1.5 border border-slate-200 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:border-[#F5C742] outline-none"
+                                        className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 font-bold read-only:bg-slate-50 read-only:text-slate-500 focus:border-[#F5C742] outline-none"
                                     />
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Date</label>
-                                    <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Date</label>
+                                    <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Due Date</label>
-                                    <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Due Date</label>
+                                    <input type="date" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed" />
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Reference</label>
-                                    <input type="text" value={reference} onChange={e => setReference(e.target.value)} readOnly={isReadOnlyInvoice} placeholder="e.g. PO Number" className="w-32 text-sm p-1.5 border border-slate-200 rounded text-slate-700 focus:border-[#F5C742] outline-none read-only:bg-slate-50 read-only:text-slate-500" />
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Reference</label>
+                                    <input type="text" value={reference} onChange={e => setReference(e.target.value)} readOnly={isReadOnlyInvoice} placeholder="e.g. PO Number" className="w-full text-sm p-1.5 border border-slate-200 rounded text-slate-700 focus:border-[#F5C742] outline-none read-only:bg-slate-50 read-only:text-slate-500" />
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Payment Terms</label>
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Payment Terms</label>
                                     <div className="relative">
-                                        <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-28 text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                        <select value={paymentTerms} onChange={e => setPaymentTerms(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                             <option>Immediate</option>
                                             <option>Net 15</option>
                                             <option>Net 30</option>
@@ -3846,10 +3851,10 @@ const SalesInvoice = () => {
                                     </div>
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Sales Mode</label>
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Sales Mode</label>
                                     <div className="relative">
-                                        <select value={salesChannel} onChange={e => setSalesChannel(e.target.value)} disabled={isReadOnlyInvoice} className="w-32 text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                        <select value={salesChannel} onChange={e => setSalesChannel(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                             <option value="Retail">Retail</option>
                                             <option value="Wholesale">Wholesale</option>
                                             <option value="POS">POS</option>
@@ -3861,8 +3866,8 @@ const SalesInvoice = () => {
                                     </div>
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Invoice Type</label>
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Invoice Type</label>
                                     <div className="relative">
                                         <select
                                             value={invoiceTypeUI}
@@ -3874,7 +3879,7 @@ const SalesInvoice = () => {
                                                 setLinkedSO(''); setLinkedDN(''); setLinkedPI('');
                                                 setBillDiscount(0);
                                             }}
-                                            className="w-40 text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                             <option>Direct Sale</option>
                                             <option>Against Sales Order</option>
                                             <option>Against Delivery Note</option>
@@ -3886,10 +3891,10 @@ const SalesInvoice = () => {
 
                                 {/* CONDITIONAL SOURCE DOCUMENT SELECTOR */}
                                 {invoiceTypeUI === 'Against Sales Order' && (
-                                    <div className="flex items-center gap-2">
-                                        <label className="text-xs font-semibold text-slate-500 shrink-0">Sales Order</label>
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Sales Order</label>
                                         <div className="relative">
-                                            <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-40 text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            <select value={linkedSO} onChange={e => handleSOChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                 <option value="">Select SO...</option>
                                                 {salesOrdersList.filter(s => s.status !== 'CANCELLED').map(s => <option key={s.id} value={s.soNumber}>{s.soNumber} - {s.customerName}</option>)}
                                             </select>
@@ -3899,10 +3904,10 @@ const SalesInvoice = () => {
                                 )}
 
                                 {invoiceTypeUI === 'Against Delivery Note' && (
-                                    <div className="flex items-center gap-2">
-                                        <label className="text-xs font-semibold text-slate-500 shrink-0">Delivery Note</label>
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Delivery Note</label>
                                         <div className="relative">
-                                            <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-40 text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            <select value={linkedDN} onChange={e => handleDNChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                 <option value="">Select DN...</option>
                                                 {deliveryNotesList.filter(d => d.status !== 'CANCELLED').map(d => <option key={d.id} value={d.dnNumber}>{d.dnNumber} - {d.customerName}</option>)}
                                             </select>
@@ -3912,10 +3917,10 @@ const SalesInvoice = () => {
                                 )}
 
                                 {invoiceTypeUI === 'Against Proforma Invoice' && (
-                                    <div className="flex items-center gap-2">
-                                        <label className="text-xs font-semibold text-slate-500 shrink-0">Proforma Invoice</label>
+                                    <div className="flex flex-col gap-1 min-w-0">
+                                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Proforma Invoice</label>
                                         <div className="relative">
-                                            <select value={linkedPI} onChange={e => handlePIChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-40 text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                            <select value={linkedPI} onChange={e => handlePIChange(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                                 <option value="">Select PI...</option>
                                                 {proformaList.filter(p => p.status !== 'CANCELLED').map(p => <option key={p.id} value={p.proformaNo}>{p.proformaNo} - {p.customerName}</option>)}
                                             </select>
@@ -3924,20 +3929,20 @@ const SalesInvoice = () => {
                                     </div>
                                 )}
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Branch</label>
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Branch</label>
                                     <input
                                         value={branch || defaultBranch?.name || ''}
                                         readOnly
                                         title={branch || defaultBranch?.name || ''}
-                                        className="w-32 text-sm p-1.5 border border-slate-200 rounded bg-slate-50 text-slate-600 focus:outline-none"
+                                        className="w-full text-sm p-1.5 border border-slate-200 rounded bg-slate-50 text-slate-600 truncate focus:outline-none"
                                     />
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                    <label className="text-xs font-semibold text-slate-500 shrink-0">Salesperson</label>
+                                <div className="flex flex-col gap-1 min-w-0">
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Salesperson</label>
                                     <div className="relative">
-                                        <select value={salesperson} onChange={e => setSalesperson(e.target.value)} disabled={isReadOnlyInvoice} className="w-40 text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                        <select value={salesperson} onChange={e => setSalesperson(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
                                             <option value="">Select salesperson...</option>
                                             {employeesList.map(emp => (
                                                 <option key={emp.id} value={emp.name}>{emp.name}</option>

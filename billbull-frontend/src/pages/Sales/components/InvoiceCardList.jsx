@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search } from 'lucide-react';
+import { Search, FileX } from 'lucide-react';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 import { getInvoiceStatusBadge } from '../utils/invoiceStatusBadge';
@@ -26,10 +26,10 @@ function InvoiceCard({ inv, selected, onSelect, currency }) {
             type="button"
             onClick={() => onSelect(inv)}
             aria-current={selected ? 'true' : undefined}
-            className={`w-full text-left p-3 rounded-lg border mb-2 transition-colors ${
+            className={`w-full text-left p-3 rounded-lg border mb-2 transition-all ${
                 selected
-                    ? 'bg-[#FFF8E7] border-[#F5C742] ring-1 ring-[#F5C742]'
-                    : 'bg-white border-slate-200 hover:bg-slate-50'
+                    ? 'bg-[#FFF8E7] border-[#F5C742] ring-1 ring-[#F5C742] shadow-sm'
+                    : 'bg-white border-slate-200 hover:bg-slate-50 hover:border-slate-300 hover:shadow-sm'
             }`}
         >
             <div className="flex justify-between items-start gap-2 mb-1">
@@ -54,7 +54,7 @@ function InvoiceCard({ inv, selected, onSelect, currency }) {
             {chips.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2">
                     {chips.map((c) => (
-                        <span key={c.label} className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${c.cls}`}>
+                        <span key={c.label} className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${c.cls}`}>
                             {c.label}: {c.ref}
                         </span>
                     ))}
@@ -66,7 +66,7 @@ function InvoiceCard({ inv, selected, onSelect, currency }) {
                 {inv.paymentMode && (
                     <>
                         <span className="text-slate-300 text-[10px]">•</span>
-                        <span className="border border-slate-200 px-1.5 py-0.5 rounded text-[10px] bg-white text-slate-600">
+                        <span className="border border-slate-200 px-1.5 py-0.5 rounded-full text-[10px] bg-white text-slate-600">
                             {inv.paymentMode}
                         </span>
                     </>
@@ -86,7 +86,7 @@ export default function InvoiceCardList({
     loading = false,
 }) {
     return (
-        <div className="bg-white border border-slate-200 rounded-xl flex flex-col max-h-[calc(100vh-9rem)]">
+        <div className="bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col max-h-[calc(100vh-9rem)]">
             <div className="p-3 border-b border-slate-100 shrink-0">
                 <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-2">All Invoices</h2>
                 <div className="relative">
@@ -97,12 +97,12 @@ export default function InvoiceCardList({
                         onChange={(e) => onSearchChange?.(e.target.value)}
                         placeholder="Search invoices..."
                         aria-label="Search invoices"
-                        className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-md text-xs focus:outline-none focus:border-[#F5C742]"
+                        className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-md text-xs focus:outline-none focus:border-[#F5C742] focus:ring-2 focus:ring-[#F5C742]/20 transition-shadow"
                     />
                 </div>
             </div>
 
-            <div className="overflow-y-auto p-3 pt-2 flex-1">
+            <div className="overflow-y-auto p-3 pt-2 flex-1 max-h-[1000px]">
                 {loading && invoices.length === 0 && (
                     <div className="space-y-2 animate-pulse" aria-busy="true">
                         {Array.from({ length: 5 }).map((_, i) => (
@@ -111,7 +111,10 @@ export default function InvoiceCardList({
                     </div>
                 )}
                 {!loading && invoices.length === 0 && (
-                    <div className="text-center py-8 text-slate-400 text-sm">No Invoices found.</div>
+                    <div className="text-center py-10 text-slate-400 text-sm">
+                        <FileX size={24} className="mx-auto mb-2 text-slate-300" />
+                        No invoices found.
+                    </div>
                 )}
                 {invoices.map((inv) => (
                     <InvoiceCard

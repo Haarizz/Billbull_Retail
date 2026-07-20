@@ -75,19 +75,19 @@ export default function PrintTemplateMenu({
                 aria-expanded={open}
                 aria-haspopup="menu"
                 onClick={toggleMenu}
-                className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium disabled:opacity-50"
+                className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-[#FFF8E7] hover:border-[#F5C742] text-slate-700 flex items-center gap-1.5 text-xs font-medium disabled:opacity-50 transition-colors"
             >
-                <Printer size={13} /> Print Template <ChevronDown size={13} className="text-slate-400" />
+                <Printer size={13} /> Print Template <ChevronDown size={13} className={`text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
             </button>
 
             {open && (
                 <>
                     <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-                    <div role="menu" className="absolute right-0 mt-1 w-64 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl z-50 py-1">
-                        <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Paper</div>
-                        {loading && <div className="px-3 py-2 text-xs text-slate-400">Loading templates…</div>}
+                    <div role="menu" className="absolute right-0 mt-1.5 w-64 max-h-80 overflow-y-auto bg-white border-0 ring-1 ring-black/5 rounded-xl shadow-lg shadow-slate-900/10 z-50 p-1.5">
+                        <div className="px-2.5 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Paper</div>
+                        {loading && <div className="px-2.5 py-2 text-xs text-slate-400">Loading templates…</div>}
                         {!loading && templates.length === 0 && (
-                            <div className="px-3 py-2 text-xs text-slate-400">No templates configured.</div>
+                            <div className="px-2.5 py-2 text-xs text-slate-400">No templates configured.</div>
                         )}
                         {!loading && PAPER_GROUPS.map(([groupKey, groupLabel]) => {
                             const group = templates
@@ -96,7 +96,7 @@ export default function PrintTemplateMenu({
                             if (group.length === 0) return null;
                             return (
                                 <div key={groupKey} className="py-0.5">
-                                    <div className="px-3 pt-1.5 pb-1 text-[9px] font-bold text-[#D99A00] uppercase tracking-wide">{groupLabel}</div>
+                                    <div className="px-2.5 pt-1.5 pb-1 text-[9px] font-bold text-[#D99A00] uppercase tracking-wide">{groupLabel}</div>
                                     {group.map((t) => (
                                         <button
                                             key={t.id}
@@ -104,7 +104,7 @@ export default function PrintTemplateMenu({
                                             role="menuitem"
                                             title={t.name}
                                             onClick={() => { setOpen(false); onPrintPaper?.(invoice, t); }}
-                                            className="w-full text-left px-3 py-2 text-xs hover:bg-[#FFF8E7] flex items-center gap-2"
+                                            className="w-full text-left px-2.5 py-2 rounded-lg text-xs hover:bg-[#FFF8E7] flex items-center gap-2 transition-colors"
                                         >
                                             {t.isDefault
                                                 ? <span className="text-[#F5C742] shrink-0">★</span>
@@ -117,7 +117,7 @@ export default function PrintTemplateMenu({
                         })}
 
                         <div className="border-t border-slate-100 mt-1 pt-1">
-                            <div className="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Thermal</div>
+                            <div className="px-2.5 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wide">Thermal</div>
                             {['58mm', '80mm'].map((size) => (
                                 <button
                                     key={size}
@@ -126,14 +126,14 @@ export default function PrintTemplateMenu({
                                     disabled={thermalBlocked}
                                     title={thermalBlocked ? thermalDisabledReason : `Print ${size} receipt`}
                                     onClick={() => { setOpen(false); onPrintThermal?.(invoice, size); }}
-                                    className="w-full text-left px-3 py-2 text-xs hover:bg-[#FFF8E7] flex items-center gap-2 disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                                    className="w-full text-left px-2.5 py-2 rounded-lg text-xs hover:bg-[#FFF8E7] flex items-center gap-2 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
                                 >
                                     <span className="w-2.5 shrink-0" />
                                     <span className="truncate text-slate-700">Thermal {size}</span>
                                 </button>
                             ))}
                             {thermalBlocked && (
-                                <p className="px-3 py-1.5 text-[10px] text-slate-400 leading-snug">{thermalDisabledReason}</p>
+                                <p className="px-2.5 py-1.5 text-[10px] text-slate-400 leading-snug">{thermalDisabledReason}</p>
                             )}
                         </div>
                     </div>
