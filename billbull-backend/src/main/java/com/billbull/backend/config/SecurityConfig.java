@@ -15,17 +15,22 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.web.cors.CorsConfigurationSource;
 
+import com.billbull.backend.ratelimit.RateLimitFilter;
+
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
 
     private final JwtFilter jwtFilter;
+    private final RateLimitFilter rateLimitFilter;
     private final CorsConfigurationSource corsConfigurationSource;
 
     // ✅ SINGLE constructor (this is important)
     public SecurityConfig(JwtFilter jwtFilter,
+            RateLimitFilter rateLimitFilter,
             CorsConfigurationSource corsConfigurationSource) {
         this.jwtFilter = jwtFilter;
+        this.rateLimitFilter = rateLimitFilter;
         this.corsConfigurationSource = corsConfigurationSource;
     }
 
@@ -39,7 +44,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**", "/api/client-logs/**", "/uploads/**", "/tools/**").permitAll()
                         .anyRequest().authenticated())
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+                // Rate limiter runs AFTER JwtFilter so the authenticated principal is available for
+                // per-user bucket keys (design §4/§6). No-op unless ratelimit.enabled=true.
+                .addFilterAfter(rateLimitFilter, JwtFilter.class);
 
         return http.build();
     }

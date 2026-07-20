@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/financials/reports")
 public class FinancialReportController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.reports";
 
     private final FinancialReportService reportService;
     private final SubLedgerReconciliationService reconciliationService;

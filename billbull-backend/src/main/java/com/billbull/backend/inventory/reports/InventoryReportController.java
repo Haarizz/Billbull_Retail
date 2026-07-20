@@ -14,7 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/inventory/reports")
 public class InventoryReportController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.reports";
 
     private final InventoryReportService reportService;
     private final InventoryReportDataService reportDataService;
@@ -77,7 +77,8 @@ public class InventoryReportController {
             @RequestParam(required = false) String department,
             @RequestParam(required = false) String brand,
             @RequestParam(required = false) String search,
-            @RequestParam(required = false) String stockCondition) {
+            @RequestParam(required = false) String stockCondition,
+            @RequestParam(required = false) String branchScope) {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(
                 reportId,
@@ -87,6 +88,7 @@ public class InventoryReportController {
                 department,
                 brand,
                 search,
-                stockCondition));
+                stockCondition,
+                allBranches(branchScope)));
     }
 }

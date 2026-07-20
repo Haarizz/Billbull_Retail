@@ -86,4 +86,17 @@ export const usersApi = {
    */
   createRole: (payload) =>
     api.post("/api/roles", payload).then((r) => r.data),
+
+  /**
+   * Update a role's description (ADMIN only). The name is immutable.
+   */
+  updateRole: (id, description) =>
+    api.put(`/api/roles/${id}`, { description }).then((r) => r.data),
+
+  /**
+   * Delete a custom role (ADMIN only).
+   * Fails for system roles or roles still assigned to active users.
+   */
+  deleteRole: (id) =>
+    api.delete(`/api/roles/${id}`),
 };

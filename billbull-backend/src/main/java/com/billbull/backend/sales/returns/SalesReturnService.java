@@ -88,6 +88,9 @@ public class SalesReturnService {
     private BranchAccessService branchAccessService;
 
     @Autowired
+    private com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+
+    @Autowired
     private com.billbull.backend.sales.delivery.DeliveryNoteBatchConsumptionRepository consumptionRepo;
 
     @Autowired
@@ -98,7 +101,9 @@ public class SalesReturnService {
         // ARCHFIX §1.6: items/batches are LAZY — fetch items via JOIN FETCH, then init the nested
         // batches (batched) inside this transaction so the response serializes fully.
         List<SalesReturn> returns = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findAllWithItems(), SalesReturn::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findAllWithItems(), SalesReturn::getBranch),
+                        SalesReturn::getCreatedByUserId));
         returns.forEach(this::initReturnGraph);
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 returns,
@@ -111,7 +116,9 @@ public class SalesReturnService {
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<SalesReturn> returns = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findByReturnDateBetween(from, to), SalesReturn::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findByReturnDateBetween(from, to), SalesReturn::getBranch),
+                        SalesReturn::getCreatedByUserId));
         returns.forEach(this::initReturnGraph);
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 returns,
@@ -125,6 +132,7 @@ public class SalesReturnService {
     public SalesReturn getReturnById(Long id) {
         SalesReturn ret = salesReturnRepository.findByIdWithItems(id)
                 .orElseThrow(() -> new RuntimeException("Sales Return not found with ID: " + id));
+        ownershipAccessService.assertCanAccessRecord(ret.getCreatedByUserId(), "Sales Return");
         initReturnGraph(ret);
         return ret;
     }
@@ -256,9 +264,11 @@ public class SalesReturnService {
         YearMonth currentMonth = YearMonth.now();
         LocalDate monthStart   = currentMonth.atDay(1);
         LocalDate monthEnd     = currentMonth.atEndOfMonth();
-        List<SalesReturn> scopedReturns = branchAccessService.filterExactBranchScopedByBranch(
-                salesReturnRepository.findAll(),
-                SalesReturn::getBranch);
+        List<SalesReturn> scopedReturns = ownershipAccessService.filterOwned(
+                branchAccessService.filterExactBranchScopedByBranch(
+                        salesReturnRepository.findAll(),
+                        SalesReturn::getBranch),
+                SalesReturn::getCreatedByUserId);
 
         double todayReturns = scopedReturns.stream()
                 .filter(salesReturn -> salesReturn.getReturnDate() != null && salesReturn.getReturnDate().isEqual(today))

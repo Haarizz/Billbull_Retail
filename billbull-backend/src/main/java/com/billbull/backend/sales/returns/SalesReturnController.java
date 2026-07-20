@@ -17,7 +17,7 @@ import java.util.Map;
 @PreAuthorize("isAuthenticated()")
 public class SalesReturnController {
 
-    private static final String MODULE = "sales";
+    private static final String MODULE = "sales.return";
     private static final Logger logger = LoggerFactory.getLogger(SalesReturnController.class);
 
     @Autowired

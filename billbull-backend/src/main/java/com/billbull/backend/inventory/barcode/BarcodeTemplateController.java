@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/barcode-templates")
 public class BarcodeTemplateController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.barcode";
 
     private final BarcodeTemplateService service;
     private final ModulePermissionService modulePermissionService;

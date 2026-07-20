@@ -13,7 +13,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ApprovalWorkflowController {
 
-    private static final String MODULE = "purchases";
+    private static final String MODULE = "purchases.lpo";
 
     private final ApprovalWorkflowStepRepository stepRepository;
     private final ModulePermissionService modulePermissionService;

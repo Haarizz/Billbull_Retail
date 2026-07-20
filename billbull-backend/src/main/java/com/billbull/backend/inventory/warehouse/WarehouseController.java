@@ -14,7 +14,7 @@ import java.util.List;
 @RequestMapping("/api/warehouses")
 public class WarehouseController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.warehouse";
 
     private final WarehouseService service;
     private final WarehouseStockService stockService;

@@ -63,7 +63,22 @@ const Login = () => {
       navigate(roleRedirects[primaryRole] || "/");
     } catch (err) {
       console.error(err);
-      setError("Invalid username or password");
+      if (err.response?.status === 429) {
+        // Brute-force lockout / rate limit. Surface the advised wait time so the user knows how
+        // long to hold off (Retry-After header or retryAfterSeconds in the body). Message stays
+        // generic — the backend never reveals whether the username exists.
+        const waitSeconds =
+          Number(err.response.headers?.["retry-after"]) ||
+          Number(err.response.data?.retryAfterSeconds) ||
+          0;
+        setError(
+          waitSeconds > 0
+            ? `Too many login attempts. Please wait ${waitSeconds} seconds before trying again.`
+            : "Too many login attempts. Please wait a moment before trying again."
+        );
+      } else {
+        setError("Invalid username or password");
+      }
     } finally {
       setIsLoading(false);
     }

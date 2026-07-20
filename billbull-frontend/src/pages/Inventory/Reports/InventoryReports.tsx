@@ -37,7 +37,7 @@ import { getCompanyProfile } from "../../../api/companyProfileApi";
 import { useBranch } from "../../../context/BranchContext";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 import { CurrencySymbol } from "../../../components/CurrencyAmount";
-import { BranchContextIndicator } from "../../../components/inventory/BranchScopeIndicators";
+import { BranchContextIndicator, ReportBranchScopeToggle } from "../../../components/inventory/BranchScopeIndicators";
 
 type ReportGroupId =
   | "stock"
@@ -942,6 +942,9 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   const [companyProfile, setCompanyProfile] = useState<any>(null);
   const [departmentOptions, setDepartmentOptions] = useState<{ id: string; name: string }[]>([]);
   const [brandOptions, setBrandOptions] = useState<{ id: string; name: string }[]>([]);
+  // Phase 11 — 'active' (default, branch-scoped when the tenant toggle is on) vs 'all'
+  // (consolidated company-wide drill for users who can switch branches).
+  const [branchScope, setBranchScope] = useState<string>("active");
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
@@ -972,6 +975,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
         brand: filters.brand,
         searchQuery: filters.itemSearch,
         stockCondition: filters.stockCondition,
+        branchScope,
       }, signal);
       if (!data) return;
       applyLiveReportData(activeReport, data);
@@ -989,7 +993,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     setReportView(activeReport, null);
     loadReport(controller.signal, appliedFilters);
     return () => controller.abort();
-  }, [activeReport, appliedFilters, activeBranch]);
+  }, [activeReport, appliedFilters, activeBranch, branchScope]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -1177,14 +1181,20 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                 <CardTitle className="text-xs font-semibold text-slate-800">
                   Inventory Reports
                 </CardTitle>
-                {/* Phase 11 — informational branch-context indicator (renders only when the tenant
-                    has inventory branch-scoping enabled). Functional consolidated/active toggle is
-                    deferred with the /data report service. */}
+                {/* Phase 11 — branch-context indicator (renders only when the tenant has
+                    inventory branch-scoping enabled). */}
                 <BranchContextIndicator />
               </div>
               <span className="text-[10px] text-slate-500">
                 Choose a report, set filters, generate and export.
               </span>
+              {/* Phase 11 — admin Active-branch / All-branches drill for the report data
+                  (renders only when scoping is on and the user can switch branches). */}
+              <ReportBranchScopeToggle
+                value={branchScope}
+                onChange={(value: string) => setBranchScope(value)}
+                className="mt-1"
+              />
             </CardHeader>
             <CardContent className="px-3 pb-3 space-y-2">
               <div className="relative">

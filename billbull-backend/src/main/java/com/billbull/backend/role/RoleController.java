@@ -68,6 +68,20 @@ public class RoleController {
     }
 
     /**
+     * Update a role's description - ADMIN ONLY. The role name is immutable.
+     * Body: { description }
+     */
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Role> updateRole(
+            @PathVariable Long id,
+            @RequestBody java.util.Map<String, String> body,
+            HttpServletRequest request) {
+        auditLogService.logAllowedAccess("/api/roles/" + id, "PUT", request);
+        return ResponseEntity.ok(roleService.updateDescription(id, body.get("description")));
+    }
+
+    /**
      * Delete a custom role - ADMIN ONLY.
      * Fails if system role or if active users are still assigned.
      */

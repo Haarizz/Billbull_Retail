@@ -73,6 +73,9 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "receiptVoucherService", receiptVoucherService);
         ReflectionTestUtils.setField(paymentService, "numberingService", numberingService);
         ReflectionTestUtils.setField(paymentService, "branchAccessService", branchAccessService);
+        ReflectionTestUtils.setField(paymentService, "ownershipAccessService",
+                new com.billbull.backend.common.ownership.OwnershipAccessService(
+                        org.mockito.Mockito.mock(com.billbull.backend.security.RolePermissionRepository.class), false));
         ReflectionTestUtils.setField(paymentService, "notifPublisher", notifPublisher);
         ReflectionTestUtils.setField(paymentService, "advanceApplicationService", advanceApplicationService);
         ReflectionTestUtils.setField(paymentService, "invoiceHistoryService", invoiceHistoryService);

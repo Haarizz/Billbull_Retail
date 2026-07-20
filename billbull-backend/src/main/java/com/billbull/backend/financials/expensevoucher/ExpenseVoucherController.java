@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 @PreAuthorize("isAuthenticated()")
 public class ExpenseVoucherController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.expense";
 
     private final ExpenseVoucherService service;
     private final ModulePermissionService modulePermissionService;

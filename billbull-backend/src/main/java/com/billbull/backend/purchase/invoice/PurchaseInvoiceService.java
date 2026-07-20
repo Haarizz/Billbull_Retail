@@ -67,6 +67,7 @@ public class PurchaseInvoiceService {
     private final ProductMediaRepository productMediaRepository;
     private final ProductBarcodeRepository productBarcodeRepository;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
     private final PurchaseSerialService purchaseSerialService;
@@ -82,6 +83,7 @@ public class PurchaseInvoiceService {
             ProductMediaRepository productMediaRepository,
             ProductBarcodeRepository productBarcodeRepository,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             ProductPackingRepository packingRepository,
             PurchaseBatchCreationService purchaseBatchCreationService,
             PurchaseSerialService purchaseSerialService,
@@ -104,6 +106,7 @@ public class PurchaseInvoiceService {
         this.productMediaRepository = productMediaRepository;
         this.productBarcodeRepository = productBarcodeRepository;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
         this.purchaseSerialService = purchaseSerialService;
@@ -773,7 +776,9 @@ public class PurchaseInvoiceService {
 
     public List<PurchaseInvoiceResponse> listAll() {
         List<PurchaseInvoice> invoices = new ArrayList<>(
-                branchAccessService.filterBranchScoped(repository.findAll(), PurchaseInvoice::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(repository.findAll(), PurchaseInvoice::getBranchId),
+                        PurchaseInvoice::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,
@@ -795,6 +800,7 @@ public class PurchaseInvoiceService {
         PurchaseInvoice invoice = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Purchase Invoice not found"));
         branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Purchase Invoice");
+        ownershipAccessService.assertCanAccessRecord(invoice.getCreatedByUserId(), "Purchase Invoice");
         return invoice;
     }
 
@@ -1238,7 +1244,9 @@ public class PurchaseInvoiceService {
     @Transactional
     public List<PurchaseInvoiceResponse> getPostedInvoicesForPayment() {
         List<PurchaseInvoice> invoices = new ArrayList<>(
-                branchAccessService.filterBranchScoped(repository.findByStatus(InvoiceStatus.POSTED), PurchaseInvoice::getBranchId));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScoped(repository.findByStatus(InvoiceStatus.POSTED), PurchaseInvoice::getBranchId),
+                        PurchaseInvoice::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 invoices,
                 PurchaseInvoice::getInvoiceDate,

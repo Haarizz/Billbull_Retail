@@ -16,11 +16,17 @@ import com.billbull.backend.settings.branch.Branch;
 		// Speeds the date-bounded sales-report loader.
 		@Index(name = "idx_dn_date", columnList = "dn_date")
 })
-public class DeliveryNote {
+@jakarta.persistence.EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)
+@org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
+public class DeliveryNote  implements com.billbull.backend.common.ownership.OwnedEntity {
 
 	@Id
 	@GeneratedValue(strategy = GenerationType.IDENTITY)
 	private Long id;
+
+    /** Stable owner id for ownership filtering; stamped on persist by OwnershipAuditListener. Nullable forever. */
+    @jakarta.persistence.Column(name = "created_by_user_id", updatable = false)
+    private Long createdByUserId;
 
 	private String dnNumber;
 	private LocalDate dnDate;
@@ -321,4 +327,14 @@ public class DeliveryNote {
 	}
 
 	// getters & setters
+
+    @Override
+    public Long getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    @Override
+    public void setCreatedByUserId(Long createdByUserId) {
+        this.createdByUserId = createdByUserId;
+    }
 }

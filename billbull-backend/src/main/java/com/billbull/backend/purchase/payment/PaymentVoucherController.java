@@ -18,7 +18,7 @@ import java.util.Map;
 @PreAuthorize("isAuthenticated()")
 public class PaymentVoucherController {
 
-    private static final String MODULE = "purchases";
+    private static final String MODULE = "purchases.payment";
 
     @Autowired
     private PaymentVoucherService service;

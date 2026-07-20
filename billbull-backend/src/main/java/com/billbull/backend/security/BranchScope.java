@@ -13,19 +13,31 @@ public final class BranchScope {
 
     private BranchScope() {}
 
-    /** The branch the current request is acting on, or {@code null} for "all branches" (admin). */
+    /**
+     * The branch the current request is acting on, or {@code null} for "all branches".
+     *
+     * <p>"All Branches" is a VIEW state, not a role: an admin who has narrowed the Branch Selector
+     * to a specific branch has a non-null {@code activeBranchId} and IS acting on that branch, even
+     * though their token carries the admin-derived {@code isAllBranches=true} capability flag. Only
+     * the true consolidated view (no specific branch selected → {@code activeBranchId == null})
+     * counts as all-branches here. This is intentionally decoupled from {@link #isAllBranches()},
+     * which answers the different question "can this user reach every branch" (used by access
+     * checks and the branch-selector list — those must stay true for admins regardless of the
+     * active selection).
+     */
     public static Long currentBranchId() {
         BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
-        if (ctx == null || ctx.isAllBranches()) {
-            return null;
-        }
-        return ctx.activeBranchId();
+        return ctx != null ? ctx.activeBranchId() : null;
     }
 
-    /** True when a branch filter must be applied to the current query. */
+    /**
+     * True when a branch filter must be applied to the current query — i.e. a specific branch is
+     * active. Keyed off {@code activeBranchId}, NOT {@code isAllBranches}, so an admin who selected
+     * a specific branch gets branch-scoped reads/writes (see {@link #currentBranchId()}).
+     */
     public static boolean applies() {
         BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
-        return ctx != null && !ctx.isAllBranches() && ctx.activeBranchId() != null;
+        return ctx != null && ctx.activeBranchId() != null;
     }
 
     public static boolean isAllBranches() {

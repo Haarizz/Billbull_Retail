@@ -21,6 +21,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import com.billbull.backend.security.BranchContextHolder;
+import com.billbull.backend.common.ownership.OwnershipAccessService;
+import com.billbull.backend.common.ownership.OwnershipContextHolder;
 import com.billbull.backend.logging.LogContext;
 import com.billbull.backend.user.UserRepository;
 
@@ -31,10 +33,13 @@ public class JwtFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
+    private final OwnershipAccessService ownershipAccessService;
 
-    public JwtFilter(JwtUtil jwtUtil, UserRepository userRepository) {
+    public JwtFilter(JwtUtil jwtUtil, UserRepository userRepository,
+                     OwnershipAccessService ownershipAccessService) {
         this.jwtUtil = jwtUtil;
         this.userRepository = userRepository;
+        this.ownershipAccessService = ownershipAccessService;
     }
 
     @Override
@@ -106,6 +111,17 @@ public class JwtFilter extends OncePerRequestFilter {
                         activeBranchId,
                         allowed,
                         isAllBranches));
+
+                // ── Ownership context (user-based data visibility) ────────────
+                // viewAll = true means "not ownership-restricted". When the feature toggle is off we
+                // set viewAll=true unconditionally so nothing filters (byte-identical to today).
+                // When on, a principal is restricted only if their roles do NOT grant the override
+                // (admins/supervisors + permissions.records.view-all holders bypass). Owner id is
+                // taken from the validated JWT claim — never from a client-supplied value.
+                boolean viewAll = !ownershipAccessService.filteringEnabled()
+                        || ownershipAccessService.rolesGrantViewAll(roles);
+                OwnershipContextHolder.set(new OwnershipContextHolder.OwnershipContext(userId, viewAll));
+
                 contextSet = true;
             }
         }
@@ -115,6 +131,7 @@ public class JwtFilter extends OncePerRequestFilter {
         } finally {
             if (contextSet) {
                 BranchContextHolder.clear();
+                OwnershipContextHolder.clear();
             }
         }
     }

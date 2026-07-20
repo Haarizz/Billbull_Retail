@@ -16,7 +16,7 @@ import java.util.Map;
 @PreAuthorize("isAuthenticated()")
 public class DeliveryNoteController {
 
-    private static final String MODULE = "sales";
+    private static final String MODULE = "sales.delivery";
 
     private final DeliveryNoteService service;
     private final DocumentEmailSender emailSender;

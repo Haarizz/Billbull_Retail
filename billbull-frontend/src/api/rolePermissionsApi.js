@@ -2,7 +2,7 @@ import api from "./axiosConfig";
 
 /**
  * Role permissions API.
- * getByRole is available to all authenticated users (used by PermissionContext).
+ * getMyPermissions is available to all authenticated users (used by PermissionContext).
  * All other methods require ADMIN.
  */
 export const rolePermissionsApi = {
@@ -14,8 +14,8 @@ export const rolePermissionsApi = {
     api.get("/api/role-permissions").then((r) => r.data),
 
   /**
-   * Get permissions for a specific role name — any authenticated user.
-   * Used by PermissionContext on login to load access rules.
+   * Get permissions for a specific role name — ADMIN only.
+   * Used by the User & Role Configuration matrix.
    */
   getByRole: (roleName) =>
     api.get(`/api/role-permissions/by-role/${roleName}`).then((r) => r.data),
@@ -35,8 +35,34 @@ export const rolePermissionsApi = {
 
   /**
    * Update an existing permission row by ID — ADMIN only.
-   * payload: { canView, canCreate, canEdit, canApprove, canExport }
+   * Partial semantics: only the flags present in the payload are changed.
+   * payload: any subset of { canView, canCreate, canEdit, canDelete, canApprove, canExport }
    */
   update: (id, payload) =>
     api.put(`/api/role-permissions/${id}`, payload).then((r) => r.data),
+
+  /**
+   * Delete a permission row — restores parent-module inheritance. ADMIN only.
+   */
+  remove: (id) =>
+    api.delete(`/api/role-permissions/${id}`),
+
+  /**
+   * Upsert a batch of rows for one role atomically — ADMIN only.
+   * permissions: [{ module, canView?, canCreate?, canEdit?, canDelete?, canApprove?, canExport? }]
+   */
+  bulkSave: (roleName, permissions) =>
+    api.post("/api/role-permissions/bulk", { roleName, permissions }).then((r) => r.data),
+
+  /**
+   * Replace toRole's permissions with a copy of fromRole's — ADMIN only.
+   */
+  copy: (fromRole, toRole) =>
+    api.post("/api/role-permissions/copy", { fromRole, toRole }).then((r) => r.data),
+
+  /**
+   * The backend's canonical module catalog — ADMIN only.
+   */
+  getModuleCatalog: () =>
+    api.get("/api/role-permissions/modules").then((r) => r.data),
 };

@@ -24,7 +24,7 @@ import java.util.Map;
 @RequestMapping("/api/financials/bank-reconciliation")
 public class BankReconciliationController {
 
-    private static final String MODULE = "finance";
+    private static final String MODULE = "finance.reconcile";
 
     private final BankReconciliationService service;
     private final ModulePermissionService modulePermissionService;

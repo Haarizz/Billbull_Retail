@@ -40,11 +40,17 @@ import java.util.List;
     @Index(name = "idx_journal_entry_status",       columnList = "status"),
     @Index(name = "idx_journal_entry_branch_date",  columnList = "branch_id, date")
 })
-public class JournalEntry {
+@jakarta.persistence.EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)
+@org.hibernate.annotations.Filter(name = "ownerFilter", condition = "created_by_user_id = :ownerId")
+public class JournalEntry  implements com.billbull.backend.common.ownership.OwnedEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** Stable owner id for ownership filtering; stamped on persist by OwnershipAuditListener. Nullable forever. */
+    @jakarta.persistence.Column(name = "created_by_user_id", updatable = false)
+    private Long createdByUserId;
 
     // ARCHFIX §1.6: LAZY (was EAGER). Read/serialize paths fetch branch+lines via JOIN FETCH and
     // init them in-session; in-transaction service logic loads it lazily on demand.
@@ -247,5 +253,15 @@ public class JournalEntry {
     public void removeLine(JournalLine line) {
         lines.remove(line);
         line.setJournalEntry(null);
+    }
+
+    @Override
+    public Long getCreatedByUserId() {
+        return createdByUserId;
+    }
+
+    @Override
+    public void setCreatedByUserId(Long createdByUserId) {
+        this.createdByUserId = createdByUserId;
     }
 }

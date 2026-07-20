@@ -15,7 +15,7 @@ import jakarta.validation.Valid;
 @PreAuthorize("isAuthenticated()")
 public class GrnController {
 
-    private static final String MODULE = "purchases";
+    private static final String MODULE = "purchases.grn";
 
     private final GrnService service;
     private final AuditLogService auditLogService;

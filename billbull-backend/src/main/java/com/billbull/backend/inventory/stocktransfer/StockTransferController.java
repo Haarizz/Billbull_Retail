@@ -12,7 +12,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class StockTransferController {
 
-    private static final String MODULE = "inventory";
+    private static final String MODULE = "inventory.stock";
 
     private final StockTransferService service;
     private final AuditLogService auditLogService;

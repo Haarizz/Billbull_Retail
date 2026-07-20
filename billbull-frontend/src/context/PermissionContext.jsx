@@ -26,8 +26,44 @@ export const PermissionProvider = ({ children }) => {
         dashboard: false,
         tally: false,
     });
+    // User-based data visibility (ownership filtering) signal from /me's `_ownership` block.
+    // filteringEnabled = tenant toggle state; restricted = THIS user sees only their own records.
+    const [ownership, setOwnership] = useState({ filteringEnabled: false, restricted: false });
 
   const pollIntervalRef = useRef(null);
+
+  const refreshPermissions = async () => {
+    if (!isAuthenticated()) return;
+
+    // Roles come straight from the JWT — needed by hasAnyRole() for the few
+    // role-gated (rather than permission-gated) UI branches.
+    setUserRoles(getRoles());
+
+    try {
+      const merged = await rolePermissionsApi.getMyPermissions();
+
+      // Pull the ownership signal out before it's treated as a permission module.
+      if (merged._ownership) {
+        setOwnership({
+          filteringEnabled: Boolean(merged._ownership.filteringEnabled),
+          restricted: Boolean(merged._ownership.restricted),
+        });
+      }
+      setGranularPermissions(merged);
+
+      // Feature toggles fallback to top-level view permissions
+      const toggles = {};
+      Object.keys(merged).forEach((mod) => {
+        if (!mod.includes('.') && mod !== '_ownership' && merged[mod] && typeof merged[mod] === 'object') {
+          toggles[mod] = merged[mod].view;
+        }
+      });
+      setFeatureToggles((prev) => ({ ...prev, ...toggles }));
+      setPermissionsLoaded(true);
+    } catch (e) {
+      console.warn('Could not load role permissions from /api/rbac/me:', e);
+    }
+  };
 
   useEffect(() => {
     refreshPermissions();
@@ -40,45 +76,26 @@ export const PermissionProvider = ({ children }) => {
     return () => clearInterval(pollIntervalRef.current);
   }, []);
 
-  const refreshPermissions = async () => {
-    if (!isAuthenticated()) return;
-
-    try {
-      const merged = await rolePermissionsApi.getMyPermissions();
-      setGranularPermissions(merged);
-
-      // Feature toggles fallback to top-level view permissions
-      const toggles = {};
-      Object.keys(merged).forEach((mod) => {
-        if (!mod.includes('.')) {
-          toggles[mod] = merged[mod].view;
-        }
-      });
-      setFeatureToggles((prev) => ({ ...prev, ...toggles }));
-      setPermissionsLoaded(true);
-    } catch (e) {
-      console.warn('Could not load role permissions from /api/rbac/me:', e);
-    }
-  };
-
     /**
-     * CORE PERMISSION LOGIC:
-     * Check if user can perform an ACTION in a MODULE.
-     * 1. If exact match exists (e.g. sales.quotation) -> use it (true or false).
-     * 2. If no exact match AND it is a sub-key -> fallback to parent key (e.g. sales).
-     * 3. Default to false.
+     * CORE PERMISSION LOGIC — mirrors backend ModulePermissionService exactly:
+     * 1. If an explicit row exists for the key (e.g. sales.quotation), that row is
+     *    AUTHORITATIVE — its value is returned even when false. An explicit deny
+     *    must not be overridden by a broader parent grant.
+     * 2. Only when NO explicit row exists does a sub-key fall back to its parent
+     *    (e.g. sales.quotation -> sales).
+     * 3. Default to DENY.
      */
     const canAction = (module, action) => {
         const modKey = module?.toLowerCase();
         const actionKey = action?.replace('can', '').toLowerCase(); // match 'view', 'create', etc.
 
-        // 1. Check Exact Match
+        // 1. Explicit row — authoritative (merged ALLOW-wins union across roles)
         const exact = granularPermissions[modKey];
-        if (exact && exact[actionKey] === true) {
-            return true;
+        if (exact !== undefined) {
+            return exact[actionKey] === true;
         }
 
-        // 2. Check Parent Fallback (if it's a sub-key like sales.quotation)
+        // 2. Parent fallback only when no explicit row exists
         if (modKey?.includes('.')) {
             const parentKey = modKey.split('.')[0];
             const parent = granularPermissions[parentKey];
@@ -87,9 +104,7 @@ export const PermissionProvider = ({ children }) => {
             }
         }
 
-        // 3. Explicit check for EXACT false (if exact exists and is false, it means NO role granted it)
-        // But since we are doing "ALLOW wins", we only return true if WE FOUND an allow.
-        // If we reach here, neither exact nor parent was explicitly true.
+        // 3. Default DENY
         return false;
     };
 
@@ -119,6 +134,7 @@ export const PermissionProvider = ({ children }) => {
                 exactPermission.view ||
                 exactPermission.create ||
                 exactPermission.edit ||
+                exactPermission.delete ||
                 exactPermission.approve ||
                 exactPermission.export
             );
@@ -135,11 +151,25 @@ export const PermissionProvider = ({ children }) => {
         return false;
     };
 
+    /**
+     * User-based data visibility (ownership filtering) state:
+     *  - ownershipFilteringEnabled: tenant toggle is on.
+     *  - isOwnershipRestricted: this user sees only records they created (no VIEW_ALL_RECORDS
+     *    override). Drives the "Showing only records you created" indicator on transaction lists.
+     *  - canViewAllRecords: this user holds the override (My/All switch is offered to them).
+     */
+    const ownershipFilteringEnabled = ownership.filteringEnabled;
+    const isOwnershipRestricted = ownership.restricted;
+    const canViewAllRecords = ownership.filteringEnabled && !ownership.restricted;
+
     const value = {
         userRoles,
         granularPermissions,
         featureToggles,
         permissionsLoaded,
+        ownershipFilteringEnabled,
+        isOwnershipRestricted,
+        canViewAllRecords,
         refreshPermissions,
         hasPermission,
         hasAnyRole,

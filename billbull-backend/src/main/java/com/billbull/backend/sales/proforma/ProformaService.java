@@ -33,6 +33,7 @@ public class ProformaService {
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository productMediaRepository;
     private final BranchAccessService branchAccessService;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final WarehouseStockService warehouseStockService;
     private final SalesDocumentNumberingService numberingService;
 
@@ -42,6 +43,7 @@ public class ProformaService {
             ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository productMediaRepository,
             BranchAccessService branchAccessService,
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             WarehouseStockService warehouseStockService,
             SalesDocumentNumberingService numberingService) {
         this.repo = repo;
@@ -49,6 +51,7 @@ public class ProformaService {
         this.barcodeRepo = barcodeRepo;
         this.productMediaRepository = productMediaRepository;
         this.branchAccessService = branchAccessService;
+        this.ownershipAccessService = ownershipAccessService;
         this.warehouseStockService = warehouseStockService;
         this.numberingService = numberingService;
     }
@@ -78,6 +81,7 @@ public class ProformaService {
 
         Long existingBranchId = pi.getBranch() != null ? pi.getBranch().getId() : null;
         branchAccessService.assertTransactionBranchAccessible(existingBranchId, "Proforma Invoice");
+        ownershipAccessService.assertCanAccessRecord(pi.getCreatedByUserId(), "Proforma Invoice");
         com.billbull.backend.settings.branch.Branch lockedBranch = pi.getBranch();
 
         if (pi.getStatus() == ProformaStatus.ISSUED) {
@@ -101,7 +105,9 @@ public class ProformaService {
     @Transactional(readOnly = true)
     public List<ProformaResponse> list() {
         List<ProformaInvoice> proformas = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(repo.findAll(), ProformaInvoice::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(repo.findAll(), ProformaInvoice::getBranch),
+                        ProformaInvoice::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
                 proformas,
                 ProformaInvoice::getPiDate,
@@ -115,7 +121,9 @@ public class ProformaService {
     @Transactional(readOnly = true)
     public List<ProformaResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<ProformaInvoice> proformas = new ArrayList<>(
-                branchAccessService.filterBranchScopedByBranch(repo.findByPiDateBetween(from, to), ProformaInvoice::getBranch));
+                ownershipAccessService.filterOwned(
+                        branchAccessService.filterBranchScopedByBranch(repo.findByPiDateBetween(from, to), ProformaInvoice::getBranch),
+                        ProformaInvoice::getCreatedByUserId));
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 proformas,
                 ProformaInvoice::getPiDate,
@@ -128,6 +136,7 @@ public class ProformaService {
     public ProformaResponse get(Long id) {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
+        ownershipAccessService.assertCanAccessRecord(pi.getCreatedByUserId(), "Proforma Invoice");
         return toResponse(pi);
     }
 
@@ -136,6 +145,7 @@ public class ProformaService {
     public void delete(Long id) {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
+        ownershipAccessService.assertCanAccessRecord(pi.getCreatedByUserId(), "Proforma Invoice");
         if (pi.getStatus() == ProformaStatus.ISSUED) {
             throw new IllegalStateException("Issued proforma cannot be deleted. Cancel it first.");
         }
@@ -149,6 +159,7 @@ public class ProformaService {
 
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
+        ownershipAccessService.assertCanAccessRecord(pi.getCreatedByUserId(), "Proforma Invoice");
 
         if (pi.getWarehouse() == null) {
             Warehouse defaultWarehouse = resolveDefaultWarehouse();
@@ -190,6 +201,7 @@ public class ProformaService {
     public ProformaResponse cancel(Long id) {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
+        ownershipAccessService.assertCanAccessRecord(pi.getCreatedByUserId(), "Proforma Invoice");
 
         if (pi.getStatus() == ProformaStatus.CANCELLED) {
             return toResponse(pi);

@@ -14,7 +14,7 @@ import java.util.List;
 @PreAuthorize("isAuthenticated()")
 public class MessagingController {
 
-    private static final String MODULE = "customer";
+    private static final String MODULE = "customer.message";
 
     @Autowired
     private MessagingService messagingService;

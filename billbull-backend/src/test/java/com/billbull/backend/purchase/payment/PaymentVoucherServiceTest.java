@@ -43,6 +43,9 @@ class PaymentVoucherServiceTest {
         ReflectionTestUtils.setField(service, "invoiceRepository", invoiceRepository);
         ReflectionTestUtils.setField(service, "postingEngineService", postingEngineService);
         ReflectionTestUtils.setField(service, "branchAccessService", branchAccessService);
+        ReflectionTestUtils.setField(service, "ownershipAccessService",
+                new com.billbull.backend.common.ownership.OwnershipAccessService(
+                        org.mockito.Mockito.mock(com.billbull.backend.security.RolePermissionRepository.class), false));
     }
 
     @Test

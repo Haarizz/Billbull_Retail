@@ -130,7 +130,8 @@ class PosSearchServiceTest {
         when(batchMasterRepository.findFirstByBatchNumberIgnoreCase("ITEM-1")).thenReturn(Optional.empty());
         Product entity = new Product();
         entity.setId(7L);
-        when(productRepository.findFirstByCodeIgnoreCaseAndIsActiveTrue("ITEM-1")).thenReturn(Optional.of(entity));
+        // Phase 6: exact code/SKU resolution goes through the branch-first service resolver.
+        when(productService.resolveActiveByCodeOrSku("ITEM-1")).thenReturn(Optional.of(entity));
         ProductAggregateResponse product = new ProductAggregateResponse();
         when(productService.getById(7L)).thenReturn(product);
 
@@ -145,8 +146,7 @@ class PosSearchServiceTest {
     void exactCustomerResolvesWhenNoProductMatch() {
         when(productService.searchProductsByBarcode("050111222")).thenReturn(List.of());
         when(batchMasterRepository.findFirstByBatchNumberIgnoreCase("050111222")).thenReturn(Optional.empty());
-        when(productRepository.findFirstByCodeIgnoreCaseAndIsActiveTrue("050111222")).thenReturn(Optional.empty());
-        when(productRepository.findFirstBySkuIgnoreCaseAndIsActiveTrue("050111222")).thenReturn(Optional.empty());
+        when(productService.resolveActiveByCodeOrSku("050111222")).thenReturn(Optional.empty());
         Customer customer = new Customer();
         customer.setCode("CUST-9");
         customer.setName("Jane Doe");
@@ -166,8 +166,7 @@ class PosSearchServiceTest {
     void noMatchResolvesToNone() {
         lenient().when(productService.searchProductsByBarcode("ghost")).thenReturn(List.of());
         lenient().when(batchMasterRepository.findFirstByBatchNumberIgnoreCase("ghost")).thenReturn(Optional.empty());
-        lenient().when(productRepository.findFirstByCodeIgnoreCaseAndIsActiveTrue("ghost")).thenReturn(Optional.empty());
-        lenient().when(productRepository.findFirstBySkuIgnoreCaseAndIsActiveTrue("ghost")).thenReturn(Optional.empty());
+        lenient().when(productService.resolveActiveByCodeOrSku("ghost")).thenReturn(Optional.empty());
         lenient().when(customerRepository.findFirstByCodeIgnoreCaseOrMobileIgnoreCaseOrPhoneIgnoreCaseOrEmailIgnoreCase(
                 "ghost", "ghost", "ghost", "ghost")).thenReturn(Optional.empty());
 

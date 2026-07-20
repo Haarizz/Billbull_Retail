@@ -48,7 +48,9 @@ class StockTransferAuthTest {
                 repository, productRepository, productPricingRepository, warehouseRepository,
                 zoneRepository, locatorRepository, binRepository, stockMovementRepository,
                 warehouseStockService, postingEngineService, stockMovementService,
-                branchScopeResolver, branchAccessService);
+                branchScopeResolver, branchAccessService,
+                new com.billbull.backend.common.ownership.OwnershipAccessService(
+                        org.mockito.Mockito.mock(com.billbull.backend.security.RolePermissionRepository.class), false));
     }
 
     private static Warehouse warehouse(long branchId) {

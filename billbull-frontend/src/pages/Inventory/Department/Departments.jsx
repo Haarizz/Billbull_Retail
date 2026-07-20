@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import PaginationFooter from '../../../components/common/PaginationFooter';
+import { GlobalBadge } from '../../../components/inventory/BranchScopeIndicators';
 import {
   Layers, ChevronRight, Plus, Upload, Download, Search,
   ChevronDown, RefreshCw, SquarePen, Trash2, Eye,
@@ -323,7 +324,10 @@ const Departments = () => {
                 pagedDepartments.map((dept) => (
                   <tr key={dept.id} className="hover:bg-slate-50 hover:border-l-4 hover:border-l-[#F5C742] transition-all border-l-4 border-transparent group">
                     <td className="p-3">
-                      <p className="font-medium text-slate-900">{dept.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-slate-900">{dept.name}</p>
+                        <GlobalBadge branchId={dept.branchId} />
+                      </div>
                     </td>
                     <td className="p-3">
                       <span className="inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium border-slate-200 font-mono min-h-[24px] min-w-[30px]">{dept.code}</span>

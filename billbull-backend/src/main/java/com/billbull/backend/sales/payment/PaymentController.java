@@ -17,7 +17,7 @@ import java.util.Map;
 @RequestMapping("/api/sales/payments")
 public class PaymentController {
 
-    private static final String MODULE = "sales";
+    private static final String MODULE = "sales.payment";
 
     @Autowired
     private PaymentService paymentService;
