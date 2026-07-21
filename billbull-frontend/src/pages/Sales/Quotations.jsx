@@ -117,6 +117,7 @@ import { generateDocFilename } from '../../utils/filenameUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';
+import QuotationPreviewSplitView from './components/QuotationPreviewSplitView';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -399,6 +400,8 @@ const Quotations = () => {
     const { defaultBranch, defaultBranchName, formatBranchLocationLabel, isLoading: isBranchLoading, branches: availableBranches, activeBranch } = useBranch();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('list');
+    // Transaction Preview (read-only) — selected quotation id for the preview tab.
+    const [previewQuotationId, setPreviewQuotationId] = useState(null);
     const [editorMode, setEditorMode] = useState('edit');
     const [status, setStatus] = useState('Draft');
     const [searchTerm, setSearchTerm] = useState('');
@@ -2066,6 +2069,32 @@ const Quotations = () => {
         handleEditQuotation(qtn, 'view');
     };
 
+    // Open the read-only Transaction Preview for a quotation (row click / tab).
+    const openQuotationPreview = (qtn) => {
+        setPreviewQuotationId(qtn.id);
+        setActiveTab('preview');
+    };
+
+    // Preview actions read editor state (print/email build from buildQuotationDocPayload
+    // + editingId), so first hydrate the editor from the raw entity, then act.
+    // The preview passes the raw getQuotationById entity → map to editor shape.
+    const loadRawQuotationIntoEditor = (rawQtn, mode = 'edit') => {
+        const mapped = mapBackendToFrontend(rawQtn);
+        handleEditQuotation(mapped, mode);
+        return mapped;
+    };
+    const handlePreviewEdit = (rawQtn) => {
+        loadRawQuotationIntoEditor(rawQtn, 'edit');
+    };
+    const handlePreviewPrint = (rawQtn) => {
+        loadRawQuotationIntoEditor(rawQtn, 'view');
+        setTimeout(() => handlePrintClick(), 120);
+    };
+    const handlePreviewEmail = (rawQtn) => {
+        loadRawQuotationIntoEditor(rawQtn, 'view');
+        setTimeout(() => handleOpenEmailModal(), 120);
+    };
+
     const handleSwitchToEditMode = () => {
         if (!canEditCurrentQuotation) {
             setToastMessage('This quotation is view-only after approval. Use Revise to make changes.');
@@ -3022,10 +3051,12 @@ const Quotations = () => {
                     <div className="flex overflow-x-auto no-scrollbar gap-2 mb-4">
                         {[
                             { id: 'list', label: 'Quotation List', icon: ShoppingCart },
+                            { id: 'preview', label: 'Transaction Preview', icon: Eye },
                             { id: 'create', label: 'Quotation Editor', icon: FileText }
                         ].map((tab) => {
                             const Icon = tab.icon;
                             const isActive = activeTab === tab.id;
+                            if (tab.id === 'preview' && !previewQuotationId && activeTab !== 'preview') return null;
                             return (
                                 <button
                                     key={tab.id}
@@ -3214,7 +3245,7 @@ const Quotations = () => {
                                     {filteredQuotations.map((qtn, index) => (
                                         <React.Fragment key={qtn.id}>
                                             <tr
-                                                onClick={() => handleViewQuotation(qtn)}
+                                                onClick={() => openQuotationPreview(qtn)}
                                                 className="hover:bg-slate-50 cursor-pointer transition-colors"
                                             >
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
@@ -3410,7 +3441,7 @@ const Quotations = () => {
                                     <MobileCard
                                         key={qtn.id}
                                         qtn={qtn}
-                                        onClick={() => handleViewQuotation(qtn)}
+                                        onClick={() => openQuotationPreview(qtn)}
                                         renderStatusBadge={renderStatusBadge}
                                         isExpanded={expandedListRows[qtn.id]}
                                         onToggleExpand={toggleListRow}
@@ -3431,6 +3462,25 @@ const Quotations = () => {
                         />
                     </div>
                     </div>
+                )}
+
+                {/* ==================== VIEW: TRANSACTION PREVIEW ==================== */}
+                {activeTab === 'preview' && (
+                    <QuotationPreviewSplitView
+                        quotations={filteredQuotations}
+                        previewQuotationId={previewQuotationId}
+                        onSelectQuotation={(qtn) => setPreviewQuotationId(qtn.id)}
+                        listLoading={isListLoading}
+                        searchTerm={searchTerm}
+                        onSearchChange={setSearchTerm}
+                        customersList={customersList}
+                        quotationCurrency={displayCurrencyProps?.currency || 'AED'}
+                        isPrinting={isPrinting}
+                        onBack={() => setActiveTab('list')}
+                        onEdit={(rawQtn) => handlePreviewEdit(rawQtn)}
+                        onPrint={(rawQtn) => handlePreviewPrint(rawQtn)}
+                        onOpenEmailModal={(rawQtn) => handlePreviewEmail(rawQtn)}
+                    />
                 )}
 
                 {/* ======================= VIEW: CREATE / EDIT ======================= */}

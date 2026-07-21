@@ -98,6 +98,7 @@ import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../../util
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import { getListSerialNumber } from '../../../utils/serialNumbering';
 import TableSkeleton from '../../../components/common/TableSkeleton';
+import GrnPreviewSplitView from '../components/GrnPreviewSplitView';
 
 // ==========================================
 // 1. MOCK DATA & CONFIGURATION
@@ -216,7 +217,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownlo
             <tbody className="divide-y divide-slate-100">
               {isLoading && <TableSkeleton cols={8} rows={8} />}
               {filteredData.map((row, index) => (
-                <tr key={row.id} className="hover:bg-slate-50 group transition-colors">
+                <tr key={row.id} className="hover:bg-slate-50 group transition-colors cursor-pointer" onClick={() => onView(row)}>
                   <td className="px-3 py-4 text-center text-slate-400 font-mono font-medium whitespace-nowrap">
                     {getListSerialNumber(index, {
                       documentNumber: row.idDisplay,
@@ -2461,6 +2462,9 @@ const GRN = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
+  // Transaction Preview (read-only) — selected GRN id + switcher search.
+  const [previewGrnId, setPreviewGrnId] = useState(null);
+  const [previewSearch, setPreviewSearch] = useState('');
   const [grns, setGrns] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   // Client-side pagination over filtered list (status filter is rich on this page).
@@ -2635,6 +2639,17 @@ const GRN = () => {
     });
   }, [grns, activeFilter, dateRange]);
 
+  // Client-side filter for the preview's GRN switcher (searches loaded rows).
+  const previewGrns = useMemo(() => {
+    const q = previewSearch.trim().toLowerCase();
+    if (!q) return filteredData;
+    return filteredData.filter((g) =>
+      [g.idDisplay, g.grnNo, g.vendor, g.vendorName, g.lpoNumber, g.warehouse]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
+    );
+  }, [filteredData, previewSearch]);
+
   // Reset page on filter change; slice for the visible page.
   useEffect(() => { setListPage(0); }, [activeFilter]);
   const pagedFilteredData = useMemo(
@@ -2723,6 +2738,12 @@ const GRN = () => {
       toast.error(`Failed to prepare invoice: ${msg}`);
       console.error("Proceed to Invoice Error:", error);
     }
+  };
+
+  // Open the read-only Transaction Preview for a GRN (row click / preview tab).
+  const openGrnPreview = (grn) => {
+    setPreviewGrnId(grn.id);
+    setActiveNavTab('preview');
   };
 
   // View/Edit Handlers
@@ -2856,7 +2877,7 @@ const GRN = () => {
           </div>
           <GRNListView
             data={pagedFilteredData}
-            onView={handleEdit}
+            onView={openGrnPreview}
             onEdit={handleEdit}
             onDelete={handleDelete}
             onPost={handlePost}
@@ -2897,12 +2918,27 @@ const GRN = () => {
           queue={qcQueue}
           onApprove={handleApproveQC}
         />;
+      case 'preview':
+        return <GrnPreviewSplitView
+          grns={previewGrns}
+          previewGrnId={previewGrnId}
+          onSelectGrn={(grn) => setPreviewGrnId(grn.id)}
+          listLoading={isLoading}
+          searchTerm={previewSearch}
+          onSearchChange={setPreviewSearch}
+          vendorsList={[]}
+          grnCurrency={currencyLabel}
+          isPrinting={false}
+          onBack={() => setActiveNavTab('list')}
+          onEdit={(grn) => handleEdit(grn)}
+          onPrint={(grn) => handlePrint(grn)}
+        />;
       case 'returns': return <ReturnsView />;
       // case 'putaway': return <PutawayView />;
       // case 'performance': return <VendorPerformanceView />;
       default: return <GRNListView
         data={filteredData}
-        onView={handleEdit}
+        onView={openGrnPreview}
         onEdit={handleEdit}
         onDelete={handleDelete}
         onPost={handlePost}
@@ -2989,6 +3025,18 @@ const GRN = () => {
               </button>
             );
           })}
+          {/* Transaction Preview tab — shown once a GRN is selected for preview */}
+          {(previewGrnId || activeNavTab === 'preview') && (
+            <button
+              onClick={() => setActiveNavTab('preview')}
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0 ${activeNavTab === 'preview'
+                ? "bg-[#F5C742] text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"}`}
+            >
+              <Eye className="h-4 w-4" />
+              Transaction Preview
+            </button>
+          )}
         </div>
 
         {activeNavTab === 'list' && (

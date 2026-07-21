@@ -1,23 +1,26 @@
 import React, { useEffect, useRef } from 'react';
 import { ArrowLeft, RotateCcw, AlertTriangle, Lock, FileQuestion } from 'lucide-react';
 
-// Generic, document-agnostic read-only "preview" layout shell, designed to
-// render inside a fixed-width slide-over panel (not a full page): single
-// stacked column — header, then summary card, then each main section in
-// order — plus lazy-section skeleton/error scaffolding and the
+// Generic, document-agnostic read-only "preview" layout shell — an ERP-style
+// transaction workspace. Renders a header band, an executive-summary strip, then
+// a two-column workspace: the primary column (items + tabbed detail) beside a
+// sticky right rail (party/branch/related info). Below `xl` the rail drops under
+// the primary column; on mobile a sticky bottom action bar is available. Includes
+// the lazy-section skeleton/error scaffolding and the
 // loading/not-found/forbidden/error states.
 //
-// Document-specific content (header, customer info, items table, status
-// rules, etc.) is composed by the caller and passed in as props/children —
-// this component has zero knowledge of "invoice"-shaped data, so a future
+// Document-specific content (header, summary tiles, items table, tabs, info rail,
+// status rules, etc.) is composed by the caller and passed in as props — this
+// component has zero knowledge of "invoice"-shaped data, so a future
 // Quotation/SalesOrder/PurchaseInvoice preview can reuse it directly.
 export default function RecordPreviewShell({
     loadState = 'loading', // 'loading' | 'ready' | 'not-found' | 'forbidden' | 'error'
     onBack,
     onRetry,
     headerContent,
-    summaryContent,
-    mainSections = [], // [{ key, content }]
+    summaryContent, // executive-summary strip under the header
+    primaryContent, // main workspace column (items + tabs)
+    rightRail, // sticky info panel (customer / branch / related docs)
     mobileActionBar, // node rendered in the fixed bottom bar on mobile
 }) {
     const headingRef = useRef(null);
@@ -88,17 +91,20 @@ export default function RecordPreviewShell({
         );
     }
 
-    // Single stacked column, sized for a slide-over panel: header, then the
-    // summary card (net/paid/balance + quick actions), then each main
-    // section in the order the caller supplied.
+    // Header band → executive-summary strip → two-column workspace (primary +
+    // sticky right rail). The rail sits beside the primary column from `xl` up
+    // and stacks beneath it below that width.
     return (
-        <div className="space-y-4 pb-24 md:pb-6 animate-in fade-in duration-200">
+        <div className="space-y-3 pb-24 md:pb-6 animate-in fade-in duration-200">
             <h1 ref={headingRef} tabIndex={-1} className="sr-only">Transaction Preview</h1>
             {headerContent}
             {summaryContent}
-            {mainSections.map((section) => (
-                <div key={section.key}>{section.content}</div>
-            ))}
+            <div className="grid xl:grid-cols-[1fr_minmax(300px,340px)] gap-3 items-start">
+                <div className="min-w-0 space-y-3">{primaryContent}</div>
+                {rightRail && (
+                    <aside className="xl:sticky xl:top-24 space-y-3">{rightRail}</aside>
+                )}
+            </div>
 
             {mobileActionBar && (
                 <div

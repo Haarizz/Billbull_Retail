@@ -374,7 +374,7 @@ public class StockTransferService {
                 StockTransferItem item = new StockTransferItem();
                 item.setStockTransfer(st);
                 item.setProduct(product);
-                item.setBatchNumber(i.batchNumber);
+                item.setBatchNumber(normalizeBatchNumber(i.batchNumber));
                 item.setQuantity(i.quantity);
                 item.setReceivedQty(0);
                 item.setUom(i.uom);
@@ -384,6 +384,14 @@ public class StockTransferService {
         }
 
         updateTransferTotals(st);
+    }
+
+    private String normalizeBatchNumber(String batchNumber) {
+        if (batchNumber == null) {
+            return null;
+        }
+        String trimmed = batchNumber.trim();
+        return trimmed.isEmpty() || "-".equals(trimmed) ? null : trimmed;
     }
 
     private void freezeItemCostsForSend(StockTransfer st) {

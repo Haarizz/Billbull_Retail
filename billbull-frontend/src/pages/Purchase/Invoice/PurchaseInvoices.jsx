@@ -120,6 +120,7 @@ import {
   getZoneLocators,
   getLocatorBins
 } from "../../../api/warehouseApi";
+import PurchaseInvoicePreviewSplitView from '../components/PurchaseInvoicePreviewSplitView';
 
 // ==========================================
 // CONSTANTS (ENUMS)
@@ -2945,6 +2946,8 @@ const PurchaseInvoices = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [activeNavTab, setActiveNavTab] = useState("list");
+  // Transaction Preview (read-only) — selected invoice backend id.
+  const [previewInvoiceDbId, setPreviewInvoiceDbId] = useState(null);
   const [editInvoice, setEditInvoice] = useState(null);
   const [editorMode, setEditorMode] = useState("edit");
   const pendingDraftRef = useRef(null);
@@ -3082,6 +3085,12 @@ const PurchaseInvoices = () => {
       const msg = err.response?.data?.message || "Failed to approve invoice.";
       alert(msg);
     }
+  };
+
+  // Open the read-only Transaction Preview for an invoice (row click / tab).
+  const openInvoicePreview = (invoice) => {
+    setPreviewInvoiceDbId(invoice.dbId ?? invoice.id);
+    setActiveNavTab('preview');
   };
 
   const handleView = async (invoice) => {
@@ -3292,7 +3301,7 @@ const PurchaseInvoices = () => {
             setActiveFilter={setActiveFilter}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
-            onView={handleView}
+            onView={openInvoicePreview}
             onPrint={handlePrint}
             onDownload={handleDownload}
             onPay={handleOpenPayment}
@@ -3315,6 +3324,22 @@ const PurchaseInvoices = () => {
             onPageChange={setListPage}
           />
         </>;
+      case "preview":
+        return <PurchaseInvoicePreviewSplitView
+          invoices={filteredInvoices}
+          previewInvoiceDbId={previewInvoiceDbId}
+          onSelectInvoice={(inv) => setPreviewInvoiceDbId(inv.dbId)}
+          listLoading={isLoading}
+          searchTerm={searchQuery}
+          onSearchChange={setSearchQuery}
+          vendorsList={[]}
+          invoiceCurrency={company?.currency || 'AED'}
+          isPrinting={false}
+          onBack={() => setActiveNavTab('list')}
+          onEdit={(raw) => handleView(mapInvoiceFromApi(raw))}
+          onPrint={(raw) => handlePrint(mapInvoiceFromApi(raw))}
+          onRecordPayment={(raw) => handleOpenPayment(mapInvoiceFromApi(raw))}
+        />;
       case "editor":
         return <CreateEditView
           onSaveDraft={handleSaveDraft}
@@ -3449,6 +3474,18 @@ const PurchaseInvoices = () => {
               </button>
             );
           })}
+          {/* Transaction Preview tab — shown once an invoice is selected for preview */}
+          {(previewInvoiceDbId || activeNavTab === 'preview') && (
+            <button
+              onClick={() => setActiveNavTab('preview')}
+              className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0 ${activeNavTab === 'preview'
+                ? "bg-[#F5C742] text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-900 hover:bg-slate-50"}`}
+            >
+              <Eye className="h-4 w-4" />
+              Transaction Preview
+            </button>
+          )}
         </div>
 
         {activeNavTab === 'list' && (

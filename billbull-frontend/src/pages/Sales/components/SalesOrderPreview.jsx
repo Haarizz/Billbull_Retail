@@ -2,26 +2,21 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import {
     X, Edit, Printer, Download, Mail, DollarSign, Copy, Clock, History,
     User, MessageSquare, Receipt,
-    Building2, Link2, CheckCircle2, AlertCircle, MoreHorizontal, ChevronDown,
+    Building2, Link2, CheckCircle2, AlertCircle, MoreHorizontal, ChevronDown, Truck,
 } from 'lucide-react';
 import RecordPreviewShell from './RecordPreviewShell';
 import PaymentHistorySection from './PaymentHistorySection';
-import PrintTemplateMenu from './PrintTemplateMenu';
-import InvoiceHistoryModal from './InvoiceHistoryModal';
-import InvoiceItemsTable from './InvoiceItemsTable';
-import { getSalesInvoiceById } from '../../../api/salesInvoiceApi';
-import { useInvoicePaymentHistory } from '../../../hooks/useInvoicePaymentHistory';
-import { useInvoiceThermalPrint } from '../../../hooks/useInvoiceThermalPrint';
-import { getInvoiceStatusBadge, resolveInvoiceSourceType, getInvoiceTypeBadge } from '../utils/invoiceStatusBadge';
-import { getAvailableInvoiceActions } from '../utils/invoiceActionRules';
-import { buildInvoiceTimeline } from '../utils/buildInvoiceTimeline';
+import SalesOrderItemsTable from './SalesOrderItemsTable';
+import { getSalesOrderById } from '../../../api/salesorderApi';
+import { useSalesOrderReceipts } from '../../../hooks/useSalesOrderReceipts';
+import { getSalesOrderStatusBadge, resolveSalesOrderSourceType } from '../utils/salesOrderStatusBadge';
+import { getAvailableSalesOrderActions } from '../utils/salesOrderActionRules';
+import { buildSalesOrderTimeline } from '../utils/buildSalesOrderTimeline';
 import { resolveCustomer, resolveDefaultShippingAddress } from '../../../utils/customerResolution';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 import { copyToClipboard } from '../../../utils/clipboard';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 import { usePermission } from '../../../hooks/usePermission';
-import { useCompany } from '../../../context/CompanyContext';
-import useShortcuts from '../../../hooks/useShortcuts';
 
 const isTypingTarget = (el) => Boolean(el && (['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable));
 
@@ -84,8 +79,6 @@ function CopyField({ label, value, className = '' }) {
     );
 }
 
-// Compact label/value row for the right-rail info panels. Long values wrap and
-// carry a native tooltip so nothing is truncated beyond reach.
 function InfoRow({ label, value, copyable = false, copyLabel }) {
     const has = value != null && value !== '';
     const text = has ? String(value) : '';
@@ -103,9 +96,6 @@ function InfoRow({ label, value, copyable = false, copyLabel }) {
     );
 }
 
-// Card wrapper for the right-rail info panels. On mobile (below xl, where the rail
-// stacks under the workspace) the card collapses to an accordion so the info
-// panels don't push the page down; on desktop it's always open.
 function RailCard({ title, icon: Icon, children, collapsible = false, defaultOpen = true }) {
     const [open, setOpen] = useState(defaultOpen);
     return (
@@ -129,16 +119,18 @@ function RailCard({ title, icon: Icon, children, collapsible = false, defaultOpe
                     </h2>
                 </div>
             )}
-            {/* Always open at xl+ regardless of accordion state below xl */}
             <div className={`px-4 py-2.5 ${collapsible && !open ? 'hidden xl:block' : ''}`}>{children}</div>
         </section>
     );
 }
 
-export default function TransactionPreview({
-    invoiceId,
+// Read-only Transaction Preview for a Sales Order — the SO analog of the Sales
+// Invoice's TransactionPreview. Reuses the document-agnostic RecordPreviewShell
+// and the shared PaymentHistorySection so both surfaces stay visually identical.
+export default function SalesOrderPreview({
+    orderId,
     customersList = [],
-    invoiceCurrency,
+    orderCurrency,
     onBack,
     onEdit,
     onPrint,
@@ -148,20 +140,18 @@ export default function TransactionPreview({
     onPrintVoucher,
     isPrinting = false,
 }) {
-    const [invoice, setInvoice] = useState(null);
+    const [order, setOrder] = useState(null);
     const [loadState, setLoadState] = useState('loading');
-    const [historyOpen, setHistoryOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('payments');
     const { canEdit } = usePermission('SALES');
-    const { company } = useCompany();
 
-    const fetchInvoice = useCallback(async () => {
-        if (!invoiceId) return;
+    const fetchOrder = useCallback(async () => {
+        if (!orderId) return;
         setLoadState('loading');
         try {
-            const data = await getSalesInvoiceById(invoiceId);
+            const data = await getSalesOrderById(orderId);
             if (!data) { setLoadState('not-found'); return; }
-            setInvoice(data);
+            setOrder(data);
             setLoadState('ready');
         } catch (err) {
             const status = err?.response?.status;
@@ -169,158 +159,121 @@ export default function TransactionPreview({
             else if (status === 403) setLoadState('forbidden');
             else setLoadState('error');
         }
-    }, [invoiceId]);
+    }, [orderId]);
 
-    // Initial fetch-by-id on mount/invoiceId-change — setState inside is
-    // intentional (drives the loading/ready/error state machine for this fetch).
-    // Reset the active tab so switching invoices doesn't leave a stale tab open.
+    // Initial fetch-by-id on mount/orderId-change — setState inside drives the
+    // loading/ready/error state machine. Reset the tab on order switch.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    useEffect(() => { fetchInvoice(); setActiveTab('payments'); }, [fetchInvoice]);
+    useEffect(() => { fetchOrder(); setActiveTab('payments'); }, [fetchOrder]);
 
-    const { payments, loading: paymentsLoading, error: paymentsError, refetch: refetchPayments } = useInvoicePaymentHistory(invoice);
+    const { receipts, loading: receiptsLoading, error: receiptsError, refetch: refetchReceipts } = useSalesOrderReceipts(order);
 
-    const timeline = useMemo(() => buildInvoiceTimeline(invoice, payments), [invoice, payments]);
+    const timeline = useMemo(() => buildSalesOrderTimeline(order, receipts), [order, receipts]);
 
     const customer = useMemo(
-        () => (invoice ? resolveCustomer({ customerCode: invoice.customerCode, customerName: invoice.customerName }, customersList) : null),
-        [invoice, customersList]
+        () => (order ? resolveCustomer({ customerCode: order.customerCode, customerName: order.customerName }, customersList) : null),
+        [order, customersList]
     );
 
-    const { printThermal, thermalDisabledReason } = useInvoiceThermalPrint({
-        branchId: invoice?.branchId,
-        company,
-    });
-
-    const actions = useMemo(() => getAvailableInvoiceActions(invoice?.status), [invoice?.status]);
-    const canEditInvoice = canEdit && actions.edit;
+    const actions = useMemo(() => getAvailableSalesOrderActions(order?.status), [order?.status]);
+    const canEditOrder = canEdit && actions.edit;
     const canPrint = actions.print;
-    // Print/PDF/Email aren't split out as separate RBAC actions in this system —
-    // reaching this page already required view on `sales`, so they ride on the
-    // status rules alone. Edit and Record Payment mutate, so they need canEdit.
     const canEmail = actions.email;
     const canPdf = actions.pdf;
     const canRecordPayment = canEdit && actions.recordPayment;
 
-    useShortcuts({
-        e: () => { if (!isTypingTarget(document.activeElement) && canEditInvoice) onEdit?.(invoice); },
-        p: () => { if (!isTypingTarget(document.activeElement) && canPrint) onPrint?.(invoice); },
-        escape: () => onBack?.(),
-    });
+    if (!orderId) return null;
 
-    if (!invoiceId) return null;
-
-    const statusBadge = invoice ? getInvoiceStatusBadge(invoice.status, invoice) : null;
-    const typeBadge = invoice ? getInvoiceTypeBadge(invoice) : null;
-    const sourceType = invoice ? resolveInvoiceSourceType(invoice) : null;
-    const balanceDue = invoice ? Number(invoice.balance ?? Math.max(0, (invoice.invoiceTotal || 0) - (invoice.amountPaid || 0))) : 0;
+    const num = (v) => Number(v ?? 0);
+    const statusBadge = order ? getSalesOrderStatusBadge(order.status) : null;
+    const sourceType = order ? resolveSalesOrderSourceType(order) : null;
+    const orderTotal = num(order?.orderTotal ?? order?.grandTotal ?? order?.total);
+    const advanceTotal = num(order?.advanceAmount);
+    const balanceDue = order ? num(order.balanceAmount ?? Math.max(0, orderTotal - advanceTotal)) : 0;
     const isSettled = balanceDue <= 0;
-    const currency = invoiceCurrency;
+    const currency = orderCurrency;
 
-    const items = (invoice?.items) || [];
+    const items = (order?.items) || [];
     const itemCount = items.length;
     const totalQty = items.reduce((s, i) => s + Number(i.quantity ?? i.qty ?? 0), 0);
-    const discountTotal = Number(invoice?.billDiscountAmount ?? 0);
-    const taxTotal = Number(invoice?.taxTotal ?? invoice?.totalTax ?? invoice?.taxAmount ?? 0);
+    const discountTotal = num(order?.billDiscountAmount ?? order?.discountAmount);
+    const taxTotal = num(order?.taxTotal ?? order?.totalTax ?? order?.taxAmount);
 
-    const relatedDocs = invoice ? [
-        invoice.linkedQuotation && { label: 'Quotation', ref: invoice.linkedQuotation },
-        invoice.linkedSalesOrder && { label: 'Sales Order', ref: invoice.linkedSalesOrder },
-        invoice.linkedDeliveryNote && { label: 'Delivery Note', ref: invoice.linkedDeliveryNote },
-        invoice.linkedProforma && { label: 'Proforma Invoice', ref: invoice.linkedProforma },
-        invoice.linkedCreditNote && { label: 'Credit Note', ref: invoice.linkedCreditNote },
-        invoice.linkedSalesReturn && { label: 'Return', ref: invoice.linkedSalesReturn },
+    const relatedDocs = order ? [
+        order.linkedQuotation && { label: 'Quotation', ref: order.linkedQuotation },
+        order.linkedProforma && { label: 'Proforma Invoice', ref: order.linkedProforma },
+        order.linkedInvoice && { label: 'Sales Invoice', ref: order.linkedInvoice },
+        order.linkedDeliveryNote && { label: 'Delivery Note', ref: order.linkedDeliveryNote },
     ].filter(Boolean) : [];
 
-    const notes = invoice?.customerNotes || invoice?.notes || '';
+    const notes = order?.customerNotes || order?.notes || '';
     const billingAddress = customer?.billingAddress || customer?.address || '';
-    const shippingAddress = invoice?.shippingAddress || (customer ? resolveDefaultShippingAddress(customer) : '');
+    const shippingAddress = order?.shippingAddress || (customer ? resolveDefaultShippingAddress(customer) : '');
 
-    // ── Section 1: Transaction header — identity + the single action toolbar ──
-    // Toolbar responsiveness:
-    //  • ≥xl: all actions inline.
-    //  • md–xl: Print + PDF stay inline; the rest collapse into a "More" menu so
-    //    buttons never overflow the header container (they wrap to a 2nd row first).
-    //  • <md: no toolbar here — the sticky mobile action bar (below) owns actions.
+    // ── Section 1: Transaction header ──
     const secondaryActions = (
         <>
-            {canEmail && <MenuItem onClick={() => onOpenEmailModal?.(invoice)} icon={Mail}>Email</MenuItem>}
-            {canEditInvoice && <MenuItem onClick={() => onEdit?.(invoice)} icon={Edit}>Edit</MenuItem>}
-            {canRecordPayment && <MenuItem onClick={() => onRecordPayment?.(invoice)} icon={DollarSign} danger>Record Payment</MenuItem>}
-            <MenuItem onClick={() => setHistoryOpen(true)} icon={History}>History</MenuItem>
+            {canEmail && <MenuItem onClick={() => onOpenEmailModal?.(order)} icon={Mail}>Email</MenuItem>}
+            {canEditOrder && <MenuItem onClick={() => onEdit?.(order)} icon={Edit}>Edit</MenuItem>}
+            {canRecordPayment && <MenuItem onClick={() => onRecordPayment?.(order)} icon={DollarSign} danger>Record Advance</MenuItem>}
         </>
     );
 
-    const headerContent = invoice && (
+    const headerContent = order && (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 md:px-5 py-3.5">
             <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                 <div className="min-w-0 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
                         <h1 className="text-lg font-bold text-slate-900 flex items-center gap-1.5 min-w-0">
-                            <CopyField label="Invoice Number" value={invoice.invoiceNumber} className="text-slate-900" />
+                            <CopyField label="SO Number" value={order.soNumber} className="text-slate-900" />
                         </h1>
                         {statusBadge && <span className={statusBadge.colorClasses}>{statusBadge.label}</span>}
-                        {typeBadge && <span className={`${typeBadge.colorClasses} px-2 py-0.5 rounded-full text-[10px] font-bold`}>{typeBadge.label}</span>}
                         {sourceType && <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${sourceType.color}`}>{sourceType.label}</span>}
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                         <span className="flex items-center gap-1 font-medium text-slate-700 min-w-0 max-w-full">
                             <User size={12} className="text-slate-400 shrink-0" />
-                            <span className="truncate" title={invoice.customerName}>{invoice.customerName}</span>
+                            <span className="truncate" title={order.customerName}>{order.customerName}</span>
                         </span>
                         <span className="text-slate-300">•</span>
-                        <span className="flex items-center gap-1 whitespace-nowrap"><Clock size={11} className="text-slate-400" /> {formatDisplayDate(invoice.invoiceDate)}</span>
-                        {invoice.dueDate && <><span className="text-slate-300">•</span><span className="whitespace-nowrap">Due {formatDisplayDate(invoice.dueDate)}</span></>}
-                        {invoice.branch && <><span className="text-slate-300">•</span><span className="truncate max-w-55" title={invoice.branch}>{invoice.branch}</span></>}
-                        {invoice.salesperson && <><span className="text-slate-300">•</span><span className="truncate max-w-45" title={invoice.salesperson}>{invoice.salesperson}</span></>}
-                        {invoice.paymentMode && <><span className="text-slate-300">•</span><span className="border border-slate-200 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 text-slate-600 whitespace-nowrap">{invoice.paymentMode}</span></>}
+                        <span className="flex items-center gap-1 whitespace-nowrap"><Clock size={11} className="text-slate-400" /> {formatDisplayDate(order.orderDate)}</span>
+                        {order.expectedDeliveryDate && <><span className="text-slate-300">•</span><span className="flex items-center gap-1 whitespace-nowrap"><Truck size={11} className="text-slate-400" /> {formatDisplayDate(order.expectedDeliveryDate)}</span></>}
+                        {order.branch?.name && <><span className="text-slate-300">•</span><span className="truncate max-w-55" title={order.branch.name}>{order.branch.name}</span></>}
+                        {order.paymentMethod && <><span className="text-slate-300">•</span><span className="border border-slate-200 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 text-slate-600 whitespace-nowrap">{order.paymentMethod}</span></>}
                     </div>
                 </div>
 
-                {/* The one and only action toolbar (md+; mobile uses the sticky bar) */}
+                {/* Action toolbar (md+; mobile uses the sticky bar) */}
                 <div className="hidden md:flex flex-wrap items-center justify-end gap-2 shrink-0 max-w-full">
                     {canPrint && (
-                        <PrintTemplateMenu
-                            invoice={invoice}
-                            disabled={isPrinting || !canPrint}
-                            onPrintPaper={(inv, template) => onPrint?.(inv, template)}
-                            onPrintThermal={(inv, size) => printThermal(inv, size)}
-                            thermalDisabledReason={thermalDisabledReason}
-                        />
-                    )}
-                    {canPrint && (
-                        <button onClick={() => onPrint?.(invoice)} disabled={isPrinting} className="h-8 px-3 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center gap-1.5 text-xs font-bold disabled:opacity-50">
+                        <button onClick={() => onPrint?.(order)} disabled={isPrinting} className="h-8 px-3 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center gap-1.5 text-xs font-bold disabled:opacity-50">
                             <Printer size={13} /> Print
                         </button>
                     )}
                     {canPdf && (
-                        <button onClick={() => onDownload?.(invoice)} disabled={isPrinting} title="Download PDF" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium disabled:opacity-50">
+                        <button onClick={() => onDownload?.(order)} disabled={isPrinting} title="Download PDF" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium disabled:opacity-50">
                             <Download size={13} /> PDF
                         </button>
                     )}
 
-                    {/* xl+: remaining actions inline */}
                     <div className="hidden xl:flex items-center gap-2">
                         {canEmail && (
-                            <button onClick={() => onOpenEmailModal?.(invoice)} title="Email invoice" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium">
+                            <button onClick={() => onOpenEmailModal?.(order)} title="Email sales order" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium">
                                 <Mail size={13} /> Email
                             </button>
                         )}
-                        {canEditInvoice && (
-                            <button onClick={() => onEdit?.(invoice)} title="Edit invoice" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium">
+                        {canEditOrder && (
+                            <button onClick={() => onEdit?.(order)} title="Edit sales order" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium">
                                 <Edit size={13} /> Edit
                             </button>
                         )}
                         {canRecordPayment && (
-                            <button onClick={() => onRecordPayment?.(invoice)} title="Record payment" className="h-8 px-3 border border-emerald-300 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 flex items-center gap-1.5 text-xs font-bold">
-                                <DollarSign size={13} /> Record Payment
+                            <button onClick={() => onRecordPayment?.(order)} title="Record advance" className="h-8 px-3 border border-emerald-300 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 flex items-center gap-1.5 text-xs font-bold">
+                                <DollarSign size={13} /> Record Advance
                             </button>
                         )}
-                        <button onClick={() => setHistoryOpen(true)} title="View history" className="h-8 px-3 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 text-xs font-medium">
-                            <History size={13} /> History
-                        </button>
                     </div>
 
-                    {/* md–xl: secondary actions collapse into "More" */}
                     <div className="xl:hidden">
                         <OverflowMenu>{secondaryActions}</OverflowMenu>
                     </div>
@@ -333,14 +286,12 @@ export default function TransactionPreview({
         </div>
     );
 
-    // ── Section 2: Executive summary strip — every total, exactly once ──
-    // Reflows 2 → 3 → 4 → 7 across mobile/tablet/laptop/desktop; equal-height cells
-    // via the grid; big values use tabular-nums + truncation so alignment holds.
+    // ── Section 2: Executive summary strip ──
     const summaryTiles = [
-        { label: 'Net Total', node: <CurrencyAmount value={invoice?.invoiceTotal} currency={currency} className="text-sm font-bold text-slate-800 tabular-nums" /> },
-        { label: 'Paid Amount', node: <CurrencyAmount value={invoice?.amountPaid} currency={currency} className="text-sm font-bold text-emerald-600 tabular-nums" /> },
+        { label: 'Order Total', node: <CurrencyAmount value={orderTotal} currency={currency} className="text-sm font-bold text-slate-800 tabular-nums" /> },
+        { label: 'Advance Paid', node: <CurrencyAmount value={advanceTotal} currency={currency} className="text-sm font-bold text-emerald-600 tabular-nums" /> },
         {
-            label: 'Balance Due',
+            label: 'Balance',
             node: <CurrencyAmount value={balanceDue} currency={currency} className={`text-sm font-bold tabular-nums ${isSettled ? 'text-emerald-600' : 'text-red-500'}`} />,
             icon: isSettled ? CheckCircle2 : AlertCircle,
             iconCls: isSettled ? 'text-emerald-400' : 'text-red-400',
@@ -352,7 +303,7 @@ export default function TransactionPreview({
         { label: 'Tax', node: <CurrencyAmount value={taxTotal} currency={currency} className="text-sm font-bold text-slate-800 tabular-nums" /> },
     ];
 
-    const summaryContent = invoice && (
+    const summaryContent = order && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2">
             {summaryTiles.map((t) => (
                 <div key={t.label} className={`border rounded-lg px-3 py-2 text-center bg-white flex flex-col justify-center ${t.tint || 'border-slate-200'} shadow-sm`}>
@@ -365,21 +316,18 @@ export default function TransactionPreview({
         </div>
     );
 
-    // ── Section 3a: Primary workspace column — items (responsive table/cards) + tabs ──
-    const itemsTable = invoice && <InvoiceItemsTable invoice={invoice} currency={currency} />;
+    // ── Section 3a: Primary workspace column ──
+    const itemsTable = order && <SalesOrderItemsTable order={order} currency={currency} />;
 
-    // Tabs — only surface tabs that have content; hide empty Notes/Attachments.
-    const tabs = invoice ? [
-        { key: 'payments', label: 'Payments', icon: Receipt, count: payments.length },
+    const tabs = order ? [
+        { key: 'payments', label: 'Advance Payments', icon: Receipt, count: receipts.length },
         { key: 'timeline', label: 'Timeline', icon: Clock, count: timeline.length },
         notes && { key: 'notes', label: 'Notes', icon: MessageSquare },
     ].filter(Boolean) : [];
 
-    // If the active tab became unavailable (e.g. switched to an invoice with no
-    // notes), fall back to the first tab.
     const effectiveTab = tabs.some((t) => t.key === activeTab) ? activeTab : (tabs[0]?.key);
 
-    const tabbedContent = invoice && (
+    const tabbedContent = order && (
         <section className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
             <div className="border-b border-slate-100 flex items-center gap-1 px-2" role="tablist">
                 {tabs.map((t) => {
@@ -406,16 +354,16 @@ export default function TransactionPreview({
             <div role="tabpanel">
                 {effectiveTab === 'payments' && (
                     <PaymentHistorySection
-                        payments={payments}
-                        loading={paymentsLoading}
-                        error={paymentsError}
-                        onRetry={refetchPayments}
+                        payments={receipts}
+                        loading={receiptsLoading}
+                        error={receiptsError}
+                        onRetry={refetchReceipts}
                         currency={currency}
-                        invoiceNumber={invoice.invoiceNumber}
+                        invoiceNumber={order.soNumber}
                         customerPhone={customer?.mobile || customer?.phone}
-                        onPrintVoucher={(receipt) => onPrintVoucher?.(receipt, invoice)}
-                        onDownloadPdf={() => onDownload?.(invoice)}
-                        onEmailVoucher={() => onOpenEmailModal?.(invoice)}
+                        onPrintVoucher={(receipt) => onPrintVoucher?.(receipt, order)}
+                        onDownloadPdf={() => onDownload?.(order)}
+                        onEmailVoucher={() => onOpenEmailModal?.(order)}
                     />
                 )}
                 {effectiveTab === 'timeline' && (
@@ -447,22 +395,20 @@ export default function TransactionPreview({
         </section>
     );
 
-    const primaryContent = invoice && (
+    const primaryContent = order && (
         <>
             {itemsTable}
             {tabbedContent}
         </>
     );
 
-    // ── Section 3b: Right rail — customer, branch, related documents ──
-    // At xl+ the rail sits beside the workspace (always-open cards); below xl it
-    // stacks under the workspace and the cards become accordions.
-    const rightRail = invoice && (
+    // ── Section 3b: Right rail ──
+    const rightRail = order && (
         <>
             <RailCard title="Customer Information" icon={User} collapsible defaultOpen>
                 <div className="divide-y divide-slate-50">
-                    <InfoRow label="Name" value={invoice.customerName} />
-                    <InfoRow label="Code" value={invoice.customerCode} copyable copyLabel="Customer Code" />
+                    <InfoRow label="Name" value={order.customerName} />
+                    <InfoRow label="Code" value={order.customerCode} copyable copyLabel="Customer Code" />
                     <InfoRow label="Phone" value={customer?.phone || customer?.mobile} />
                     <InfoRow label="Email" value={customer?.email} />
                     <InfoRow label="VAT / TRN" value={customer?.trn} copyable copyLabel="TRN" />
@@ -471,12 +417,13 @@ export default function TransactionPreview({
                 </div>
             </RailCard>
 
-            <RailCard title="Branch & Terms" icon={Building2} collapsible defaultOpen={false}>
+            <RailCard title="Order & Delivery" icon={Building2} collapsible defaultOpen={false}>
                 <div className="divide-y divide-slate-50">
-                    <InfoRow label="Branch" value={invoice.branch} />
-                    <InfoRow label="Salesperson" value={invoice.salesperson} />
-                    <InfoRow label="Payment Terms" value={invoice.paymentTerms} />
-                    <InfoRow label="Reference" value={invoice.reference} copyable copyLabel="Reference" />
+                    <InfoRow label="Branch" value={order.branch?.name} />
+                    <InfoRow label="Delivery Type" value={order.deliveryType} />
+                    <InfoRow label="Expected Delivery" value={order.expectedDeliveryDate ? formatDisplayDate(order.expectedDeliveryDate) : ''} />
+                    <InfoRow label="Payment Method" value={order.paymentMethod} />
+                    <InfoRow label="Reference" value={order.paymentReference} copyable copyLabel="Reference" />
                 </div>
             </RailCard>
 
@@ -495,31 +442,31 @@ export default function TransactionPreview({
         </>
     );
 
-    // Mobile-only action bar (the desktop toolbar lives in the header band).
-    const mobileActionBar = invoice && (
+    // Mobile-only action bar.
+    const mobileActionBar = order && (
         <div className="flex items-center gap-2">
             {canPrint && (
-                <button onClick={() => onPrint?.(invoice)} disabled={isPrinting} className="flex-1 h-10 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-xs font-bold disabled:opacity-50">
+                <button onClick={() => onPrint?.(order)} disabled={isPrinting} className="flex-1 h-10 rounded-md bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 flex items-center justify-center gap-1.5 text-xs font-bold disabled:opacity-50">
                     <Printer size={14} /> Print
                 </button>
             )}
             {canRecordPayment && (
-                <button onClick={() => onRecordPayment?.(invoice)} className="flex-1 h-10 border border-emerald-300 rounded-md bg-emerald-50 text-emerald-700 flex items-center justify-center gap-1.5 text-xs font-bold">
-                    <DollarSign size={14} /> Payment
+                <button onClick={() => onRecordPayment?.(order)} className="flex-1 h-10 border border-emerald-300 rounded-md bg-emerald-50 text-emerald-700 flex items-center justify-center gap-1.5 text-xs font-bold">
+                    <DollarSign size={14} /> Advance
                 </button>
             )}
             {canPdf && (
-                <button onClick={() => onDownload?.(invoice)} disabled={isPrinting} aria-label="Download PDF" className="h-10 w-10 border border-slate-300 rounded-md bg-white text-slate-700 flex items-center justify-center disabled:opacity-50">
+                <button onClick={() => onDownload?.(order)} disabled={isPrinting} aria-label="Download PDF" className="h-10 w-10 border border-slate-300 rounded-md bg-white text-slate-700 flex items-center justify-center disabled:opacity-50">
                     <Download size={15} />
                 </button>
             )}
             {canEmail && (
-                <button onClick={() => onOpenEmailModal?.(invoice)} aria-label="Email" className="h-10 w-10 border border-slate-300 rounded-md bg-white text-slate-700 flex items-center justify-center">
+                <button onClick={() => onOpenEmailModal?.(order)} aria-label="Email" className="h-10 w-10 border border-slate-300 rounded-md bg-white text-slate-700 flex items-center justify-center">
                     <Mail size={15} />
                 </button>
             )}
-            {canEditInvoice && (
-                <button onClick={() => onEdit?.(invoice)} aria-label="Edit" className="h-10 w-10 border border-slate-300 rounded-md bg-white text-slate-700 flex items-center justify-center">
+            {canEditOrder && (
+                <button onClick={() => onEdit?.(order)} aria-label="Edit" className="h-10 w-10 border border-slate-300 rounded-md bg-white text-slate-700 flex items-center justify-center">
                     <Edit size={15} />
                 </button>
             )}
@@ -527,24 +474,15 @@ export default function TransactionPreview({
     );
 
     return (
-        <>
-            <RecordPreviewShell
-                loadState={loadState}
-                onBack={onBack}
-                onRetry={fetchInvoice}
-                headerContent={headerContent}
-                summaryContent={summaryContent}
-                primaryContent={primaryContent}
-                rightRail={rightRail}
-                mobileActionBar={mobileActionBar}
-            />
-            {historyOpen && invoice && (
-                <InvoiceHistoryModal
-                    invoiceId={invoice.id}
-                    invoiceNumber={invoice.invoiceNumber}
-                    onClose={() => setHistoryOpen(false)}
-                />
-            )}
-        </>
+        <RecordPreviewShell
+            loadState={loadState}
+            onBack={onBack}
+            onRetry={fetchOrder}
+            headerContent={headerContent}
+            summaryContent={summaryContent}
+            primaryContent={primaryContent}
+            rightRail={rightRail}
+            mobileActionBar={mobileActionBar}
+        />
     );
 }

@@ -125,6 +125,7 @@ import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 import TableSkeleton from '../../components/common/TableSkeleton';
+import DeliveryNotePreviewSplitView from './components/DeliveryNotePreviewSplitView';
 
 const DeliveryNote = () => {
     const location = useLocation();
@@ -136,6 +137,8 @@ const DeliveryNote = () => {
     const currency = company?.currency || 'AED';
     const canManualBatchSelect = canAction('batch_manual_select', 'edit');
     const [activeTab, setActiveTab] = useState('list');
+    // Transaction Preview (read-only) — selected DN id for the preview tab.
+    const [previewDeliveryNoteId, setPreviewDeliveryNoteId] = useState(null);
     const [currentDnId, setCurrentDnId] = useState(null); // Tracks editing vs creating
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
     // Originating branch of the loaded DN — drives print/email header (PDF §7.1).
@@ -1168,6 +1171,26 @@ const DeliveryNote = () => {
         setActiveTab('create');
     };
 
+    // Open the read-only Transaction Preview for a DN (row click / tab).
+    const openDeliveryNotePreview = (dn) => {
+        setPreviewDeliveryNoteId(dn.id);
+        setActiveTab('preview');
+    };
+
+    // Preview actions read editor state (print/email/pick-list build from
+    // buildDnPrintData + loaded items/branch), and handleRowClick expects the
+    // list-row shape — so resolve the matching list row by id, hydrate the editor,
+    // then run the action. The preview passes the raw entity, from which we take id.
+    const hydrateDnEditorById = (id) => {
+        const row = deliveryNotesList.find((d) => d.id === id);
+        if (row) handleRowClick(row);
+        return row;
+    };
+    const handlePreviewEdit = (raw) => { hydrateDnEditorById(raw.id); };
+    const handlePreviewPrint = (raw) => { hydrateDnEditorById(raw.id); setTimeout(() => handlePrint(), 150); };
+    const handlePreviewPickList = (raw) => { hydrateDnEditorById(raw.id); setTimeout(() => handlePrintPickList(), 150); };
+    const handlePreviewEmail = (raw) => { hydrateDnEditorById(raw.id); setTimeout(() => setIsEmailModalOpen(true), 150); };
+
     const handleStatusAdvance = () => {
         let nextStatus = '';
         const sc = status.toUpperCase();
@@ -1889,7 +1912,7 @@ const DeliveryNote = () => {
 
     const MobileCard = ({ dn }) => (
         <div
-            onClick={() => handleRowClick(dn)}
+            onClick={() => openDeliveryNotePreview(dn)}
             className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.98] transition-all"
         >
             <div className="flex justify-between items-start mb-3">
@@ -2129,9 +2152,10 @@ const DeliveryNote = () => {
                         <div className="flex overflow-x-auto no-scrollbar gap-2">
                             {[
                                 { id: 'list', label: 'Delivery Notes' },
+                                { id: 'preview', label: 'Transaction Preview' },
                                 { id: 'create', label: 'Create / Edit Delivery Note' },
                                 { id: 'picking', label: 'Picking List' }
-                            ].map(tab => (
+                            ].filter(tab => !(tab.id === 'preview' && !previewDeliveryNoteId && activeTab !== 'preview')).map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
@@ -2245,7 +2269,7 @@ const DeliveryNote = () => {
                                     <tbody className="divide-y divide-slate-100">
                                         {isListLoading && <TableSkeleton cols={8} rows={8} />}
                                         {filteredDeliveryNotes.map((dn, index) => (
-                                            <tr key={dn.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => handleRowClick(dn)}>
+                                            <tr key={dn.id} className="hover:bg-slate-50 cursor-pointer group" onClick={() => openDeliveryNotePreview(dn)}>
                                                 <td className="px-3 py-3 text-center text-slate-400 font-mono font-medium">
                                                     {getListSerialNumber(index, {
                                                         documentNumber: dn.dnNo,
@@ -2325,6 +2349,25 @@ const DeliveryNote = () => {
                                 onPageChange={setListPage}
                             />
                         </div>
+                    )}
+
+                    {/* ============== VIEW: TRANSACTION PREVIEW ============== */}
+                    {activeTab === 'preview' && (
+                        <DeliveryNotePreviewSplitView
+                            deliveryNotes={filteredDeliveryNotes}
+                            previewDeliveryNoteId={previewDeliveryNoteId}
+                            onSelectDeliveryNote={(dn) => setPreviewDeliveryNoteId(dn.id)}
+                            listLoading={isListLoading}
+                            searchTerm={searchTerm}
+                            onSearchChange={setSearchTerm}
+                            customersList={customersList}
+                            isPrinting={isPrinting}
+                            onBack={() => setActiveTab('list')}
+                            onEdit={(dn) => handlePreviewEdit(dn)}
+                            onPrint={(dn) => handlePreviewPrint(dn)}
+                            onPrintPickList={(dn) => handlePreviewPickList(dn)}
+                            onOpenEmailModal={(dn) => handlePreviewEmail(dn)}
+                        />
                     )}
 
                     {/* ================= VIEW: CREATE / EDIT ================= */}

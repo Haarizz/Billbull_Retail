@@ -119,12 +119,15 @@ import InlineProductSearchCell from '../../components/InlineProductSearchCell';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 import TableSkeleton from '../../components/common/TableSkeleton';
+import ProformaPreviewSplitView from './components/ProformaPreviewSplitView';
 
 const ProformaInvoice = () => {
   const { company } = useCompany();
   const { defaultBranch, defaultBranchName, branches: availableBranches, activeBranch } = useBranch();
   const [loadedPiBranchId, setLoadedPiBranchId] = useState(null);
   const [activeTab, setActiveTab] = useState('list');
+  // Transaction Preview (read-only) — selected proforma id for the preview tab.
+  const [previewProformaId, setPreviewProformaId] = useState(null);
   const [overflowMenu, setOverflowMenu] = useState(null);
   const overflowMenuRef = useRef(null);
   const [piId, setPiId] = useState(null);
@@ -919,6 +922,19 @@ const ProformaInvoice = () => {
     }
   };
 
+  // Open the read-only Transaction Preview for a proforma (row click / tab).
+  const openProformaPreview = (pi) => {
+    setPreviewProformaId(pi.id);
+    setActiveTab('preview');
+  };
+
+  // Preview actions read editor state (print/email build from buildPiPrintData +
+  // loaded items/branch), so first hydrate the editor via handleRowClick (which
+  // fetches the full PI by id), then run the action.
+  const handlePreviewEdit = (pi) => { handleRowClick(pi); };
+  const handlePreviewPrint = (pi) => { handleRowClick(pi); setTimeout(() => handlePrintClick(), 150); };
+  const handlePreviewEmail = (pi) => { handleRowClick(pi); setTimeout(() => setIsEmailModalOpen(true), 150); };
+
   const handleCreateNew = () => {
     if (proformaAutoNumbering) {
       getNextProformaNumber().then(setPiNumber).catch(() => setPiNumber(''));
@@ -1303,7 +1319,7 @@ const ProformaInvoice = () => {
 
   const MobileCard = ({ pi }) => (
     <div
-      onClick={() => handleRowClick(pi)}
+      onClick={() => openProformaPreview(pi)}
       className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 mb-3 active:scale-[0.95] transition-all"
     >
       <div className="flex justify-between items-start mb-2">
@@ -1478,10 +1494,12 @@ const ProformaInvoice = () => {
           <div className="flex overflow-x-auto no-scrollbar gap-2">
             {[
               { id: 'list', label: 'Proforma List', icon: ShoppingCartIcon },
+              { id: 'preview', label: 'Transaction Preview', icon: Eye },
               { id: 'create', label: 'Proforma Editor', icon: FileText }
             ].map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
+              if (tab.id === 'preview' && !previewProformaId && activeTab !== 'preview') return null;
               return (
                 <button
                   key={tab.id}
@@ -1594,7 +1612,7 @@ const ProformaInvoice = () => {
                   {filteredProformas.map((pi, index) => (
                     <tr
                       key={pi.id}
-                      onClick={() => handleRowClick(pi)}
+                      onClick={() => openProformaPreview(pi)}
                       className="hover:bg-slate-50 cursor-pointer transition-colors"
                     >
                       <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
@@ -1675,6 +1693,25 @@ const ProformaInvoice = () => {
               onPageChange={setListPage}
             />
           </div>
+        )}
+
+        {/* ==================== VIEW: TRANSACTION PREVIEW ==================== */}
+        {activeTab === 'preview' && (
+          <ProformaPreviewSplitView
+            proformas={filteredProformas}
+            previewProformaId={previewProformaId}
+            onSelectProforma={(pi) => setPreviewProformaId(pi.id)}
+            listLoading={isListLoading}
+            searchTerm={searchTerm}
+            onSearchChange={setSearchTerm}
+            customersList={customersList}
+            proformaCurrency={currency}
+            isPrinting={isPrinting}
+            onBack={() => setActiveTab('list')}
+            onEdit={(pi) => handlePreviewEdit(pi)}
+            onPrint={(pi) => handlePreviewPrint(pi)}
+            onOpenEmailModal={(pi) => handlePreviewEmail(pi)}
+          />
         )}
 
         {/* ======================= VIEW: CREATE / EDIT ======================= */}

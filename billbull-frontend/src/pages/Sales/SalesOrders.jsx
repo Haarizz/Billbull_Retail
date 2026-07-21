@@ -100,6 +100,7 @@ import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/c
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';
+import SalesOrderPreviewSplitView from './components/SalesOrderPreviewSplitView';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -191,6 +192,10 @@ const SalesOrders = () => {
   const { canCreate, canEdit, canApprove, canExport, canAction } = usePermissions();
   const canManualBatchSelect = canAction('batch_manual_select', 'edit');
   const [activeTab, setActiveTab] = useState('list');
+
+  // Transaction Preview (read-only) — selected order id + list search term.
+  const [previewOrderId, setPreviewOrderId] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // ✅ FIX 1: ADD ORDER ID STATE
   const [orderId, setOrderId] = useState(null);
@@ -1514,6 +1519,42 @@ const SalesOrders = () => {
     setActiveTab('create');
   };
 
+  // Client-side filter for the preview's order switcher (searches the loaded page).
+  const filteredOrders = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return ordersList;
+    return ordersList.filter((o) =>
+      [o.soNumber, o.customerName, o.customerCode, o.linkedQuotation, o.linkedProforma]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(q))
+    );
+  }, [ordersList, searchTerm]);
+
+  // Open the read-only Transaction Preview for an order (row click / preview tab).
+  const openOrderPreview = (order) => {
+    setPreviewOrderId(order.id);
+    setActiveTab('preview');
+  };
+
+  // Preview actions that depend on editor state (print/email/advance) first hydrate
+  // the editor with the order, then run the action — mirroring the list-row flow.
+  const handlePreviewPrint = (order) => {
+    handleLoadOrder(order);
+    setTimeout(() => handlePrintClick(), 100);
+  };
+  const handlePreviewEmail = (order) => {
+    handleLoadOrder(order);
+    setIsEmailModalOpen(true);
+  };
+  const handlePreviewRecordAdvance = (order) => {
+    handleLoadOrder(order);
+    setTimeout(() => handleOpenPaymentModal(), 100);
+  };
+  const handlePreviewPrintVoucher = (receipt, order) => {
+    handleLoadOrder(order);
+    setTimeout(() => handlePrintAdvanceReceipt(), 100);
+  };
+
   // ✅ FIX 3: RESET ID WHEN CREATING NEW
   const handleCreateNew = () => {
     setOrderId(null); // <--- Reset to null for new creation
@@ -1830,11 +1871,13 @@ const SalesOrders = () => {
         <div className="flex overflow-x-auto no-scrollbar gap-2 mb-4">
           {[
             { id: 'list', label: 'Sales Order List', icon: ShoppingCart },
+            { id: 'preview', label: 'Transaction Preview', icon: Eye },
             { id: 'create', label: 'Sales Order Editor', icon: FileText }
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             if (tab.id === 'create' && !canCreate('sales.order') && activeTab !== 'create') return null;
+            if (tab.id === 'preview' && !previewOrderId && activeTab !== 'preview') return null;
             return (
               <button
                 key={tab.id}
@@ -1972,7 +2015,7 @@ const SalesOrders = () => {
               <tbody className="divide-y divide-slate-50">
                 {isListLoading && <TableSkeleton cols={10} rows={8} />}
                 {ordersList.map((order, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => handleLoadOrder(order)}>
+                  <tr key={idx} className="hover:bg-slate-50 cursor-pointer" onClick={() => openOrderPreview(order)}>
                     <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
                       {getListSerialNumber(idx, {
                         documentNumber: order.soNumber,
@@ -2002,9 +2045,9 @@ const SalesOrders = () => {
                       <div className="flex justify-end items-center gap-1">
                         {/* Primary actions */}
                         <button
-                          onClick={() => handleLoadOrder(order)}
+                          onClick={() => openOrderPreview(order)}
                           className="p-1.5 hover:bg-yellow-100 rounded text-yellow-600 transition-colors"
-                          title="View / Edit"
+                          title="View"
                         >
                           <Eye size={14} />
                         </button>
@@ -2060,7 +2103,7 @@ const SalesOrders = () => {
                 <MobileCard
                   key={order.id || order.soNumber}
                   order={order}
-                  onClick={handleLoadOrder}
+                  onClick={openOrderPreview}
                   getStatusBadge={renderStatusBadge}
                   currency={orderCurrency}
                 />
@@ -2078,6 +2121,28 @@ const SalesOrders = () => {
           </div>
         </div>
         </div>
+      )}
+
+      {/* ==================== VIEW: TRANSACTION PREVIEW ==================== */}
+      {activeTab === 'preview' && (
+        <SalesOrderPreviewSplitView
+          orders={filteredOrders}
+          previewOrderId={previewOrderId}
+          onSelectOrder={(order) => setPreviewOrderId(order.id)}
+          listLoading={isListLoading}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          customersList={customersList}
+          orderCurrency={orderCurrency}
+          isPrinting={isPrinting}
+          onBack={() => setActiveTab('list')}
+          onEdit={(order) => handleLoadOrder(order)}
+          onPrint={(order) => handlePreviewPrint(order)}
+          onDownload={(order) => handlePreviewPrint(order)}
+          onOpenEmailModal={(order) => handlePreviewEmail(order)}
+          onRecordPayment={(order) => handlePreviewRecordAdvance(order)}
+          onPrintVoucher={(receipt, order) => handlePreviewPrintVoucher(receipt, order)}
+        />
       )}
 
       {/* ======================= VIEW: CREATE ======================= */}
