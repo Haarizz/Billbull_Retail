@@ -58,6 +58,7 @@ import {
 } from '../../../api/paymentApi';
 import { getVendors } from '../../../api/vendorsApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
+import PaymentVoucherPreviewSplitView from '../components/PaymentVoucherPreviewSplitView';
 
 // ==========================================
 // HELPERS & CONFIG
@@ -357,6 +358,8 @@ const PaymentVoucher = () => {
     const { branches: availableBranches, activeBranch } = useBranch();
     const currency = company?.currency || 'AED';
     const [activeTab, setActiveTab] = useState("list");
+    // Transaction Preview (read-only) — selected voucher backend id.
+    const [previewVoucherDbId, setPreviewVoucherDbId] = useState(null);
     const [selectedVoucher, setSelectedVoucher] = useState(null);
     const [isCreateOpen, setCreateOpen] = useState(false);
 
@@ -584,6 +587,12 @@ const PaymentVoucher = () => {
             console.error("Error printing Voucher:", error);
             toast.error('Failed to generate print layout');
         }
+    };
+
+    // Open the read-only Transaction Preview for a voucher (row click / tab).
+    const openVoucherPreview = (voucher) => {
+        setPreviewVoucherDbId(voucher.dbId ?? voucher.id);
+        setActiveTab('preview');
     };
 
     const handlePrintVoucher = async (voucher) => {
@@ -859,6 +868,7 @@ const PaymentVoucher = () => {
             <div className="flex items-center gap-6 border-b border-slate-200 mb-6">
                 {[
                     { id: 'list', label: 'Voucher List' },
+                    ...((previewVoucherDbId || activeTab === 'preview') ? [{ id: 'preview', label: 'Transaction Preview' }] : []),
                     { id: 'pay', label: 'Pay Invoices' },
                     { id: 'approval', label: 'Pending Approval' },
                     { id: 'history', label: 'History / Audit' },
@@ -1247,7 +1257,7 @@ const PaymentVoucher = () => {
                                         {pagedMainList.length === 0 ? (
                                             <tr><td colSpan="11" className="p-6 text-center text-slate-400">No posted vouchers found.</td></tr>
                                         ) : pagedMainList.map((row, index) => (
-                                            <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors">
+                                            <tr key={row.dbId} className="hover:bg-slate-50 group transition-colors cursor-pointer" onClick={() => openVoucherPreview(row)}>
                                                 <td className="px-4 py-3 text-center text-slate-400 font-mono font-medium">
                                                     {getListSerialNumber(index, {
                                                         documentNumber: row.id,
@@ -1285,13 +1295,13 @@ const PaymentVoucher = () => {
                                                 </td>
                                                 <td className="px-4 py-3 text-center">
                                                     <div className="flex items-center justify-center gap-1 opacity-60 group-hover:opacity-100">
-                                                        <button onClick={() => setSelectedVoucher(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="View Audit">
+                                                        <button onClick={(e) => { e.stopPropagation(); setSelectedVoucher(row); }} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="View Audit">
                                                             <Eye className="w-3 h-3" />
                                                         </button>
-                                                        <button onClick={() => handlePrintVoucher(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Print">
+                                                        <button onClick={(e) => { e.stopPropagation(); handlePrintVoucher(row); }} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Print">
                                                             <Printer className="w-3 h-3" />
                                                         </button>
-                                                        <button onClick={() => handleDownloadVoucher(row)} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Download PDF">
+                                                        <button onClick={(e) => { e.stopPropagation(); handleDownloadVoucher(row); }} className="p-1.5 border border-slate-200 rounded hover:bg-slate-100 text-slate-500" title="Download PDF">
                                                             <Download className="w-3 h-3" />
                                                         </button>
                                                     </div>
@@ -1403,6 +1413,25 @@ const PaymentVoucher = () => {
                 )}
 
                 {/* 3. History View */}
+                {activeTab === 'preview' && (
+                    <div className="p-4">
+                        <PaymentVoucherPreviewSplitView
+                            vouchers={vouchers}
+                            previewVoucherDbId={previewVoucherDbId}
+                            onSelectVoucher={(v) => setPreviewVoucherDbId(v.dbId)}
+                            listLoading={loading}
+                            searchTerm={searchTerm}
+                            onSearchChange={setSearchTerm}
+                            vendorsList={vendors}
+                            voucherCurrency={currency}
+                            isPrinting={false}
+                            onBack={() => setActiveTab('list')}
+                            onPrint={(raw) => handlePrintVoucher({ ...raw, dbId: raw.id })}
+                            onDownload={(raw) => handleDownloadVoucher({ ...raw, dbId: raw.id, voucherNumber: raw.voucherNumber })}
+                        />
+                    </div>
+                )}
+
                 {activeTab === 'history' && (
                     <div className="p-6">
                         <div className="mb-4">

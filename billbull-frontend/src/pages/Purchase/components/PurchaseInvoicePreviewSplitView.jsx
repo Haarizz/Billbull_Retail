@@ -1,20 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { ListFilter, X } from 'lucide-react';
-import InvoiceCardList from './InvoiceCardList';
-import TransactionPreview from './TransactionPreview';
+import PurchaseInvoiceCardList from './PurchaseInvoiceCardList';
+import PurchaseInvoicePreview from './PurchaseInvoicePreview';
 
-// Transaction Preview page: persistent invoice switcher + read-only preview.
-//
-// Responsive layout:
-//  • ≥1024px (lg): two columns — a fixed invoice list beside the preview. The list
-//    is fed by the parent's already-filtered `invoices` (no refetch); selecting a
-//    card just swaps the id the preview fetches, so switching never leaves this view.
-//    Between lg and xl the list column is narrower to leave room for the workspace.
-//  • <1024px: the preview takes the full width and the list becomes a slide-out
-//    drawer (a "Browse invoices" trigger opens it; selecting a card closes it).
-export default function InvoicePreviewSplitView({
+// Purchase Invoice Transaction Preview page: persistent invoice switcher +
+// read-only preview. Invoices are keyed by their numeric backend id (dbId).
+export default function PurchaseInvoicePreviewSplitView({
     invoices,
-    previewInvoiceId,
+    previewInvoiceDbId,
     onSelectInvoice,
     listLoading,
     searchTerm,
@@ -23,7 +16,6 @@ export default function InvoicePreviewSplitView({
 }) {
     const [drawerOpen, setDrawerOpen] = useState(false);
 
-    // Lock body scroll while the drawer is open and close it on Escape.
     useEffect(() => {
         if (!drawerOpen) return undefined;
         const onKey = (e) => { if (e.key === 'Escape') setDrawerOpen(false); };
@@ -31,17 +23,17 @@ export default function InvoicePreviewSplitView({
         return () => document.removeEventListener('keydown', onKey);
     }, [drawerOpen]);
 
-    const selectedInvoice = invoices?.find((i) => i.id === previewInvoiceId);
+    const selectedInvoice = invoices?.find((i) => i.dbId === previewInvoiceDbId);
 
     const handleSelect = (inv) => {
         onSelectInvoice(inv);
-        setDrawerOpen(false); // drawer is mobile-only; harmless on desktop
+        setDrawerOpen(false);
     };
 
     const listNode = (
-        <InvoiceCardList
+        <PurchaseInvoiceCardList
             invoices={invoices}
-            selectedId={previewInvoiceId}
+            selectedDbId={previewInvoiceDbId}
             onSelect={handleSelect}
             currency={previewProps.invoiceCurrency}
             searchTerm={searchTerm}
@@ -52,7 +44,6 @@ export default function InvoicePreviewSplitView({
 
     return (
         <div className="animate-in fade-in duration-200">
-            {/* Mobile-only trigger to open the invoice-list drawer */}
             <button
                 type="button"
                 onClick={() => setDrawerOpen(true)}
@@ -60,21 +51,19 @@ export default function InvoicePreviewSplitView({
             >
                 <ListFilter size={14} className="text-[#D99A00]" />
                 Browse invoices
-                {selectedInvoice && <span className="text-slate-400 font-normal">· {selectedInvoice.invoiceNumber}</span>}
+                {selectedInvoice && <span className="text-slate-400 font-normal">· {selectedInvoice.id}</span>}
             </button>
 
             <div className="grid lg:grid-cols-[minmax(260px,300px)_1fr] xl:grid-cols-[minmax(300px,340px)_1fr] gap-4 items-start">
-                {/* Desktop / tablet: persistent list column */}
                 <div className="hidden lg:block lg:sticky lg:top-24">
                     {listNode}
                 </div>
 
                 <div className="min-w-0">
-                    <TransactionPreview invoiceId={previewInvoiceId} {...previewProps} />
+                    <PurchaseInvoicePreview invoiceId={previewInvoiceDbId} {...previewProps} />
                 </div>
             </div>
 
-            {/* Mobile: slide-out drawer */}
             {drawerOpen && (
                 <div className="lg:hidden fixed inset-0 z-50 flex">
                     <button
@@ -85,11 +74,11 @@ export default function InvoicePreviewSplitView({
                     />
                     <div
                         role="dialog"
-                        aria-label="Invoices"
+                        aria-label="Purchase Invoices"
                         className="relative w-[85%] max-w-sm h-full bg-slate-50 shadow-xl flex flex-col animate-in slide-in-from-left duration-200"
                     >
                         <div className="flex items-center justify-between px-3 py-2.5 border-b border-slate-200 bg-white shrink-0">
-                            <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Invoices</span>
+                            <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Purchase Invoices</span>
                             <button
                                 type="button"
                                 onClick={() => setDrawerOpen(false)}
