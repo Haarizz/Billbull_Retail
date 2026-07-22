@@ -14,9 +14,15 @@ import java.util.Map;
 public class PosTerminalController {
 
     private final PosTerminalService service;
+    private final PosTerminalLifecycleService lifecycleService;
+    private final PosTerminalActivityService activityService;
 
-    public PosTerminalController(PosTerminalService service) {
+    public PosTerminalController(PosTerminalService service,
+                                  PosTerminalLifecycleService lifecycleService,
+                                  PosTerminalActivityService activityService) {
         this.service = service;
+        this.lifecycleService = lifecycleService;
+        this.activityService = activityService;
     }
 
     @PostMapping("/register")
@@ -51,6 +57,7 @@ public class PosTerminalController {
     public ResponseEntity<Map<String, Object>> heartbeat(@PathVariable String terminalId,
                                                           HttpServletRequest request) {
         PosTerminal t = service.heartbeat(terminalId, resolveClientIp(request));
+        activityService.recordActivity(terminalId, "HEARTBEAT");
         return ResponseEntity.ok(Map.of(
                 "terminalId", t.getTerminalId(),
                 "status", t.getStatus(),
@@ -90,7 +97,31 @@ public class PosTerminalController {
     @PostMapping("/{id}/restore")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosTerminal> restore(@PathVariable Long id) {
-        return ResponseEntity.ok(service.restore(id));
+        return ResponseEntity.ok(lifecycleService.restore(id));
+    }
+
+    // -------------------------------------------------------------------------
+    // Terminal Auto-Archive lifecycle
+    // -------------------------------------------------------------------------
+
+    @PostMapping("/{id}/keep-active")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosTerminal> keepActive(@PathVariable Long id) {
+        return ResponseEntity.ok(lifecycleService.keepActive(id));
+    }
+
+    @PostMapping("/{id}/archive-now")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosTerminal> archiveNow(@PathVariable Long id) {
+        return ResponseEntity.ok(lifecycleService.manualArchiveNow(id));
+    }
+
+    @PutMapping("/{id}/auto-archive-exempt")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosTerminal> setAutoArchiveExempt(@PathVariable Long id,
+                                                             @RequestBody Map<String, Object> body) {
+        boolean exempt = Boolean.parseBoolean(String.valueOf(body.getOrDefault("exempt", false)));
+        return ResponseEntity.ok(lifecycleService.setAutoArchiveExempt(id, exempt));
     }
 
     // -------------------------------------------------------------------------

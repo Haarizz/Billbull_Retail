@@ -20,7 +20,7 @@ import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
 import { getPosScanners, createPosScanner, decommissionPosScanner } from '../../../api/posScannerApi';
 import { getPosCashDrawers, createPosCashDrawer, decommissionPosCashDrawer } from '../../../api/posCashDrawerApi';
-import { assignTerminalCounter } from '../../../api/posApi';
+import { assignTerminalCounter, archivePosTerminal, restorePosTerminal, keepTerminalActive, archiveTerminalNow, setTerminalAutoArchiveExempt } from '../../../api/posApi';
 import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
@@ -152,6 +152,7 @@ const POSConsole = React.memo((props) => {
     });
 
     const [counterList, setCounterList] = useState([]);
+    const [viewHistoryTerminalId, setViewHistoryTerminalId] = useState(null);
     const [printerDialogOpen, setPrinterDialogOpen] = useState(false);
     const [editingPrinter, setEditingPrinter] = useState(null);
     const [printerForm, setPrinterForm] = useState(createInitialPrinterForm());
@@ -2198,7 +2199,11 @@ const POSConsole = React.memo((props) => {
             const activeCount = terminalList.filter(t => t.status === 'ACTIVE').length;
             const blockedCount = terminalList.filter(t => t.status === 'BLOCKED').length;
             const inactiveCount = terminalList.filter(t => t.status === 'INACTIVE').length;
-            const slotUsed = terminalList.length;
+            const offlineCount = terminalList.filter(t => t.status === 'OFFLINE').length;
+            const staleCount = terminalList.filter(t => t.status === 'STALE').length;
+            const archivedCount = terminalList.filter(t => t.status === 'ARCHIVED').length;
+            // Archived terminals free their slot — match the backend's countActiveLimitByBranchId semantics.
+            const slotUsed = terminalList.filter(t => t.status !== 'ARCHIVED').length;
             const slotPct = Math.min(100, Math.round((slotUsed / maxSlots) * 100));
             const slotNearFull = slotUsed >= maxSlots - 1;
 
@@ -2262,7 +2267,90 @@ const POSConsole = React.memo((props) => {
             const statusConfig = {
               ACTIVE:   { label: 'Active',   dot: 'bg-green-500', badge: 'bg-green-50 text-green-700',  icon: <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> },
               INACTIVE: { label: 'Inactive', dot: 'bg-amber-400', badge: 'bg-amber-50 text-amber-700',  icon: <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> },
+              OFFLINE:  { label: 'Offline',  dot: 'bg-gray-400',  badge: 'bg-gray-100 text-gray-600',    icon: <span className="w-1.5 h-1.5 rounded-full bg-gray-400" /> },
               BLOCKED:  { label: 'Blocked',  dot: 'bg-red-500',   badge: 'bg-red-50 text-red-600',      icon: <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> },
+              STALE:    { label: 'Stale',    dot: 'bg-orange-500', badge: 'bg-orange-50 text-orange-700', icon: <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> },
+              ARCHIVED: { label: 'Archived', dot: 'bg-gray-400',  badge: 'bg-gray-100 text-gray-500',    icon: <span className="w-1.5 h-1.5 rounded-full bg-gray-400" /> },
+            };
+
+            const daysSince = (ts) => {
+              if (!ts) return null;
+              return Math.floor((new Date() - new Date(ts)) / (1000 * 60 * 60 * 24));
+            };
+
+            const handleArchiveTerminal = async (terminal) => {
+              const reason = window.prompt('Archive reason (optional):');
+              if (reason === null) return;
+              try {
+                const updated = await archivePosTerminal(terminal.id, reason || undefined);
+                setTerminalList(prev => prev.map(x => x.terminalId === terminal.terminalId ? { ...x, ...updated } : x));
+              } catch (e) {
+                window.alert(e?.response?.data?.message || 'Archive failed.');
+              }
+            };
+
+            const handleRestoreTerminal = async (terminal) => {
+              try {
+                const updated = await restorePosTerminal(terminal.id);
+                setTerminalList(prev => prev.map(x => x.terminalId === terminal.terminalId ? { ...x, ...updated } : x));
+              } catch (e) {
+                window.alert(e?.response?.data?.message || 'Restore failed.');
+              }
+            };
+
+            const handleKeepActive = async (terminal) => {
+              try {
+                const updated = await keepTerminalActive(terminal.id);
+                setTerminalList(prev => prev.map(x => x.terminalId === terminal.terminalId ? { ...x, ...updated } : x));
+              } catch (e) {
+                window.alert(e?.response?.data?.message || 'Keep Active failed.');
+              }
+            };
+
+            const handleArchiveNow = async (terminal) => {
+              if (!window.confirm(`Archive terminal "${terminal.terminalName || terminal.terminalId}" now?`)) return;
+              try {
+                const updated = await archiveTerminalNow(terminal.id);
+                setTerminalList(prev => prev.map(x => x.terminalId === terminal.terminalId ? { ...x, ...updated } : x));
+              } catch (e) {
+                window.alert(e?.response?.data?.message || 'Archive Now failed.');
+              }
+            };
+
+            const handleToggleExempt = async (terminal) => {
+              try {
+                const updated = await setTerminalAutoArchiveExempt(terminal.id, !terminal.autoArchiveExempt);
+                setTerminalList(prev => prev.map(x => x.terminalId === terminal.terminalId ? { ...x, ...updated } : x));
+              } catch (e) {
+                window.alert(e?.response?.data?.message || 'Failed to update exemption.');
+              }
+            };
+
+            const parseArchiveContext = (json) => {
+              if (!json) return null;
+              try { return JSON.parse(json); } catch (e) { return null; }
+            };
+
+            const autoArchiveEnabled = !!posSettings?.terminalAutoArchiveEnabled;
+            const autoArchiveAfterDays = posSettings?.terminalArchiveAfterDays ?? 30;
+            const autoArchiveNotifyBefore = posSettings?.terminalArchiveNotifyBefore ?? true;
+            const autoArchiveWarningDays = posSettings?.terminalArchiveWarningDays ?? 5;
+            const autoArchiveConfigInvalid = autoArchiveAfterDays <= 0
+              || autoArchiveWarningDays < 0
+              || (autoArchiveEnabled && autoArchiveNotifyBefore && autoArchiveWarningDays >= autoArchiveAfterDays);
+
+            const updateAutoArchiveSetting = (patch) => {
+              setPosSettings(prev => ({ ...(prev || {}), ...patch }));
+            };
+
+            const handleSaveAutoArchiveSettings = async () => {
+              if (autoArchiveConfigInvalid) return;
+              try {
+                const saved = await savePosSettings({ ...(posSettings || {}) });
+                setPosSettings(saved);
+              } catch (e) {
+                window.alert(e?.response?.data?.message || 'Failed to save Terminal Auto Archive settings.');
+              }
             };
 
             return (
@@ -2298,6 +2386,83 @@ const POSConsole = React.memo((props) => {
                     <p className="text-[10px] text-gray-400">{s.sub}</p>
                   </div>
                 ))}
+              </div>
+
+              {/* ── Terminal Health Summary ── */}
+              <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm">
+                <p className="text-xs font-bold text-[#1E293B] mb-3">Terminal Health</p>
+                <div className="flex items-center gap-5 flex-wrap text-sm">
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" /> <strong>{activeCount}</strong> Active</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-400" /> <strong>{offlineCount}</strong> Offline</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-500" /> <strong>{staleCount}</strong> Stale</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-300" /> <strong>{archivedCount}</strong> Archived</span>
+                </div>
+              </div>
+
+              {/* ── Terminal Auto Archive settings ── */}
+              <div className="bg-white border border-gray-200 rounded-2xl px-5 py-4 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-bold text-[#1E293B]">Terminal Auto Archive</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Automatically archive terminals that have been inactive for too long, freeing their slot.</p>
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={autoArchiveEnabled}
+                      onChange={e => updateAutoArchiveSetting({ terminalAutoArchiveEnabled: e.target.checked })}
+                      className="h-4 w-4 rounded border-gray-300 text-[#F5C742] focus:ring-[#F5C742]"
+                    />
+                    <span className="text-xs font-semibold text-gray-600">Enable</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Archive after (days)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={autoArchiveAfterDays}
+                      onChange={e => updateAutoArchiveSetting({ terminalArchiveAfterDays: Number(e.target.value) })}
+                      className="w-full h-10 px-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={autoArchiveNotifyBefore}
+                        onChange={e => updateAutoArchiveSetting({ terminalArchiveNotifyBefore: e.target.checked })}
+                        className="h-3.5 w-3.5 rounded border-gray-300 text-[#F5C742] focus:ring-[#F5C742]"
+                      />
+                      Notify before archive
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      disabled={!autoArchiveNotifyBefore}
+                      value={autoArchiveWarningDays}
+                      onChange={e => updateAutoArchiveSetting({ terminalArchiveWarningDays: Number(e.target.value) })}
+                      placeholder="Warning period (days)"
+                      className="w-full h-10 px-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40 bg-white disabled:bg-gray-50 disabled:text-gray-300"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      onClick={handleSaveAutoArchiveSettings}
+                      disabled={autoArchiveConfigInvalid}
+                      className="w-full h-10 text-xs font-bold text-[#1E293B] bg-[#F5C742] hover:bg-[#e6b93a] disabled:bg-gray-100 disabled:text-gray-300 rounded-xl transition-colors"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+                {autoArchiveConfigInvalid && (
+                  <p className="text-xs text-red-500 font-semibold">
+                    Warning period must be less than archive-after days, and archive-after days must be greater than zero.
+                  </p>
+                )}
               </div>
 
               {/* ── Slot usage bar ── */}
@@ -2559,9 +2724,96 @@ const POSConsole = React.memo((props) => {
                                       <Star className="h-3.5 w-3.5" /> Set Main
                                     </button>
                                   )}
+
+                                  {/* Archive / Restore */}
+                                  {t.status === 'ARCHIVED' ? (
+                                    <>
+                                      <button
+                                        onClick={() => handleRestoreTerminal(t)}
+                                        className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors"
+                                      >
+                                        <Unlock className="h-3.5 w-3.5" /> Restore
+                                      </button>
+                                      {t.archiveContextJson && (
+                                        <button
+                                          onClick={() => setViewHistoryTerminalId(prev => prev === t.terminalId ? null : t.terminalId)}
+                                          className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors"
+                                        >
+                                          <Info className="h-3.5 w-3.5" /> View History
+                                        </button>
+                                      )}
+                                    </>
+                                  ) : (
+                                    !t.currentOpenSessionId && !isThisDevice && (
+                                      <button
+                                        onClick={() => handleArchiveTerminal(t)}
+                                        className="flex items-center gap-1.5 text-xs font-semibold text-orange-600 border border-orange-200 hover:bg-orange-50 px-3 py-1.5 rounded-lg transition-colors"
+                                      >
+                                        <AlertTriangle className="h-3.5 w-3.5" /> Archive
+                                      </button>
+                                    )
+                                  )}
                                 </div>
+
+                                {/* Exempt from Auto Archive */}
+                                {t.status !== 'ARCHIVED' && (
+                                  <label className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 cursor-pointer mt-0.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!t.autoArchiveExempt}
+                                      onChange={() => handleToggleExempt(t)}
+                                      className="h-3 w-3 rounded border-gray-300 text-[#F5C742] focus:ring-[#F5C742]"
+                                    />
+                                    Exempt from Auto Archive
+                                  </label>
+                                )}
                               </div>
                             </div>
+
+                            {/* STALE warning banner */}
+                            {t.status === 'STALE' && !t.autoArchiveExempt && (() => {
+                              const inactiveDays = daysSince(t.lastActivityAt) ?? daysSince(t.staleAt) ?? 0;
+                              const archiveAfterDays = posSettings?.terminalArchiveAfterDays ?? 30;
+                              const daysRemaining = Math.max(archiveAfterDays - inactiveDays, 0);
+                              return (
+                                <div className="mt-3 flex items-center justify-between gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5">
+                                  <span className="text-xs font-semibold text-orange-700 flex items-center gap-1.5">
+                                    <AlertTriangle className="h-3.5 w-3.5" />
+                                    Inactive for {inactiveDays} day{inactiveDays === 1 ? '' : 's'} · Archive in {daysRemaining} day{daysRemaining === 1 ? '' : 's'}
+                                  </span>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      onClick={() => handleKeepActive(t)}
+                                      className="text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1 rounded-lg transition-colors"
+                                    >
+                                      Keep Active
+                                    </button>
+                                    <button
+                                      onClick={() => handleArchiveNow(t)}
+                                      className="text-xs font-semibold text-orange-700 border border-orange-300 hover:bg-orange-100 px-3 py-1 rounded-lg transition-colors"
+                                    >
+                                      Archive Now
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Archive history detail */}
+                            {t.status === 'ARCHIVED' && viewHistoryTerminalId === t.terminalId && (() => {
+                              const ctx = parseArchiveContext(t.archiveContextJson);
+                              if (!ctx) return null;
+                              return (
+                                <div className="mt-3 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-xs text-gray-600 space-y-1">
+                                  <p><strong>Trigger:</strong> {ctx.trigger}</p>
+                                  <p><strong>Days inactive at archive:</strong> {ctx.daysInactive}</p>
+                                  {ctx.lastHeartbeatAt && <p><strong>Last heartbeat:</strong> {formatLastSeen(ctx.lastHeartbeatAt) || ctx.lastHeartbeatAt}</p>}
+                                  {ctx.lastSessionAt && <p><strong>Last session:</strong> {formatLastSeen(ctx.lastSessionAt) || ctx.lastSessionAt}</p>}
+                                  {ctx.lastTransactionAt && <p><strong>Last transaction:</strong> {formatLastSeen(ctx.lastTransactionAt) || ctx.lastTransactionAt}</p>}
+                                  {ctx.archivedAt && <p><strong>Archived at:</strong> {formatLastSeen(ctx.archivedAt) || ctx.archivedAt}</p>}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
 

@@ -9,6 +9,7 @@ public enum PosTerminalStatus {
     INACTIVE,
     MAINTENANCE,
     BLOCKED,
+    STALE,
     DECOMMISSIONED,
     ARCHIVED
 }

@@ -58,4 +58,20 @@ public interface PosTerminalRepository extends JpaRepository<PosTerminal, Long> 
     @Query("SELECT COUNT(t) FROM PosTerminal t WHERE t.branchId = :branchId " +
            "AND t.status != 'ARCHIVED'")
     long countActiveLimitByBranchId(@Param("branchId") Long branchId);
+
+    // Terminal Auto-Archive lifecycle: sweep candidates for a branch — everything except
+    // terminals already archived/decommissioned/blocked or exempted from the sweep.
+    @Query("SELECT t FROM PosTerminal t WHERE t.branchId = :branchId " +
+           "AND t.status NOT IN ('ARCHIVED', 'DECOMMISSIONED', 'BLOCKED') " +
+           "AND t.autoArchiveExempt = false")
+    List<PosTerminal> findAutoArchiveCandidates(@Param("branchId") Long branchId);
+
+    // Atomic "touch" of last_activity_at: only ever advances, never regresses, and never loads the
+    // full entity on this hot path (called from every activity-producing POS flow).
+    @Modifying
+    @Query(value = "UPDATE pos_terminals SET last_activity_at = :now " +
+                   "WHERE terminal_id = :terminalId " +
+                   "AND (last_activity_at IS NULL OR last_activity_at < :now)",
+           nativeQuery = true)
+    int touchLastActivity(@Param("terminalId") String terminalId, @Param("now") LocalDateTime now);
 }

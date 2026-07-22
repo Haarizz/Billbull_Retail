@@ -57,6 +57,7 @@ class PosCheckoutControllerTest {
     @Mock private ProductRepository productRepository;
     @Mock private ProductPricingRepository pricingRepository;
     @Mock private RolePermissionService permissionService;
+    @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
 
     @InjectMocks private PosCheckoutController controller;
 

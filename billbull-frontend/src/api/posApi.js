@@ -40,6 +40,22 @@ export const restorePosTerminal = async (id) => {
   return res.data;
 };
 
+// Terminal Auto-Archive lifecycle
+export const keepTerminalActive = async (id) => {
+  const res = await api.post(`${BASE}/terminals/${id}/keep-active`);
+  return res.data;
+};
+
+export const archiveTerminalNow = async (id) => {
+  const res = await api.post(`${BASE}/terminals/${id}/archive-now`);
+  return res.data;
+};
+
+export const setTerminalAutoArchiveExempt = async (id, exempt) => {
+  const res = await api.put(`${BASE}/terminals/${id}/auto-archive-exempt`, { exempt });
+  return res.data;
+};
+
 export const assignTerminalCounter = async (id, counterId) => {
   const res = await api.post(`${BASE}/terminals/${id}/assign-counter`, { counterId });
   return res.data;

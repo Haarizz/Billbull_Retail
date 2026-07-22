@@ -1,7 +1,9 @@
 package com.billbull.backend.pos.settings;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
@@ -112,5 +114,63 @@ class PosSettingsServiceTest {
         lenient().when(branchAccessService.getCurrentUserBranchId()).thenReturn(7L);
         assertFalse(service.verifyPin(""), "blank PIN rejected");
         assertFalse(service.verifyPin(null), "null PIN rejected");
+    }
+
+    // ── Terminal Auto-Archive config validation ─────────────────────────────
+
+    private PosSettings autoArchiveSettings(Long branchId, boolean enabled, int archiveAfterDays,
+                                             boolean notifyBefore, int warningDays) {
+        PosSettings s = new PosSettings();
+        s.setBranchId(branchId);
+        s.setTerminalAutoArchiveEnabled(enabled);
+        s.setTerminalArchiveAfterDays(archiveAfterDays);
+        s.setTerminalArchiveNotifyBefore(notifyBefore);
+        s.setTerminalArchiveWarningDays(warningDays);
+        return s;
+    }
+
+    @Test
+    void rejectsArchiveAfterDaysZeroOrLess() {
+        PosSettings s = autoArchiveSettings(1L, true, 0, true, 5);
+        assertThrows(IllegalArgumentException.class, () -> service.save(s));
+    }
+
+    @Test
+    void rejectsNegativeWarningDays() {
+        PosSettings s = autoArchiveSettings(1L, true, 30, true, -1);
+        assertThrows(IllegalArgumentException.class, () -> service.save(s));
+    }
+
+    @Test
+    void rejectsWarningDaysGreaterThanOrEqualToArchiveAfterDaysWhenEnabled() {
+        PosSettings s = autoArchiveSettings(1L, true, 5, true, 10);
+        assertThrows(IllegalArgumentException.class, () -> service.save(s));
+    }
+
+    @Test
+    void allowsWarningGreaterThanArchiveWhenAutoArchiveDisabled() {
+        PosSettings s = autoArchiveSettings(1L, false, 5, true, 10);
+        lenient().when(repo.findByBranchId(1L)).thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings saved = service.save(s);
+
+        assertEquals(5, saved.getTerminalArchiveAfterDays());
+    }
+
+    @Test
+    void validConfigPersistsAllFourFieldsThroughUpsert() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings incoming = autoArchiveSettings(1L, true, 45, true, 7);
+        PosSettings saved = service.save(incoming);
+
+        assertTrue(saved.getTerminalAutoArchiveEnabled());
+        assertEquals(45, saved.getTerminalArchiveAfterDays());
+        assertTrue(saved.getTerminalArchiveNotifyBefore());
+        assertEquals(7, saved.getTerminalArchiveWarningDays());
     }
 }

@@ -148,6 +148,19 @@ public class PosSettings extends BaseEntity {
     @Column(name = "idle_threshold_minutes")
     private Integer idleThresholdMinutes = 5;
 
+    // Terminal Auto-Archive lifecycle — OFF by default on every install until an admin opts in.
+    @Column(name = "terminal_auto_archive_enabled")
+    private Boolean terminalAutoArchiveEnabled = false;
+
+    @Column(name = "terminal_archive_after_days")
+    private Integer terminalArchiveAfterDays = 30;
+
+    @Column(name = "terminal_archive_notify_before")
+    private Boolean terminalArchiveNotifyBefore = true;
+
+    @Column(name = "terminal_archive_warning_days")
+    private Integer terminalArchiveWarningDays = 5;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -269,4 +282,16 @@ public class PosSettings extends BaseEntity {
 
     public Integer getIdleThresholdMinutes() { return idleThresholdMinutes; }
     public void setIdleThresholdMinutes(Integer idleThresholdMinutes) { this.idleThresholdMinutes = idleThresholdMinutes; }
+
+    public Boolean getTerminalAutoArchiveEnabled() { return terminalAutoArchiveEnabled; }
+    public void setTerminalAutoArchiveEnabled(Boolean terminalAutoArchiveEnabled) { this.terminalAutoArchiveEnabled = terminalAutoArchiveEnabled; }
+
+    public Integer getTerminalArchiveAfterDays() { return terminalArchiveAfterDays; }
+    public void setTerminalArchiveAfterDays(Integer terminalArchiveAfterDays) { this.terminalArchiveAfterDays = terminalArchiveAfterDays; }
+
+    public Boolean getTerminalArchiveNotifyBefore() { return terminalArchiveNotifyBefore; }
+    public void setTerminalArchiveNotifyBefore(Boolean terminalArchiveNotifyBefore) { this.terminalArchiveNotifyBefore = terminalArchiveNotifyBefore; }
+
+    public Integer getTerminalArchiveWarningDays() { return terminalArchiveWarningDays; }
+    public void setTerminalArchiveWarningDays(Integer terminalArchiveWarningDays) { this.terminalArchiveWarningDays = terminalArchiveWarningDays; }
 }

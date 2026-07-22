@@ -18,6 +18,10 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     Optional<PosSession> findByTerminalPkAndStatus(Long terminalPk, PosSessionStatus status);
 
+    // Most recent session regardless of status — used by the Terminal Auto-Archive lifecycle
+    // to compute "last activity" and to snapshot archive context (one-off lookup, not hot-path).
+    Optional<PosSession> findTopByTerminalPkOrderByOpenedAtDesc(Long terminalPk);
+
     List<PosSession> findByBranchIdAndStatusOrderByOpenedAtDesc(Long branchId, PosSessionStatus status);
 
     List<PosSession> findByBranchIdAndSessionDateOrderByOpenedAtDesc(Long branchId, LocalDate sessionDate);

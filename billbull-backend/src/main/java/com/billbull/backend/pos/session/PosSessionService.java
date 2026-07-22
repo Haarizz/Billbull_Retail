@@ -8,6 +8,7 @@ import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.pos.terminal.PosTerminal;
+import com.billbull.backend.pos.terminal.PosTerminalActivityService;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
@@ -57,6 +58,7 @@ public class PosSessionService {
     private final SalesReturnRepository returnRepository;
     private final PosDayCloseRepository dayCloseRepository;
     private final ObjectMapper objectMapper;
+    private final PosTerminalActivityService terminalActivityService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -78,7 +80,8 @@ public class PosSessionService {
                              PosTerminalRepository terminalRepository,
                              SalesReturnRepository returnRepository,
                              PosDayCloseRepository dayCloseRepository,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             PosTerminalActivityService terminalActivityService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -92,6 +95,7 @@ public class PosSessionService {
         this.returnRepository = returnRepository;
         this.dayCloseRepository = dayCloseRepository;
         this.objectMapper = objectMapper;
+        this.terminalActivityService = terminalActivityService;
     }
 
     private String currentUser() {
@@ -192,6 +196,7 @@ public class PosSessionService {
         }
 
         auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
+        terminalActivityService.recordActivity(saved.getTerminalId(), "SESSION_OPEN");
         return saved;
     }
 
@@ -350,6 +355,7 @@ public class PosSessionService {
         // Async audit: session closed with variance info
         auditService.logSessionClosed(
                 closed.getId(), closed.getTerminalId(), closed.getBranchId(), varianceStr);
+        terminalActivityService.recordActivity(closed.getTerminalId(), "SESSION_CLOSE");
 
         return closed;
     }
@@ -473,6 +479,8 @@ public class PosSessionService {
                 description,
                 session.getSessionDate(),
                 branch);
+
+        terminalActivityService.recordActivity(session.getTerminalId(), movementType);
 
         return movement;
     }
