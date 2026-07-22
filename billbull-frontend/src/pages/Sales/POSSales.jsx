@@ -10452,16 +10452,24 @@ export default function POSSales() {
                   orderTotal: currentInvoice.total,
                   customerNotes: orderNotes || null,
                   branch: branchId ? { id: branchId } : null,
-                  items: activeItems.map(item => ({
-                    itemCode: item.code || item.barcode || item.id,
-                    description: item.name,
-                    quantity: item.quantity,
-                    price: item.price,
-                    discount: item.discount || 0,
-                    taxRate: item.taxRate || 5,
-                    taxAmount: item.total - (item.price * item.quantity * (1 - (item.discount || 0) / 100)),
-                    lineTotal: item.total,
-                  })),
+                  items: activeItems.map(item => {
+                    const taxRate = item.taxRate != null ? item.taxRate : 5;
+                    const { taxableAmount, taxAmount, total: lineTotal } = computeLineTaxTotals({
+                      netAfterDiscount: item.total,
+                      taxPercent: taxRate,
+                    });
+                    return {
+                      itemCode: item.code || item.barcode || item.id,
+                      description: item.name,
+                      quantity: item.quantity,
+                      price: item.price,
+                      discount: item.discount || 0,
+                      taxRate,
+                      taxableAmount,
+                      taxAmount,
+                      lineTotal,
+                    };
+                  }),
                 };
                 await saveSalesOrder(payload);
                 clearInvoice();
@@ -10535,18 +10543,24 @@ export default function POSSales() {
           if (!sel) return;
           const items = sel.items || sel.orderItems || [];
           if (items.length === 0) { alert('Order has no items to load.'); return; }
-          const mapped = items.map(it => ({
-            id: it.productId || it.id || it.itemCode,
-            name: it.productName || it.itemName || it.name || '',
-            code: it.productCode || it.itemCode || it.code || '',
-            price: toNumber(it.unitPrice || it.rate || it.price, 0),
-            qty: toNumber(it.quantity || it.qty, 1),
-            discount: toNumber(it.discountPercent || it.discount, 0),
-            taxRate: toNumber(it.taxRate || it.vatRate, 0),
-            unit: it.unit || 'Pcs',
-            batchNumber: it.batchNumber || null,
-            serialNumber: it.serialNumber || null,
-          }));
+          const mapped = items.map(it => {
+            const price = toNumber(it.unitPrice || it.rate || it.price, 0);
+            const quantity = toNumber(it.quantity || it.qty, 1);
+            const discount = toNumber(it.discountPercent || it.discount, 0);
+            return {
+              id: it.productId || it.id || it.itemCode,
+              name: it.productName || it.itemName || it.name || '',
+              code: it.productCode || it.itemCode || it.code || '',
+              price,
+              quantity,
+              discount,
+              taxRate: toNumber(it.taxRate || it.vatRate, 0),
+              total: price * quantity * (1 - discount / 100),
+              unit: it.unit || 'Pcs',
+              batchNumber: it.batchNumber || null,
+              serialNumber: it.serialNumber || null,
+            };
+          });
           setCurrentInvoice(recalculateInvoice(mapped));
           setShowOrdersListDialog(false);
           setOrdersListSelected(null);
