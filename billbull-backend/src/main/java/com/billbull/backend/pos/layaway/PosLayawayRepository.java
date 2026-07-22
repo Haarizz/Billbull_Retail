@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
@@ -13,6 +14,16 @@ import java.util.Optional;
 public interface PosLayawayRepository extends JpaRepository<PosLayaway, Long> {
 
     Optional<PosLayaway> findByLayawayNumber(String layawayNumber);
+
+    /** Open layaways whose due date has passed — expiry-release sweep candidates. */
+    @Query("""
+            SELECT l FROM PosLayaway l
+            WHERE l.dueDate IS NOT NULL AND l.dueDate < :today
+              AND l.status IN (com.billbull.backend.pos.layaway.PosLayawayStatus.ACTIVE,
+                                com.billbull.backend.pos.layaway.PosLayawayStatus.PARTIALLY_PAID,
+                                com.billbull.backend.pos.layaway.PosLayawayStatus.READY_TO_CONVERT)
+            """)
+    List<PosLayaway> findOverdueOpenLayaways(@Param("today") LocalDate today);
 
     @Query("SELECT MAX(l.layawayNumber) FROM PosLayaway l")
     String findMaxLayawayNumber();
