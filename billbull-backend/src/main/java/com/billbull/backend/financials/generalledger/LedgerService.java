@@ -1,6 +1,7 @@
 package com.billbull.backend.financials.generalledger;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -73,17 +74,6 @@ public class LedgerService {
         return normalized != null && scopedBranchKeys.contains(normalized);
     }
 
-    private List<Account> filterAccountsByExactScope(List<Account> accounts) {
-        BranchAccessService.ListScope scope = branchAccessService.currentExactScope();
-        if (scope.allBranches()) {
-            return accounts;
-        }
-        Set<String> scopedBranchKeys = resolveScopedBranchKeys();
-        return accounts.stream()
-                .filter(account -> matchesScopedLegacyBranch(account.getBranch(), scopedBranchKeys))
-                .toList();
-    }
-
     private List<CostCenter> filterCostCentersByExactScope(List<CostCenter> costCenters) {
         BranchAccessService.ListScope scope = branchAccessService.currentExactScope();
         if (scope.allBranches()) {
@@ -102,9 +92,13 @@ public class LedgerService {
     }
 
     // ================= ACCOUNTS =================
+    // Chart of Accounts is a company-wide master (not branch-scoped): every
+    // branch shares the same account tree. Branch filtering applies only to
+    // transactional/reporting data (see getTransactionHistory below and
+    // FinancialReportService), never to the COA masters themselves.
 
     public List<Account> getAllAccounts() {
-        return filterAccountsByExactScope(accountRepo.findAll());
+        return accountRepo.findAll();
     }
 
     public List<Account> getBankAccounts() {
@@ -291,9 +285,17 @@ public class LedgerService {
     }
 
     // ================= COA TREE =================
+    // The tree structure (which accounts exist, parent/child hierarchy) is the
+    // company-wide COA master and is never branch-filtered — see getAllAccounts().
+    // The balance shown per account IS branch-scoped: it is derived from posted
+    // ledger entries for the currently active branch (same aggregation
+    // FinancialReportService's Balance Sheet uses), not from Account.balanceAmount,
+    // which is a single non-branch-scoped running total and would show identical
+    // figures under every branch selection.
 
     public List<Map<String, Object>> getAccountTree() {
         List<Account> allAccounts = getAllAccounts();
+        Map<String, BigDecimal[]> branchBalances = resolveBranchScopedBalances();
 
         Map<String, List<Account>> childrenMap = new LinkedHashMap<>();
         List<Account> roots = new ArrayList<>();
@@ -308,12 +310,39 @@ public class LedgerService {
 
         List<Map<String, Object>> tree = new ArrayList<>();
         for (Account root : roots) {
-            tree.add(buildTreeNode(root, childrenMap));
+            tree.add(buildTreeNode(root, childrenMap, branchBalances));
         }
         return tree;
     }
 
-    private Map<String, Object> buildTreeNode(Account account, Map<String, List<Account>> childrenMap) {
+    /**
+     * Net Dr/Cr per account code (index 0 = debit total, 1 = credit total),
+     * scoped to the currently active branch (or unfiltered under "All Branches").
+     * Leaf accounts with no postings simply have no entry in the map and fall
+     * back to zero, which is correct: a branch with no transactions on an
+     * account must show zero, not the company-wide total.
+     */
+    private Map<String, BigDecimal[]> resolveBranchScopedBalances() {
+        BranchAccessService.ListScope scope = branchAccessService.currentExactScope();
+        Long branchId = scope.allBranches() || scope.branchIds().size() != 1
+                ? null
+                : scope.branchIds().iterator().next();
+
+        List<LedgerEntryRepository.AccountAggregate> aggregates =
+                entryRepo.aggregateByAccountCodeBefore(branchId, LocalDate.now().plusDays(1));
+
+        Map<String, BigDecimal[]> balances = new java.util.HashMap<>();
+        for (LedgerEntryRepository.AccountAggregate agg : aggregates) {
+            balances.put(agg.getAccountCode(), new BigDecimal[] {
+                    agg.getSumDebit() != null ? agg.getSumDebit() : BigDecimal.ZERO,
+                    agg.getSumCredit() != null ? agg.getSumCredit() : BigDecimal.ZERO
+            });
+        }
+        return balances;
+    }
+
+    private Map<String, Object> buildTreeNode(Account account, Map<String, List<Account>> childrenMap,
+            Map<String, BigDecimal[]> branchBalances) {
         Map<String, Object> node = new LinkedHashMap<>();
         node.put("id", account.getId());
         node.put("code", account.getCode());
@@ -325,14 +354,23 @@ public class LedgerService {
         node.put("level", account.getLevel());
         node.put("isGroup", account.getIsGroup());
         node.put("normalBalance", account.getNormalBalance());
-        node.put("balanceAmount", account.getBalanceAmount());
-        node.put("balanceType", account.getBalanceType());
+
+        BigDecimal[] drCr = branchBalances.get(account.getCode());
+        BigDecimal debit = drCr != null ? drCr[0] : BigDecimal.ZERO;
+        BigDecimal credit = drCr != null ? drCr[1] : BigDecimal.ZERO;
+        if (debit.compareTo(credit) >= 0) {
+            node.put("balanceAmount", debit.subtract(credit));
+            node.put("balanceType", "Dr");
+        } else {
+            node.put("balanceAmount", credit.subtract(debit));
+            node.put("balanceType", "Cr");
+        }
         node.put("status", account.getStatus());
 
         List<Account> children = childrenMap.getOrDefault(account.getCode(), Collections.emptyList());
         List<Map<String, Object>> childNodes = new ArrayList<>();
         for (Account child : children) {
-            childNodes.add(buildTreeNode(child, childrenMap));
+            childNodes.add(buildTreeNode(child, childrenMap, branchBalances));
         }
         node.put("children", childNodes);
 
