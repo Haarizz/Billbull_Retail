@@ -89,6 +89,29 @@ public class PosTerminal extends BaseEntity {
     @Column(name = "assigned_profile_version")
     private Integer assignedProfileVersion;
 
+    // Terminal Auto-Archive lifecycle fields.
+    @Column(name = "stale_at")
+    private LocalDateTime staleAt;
+
+    // Timestamp of the LAST stale-warning notification sent (repeat-reminder cadence, not one-shot).
+    @Column(name = "stale_warning_sent_at")
+    private LocalDateTime staleWarningSentAt;
+
+    // Cached effective-activity timestamp, maintained incrementally by every activity-producing
+    // POS flow (heartbeat, session open/close, checkout, cash movement, etc.) via
+    // PosTerminalActivityService — never recomputed from joins on the sweep hot path.
+    @Column(name = "last_activity_at")
+    private LocalDateTime lastActivityAt;
+
+    // Per-terminal "Never Auto Archive" opt-out. Scheduler skips exempt terminals entirely.
+    @Column(name = "auto_archive_exempt", nullable = false)
+    private Boolean autoArchiveExempt = false;
+
+    // Structured JSON snapshot captured at archive time (trigger, days inactive, last
+    // heartbeat/session/transaction) — superset of the short human-readable archiveReason.
+    @Column(name = "archive_context_json", columnDefinition = "TEXT")
+    private String archiveContextJson;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -156,4 +179,19 @@ public class PosTerminal extends BaseEntity {
 
     public Integer getAssignedProfileVersion() { return assignedProfileVersion; }
     public void setAssignedProfileVersion(Integer assignedProfileVersion) { this.assignedProfileVersion = assignedProfileVersion; }
+
+    public LocalDateTime getStaleAt() { return staleAt; }
+    public void setStaleAt(LocalDateTime staleAt) { this.staleAt = staleAt; }
+
+    public LocalDateTime getStaleWarningSentAt() { return staleWarningSentAt; }
+    public void setStaleWarningSentAt(LocalDateTime staleWarningSentAt) { this.staleWarningSentAt = staleWarningSentAt; }
+
+    public LocalDateTime getLastActivityAt() { return lastActivityAt; }
+    public void setLastActivityAt(LocalDateTime lastActivityAt) { this.lastActivityAt = lastActivityAt; }
+
+    public Boolean getAutoArchiveExempt() { return autoArchiveExempt; }
+    public void setAutoArchiveExempt(Boolean autoArchiveExempt) { this.autoArchiveExempt = autoArchiveExempt; }
+
+    public String getArchiveContextJson() { return archiveContextJson; }
+    public void setArchiveContextJson(String archiveContextJson) { this.archiveContextJson = archiveContextJson; }
 }

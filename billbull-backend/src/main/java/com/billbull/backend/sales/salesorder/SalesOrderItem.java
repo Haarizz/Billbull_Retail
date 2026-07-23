@@ -34,6 +34,9 @@ public class SalesOrderItem {
     private Double taxRate;
     @Column(precision = 15, scale = 2)
     private BigDecimal taxAmount;
+    /** Net-of-discount, pre-tax amount the tax is calculated on. */
+    @Column(name = "taxable_amount", precision = 15, scale = 2)
+    private BigDecimal taxableAmount;
     @Column(precision = 15, scale = 2)
     private BigDecimal lineTotal;
     private Integer deliveredQuantity = 0;
@@ -208,6 +211,14 @@ public class SalesOrderItem {
 
     public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
+    }
+
+    public BigDecimal getTaxableAmount() {
+        return taxableAmount;
+    }
+
+    public void setTaxableAmount(BigDecimal taxableAmount) {
+        this.taxableAmount = taxableAmount;
     }
 
     public BigDecimal getLineTotal() {

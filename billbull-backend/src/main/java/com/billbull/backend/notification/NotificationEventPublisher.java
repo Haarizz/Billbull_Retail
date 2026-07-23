@@ -181,6 +181,22 @@ public class NotificationEventPublisher {
                 priority != null ? priority : "HIGH", null, null, null);
     }
 
+    /**
+     * Terminal Auto-Archive stale warning/reminder → notify ADMIN + BRANCH_ADMIN.
+     * {@code isFinal} marks the last reminder before the terminal is archived (higher priority,
+     * distinct copy) — driven by the repeat-notification cadence in PosTerminalLifecycleService.
+     */
+    public void terminalStaleWarning(String terminalName, int daysInactive, int daysUntilArchive,
+                                      String terminalId, boolean isFinal) {
+        String title = isFinal ? "Final Reminder: Terminal Archiving Soon" : "Terminal Inactivity Warning";
+        String message = String.format(
+                "Terminal '%s' has been inactive for %d day(s) and will be archived in %d day(s).",
+                terminalName, daysInactive, daysUntilArchive);
+        notifyRoles(List.of("ADMIN", "BRANCH_ADMIN"),
+                title, message, "WARNING", "POS", isFinal ? "CRITICAL" : "HIGH",
+                "/sales/pos-console?tab=terminals", terminalId, "POS_TERMINAL");
+    }
+
     // ── Private ───────────────────────────────────────────────────────────────
 
     private List<String> resolveUsernamesForRole(String roleName) {

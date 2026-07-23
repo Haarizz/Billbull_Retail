@@ -5,6 +5,8 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.reservation.PosStockReservationService;
+import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.Branch;
@@ -38,26 +40,32 @@ public class PosLayawayService {
     private final PosLayawayPaymentRepository paymentRepo;
     private final ProductRepository productRepository;
     private final BatchSelectionService batchSelectionService;
+    private final PosStockReservationService stockReservationService;
     private final RolePermissionService permissionService;
     private final PostingEngineService postingEngine;
     private final BranchRepository branchRepository;
+    private final WarehouseRepository warehouseRepository;
     private final PosAuditService auditService;
 
     public PosLayawayService(PosLayawayRepository repo,
                              PosLayawayPaymentRepository paymentRepo,
                              ProductRepository productRepository,
                              BatchSelectionService batchSelectionService,
+                             PosStockReservationService stockReservationService,
                              RolePermissionService permissionService,
                              PostingEngineService postingEngine,
                              BranchRepository branchRepository,
+                             WarehouseRepository warehouseRepository,
                              PosAuditService auditService) {
         this.repo = repo;
         this.paymentRepo = paymentRepo;
         this.productRepository = productRepository;
         this.batchSelectionService = batchSelectionService;
+        this.stockReservationService = stockReservationService;
         this.permissionService = permissionService;
         this.postingEngine = postingEngine;
         this.branchRepository = branchRepository;
+        this.warehouseRepository = warehouseRepository;
         this.auditService = auditService;
     }
 
@@ -167,19 +175,33 @@ public class PosLayawayService {
         // Persist first so the layaway + items have ids to anchor batch reservations.
         PosLayaway saved = repo.save(layaway);
 
+        boolean reserveStock = Boolean.TRUE.equals(saved.getReserveStockRequested());
+        Long defaultWarehouseId = reserveStock ? resolveBranchDefaultWarehouseId(saved.getBranchId()) : null;
         for (PosLayawayItem item : saved.getItems()) {
-            if (item.isVoided() || !item.isBatchControlled()) {
+            if (item.isVoided() || !reserveStock) {
                 continue;
             }
-            if (item.getPinnedBatchNumber() != null) {
-                // Scanned a specific physical unit (quantity 1 per scan).
-                batchSelectionService.reserveBatchForLayawayLine(
-                        saved.getId(), item.getId(), item.getItemCode(), item.getPinnedBatchNumber());
+            if (item.isBatchControlled()) {
+                if (item.getPinnedBatchNumber() != null) {
+                    // Scanned a specific physical unit (quantity 1 per scan).
+                    batchSelectionService.reserveBatchForLayawayLine(
+                            saved.getId(), item.getId(), item.getItemCode(), item.getPinnedBatchNumber());
+                } else {
+                    // No scan, FEFO-enabled — auto-reserve first-expiry batches for
+                    // the whole line quantity so the reservation is concrete.
+                    batchSelectionService.autoReserveFefoForLayawayLine(
+                            saved.getId(), item.getId(), item.getItemCode(), item.getQuantity());
+                }
             } else {
-                // No scan, FEFO-enabled — auto-reserve first-expiry batches for
-                // the whole line quantity so the reservation is concrete.
-                batchSelectionService.autoReserveFefoForLayawayLine(
-                        saved.getId(), item.getId(), item.getItemCode(), item.getQuantity());
+                // Non-batch product — soft warehouse-level reservation (available -= qty,
+                // on-hand untouched). Resolve the product id since the request only carries
+                // the item code.
+                Product product = productRepository.findByCode(item.getItemCode()).orElse(null);
+                if (product != null) {
+                    stockReservationService.reserveForLayawayLine(
+                            saved.getId(), item.getId(), product.getId(), item.getItemCode(),
+                            defaultWarehouseId, item.getQuantity());
+                }
             }
         }
 
@@ -240,6 +262,7 @@ public class PosLayawayService {
                     "Only an open layaway can be cancelled (current status: " + layaway.getStatus() + ")");
         }
         batchSelectionService.releaseLayaway(layaway.getId());
+        stockReservationService.releaseLayaway(layaway.getId());
 
         // Reverse deposit GL if a journal was posted at creation
         if (layaway.getDepositAmount() != null && layaway.getDepositAmount().signum() > 0
@@ -276,6 +299,7 @@ public class PosLayawayService {
                     "Only an open layaway can be converted (current status: " + layaway.getStatus() + ")");
         }
         batchSelectionService.releaseLayaway(layaway.getId());
+        stockReservationService.releaseLayaway(layaway.getId());
         layaway.setStatus(PosLayawayStatus.CONVERTED);
         layaway.setConvertedInvoiceId(invoiceId);
         layaway.setConvertedInvoiceNumber(invoiceNumber);
@@ -336,6 +360,51 @@ public class PosLayawayService {
     @Transactional(readOnly = true)
     public List<PosLayawayPayment> getPayments(Long layawayId) {
         return paymentRepo.findByLayaway_IdOrderByPaymentDateAsc(layawayId);
+    }
+
+    /**
+     * Supervisor-gated manual release: drops all stock holds for an open layaway
+     * without cancelling/converting it (e.g. a customer no longer wants a specific
+     * reserved unit but the layaway itself should stay open).
+     */
+    public PosLayaway releaseReservation(Long id) {
+        if (!permissionService.currentUserCanDelete(CANCEL_MODULE)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Supervisor permission is required to release layaway stock");
+        }
+        PosLayaway layaway = getById(id);
+        batchSelectionService.releaseLayaway(layaway.getId());
+        stockReservationService.releaseLayaway(layaway.getId());
+        return layaway;
+    }
+
+    /** Release stock holds for layaways that have passed their due date unattended. Idempotent. */
+    public void releaseExpired(Long id) {
+        batchSelectionService.releaseLayaway(id);
+        stockReservationService.releaseLayaway(id);
+    }
+
+    /**
+     * Resolve a default warehouse id for a branch, mirroring
+     * {@code SalesInvoiceService.resolveBranchDefaultWarehouseId} so a layaway
+     * reservation lands in the same warehouse the eventual conversion sale deducts
+     * from: prefers the branch's configured default warehouse, else the first
+     * active warehouse mapped to the branch.
+     */
+    private Long resolveBranchDefaultWarehouseId(Long branchId) {
+        if (branchId == null) {
+            return null;
+        }
+        Branch branch = branchRepository.findById(branchId).orElse(null);
+        if (branch != null && branch.getDefaultWarehouse() != null
+                && branch.getDefaultWarehouse().getId() != null) {
+            return branch.getDefaultWarehouse().getId();
+        }
+        return warehouseRepository.findByBranch_Id(branchId).stream()
+                .filter(w -> w.getId() != null && w.isActive())
+                .map(com.billbull.backend.inventory.warehouse.Warehouse::getId)
+                .findFirst()
+                .orElse(null);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

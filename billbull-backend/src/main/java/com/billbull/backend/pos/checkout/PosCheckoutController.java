@@ -64,6 +64,7 @@ public class PosCheckoutController {
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
     private final PaymentRepository paymentRepository;
+    private final com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -74,7 +75,8 @@ public class PosCheckoutController {
                                   RolePermissionService permissionService,
                                   ProductService productService,
                                   EmployeeRepository employeeRepository,
-                                  PaymentRepository paymentRepository) {
+                                  PaymentRepository paymentRepository,
+                                  com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -88,6 +90,7 @@ public class PosCheckoutController {
         this.productService = productService;
         this.employeeRepository = employeeRepository;
         this.paymentRepository = paymentRepository;
+        this.terminalActivityService = terminalActivityService;
     }
 
     @PostMapping
@@ -259,6 +262,7 @@ public class PosCheckoutController {
         auditService.logCheckoutCompleted(
                 request.getSessionId(), request.getTerminalId(), request.getBranchId(),
                 finalSaved.getId(), finalSaved.getInvoiceNumber());
+        terminalActivityService.recordActivity(request.getTerminalId(), "CHECKOUT");
         if (request.getItems() != null) {
             request.getItems().stream()
                     .filter(it -> Boolean.TRUE.equals(it.getVoided()))
@@ -514,6 +518,7 @@ public class PosCheckoutController {
         auditService.logCheckoutCompleted(req.getSessionId(), req.getTerminalId(),
                 req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(),
                 id, invoice.getInvoiceNumber());
+        terminalActivityService.recordActivity(req.getTerminalId(), "CHECKOUT");
         return ResponseEntity.ok(invoiceService.getById(id));
     }
 

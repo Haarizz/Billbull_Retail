@@ -17,6 +17,13 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         Optional<SalesInvoice> findByPosCheckoutKey(String posCheckoutKey);
 
+        /**
+         * Most recent POS sale on a given terminal — used by the Terminal Auto-Archive lifecycle
+         * to compute "last activity" / archive-context snapshot. One-off lookup at archive time,
+         * not on the sweep hot path (see PosTerminalActivityService for the cached last_activity_at).
+         */
+        Optional<SalesInvoice> findTopByPosTerminalIdOrderByCreatedAtDesc(String posTerminalId);
+
         boolean existsByCustomerCode(String customerCode);
 
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();

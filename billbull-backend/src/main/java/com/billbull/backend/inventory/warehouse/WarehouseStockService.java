@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.batch.BatchAllocationRepository;
+import com.billbull.backend.inventory.reservation.PosStockReservationRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
 
 @Service
@@ -28,6 +29,7 @@ public class WarehouseStockService {
     private final com.billbull.backend.sales.proforma.ProformaRepository proformaRepo;
     private final com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo;
     private final BatchAllocationRepository batchAllocationRepository;
+    private final PosStockReservationRepository posStockReservationRepository;
 
     public WarehouseStockService(
             StockMovementRepository stockRepo,
@@ -40,7 +42,8 @@ public class WarehouseStockService {
             com.billbull.backend.sales.salesorder.SalesOrderRepository salesOrderRepo,
             com.billbull.backend.sales.proforma.ProformaRepository proformaRepo,
             com.billbull.backend.sales.delivery.DeliveryNoteRepository deliveryNoteRepo,
-            BatchAllocationRepository batchAllocationRepository) {
+            BatchAllocationRepository batchAllocationRepository,
+            PosStockReservationRepository posStockReservationRepository) {
         this.stockRepo = stockRepo;
         this.productRepo = productRepo;
         this.warehouseRepo = warehouseRepo;
@@ -51,6 +54,7 @@ public class WarehouseStockService {
         this.proformaRepo = proformaRepo;
         this.deliveryNoteRepo = deliveryNoteRepo;
         this.batchAllocationRepository = batchAllocationRepository;
+        this.posStockReservationRepository = posStockReservationRepository;
     }
 
     private int safeInt(BigDecimal value) {
@@ -141,7 +145,9 @@ public class WarehouseStockService {
         }
         int salesOrderReserved = getSalesOrderReservedForWarehouse(warehouseId, productId);
         int deliveryNoteReserved = safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId));
-        return salesOrderReserved + deliveryNoteReserved;
+        int layawayReserved = safeInt(
+                posStockReservationRepository.sumReservedByProductAndWarehouse(productId, warehouseId));
+        return salesOrderReserved + deliveryNoteReserved + layawayReserved;
     }
 
     public List<WarehouseStockResponse> getStock(Long warehouseId) {
@@ -164,7 +170,8 @@ public class WarehouseStockService {
                     : salesOrderAllocations
                             .getOrDefault(productId, Collections.emptyMap())
                             .getOrDefault(warehouseId, 0)
-                            + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId));
+                            + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(productId, warehouseId))
+                            + safeInt(posStockReservationRepository.sumReservedByProductAndWarehouse(productId, warehouseId));
 
             WarehouseStockResponse response = new WarehouseStockResponse();
             response.setProductId(productId);
@@ -198,7 +205,8 @@ public class WarehouseStockService {
             int totalReserved = product.isBatch()
                     ? safeInt(batchAllocationRepository.sumReservedByProductAndWarehouse(product.getId(), warehouseId))
                     : salesOrderAllocation.getOrDefault(warehouseId, 0)
-                            + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(product.getId(), warehouseId));
+                            + safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotes(product.getId(), warehouseId))
+                            + safeInt(posStockReservationRepository.sumReservedByProductAndWarehouse(product.getId(), warehouseId));
 
             WarehouseStockResponse response = new WarehouseStockResponse();
             response.setProductId(product.getId());

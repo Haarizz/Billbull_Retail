@@ -105,6 +105,66 @@ public class PosAuditService {
                 "Receipt reprinted for invoice: " + invoiceNumber, null, null);
     }
 
+    // ── Terminal Auto-Archive lifecycle ─────────────────────────────────────
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalStale(String terminalId, Long branchId, int daysInactive) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_STALE, "TERMINAL", terminalId,
+                "Terminal marked STALE after " + daysInactive + " day(s) of inactivity", null, null);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalStaleWarningSent(String terminalId, Long branchId, int daysInactive, int daysUntilArchive) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_STALE_WARNING_SENT, "TERMINAL", terminalId,
+                "Stale warning sent: inactive " + daysInactive + " day(s), archiving in " + daysUntilArchive + " day(s)",
+                null, null);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalRecoveredFromStale(String terminalId, Long branchId, String source) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_RECOVERED_FROM_STALE, "TERMINAL", terminalId,
+                "Terminal recovered from STALE due to new activity (" + source + ")", null, null);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalAutoArchived(String terminalId, Long branchId, String reason) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_AUTO_ARCHIVED, "TERMINAL", terminalId,
+                reason, null, null);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalManualArchived(String terminalId, Long branchId, String adminUser, String reason) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_MANUAL_ARCHIVED, "TERMINAL", terminalId,
+                reason + " (by " + adminUser + ")", null, null);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalRestored(String terminalId, Long branchId, String adminUser) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_RESTORED, "TERMINAL", terminalId,
+                "Terminal restored by " + adminUser, null, null);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalKeptActive(String terminalId, Long branchId, String adminUser) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_KEPT_ACTIVE, "TERMINAL", terminalId,
+                "Terminal kept active by " + adminUser, null, null);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalExemptChanged(String terminalId, Long branchId, String adminUser, boolean exempt) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_EXEMPT_CHANGED, "TERMINAL", terminalId,
+                (exempt ? "Exempted from auto-archive" : "Auto-archive exemption removed") + " by " + adminUser,
+                null, null);
+    }
+
     // ── core save ────────────────────────────────────────────────────────────
 
     private void save(Long sessionId, String terminalId, Long branchId,

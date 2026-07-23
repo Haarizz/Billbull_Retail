@@ -273,6 +273,23 @@ const Ledger = () => {
 
   // --- COA TREE STATES ---
   const [accountTree, setAccountTree] = useState([]);
+  // Per-account balance as scoped to the currently active branch (backend-computed
+  // from posted ledger entries, unlike the company-wide Account.balanceAmount that
+  // /api/ledger/accounts returns). The stat cards must read from here, not from the
+  // flat `accounts` list, so they change when the branch selector changes.
+  const branchAccountBalanceByCode = useMemo(() => {
+    const map = new Map();
+    const walk = (nodes) => {
+      (nodes || []).forEach((node) => {
+        if (node?.code) {
+          map.set(node.code, { balanceAmount: node.balanceAmount, balanceType: node.balanceType });
+        }
+        walk(node.children);
+      });
+    };
+    walk(accountTree);
+    return map;
+  }, [accountTree]);
   const [expandedNodes, setExpandedNodes] = useState(new Set());
   const [coaViewMode, setCoaViewMode] = useState('tree'); // 'list' | 'tree'
   const [coaTreeSearch, setCoaTreeSearch] = useState('');
@@ -1312,10 +1329,14 @@ const glAccountOptions = accounts
               
               let total = 0;
               typeAccounts.forEach(acc => {
-                const amount = parseFloat(acc.balanceAmount || 0);
+                // Prefer the branch-scoped balance from the COA tree; fall back to the
+                // account's own field only if the tree hasn't resolved this code (e.g.
+                // it's a group node not represented as a tree leaf).
+                const branchBalance = branchAccountBalanceByCode.get(acc.code);
+                const amount = parseFloat((branchBalance ? branchBalance.balanceAmount : acc.balanceAmount) || 0);
                 if (amount === 0) return;
-                
-                const balType = (acc.balanceType || acc.normalBalance || 'Dr').trim();
+
+                const balType = ((branchBalance ? branchBalance.balanceType : acc.balanceType) || acc.normalBalance || 'Dr').trim();
                 const isDebit = balType.toLowerCase().startsWith('dr');
                 const isCrNormal = type === 'Liabilities' || type === 'Income' || type === 'Equity';
                 

@@ -64,12 +64,35 @@ public class PosSettingsService {
         });
     }
 
+    /**
+     * Validate Terminal Auto Archive configuration before it can be saved. Rejecting at save time
+     * (rather than letting the scheduler cope with nonsense config) keeps the sweep job simple and
+     * prevents a branch from silently never warning admins or archiving terminals immediately.
+     */
+    private void validateTerminalAutoArchiveConfig(PosSettings settings) {
+        Integer archiveAfterDays = settings.getTerminalArchiveAfterDays();
+        Integer warningDays = settings.getTerminalArchiveWarningDays();
+        if (archiveAfterDays != null && archiveAfterDays <= 0) {
+            throw new IllegalArgumentException("Archive after days must be greater than zero.");
+        }
+        if (warningDays != null && warningDays < 0) {
+            throw new IllegalArgumentException("Warning period days cannot be negative.");
+        }
+        boolean notifyEnabled = Boolean.TRUE.equals(settings.getTerminalArchiveNotifyBefore());
+        if (Boolean.TRUE.equals(settings.getTerminalAutoArchiveEnabled()) && notifyEnabled
+                && archiveAfterDays != null && warningDays != null
+                && warningDays >= archiveAfterDays) {
+            throw new IllegalArgumentException("Warning period days must be less than archive after days.");
+        }
+    }
+
     @Transactional
     public PosSettings save(PosSettings settings) {
         if (settings.getBranchId() == null) {
             Long branchId = branchAccessService.getCurrentUserBranchId();
             settings.setBranchId(branchId);
         }
+        validateTerminalAutoArchiveConfig(settings);
         // Upsert by branchId
         return repo.findByBranchId(settings.getBranchId())
                 .map(existing -> {
@@ -103,6 +126,10 @@ public class PosSettingsService {
                     existing.setAutoPrintReceipt(settings.getAutoPrintReceipt());
                     existing.setTaxInclusive(settings.getTaxInclusive());
                     existing.setDefaultTaxRate(settings.getDefaultTaxRate());
+                    existing.setTerminalAutoArchiveEnabled(settings.getTerminalAutoArchiveEnabled());
+                    existing.setTerminalArchiveAfterDays(settings.getTerminalArchiveAfterDays());
+                    existing.setTerminalArchiveNotifyBefore(settings.getTerminalArchiveNotifyBefore());
+                    existing.setTerminalArchiveWarningDays(settings.getTerminalArchiveWarningDays());
                     return repo.save(existing);
                 })
                 .orElseGet(() -> {

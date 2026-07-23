@@ -28,6 +28,8 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.inventory.reservation.PosStockReservationService;
+import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -39,17 +41,20 @@ class PosLayawayServiceTest {
     @Mock private PosLayawayPaymentRepository paymentRepo;
     @Mock private ProductRepository productRepository;
     @Mock private BatchSelectionService batchSelectionService;
+    @Mock private PosStockReservationService stockReservationService;
     @Mock private RolePermissionService permissionService;
     @Mock private PostingEngineService postingEngine;
     @Mock private BranchRepository branchRepository;
+    @Mock private WarehouseRepository warehouseRepository;
     @Mock private PosAuditService auditService;
 
     private PosLayawayService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService, permissionService,
-                postingEngine, branchRepository, auditService);
+        service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService,
+                stockReservationService, permissionService, postingEngine, branchRepository, warehouseRepository,
+                auditService);
         // save() returns the same entity with ids assigned, so the reserve loop can run.
         lenient().when(repo.save(any(PosLayaway.class))).thenAnswer(inv -> {
             PosLayaway l = inv.getArgument(0);
@@ -64,9 +69,11 @@ class PosLayawayServiceTest {
     }
 
     @Test
-    void createReservesBatchLinesAndSkipsNormalLines() {
+    void createReservesBothBatchAndNormalLinesWhenReserveStockRequested() {
         when(productRepository.findByCode("BATCH-ITEM")).thenReturn(Optional.of(batchProduct("BATCH-ITEM")));
-        when(productRepository.findByCode("NORMAL-ITEM")).thenReturn(Optional.of(normalProduct("NORMAL-ITEM")));
+        Product normal = normalProduct("NORMAL-ITEM");
+        normal.setId(42L);
+        when(productRepository.findByCode("NORMAL-ITEM")).thenReturn(Optional.of(normal));
 
         PosLayawayCreateRequest req = baseRequest();
         req.setItems(List.of(
@@ -75,12 +82,31 @@ class PosLayawayServiceTest {
 
         PosLayaway saved = service.create(req);
 
-        // Batch line reserves its scanned unit; normal line reserves nothing.
+        // Batch line reserves its scanned unit; normal line gets a soft warehouse reservation.
         verify(batchSelectionService).reserveBatchForLayawayLine(eq(100L), anyLong(), eq("BATCH-ITEM"), eq("BATCH-A-1"));
         verify(batchSelectionService, never())
                 .reserveBatchForLayawayLine(anyLong(), anyLong(), eq("NORMAL-ITEM"), any());
+        verify(stockReservationService)
+                .reserveForLayawayLine(eq(100L), anyLong(), eq(42L), eq("NORMAL-ITEM"), any(), eq(2));
         assertEquals(2, saved.getItems().size());
         assertTrue(saved.getLayawayNumber().startsWith("LAY-"));
+    }
+
+    @Test
+    void createSkipsAllReservationsWhenReserveStockNotRequested() {
+        when(productRepository.findByCode("BATCH-ITEM")).thenReturn(Optional.of(batchProduct("BATCH-ITEM")));
+
+        PosLayawayCreateRequest req = baseRequest();
+        req.setReserveStockRequested(false);
+        req.setItems(List.of(line("BATCH-ITEM", 1, 100.0, "BATCH-A-1")));
+
+        PosLayaway saved = service.create(req);
+
+        verify(batchSelectionService, never())
+                .reserveBatchForLayawayLine(anyLong(), anyLong(), any(), any());
+        verify(stockReservationService, never())
+                .reserveForLayawayLine(anyLong(), anyLong(), any(), any(), any(), anyInt());
+        assertEquals(Boolean.FALSE, saved.getReserveStockRequested());
     }
 
     @Test
@@ -210,6 +236,7 @@ class PosLayawayServiceTest {
         PosLayaway result = service.cancel(7L);
 
         verify(batchSelectionService).releaseLayaway(7L);
+        verify(stockReservationService).releaseLayaway(7L);
         assertEquals(PosLayawayStatus.CANCELLED, result.getStatus());
     }
 
@@ -221,9 +248,38 @@ class PosLayawayServiceTest {
         PosLayaway result = service.markConverted(9L, 555L, "SI-POS-0009");
 
         verify(batchSelectionService).releaseLayaway(9L);
+        verify(stockReservationService).releaseLayaway(9L);
         assertEquals(PosLayawayStatus.CONVERTED, result.getStatus());
         assertEquals(555L, result.getConvertedInvoiceId());
         assertEquals("SI-POS-0009", result.getConvertedInvoiceNumber());
+    }
+
+    @Test
+    void releaseReservationRequiresSupervisorPermission() {
+        when(permissionService.currentUserCanDelete("sales")).thenReturn(false);
+        assertThrows(ResponseStatusException.class, () -> service.releaseReservation(11L));
+        verify(batchSelectionService, never()).releaseLayaway(anyLong());
+    }
+
+    @Test
+    void releaseReservationReleasesHoldsWithoutChangingStatus() {
+        when(permissionService.currentUserCanDelete("sales")).thenReturn(true);
+        PosLayaway layaway = openLayaway(11L);
+        when(repo.findById(11L)).thenReturn(Optional.of(layaway));
+
+        PosLayaway result = service.releaseReservation(11L);
+
+        verify(batchSelectionService).releaseLayaway(11L);
+        verify(stockReservationService).releaseLayaway(11L);
+        assertEquals(PosLayawayStatus.ACTIVE, result.getStatus());
+    }
+
+    @Test
+    void releaseExpiredReleasesHoldsForOverdueLayaway() {
+        service.releaseExpired(13L);
+
+        verify(batchSelectionService).releaseLayaway(13L);
+        verify(stockReservationService).releaseLayaway(13L);
     }
 
     // ── fixtures ──────────────────────────────────────────────────────────────

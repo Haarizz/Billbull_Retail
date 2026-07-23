@@ -50,6 +50,13 @@ public class PosLayawayController {
         return ResponseEntity.ok(service.cancel(id));
     }
 
+    /** Supervisor-gated manual release of stock holds without cancelling the layaway. */
+    @PostMapping("/{id}/release-reservation")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosLayaway> releaseReservation(@PathVariable Long id) {
+        return ResponseEntity.ok(service.releaseReservation(id));
+    }
+
     @PostMapping("/{id}/convert")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosLayaway> convert(@PathVariable Long id, @RequestBody ConvertRequest body) {

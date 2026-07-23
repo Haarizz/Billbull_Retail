@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
-import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -14,7 +13,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
-import com.billbull.backend.settings.branch.BranchAccessService;
 
 @ExtendWith(MockitoExtension.class)
 class LedgerServiceBankAccountTest {
@@ -22,16 +20,11 @@ class LedgerServiceBankAccountTest {
     @Mock
     private AccountRepository accountRepository;
 
-    @Mock
-    private BranchAccessService branchAccessService;
-
     @InjectMocks
     private LedgerService ledgerService;
 
     @Test
     void getBankAccountsReturnsOnlyActiveAssetBankAccounts() {
-        when(branchAccessService.currentExactScope())
-                .thenReturn(new BranchAccessService.ListScope(true, Set.of()));
         when(accountRepository.findAll()).thenReturn(List.of(
                 account("1010", "Bank Account (Main)", "Assets", "Asset", false, "active", true),
                 account("1001", "Cash in Hand", "Assets", "Asset", false, "active", true),
@@ -46,6 +39,23 @@ class LedgerServiceBankAccountTest {
         assertThat(result)
                 .extracting(Account::getCode)
                 .containsExactly("1010", "1200");
+    }
+
+    @Test
+    void getAllAccountsIsCompanyWideRegardlessOfBranchScope() {
+        // Chart of Accounts is a shared company-wide master: it must not be
+        // filtered even when the caller has a specific (non-"all branches")
+        // branch scope active. Only transactional/reporting data is
+        // branch-scoped, never the COA itself.
+        when(accountRepository.findAll()).thenReturn(List.of(
+                account("1000", "Assets", "Assets", "Asset", true, "active", false),
+                account("1010", "Bank Account (Main)", "Assets", "Asset", false, "active", true)));
+
+        List<Account> result = ledgerService.getAllAccounts();
+
+        assertThat(result)
+                .extracting(Account::getCode)
+                .containsExactly("1000", "1010");
     }
 
     private Account account(String code, String name, String accountGroup, String accountType,
