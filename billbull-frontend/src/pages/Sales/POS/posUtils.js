@@ -19,6 +19,7 @@ export const mapPosProductListItem = (d = {}) => ({
   minPrice: d.minPrice != null && d.minPrice !== '' ? toNumber(d.minPrice) : null,
   maxPrice: d.maxPrice != null && d.maxPrice !== '' ? toNumber(d.maxPrice) : null,
   retailPrice: d.retailPrice != null && d.retailPrice !== '' ? toNumber(d.retailPrice) : null,
+  cost: d.cost != null && d.cost !== '' ? toNumber(d.cost) : null,
   stock: toNumber(d.stock ?? 0),
   image: d.image ? getImageUrl(d.image) : null,
   departmentId: d.departmentId || null,
@@ -47,6 +48,7 @@ export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
     maxPrice: pricing.maxPrice,
     minPrice: pricing.minPrice,
     onlinePrice: pricing.onlinePrice,
+    cost: pricing.cost,
     stock: entry.stock ?? product.stock,
     image: entry.primaryImage || entry.image,
     departmentId: product.department?.id,
@@ -89,18 +91,23 @@ export const mapPosCustomer = (customer = {}) => ({
 // gate (PosCheckoutController) which hard-blocks the sale unless the user holds
 // pos_price_override — surfacing it here lets the cashier fix the price before
 // Settle Payment instead of hitting that 403 cold. The floor is minPrice, but
-// when minPrice isn't set the backend falls back to retailPrice as the floor
+// when minPrice isn't set the backend falls back to cost as the floor.
 // (see PosCheckoutController §2.4) — mirrored here so a product with no minPrice
 // configured still warns instead of going silent. Above maxPrice is
 // informational only; the backend never blocks on it.
 export const getCartPriceWarning = (item) => {
   if (!item || item.isVoided) return null;
-  const price = toNumber(item.price, 0);
-  const floor = item.minPrice ?? item.retailPrice ?? null;
-  if (floor != null && price < floor) {
+  const unitPrice = toNumber(item.price, 0);
+  const discountPct = toNumber(item.discount, 0);
+  const effectivePrice = unitPrice * (1 - (discountPct / 100));
+
+  const floor = toNumber(item.minPrice) > 0 ? toNumber(item.minPrice) 
+              : (toNumber(item.cost) > 0 ? toNumber(item.cost) : null);
+
+  if (floor != null && effectivePrice < floor) {
     return { level: 'error', message: `Below min price (${floor})` };
   }
-  if (item.maxPrice != null && price > item.maxPrice) {
+  if (item.maxPrice != null && unitPrice > item.maxPrice) {
     return { level: 'warn', message: `Above max price (${item.maxPrice})` };
   }
   return null;

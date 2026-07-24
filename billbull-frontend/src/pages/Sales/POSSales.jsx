@@ -2452,6 +2452,7 @@ export default function POSSales() {
           minPrice: product.minPrice != null && product.minPrice !== '' ? toNumber(product.minPrice) : null,
           maxPrice: product.maxPrice != null && product.maxPrice !== '' ? toNumber(product.maxPrice) : null,
           retailPrice: product.retailPrice != null && product.retailPrice !== '' ? toNumber(product.retailPrice) : null,
+          cost: product.cost != null && product.cost !== '' ? toNumber(product.cost) : null,
           quantity: qtyToAdd,
           discount: toNumber(product.defaultDiscount, 0),
           taxRate: resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false),

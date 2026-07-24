@@ -633,13 +633,20 @@ public class PosCheckoutController {
                     if (Boolean.TRUE.equals(item.getVoided()) || item.getPrice() == null) continue;
                     ProductPricing pr = pricingByCode.get(item.getItemCode());
                     if (pr == null) continue;
-                    BigDecimal itemPrice = BigDecimal.valueOf(item.getPrice());
-                    BigDecimal minPrice = pr.getMinPrice() != null ? pr.getMinPrice()
-                                       : (pr.getRetailPrice() != null ? pr.getRetailPrice() : null);
-                    if (minPrice != null && itemPrice.compareTo(minPrice) < 0) {
+                    BigDecimal unitPrice = BigDecimal.valueOf(item.getPrice());
+                    // Compute effective selling price after line discount so that
+                    // discounts cannot bypass the minimum price rule.
+                    double discountPct = item.getDiscount() != null ? item.getDiscount() : 0.0;
+                    BigDecimal effectivePrice = unitPrice.multiply(
+                            BigDecimal.ONE.subtract(BigDecimal.valueOf(discountPct / 100.0)));
+                    // Temporary fallback: minPrice → cost (not retail).
+                    // Zero is treated as "not configured" — a zero cost is not a valid floor.
+                    BigDecimal effectiveMin = isPositive(pr.getMinPrice()) ? pr.getMinPrice()
+                                           : (isPositive(pr.getCost()) ? pr.getCost() : null);
+                    if (effectiveMin != null && effectivePrice.compareTo(effectiveMin) < 0) {
                         if (!permissionService.currentUserCanEdit("pos_price_override")) {
                             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                                    "Price below minimum for " + item.getItemCode()
+                                    "Price below minimum (" + effectiveMin + ") for " + item.getItemCode()
                                     + ". Supervisor override required (pos_price_override).");
                         }
                     }
@@ -756,5 +763,10 @@ public class PosCheckoutController {
         }
         if (req.getPaymentMode() != null) return req.getPaymentMode();
         return "Cash";
+    }
+
+    /** Returns true when a BigDecimal value is non-null and strictly positive (> 0). */
+    private static boolean isPositive(BigDecimal value) {
+        return value != null && value.compareTo(BigDecimal.ZERO) > 0;
     }
 }
