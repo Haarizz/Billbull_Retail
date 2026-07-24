@@ -2015,6 +2015,7 @@ const DeliveryNote = () => {
                     onClose={() => setSelectedAddonItem(null)}
                     onSave={handleSaveAddonItem}
                     isReadOnly={isLockedForEdit}
+                    vatMode={vatMode}
                 />
             )}
             {/* ================= MODAL ================= */}

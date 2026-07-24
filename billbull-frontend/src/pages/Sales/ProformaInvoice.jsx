@@ -2376,6 +2376,7 @@ const ProformaInvoice = () => {
             onClose={() => setSelectedAddonItem(null)}
             onSave={handleSaveAddonItem}
             isReadOnly={isReadOnly}
+            vatMode={vatMode}
           />
         )}
 

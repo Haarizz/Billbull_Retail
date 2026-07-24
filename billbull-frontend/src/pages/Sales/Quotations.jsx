@@ -4641,6 +4641,7 @@ const Quotations = () => {
                         setSelectedAddonItem(null);
                     }}
                     isReadOnly={isViewMode}
+                    vatMode={vatMode}
                 />
 
                 {/* --- COMPARE REVISIONS MODAL --- */}
