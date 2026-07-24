@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull ERP — File Storage Implementation Blueprint (Final Review)</title>
+<style>
+  @font-face {
+    font-family: 'Source Serif';
+    src: local('Source Serif 4'), local('Source Serif Pro');
+  }
+
+  :root {
+    --bg: #f7f8fa;
+    --bg-raised: #ffffff;
+    --bg-sunken: #eef0f3;
+    --ink: #1b1e24;
+    --ink-soft: #4a4f59;
+    --ink-faint: #7a8090;
+    --border: #dcdfe5;
+    --border-soft: #e8eaee;
+    --accent: #9a5d16;
+    --accent-strong: #7a4810;
+    --accent-bg: #fbf1e2;
+    --accent-border: #e8c98f;
+    --ok: #1d7a4c;
+    --ok-bg: #e7f5ed;
+    --warn: #a15c00;
+    --warn-bg: #fdf1dc;
+    --bad: #b3271f;
+    --bad-bg: #fdeceb;
+    --terminal: #445070;
+    --terminal-bg: #eaedf5;
+    --code-bg: #eef0f3;
+    --shadow: 0 1px 2px rgba(20, 22, 30, 0.06), 0 4px 16px rgba(20, 22, 30, 0.05);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12141a;
+    --bg-raised: #1a1d25;
+    --bg-sunken: #0e1015;
+    --ink: #eef0f4;
+    --ink-soft: #b6bac6;
+    --ink-faint: #7d8394;
+    --border: #2c303c;
+    --border-soft: #23262f;
+    --accent: #e0a94a;
+    --accent-strong: #f0bc63;
+    --accent-bg: #2b2213;
+    --accent-border: #4a3a1a;
+    --ok: #4fbf87;
+    --ok-bg: #133025;
+    --warn: #e0a94a;
+    --warn-bg: #2b2213;
+    --bad: #e8746c;
+    --bad-bg: #331815;
+    --terminal: #8d9ac2;
+    --terminal-bg: #1c2030;
+    --code-bg: #1c1f28;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12141a;
+      --bg-raised: #1a1d25;
+      --bg-sunken: #0e1015;
+      --ink: #eef0f4;
+      --ink-soft: #b6bac6;
+      --ink-faint: #7d8394;
+      --border: #2c303c;
+      --border-soft: #23262f;
+      --accent: #e0a94a;
+      --accent-strong: #f0bc63;
+      --accent-bg: #2b2213;
+      --accent-border: #4a3a1a;
+      --ok: #4fbf87;
+      --ok-bg: #133025;
+      --warn: #e0a94a;
+      --warn-bg: #2b2213;
+      --bad: #e8746c;
+      --bad-bg: #331815;
+      --terminal: #8d9ac2;
+      --terminal-bg: #1c2030;
+      --code-bg: #1c1f28;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, pre, .mono, td.mono, th.mono {
+    font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Source Serif', Georgia, "Times New Roman", serif;
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.toc { display: none; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.25rem 1.25rem 2.5rem 1.75rem;
+    border-right: 1px solid var(--border-soft);
+  }
+
+  .toc-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1rem;
+  }
+
+  .toc-list { list-style: none; margin: 0; padding: 0; }
+  .toc-list a {
+    display: block;
+    padding: 0.32rem 0.6rem;
+    margin: 0.05rem 0;
+    border-radius: 5px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 0.86rem;
+    border-left: 2px solid transparent;
+  }
+  .toc-list a:hover { color: var(--ink); background: var(--bg-sunken); }
+  .toc-list a .num { color: var(--accent); font-family: ui-monospace, monospace; font-size: 0.78rem; margin-right: 0.5em; }
+
+  main {
+    padding: 2.5rem clamp(1.25rem, 4vw, 4rem) 6rem;
+    min-width: 0;
+  }
+
+  .cover {
+    padding-bottom: 2.25rem;
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    padding: 0.3rem 0.65rem;
+    border-radius: 4px;
+    margin-bottom: 1.1rem;
+  }
+  .cover h1 {
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+    line-height: 1.12;
+    margin: 0 0 0.85rem;
+    max-width: 24ch;
+  }
+  .cover .dek {
+    font-size: 1.05rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 1.4rem;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+  .meta-row strong { color: var(--ink-soft); font-weight: 600; }
+
+  section { margin-bottom: 3.25rem; scroll-margin-top: 1.5rem; }
+  section > .part-eyebrow {
+    font-family: ui-monospace, monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+  }
+  h2 {
+    font-size: 1.5rem;
+    margin: 0 0 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.14rem; margin: 1.8rem 0 0.7rem; }
+  h4 { font-size: 0.98rem; margin: 1.3rem 0 0.5rem; color: var(--ink-soft); }
+  p { max-width: 74ch; margin: 0 0 0.9rem; color: var(--ink-soft); }
+  p.lead { font-size: 1.03rem; color: var(--ink); max-width: 70ch; }
+  ul, ol { max-width: 72ch; color: var(--ink-soft); padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.35rem; }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent-strong); }
+
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.4em;
+    font-size: 0.86em;
+    color: var(--ink);
+  }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0 1.3rem;
+    max-width: 74ch;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout .cal-label {
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+    display: block;
+  }
+  .callout.warn .cal-label { color: var(--warn); }
+  .callout.bad .cal-label { color: var(--bad); }
+  .callout.ok .cal-label { color: var(--ok); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0 0 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.86rem; }
+  table.wide { min-width: 980px; }
+  thead th {
+    text-align: left;
+    background: var(--bg-sunken);
+    color: var(--ink-faint);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg-sunken); }
+  td.mono, th.mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+  td strong { color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .pill {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    padding: 0.14rem 0.55rem;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pill-ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .pill-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .pill-bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .pill-terminal { background: var(--terminal-bg); color: var(--terminal); border-color: var(--terminal); }
+  .pill-accent { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    margin: 0 0 1.3rem;
+  }
+  .code-block pre {
+    margin: 0;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    white-space: pre;
+  }
+  .code-block .arrow { color: var(--accent); }
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 0 0 1.3rem;
+    max-width: 46ch;
+  }
+  .flow-step {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.86rem;
+    color: var(--ink);
+  }
+  .flow-connector {
+    display: flex;
+    justify-content: center;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    padding: 0.1rem 0;
+  }
+  .flow-step.branch { border-color: var(--accent-border); background: var(--accent-bg); }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.85rem;
+    margin: 0 0 1.4rem;
+  }
+  .card {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    box-shadow: var(--shadow);
+  }
+  .card h4 { margin: 0 0 0.4rem; font-size: 0.92rem; color: var(--ink); }
+  .card p { font-size: 0.82rem; margin: 0; color: var(--ink-faint); max-width: none; }
+
+  hr.sep { border: none; border-top: 1px solid var(--border); margin: 2.4rem 0; }
+
+  footer.doc-footer {
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+  }
+
+  ::selection { background: var(--accent-border); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="toc">
+    <p class="toc-label">Contents</p>
+    <ul class="toc-list">
+      <li><a href="#p1"><span class="num">01</span>Tenant identity</a></li>
+      <li><a href="#p2"><span class="num">02</span>Storage abstraction</a></li>
+      <li><a href="#p3"><span class="num">03</span>Database design</a></li>
+      <li><a href="#p4"><span class="num">04</span>Export / import</a></li>
+      <li><a href="#p5"><span class="num">05</span>Backup &amp; DR</a></li>
+      <li><a href="#p6"><span class="num">06</span>File metadata</a></li>
+      <li><a href="#p7"><span class="num">07</span>Storage maintenance</a></li>
+      <li><a href="#p8"><span class="num">08</span>Security review</a></li>
+      <li><a href="#p9"><span class="num">09</span>Future cloud readiness</a></li>
+      <li><a href="#p10"><span class="num">10</span>Final blueprint</a></li>
+      <li><a href="#p11"><span class="num">11</span>What changed, and why</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <div class="cover">
+      <span class="eyebrow">Final architecture review &middot; supersedes parts of the original study &middot; still no code written</span>
+      <h1>File Storage Implementation Blueprint</h1>
+      <p class="dek">A critical second pass over <em>File Storage &amp; Multi-Tenant Upload Architecture</em> (2026-07-23). The original correctly diagnosed the problem and the local-disk path convention; this pass tightens the two load-bearing decisions it left loose — tenant identity and database storage format — and adds the metadata, maintenance, security, and DR layers a production rollout needs but the first draft didn't yet specify.</p>
+      <div class="meta-row">
+        <span><strong>Branch</strong> feature/billpos</span>
+        <span><strong>Scope</strong> architecture refinement only — no re-audit, no code</span>
+        <span><strong>Supersedes</strong> Parts 09–10 of the original study (see Part 11)</span>
+        <span><strong>Prepared</strong> 2026-07-23</span>
+      </div>
+    </div>
+
+    <section id="p1">
+      <p class="part-eyebrow">Part 01</p>
+      <h2>Stable tenant identity</h2>
+      <p class="lead">The original study recommended keying the storage path on <code>spring.profiles.active</code> — "no new identity concept, reuse what's already there." That reasoning is right about cost, wrong about durability. This is the one recommendation in the original report that needs to change before implementation, not after.</p>
+
+      <h3>Why the Spring profile name fails as a permanent storage key</h3>
+      <p>The fourteen profile files already on disk are <code>client1</code>, <code>client2</code>, <code>client4</code>, <code>client5</code>, <code>client6</code>, <code>demo</code>, <code>geebu</code>, <code>hilite</code>, <code>leroyalflowers</code>, <code>leroyalgifts</code>, <code>prod</code>, <code>qa</code>, <code>royaltools</code>, <code>testing</code>. Looking at that list with fresh eyes surfaces three problems the original report didn't weigh:</p>
+      <ul>
+        <li><strong>Profile names are not all tenant names.</strong> <code>prod</code>, <code>qa</code>, and <code>testing</code> are environment labels, not clients — three of the fourteen profiles don't even represent a distinct customer, or represent one ambiguously. A storage key derived from the profile would put "prod" data in a folder called <code>prod/</code>, which says nothing about which client that is.</li>
+        <li><strong>Profile names are operational shorthand, not identity.</strong> <code>client1</code> through <code>client6</code> are numbered placeholders assigned in deployment order, not derived from the customer's actual name. If a client is renamed, re-sold, or a profile file is renamed during a later infra cleanup — plausible, since <code>geebu</code> and <code>hilite</code> already show that naming shifted from numbered to name-based at some point — every path on disk and every DB path column keyed on the old profile name goes stale simultaneously.</li>
+        <li><strong>Profile ≠ deployment target 1:1 forever.</strong> The whole point of the K8s work already underway is to decouple "which tenant" from "which process/config." Tying the storage key to <code>spring.profiles.active</code> re-couples exactly the thing the K8s migration is trying to make swappable — a new profile naming convention, a profile consolidation, or a future move to one Spring Boot image serving multiple tenants via a request-scoped tenant resolver (already how the K8s ConfigMap pattern half-works today) would all break the storage key.</li>
+      </ul>
+      <div class="callout bad">
+        <span class="cal-label">Correction to the original report</span>
+        <p>Part 09 of the original study said "no new identity concept is introduced; it's the one tenant key that already exists." That statement undersold the cost: the profile name is a <em>deployment</em> key, not a <em>data</em> key, and conflating the two means a future rename operation (which has already happened once, per the <code>client1..6</code> → <code>geebu</code>/<code>hilite</code> naming drift visible in the existing profile set) becomes a data migration instead of a config change.</p>
+      </div>
+
+      <h3>Recommendation: a dedicated, immutable storage identifier</h3>
+      <p>Introduce one new column, <code>tenant_storage_key</code> (or equivalently <code>company.storage_code</code>), set once at tenant provisioning time and never changed again for the life of that tenant — independent of the client's display name, the Spring profile name, the database name, or anything else that might legitimately change over time.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Candidate</th><th>Verdict</th><th>Reasoning</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">spring.profiles.active</td><td><span class="pill pill-bad">Reject</span></td><td>Deployment/environment label, not data identity; already shows naming drift; conflates 3 non-tenant environments (prod/qa/testing) with real clients.</td></tr>
+            <tr><td class="mono">company.code / company.slug</td><td><span class="pill pill-warn">Reject as primary key, fine as display value</span></td><td>Derived from the company's trading name — legitimately changes on rebrand, legal name change, or franchise resale. Good for human-readable folder names in exports/reports, bad as the immutable join key.</td></tr>
+            <tr><td class="mono">Database name / JDBC URL</td><td><span class="pill pill-bad">Reject</span></td><td>Changes on every database migration — exactly the event this whole report exists to make safe. Using it as the storage key would re-couple storage identity to the thing being migrated.</td></tr>
+            <tr><td class="mono">Dedicated <code>tenant_storage_key</code> (UUID or short opaque code, assigned once)</td><td><span class="pill pill-ok">Recommended</span></td><td>Exists for exactly one purpose: identify this tenant's data forever, independent of every other naming scheme that's allowed to change around it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Practical shape: a short, human-debuggable code (e.g. <code>tsk-a1x9k2</code> or a slugified one-time snapshot of the company name, <code>leroyal-flowers-01</code>) rather than a raw UUID — engineers will read this in logs, PVC paths, and tarball filenames often enough that pure opacity costs more than it protects. Store it once, in exactly one place per tenant (recommend the existing per-tenant <code>application-{profile}.properties</code> file, as a new <code>tenant.storage-key=...</code> property — deliberately *not* derived from the profile filename itself, breaking the coupling explicitly rather than by convention).</p>
+      <div class="callout ok">
+        <span class="cal-label">Migration cost of this correction</span>
+        <p>Because no tenant has any files namespaced yet (the original report's Part 12 migration hasn't run), this correction costs nothing extra if made now — it only changes what string gets used as the path segment in a migration that hasn't happened. Making this change after Part 12 has already run for even one tenant would mean a second migration. This is the single highest-leverage fix available before implementation starts.</p>
+      </div>
+    </section>
+
+    <section id="p2">
+      <p class="part-eyebrow">Part 02</p>
+      <h2>Storage abstraction — layered, not a single service</h2>
+      <p class="lead">The original report's <code>TenantFileStorageService</code> was directionally correct (one shared component, nine call sites collapse into one) but under-specified as a single concrete class. A production blueprint needs a real interface boundary so the backend can change <em>where</em> bytes live without touching <em>any</em> business logic — matching exactly what Part 06/09 of the original already argued for local-vs-object-storage, just not yet drawn as a layered contract.</p>
+
+      <h3>Layer design</h3>
+      <div class="code-block"><pre>Controller / Service layer (Product, Brand, Company, Branch, Employee, Receipt, Tax, ...)
+        │  calls only this interface — never a concrete class, never java.nio.file directly
+        ▼
+StorageProvider  (interface)
+  - store(StorageKey key, InputStream content, StorageMetadata meta) → StoredFileRef
+  - load(StorageKey key) → InputStream
+  - delete(StorageKey key) → void
+  - exists(StorageKey key) → boolean
+  - resolvePublicUrl(StorageKey key) → String
+        │
+        ▼
+  ┌─────────────────────┬──────────────────────────────┐
+  │ LocalStorageProvider │  (future, same interface)     │
+  │  (default, active)   │  MinIOStorageProvider          │
+  │                       │  S3StorageProvider              │
+  │                       │  AzureBlobStorageProvider        │
+  │                       │  GcsStorageProvider                │
+  └─────────────────────┴──────────────────────────────┘</pre></div>
+      <p>A thin <code>TenantFileStorageService</code> still exists above this — but now it's a tenant-aware convenience wrapper (injects the tenant storage key and category into a <code>StorageKey</code>, delegates to whichever <code>StorageProvider</code> is active) rather than the whole abstraction. The distinction matters: <code>TenantFileStorageService</code> knows about tenants and categories; <code>StorageProvider</code> knows nothing about the business domain at all — it just moves bytes given an opaque key. That separation is what lets the provider be swapped via Spring configuration (<code>storage.provider=local|minio|s3|azure|gcs</code>, a single <code>@ConditionalOnProperty</code>-selected bean) with zero change to any of the nine call sites.</p>
+
+      <h3><code>StorageKey</code> — the one shared value type</h3>
+      <p>A small immutable value object, not a raw string, so path construction happens in exactly one place:</p>
+      <div class="code-block"><pre>record StorageKey(String tenantStorageKey, String category, String filename) {
+    String toLogicalPath() { return category + "/" + filename; }          // → §3, DB storage format
+    String toPhysicalPath(String root) { return root + "/" + tenantStorageKey + "/" + toLogicalPath(); }
+}</pre></div>
+      <p>Every existing hardcoded directory constant (Part 01/02 of the original report) is deleted; every call site constructs a <code>StorageKey</code> and calls <code>TenantFileStorageService</code>. This is also where filename sanitization and category allow-listing live (Part 08) — centralizing them fixes the Sales Order attachment collision risk the original report flagged (no-UUID original-filename reuse) as a side effect, not a separate task.</p>
+
+      <h3>Why this layering, specifically, beats a single concrete class</h3>
+      <ul>
+        <li><strong>Local-to-object-storage swap becomes a deploy-time config change</strong> (Part 06/09 of the original correctly wanted this outcome; this is what actually delivers it — a single service class with an <code>if (useS3)</code> branch inside it does not).</li>
+        <li><strong>Testability.</strong> Unit tests inject an in-memory <code>StorageProvider</code> fake; today's storage classes require real filesystem I/O in tests (or are untested — the original audit found no dedicated tests for any of the seven storage classes).</li>
+        <li><strong>Hybrid storage (Part 09) becomes expressible</strong>: a <code>CompositeStorageProvider</code> that reads from local disk but writes new files to S3, for a gradual live migration, is a straightforward addition to this shape and an awkward retrofit onto a single class.</li>
+      </ul>
+    </section>
+
+    <section id="p3">
+      <p class="part-eyebrow">Part 03</p>
+      <h2>Database design — logical storage key, not a URL</h2>
+      <p class="lead">The original report's Part 11 recommended rewriting DB columns to hold a relative URL like <code>/uploads/{tenant-code}/products/{uuid}.jpg</code>. On review, that's the wrong level to freeze into the database — it bakes both the tenant identifier <em>and</em> the URL-serving convention into rows that should outlive both.</p>
+
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th></th><th>Option A — Full URL</th><th>Option B — Relative path</th><th>Option C — Logical storage key</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Example</strong></td><td class="mono">https://app.billbull.com/uploads/client1/products/img.jpg</td><td class="mono">/uploads/client1/products/img.jpg</td><td class="mono">products/img.jpg</td></tr>
+            <tr><td><strong>Survives a domain/CDN change</strong></td><td><span class="pill pill-bad">No</span> — every row needs a rewrite</td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-ok">Yes</span></td></tr>
+            <tr><td><strong>Survives a tenant-key rename</strong></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-bad">No</span> — tenant segment is baked into every row</td><td><span class="pill pill-ok">Yes</span> — tenant key is supplied at resolve time from the authenticated session/DB connection, never stored per-row</td></tr>
+            <tr><td><strong>Survives local disk → object storage swap</strong></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-bad">No</span> — <code>/uploads/</code> prefix is a local-disk-serving artifact</td><td><span class="pill pill-ok">Yes</span> — the key is provider-agnostic; only <code>resolvePublicUrl()</code> changes</td></tr>
+            <tr><td><strong>Frontend impact</strong></td><td>None (already a full URL)</td><td>None (original report's assumption)</td><td>Requires resolving through an API/service call or a lightweight backend URL-signing endpoint rather than reading a ready-made string — a real but bounded cost</td></tr>
+            <tr><td><strong>Coupling</strong></td><td>Couples DB to hostname/CDN</td><td>Couples DB to tenant key <em>and</em> to the local static-resource convention</td><td>Couples DB to nothing except "which category, which filename" — the two facts that are actually permanent about a stored file</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warn">
+        <span class="cal-label">Correction to the original report</span>
+        <p>Part 11 of the original study picked Option B specifically <em>because</em> it requires zero frontend change ("the frontend needs zero changes if the new scheme still resolves through the same <code>/uploads/**</code> URL space"). That's a real, valid short-term argument — and for the immediate migration described in the original Part 12, it is the pragmatic choice. But it optimizes for the frontend cost of <em>this one migration</em> at the expense of baking two more assumptions (tenant key, serving convention) into ~10 database columns that Part 09 of the original report already predicted would need to survive a future storage-backend swap. Section §10 below reconciles this: use Option C as the stored value, and add exactly one new resolution step (already required anyway by the <code>StorageProvider</code> abstraction in Part 02) so the frontend-simplicity goal is still met without re-baking assumptions into data.</p>
+      </div>
+
+      <h3>Recommended: Option C, resolved through the storage abstraction</h3>
+      <p>Store <code>products/{uuid}.jpg</code> — category and filename only, no tenant segment, no protocol, no <code>/uploads/</code> prefix. At read time, the same <code>StorageProvider.resolvePublicUrl(StorageKey)</code> from Part 02 combines the logical key with the current request's tenant (resolved the normal way — the active DB connection already implies the tenant, exactly as every other tenant-scoped query in the app already works) to produce whatever URL is currently correct — local <code>/uploads/{tenant-key}/products/{uuid}.jpg</code> today, a signed S3 URL tomorrow, without ever touching the stored row.</p>
+      <p>This is a genuine change from the original report's Part 10 assumption of "zero frontend changes." The honest accounting: <code>getImageUrl()</code> in <code>urlUtils.js</code> currently assumes the backend already returns a ready-to-use path. Under Option C, the backend DTO layer (not the frontend) does one extra step — resolving the logical key to a URL before serializing the response — so the frontend's <code>getImageUrl()</code> contract is actually preserved unchanged; only backend serialization gains one resolution call per entity, already inside the existing DTO-mapping code, not a new endpoint round-trip.</p>
+    </section>
+
+    <section id="p4">
+      <p class="part-eyebrow">Part 04</p>
+      <h2>Export / Import client architecture</h2>
+      <p class="lead">The original report's Part 08 (client migration) already gets 80% of the way here — tenant-code-rooted folders make a tarball-per-tenant trivial. This section generalizes that into a named, repeatable capability rather than a one-off migration script, and folds in the assets the original scope named but didn't structurally account for: company configuration, templates, documents.</p>
+
+      <h3>Export package contents</h3>
+      <div class="code-block"><pre>{tenant-storage-key}-export-{date}/
+  manifest.json              ← export tool version, timestamp, tenant-storage-key, checksums of every file below
+  database.sql.gz            ← pg_dump of this tenant's database only
+  uploads/
+    products/
+    brands/
+    company/
+    branch/
+    employees/
+    avatars/
+    sales-orders/
+    receipts/
+    tax_filings/
+  config/
+    company-profile.json     ← non-file company settings not captured by the DB dump alone, if any live outside it
+    print-templates/         ← from src/utils print template config, if template bodies are DB-stored, exported alongside
+  checksums.sha256           ← one line per file, verified on import (§7 duplicate/orphan detection reuses this same hashing)</pre></div>
+      <p><code>manifest.json</code> is the piece the original report didn't need (it designed a one-time migration, not a repeatable export) but a real Export/Import feature does: a self-describing header so an import tool can validate compatibility (schema version, storage-key format version) before touching anything.</p>
+
+      <h3>Export flow</h3>
+      <div class="flow">
+        <div class="flow-step"><strong>1.</strong> Resolve tenant storage key (Part 01) — the one stable value the whole package is keyed on</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>2.</strong> <code>pg_dump</code> that tenant's database (already fully independent per-tenant, per the existing "one DB per tenant" model — no change needed here)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>3.</strong> Archive <code>uploads/{tenant-storage-key}/</code> via the active <code>StorageProvider</code> — local disk today (a <code>tar</code>), object storage tomorrow (a prefix-scoped bucket export) — the export tool calls the abstraction, never the filesystem directly, so it works unmodified after any future storage backend swap</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>4.</strong> Compute checksums, write <code>manifest.json</code>, bundle into one package</div>
+      </div>
+
+      <h3>Import flow</h3>
+      <p>The inverse, plus one safety step the original migration plan didn't need but a general-purpose import tool must have: <strong>collision detection</strong>. Importing into an environment that already has a tenant using the same storage key must fail loudly, not overwrite — this is the same "never destructive without confirmation" principle applied to tenant boundaries instead of files.</p>
+      <ul>
+        <li>Validate manifest compatibility (schema/format versions) before any write.</li>
+        <li>Restore database into a freshly named target DB (never overwrite an existing DB with dump restore — matches standard practice already implied by the existing per-tenant-DB model).</li>
+        <li>Extract uploads into a new <code>uploads/{tenant-storage-key}/</code> (or a caller-supplied new key, for cloning a tenant into a sandbox/staging copy — a capability this design gets for free once the storage key is decoupled from deployment identity, per Part 01).</li>
+        <li>Verify every file against <code>checksums.sha256</code> before declaring success — reuses the same hashing infrastructure recommended for orphan/duplicate detection in Part 07, not a separate mechanism.</li>
+      </ul>
+      <div class="callout ok">
+        <span class="cal-label">Why the earlier design already supports this "for free"</span>
+        <p>Because Part 01 decouples the storage key from the Spring profile, and Part 02's abstraction means export/import code calls <code>StorageProvider</code> rather than raw paths, Export/Import isn't a redesign of the upload system — it's a new tool built entirely on top of the same two abstractions everything else already uses. This is the direct payoff of getting Parts 01–02 right before writing any of the nine call-site refactors.</p>
+      </div>
+    </section>
+
+    <section id="p5">
+      <p class="part-eyebrow">Part 05</p>
+      <h2>Backup &amp; disaster recovery</h2>
+      <p class="lead">The original report treated backup/DR as an existing-but-unaudited external concern ("not found as existing automation in this repo, likely a manual/host-level process today"). This section turns that gap into an explicit design rather than leaving it implicit.</p>
+
+      <h3>Independent, per-tenant, per-asset-class backups</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Asset</th><th>Backup mechanism</th><th>Independent of other tenants?</th><th>Independent of the other asset class?</th></tr></thead>
+          <tbody>
+            <tr><td>Database</td><td><code>pg_dump</code> per tenant DB, scheduled</td><td><span class="pill pill-ok">Yes</span> — already true today</td><td><span class="pill pill-ok">Yes</span> — restorable without touching uploads</td></tr>
+            <tr><td>Uploads</td><td>Tarball/snapshot of <code>uploads/{tenant-storage-key}/</code> only, scheduled</td><td><span class="pill pill-ok">Yes</span> — only after Part 01's fix; today's flat directory makes this impossible without manual filtering, exactly the original report's core finding</td><td><span class="pill pill-ok">Yes</span> — restorable without touching the DB</td></tr>
+            <tr><td>Company config / templates</td><td>Included in the DB dump if DB-stored (confirm during implementation which print-template assets are DB rows vs. files); otherwise treated as an uploads-category and covered by the same snapshot</td><td><span class="pill pill-ok">Yes</span>, once classified</td><td>n/a</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Retention policy</h3>
+      <p>Recommend a standard grandfather-father-son rotation, independently configurable per asset class since DB dumps and upload snapshots have different size/change profiles: daily backups retained 14 days, weekly retained 8 weeks, monthly retained 12 months — tunable per tenant tier if some clients contractually require longer retention. This is a policy recommendation, not yet implemented tooling; the existing `audit.retention.months` pattern already used for audit logs is a reasonable model to extend to backups.</p>
+
+      <h3>Restore verification — don't trust a backup you haven't restored</h3>
+      <p>A backup that has never been restored is a hope, not a guarantee. Recommend a scheduled, automated "restore drill": periodically (e.g. monthly) restore the latest backup of one rotating tenant into an isolated scratch environment and run the same validation checklist the original report's Part 13 already defined for the migration (HTTP-fetch every path, row-count sanity checks) — reusing that checklist as ongoing DR hygiene, not a one-time migration gate.</p>
+
+      <h3>Disaster recovery workflow</h3>
+      <div class="flow">
+        <div class="flow-step"><strong>1.</strong> Declare incident; identify last-known-good backup timestamp for the affected tenant(s)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>2.</strong> Provision a clean target (new PVC / new DB instance) — never restore over a partially-corrupted live target</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>3.</strong> Restore DB dump and upload snapshot independently and in parallel (they don't depend on each other, per the table above)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>4.</strong> Run the validation checklist (original report Part 13) before cutting traffic back</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>5.</strong> Cut over; keep the failed environment quarantined (not deleted) until root cause is understood</div>
+      </div>
+      <p>Because uploads and database are independently backed up and independently restorable, a corruption event affecting only one (e.g. a bad migration script mangling DB rows, or a disk failure on the uploads PVC) never forces restoring the other — directly satisfying the task's requirement that "uploads and databases remain independently restorable."</p>
+    </section>
+
+    <section id="p6">
+      <p class="part-eyebrow">Part 06</p>
+      <h2>File metadata — centralize it</h2>
+      <p class="lead">The original report didn't address metadata at all beyond the bare path/filename columns already scattered across ten entities. On review, this is a real gap: none of the nine existing storage call sites record MIME type, size, checksum, or uploader — all facts that matter for the maintenance (Part 07), security (Part 08), and export/DR (Parts 04–05) capabilities this blueprint is adding.</p>
+
+      <h3>Recommendation: yes, centralize — one new table</h3>
+      <p>Add a single <code>stored_file</code> table, written once per <code>StorageProvider.store()</code> call (i.e., inside the shared <code>TenantFileStorageService</code>, not duplicated per module — the same collapsing-nine-into-one principle as Part 02):</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">id</td><td>PK (UUIDv7, matching the project's existing <code>BaseEntity</code> convention)</td></tr>
+            <tr><td class="mono">tenant_storage_key</td><td>Which tenant, per Part 01 — redundant with the DB itself being per-tenant, but valuable for any future cross-tenant admin/reporting tooling and for the export manifest in Part 04</td></tr>
+            <tr><td class="mono">logical_key</td><td>The Option C value from Part 03 (<code>products/{uuid}.jpg</code>) — the join key other entities' path columns reference</td></tr>
+            <tr><td class="mono">original_filename</td><td>As uploaded by the user — needed for download-as, and for the collision/sanitization audit in Part 08</td></tr>
+            <tr><td class="mono">stored_filename</td><td>The generated (UUID-based) name actually on disk/in the bucket</td></tr>
+            <tr><td class="mono">mime_type</td><td>Detected server-side (Part 08 — never trust the client-supplied <code>Content-Type</code> alone)</td></tr>
+            <tr><td class="mono">size_bytes</td><td>For storage usage reports (Part 07) and max-size enforcement audit trail</td></tr>
+            <tr><td class="mono">checksum_sha256</td><td>Duplicate detection (Part 07), integrity verification on export/import (Part 04), corruption detection during DR restore (Part 05)</td></tr>
+            <tr><td class="mono">storage_provider</td><td><code>local</code> / <code>s3</code> / <code>minio</code> / <code>azure</code> / <code>gcs</code> — makes hybrid storage (Part 09) queryable: "show me every file still on local disk"</td></tr>
+            <tr><td class="mono">category</td><td><code>products</code>, <code>brands</code>, <code>company</code>, etc. — the same category taxonomy already established</td></tr>
+            <tr><td class="mono">uploaded_by, created_at</td><td>Standard <code>BaseEntity</code> audit fields, already the project convention</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The nine existing entity columns (<code>Product.imageUrl</code>, <code>Brand.logoPath</code>, etc.) keep their current role as the domain-facing reference — they store the same <code>logical_key</code> value (Part 03), not a foreign key to <code>stored_file.id</code>, to avoid a disruptive join-everywhere refactor. <code>stored_file</code> is a secondary index over the same logical keys, populated as a side effect of every write, useful for cross-cutting queries (usage reports, orphan detection, duplicate detection) that no single domain entity can answer on its own today.</p>
+      <div class="callout">
+        <span class="cal-label">Cost/benefit, stated plainly</span>
+        <p>This is one new table and one extra insert per upload — cheap. The alternative (no centralized metadata) means every future maintenance feature in Part 07 has to independently union-query nine different entity tables to answer "what files exist and how big are they," which is exactly the kind of duplicated-logic problem this whole redesign exists to stop introducing.</p>
+      </div>
+    </section>
+
+    <section id="p7">
+      <p class="part-eyebrow">Part 07</p>
+      <h2>Storage maintenance</h2>
+      <p class="lead">None of this exists today (the original audit found no cleanup jobs, no usage reporting for uploads) and none of it was in scope for the original report. All of it becomes straightforward once Part 06's <code>stored_file</code> table exists — each feature below is a query or a scheduled job over that one table, not new per-module logic.</p>
+      <div class="card-grid">
+        <div class="card"><h4>Orphan file detection</h4><p>A file exists in <code>stored_file</code> (or on disk) with no domain entity referencing its <code>logical_key</code> — e.g. a Product was deleted but its image row/file was not cleaned up. Scheduled job: for each category, join <code>stored_file</code> against the owning entity table's active rows; anything unmatched is a candidate orphan.</p></div>
+        <div class="card"><h4>Automatic cleanup</h4><p>Orphans older than a grace period (e.g. 30 days — long enough to survive soft-delete/undo windows, matching the project's existing <code>isActive</code> soft-delete convention) are safe to physically delete. Never delete on first detection; always a report-then-sweep cadence, mirroring the project's existing <code>AuditLogRetentionJob</code> pattern.</p></div>
+        <div class="card"><h4>Duplicate detection</h4><p><code>checksum_sha256</code> makes this a single <code>GROUP BY checksum_sha256 HAVING COUNT(*) > 1</code> query per tenant. Useful for storage cost reports; actual dedup (content-addressed storage) is a further optimization, not required for v1.</p></div>
+        <div class="card"><h4>Storage usage reports</h4><p><code>SUM(size_bytes) GROUP BY tenant_storage_key, category</code> — direct, cheap, and finally possible because size is actually recorded (it isn't today).</p></div>
+        <div class="card"><h4>Per-tenant storage statistics</h4><p>Same query, surfaced as an admin-facing dashboard tile — total storage, growth trend, largest category — useful both operationally and as a factual basis for any future tiered-pricing-by-storage conversation.</p></div>
+        <div class="card"><h4>Folder health validation</h4><p>A scheduled check that every <code>tenant_storage_key</code> with active DB rows actually has its expected category subfolders present on the active <code>StorageProvider</code> — catches a mis-mounted PVC or a failed export/import early, before a user hits a 404.</p></div>
+      </div>
+    </section>
+
+    <section id="p8">
+      <p class="part-eyebrow">Part 08</p>
+      <h2>Security review</h2>
+      <p class="lead">The original report didn't do a security pass on the upload paths at all. This one matters independently of the tenant-isolation redesign — several of these gaps are exploitable today, in the current flat-directory system, regardless of whether this migration ships.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Concern</th><th>Current state (per original audit)</th><th>Recommendation</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Path traversal</strong></td><td>Not verified as guarded in any of the 9 storage classes — original-filename components are concatenated into paths in at least one site (Sales Order attachments) without a documented traversal check</td><td>Centralize in the <code>StorageProvider</code>/<code>StorageKey</code> layer (Part 02): strip any <code>../</code>, normalize, and reject any resolved path that escapes the tenant's root directory — one implementation, enforced for all nine call sites automatically, impossible to skip per-module</td></tr>
+            <tr><td><strong>Filename sanitization</strong></td><td>Only a UUID <em>prefix</em> is added in most modules; the original filename (including its extension and any embedded special characters) is preserved as a suffix</td><td>Sanitize to an allow-listed character set, cap length, and separate "what the user called it" (kept only in metadata, Part 06's <code>original_filename</code>) from "what's actually on disk" (always a generated name, never derived from user input)</td></tr>
+            <tr><td><strong>MIME validation</strong></td><td>Not verified as checked anywhere — the client-supplied <code>Content-Type</code> header appears to be trusted implicitly</td><td>Sniff actual content server-side (magic-byte detection, e.g. Apache Tika or equivalent) and reject a mismatch between claimed and actual type — record the detected value in <code>stored_file.mime_type</code>, never the client-asserted one</td></tr>
+            <tr><td><strong>Extension allow-listing</strong></td><td>Not found as enforced anywhere</td><td>Per-category allow-list (images: jpg/png/webp; documents: pdf; no category should ever accept arbitrary extensions) enforced in the shared layer, not per-controller</td></tr>
+            <tr><td><strong>Max upload size</strong></td><td>Global <code>spring.servlet.multipart.max-file-size=300MB</code> — generous for a company logo, permissive enough to allow resource-exhaustion abuse on a small-file category</td><td>Per-category size caps (a logo doesn't need 300MB of headroom; only bulk document/attachment categories plausibly do) enforced in the shared storage layer in addition to the global Tomcat/Spring limit</td></tr>
+            <tr><td><strong>Executable file restrictions</strong></td><td>Not found as explicitly blocked — the extension/MIME gaps above mean nothing currently stops an <code>.exe</code>/<code>.sh</code>/<code>.jsp</code> upload disguised with an image extension</td><td>Explicit deny-list layered under the allow-list (defense in depth) for known-executable signatures regardless of claimed extension; served files should also be served with <code>Content-Disposition</code> and a locked-down MIME response header so a browser never executes an uploaded file even if one slipped through</td></tr>
+            <tr><td><strong>Antivirus integration</strong></td><td>None</td><td>Not required for v1, but the layered <code>StorageProvider</code> design (Part 02) makes this a clean future insertion point: an <code>AvScanningStorageProviderDecorator</code> wrapping any concrete provider, scanning on <code>store()</code> before delegating — added later without touching business logic, the same benefit the layering already provides for backend swaps</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warn">
+        <span class="cal-label">Independent of this migration</span>
+        <p>Every row in this table describes a gap in the <em>current</em> system, not something the tenant-isolation redesign introduces. These are worth fixing as part of the same refactor (since every call site is being touched anyway per Part 02) rather than deferring — fixing nine call sites once, with security built into the shared layer, is strictly cheaper than fixing them individually later.</p>
+      </div>
+    </section>
+
+    <section id="p9">
+      <p class="part-eyebrow">Part 09</p>
+      <h2>Future cloud readiness</h2>
+      <p class="lead">The original report already reasoned about object storage (Option C) and hybrid (Option D) at the strategy level. This section confirms each forward path is actually reachable <em>without business-logic changes</em>, given the layering in Part 02 — the test the task is asking this blueprint to pass.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Future capability</th><th>What changes</th><th>What does NOT change</th></tr></thead>
+          <tbody>
+            <tr><td>CDN integration</td><td><code>StorageProvider.resolvePublicUrl()</code> returns a CDN-fronted URL instead of a direct backend URL; CDN cache invalidation hooked into <code>delete()</code></td><td>Every controller, every DB column (Option C never stored a URL to begin with — Part 03's whole point)</td></tr>
+            <tr><td>Object storage (MinIO/S3/Azure/GCS)</td><td>Swap active <code>StorageProvider</code> bean via <code>storage.provider</code> config; run a one-time bulk copy of existing local files into the new backend, keyed by the same logical keys already stored</td><td>All nine call sites, all DB columns, the frontend contract</td></tr>
+            <tr><td>Multi-region deployment</td><td>Object-storage providers with cross-region replication (S3 CRR, GCS multi-region buckets) configured at the infra layer</td><td>Application code — the abstraction never assumed single-region local disk</td></tr>
+            <tr><td>Horizontal backend scaling (&gt;1 replica per tenant)</td><td>Once on an object-storage provider, the <code>ReadWriteOnce</code> PVC constraint (original report Part 07) simply no longer applies — the backend Deployment can move from <code>Recreate</code>/<code>replicas: 1</code> to <code>RollingUpdate</code>/<code>replicas: N</code></td><td>No application code change — this was already true the moment local disk stops being the bottleneck; the abstraction doesn't need to change again to unlock it</td></tr>
+            <tr><td>ReadWriteMany storage (interim step, before full object storage)</td><td>An NFS-backed or cloud-file-share <code>StorageClass</code> swapped into the PVC definition; <code>LocalStorageProvider</code> keeps working unmodified since it only assumes a mounted filesystem path, not a specific volume type</td><td>Zero application code — this is purely a K8s manifest change</td></tr>
+            <tr><td>Hybrid storage (some tenants local, some cloud, or gradual migration)</td><td>A <code>CompositeStorageProvider</code> or per-tenant provider selection (config keyed on <code>tenant_storage_key</code>, not on Spring profile — Part 01 pays off again here) routes each tenant to its assigned backend</td><td>Business logic still calls one interface; it never knows which tenant is on which backend</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The throughline: every future capability in this list is reachable purely by adding a new <code>StorageProvider</code> implementation or a new config value — never by touching a controller, a service class outside the storage layer, or a frontend file. That is the concrete, verifiable meaning of "storage backends can be changed through configuration rather than business logic changes," which was the task's explicit requirement for Part 02.</p>
+    </section>
+
+    <section id="p10">
+      <p class="part-eyebrow">Part 10</p>
+      <h2>Final implementation blueprint</h2>
+
+      <h3>Final recommended architecture</h3>
+      <p>Local disk today, behind a <code>StorageProvider</code> interface (Part 02), keyed on a dedicated immutable <code>tenant_storage_key</code> (Part 01, not the Spring profile), with database columns holding a provider-agnostic logical key (Part 03, not a URL), a centralized <code>stored_file</code> metadata table (Part 06) backing maintenance/security/export tooling (Parts 04, 05, 07, 08), and object storage documented as a config-only swap-in for whenever horizontal backend scaling is actually needed (Part 09) — not adopted now.</p>
+
+      <h3>Folder structure (on the active <code>LocalStorageProvider</code>)</h3>
+      <div class="code-block"><pre>uploads/
+  {tenant-storage-key}/          ← e.g. tsk-a1x9k2, NOT the Spring profile name
+    products/
+    brands/
+    company/
+    branch/
+    employees/
+    avatars/
+    sales-orders/{orderId}/
+    receipts/
+    tax_filings/</pre></div>
+      <p>Structurally identical to the original report's Part 10 — the only change is what fills in <code>{tenant-storage-key}</code>: a dedicated stable identifier (Part 01) instead of the Spring profile name.</p>
+
+      <h3>Storage abstraction design</h3>
+      <p><code>StorageProvider</code> interface → <code>LocalStorageProvider</code> (active) → future <code>MinIOStorageProvider</code> / <code>S3StorageProvider</code> / <code>AzureBlobStorageProvider</code> / <code>GcsStorageProvider</code>, selected by config, wrapped by a tenant-aware <code>TenantFileStorageService</code> that all business logic calls (Part 02). <code>StorageKey</code> is the shared value type that centralizes path construction, sanitization, and traversal checks (Parts 02, 08).</p>
+
+      <h3>Tenant identification strategy</h3>
+      <p>A dedicated, immutable <code>tenant_storage_key</code>, assigned once at provisioning, stored in that tenant's own properties file as a new property (never derived from the filename or the Spring profile name itself). Survives client renames, profile renames, environment consolidation, and any future move away from one-profile-per-tenant deployment (Part 01).</p>
+
+      <h3>Database storage strategy</h3>
+      <p>Logical storage key only (e.g. <code>products/{uuid}.jpg</code>) in every existing path column — no tenant segment, no protocol, no serving-convention prefix baked in. Resolved to an actual URL at serialization time via <code>StorageProvider.resolvePublicUrl()</code>, keeping the frontend's existing <code>getImageUrl()</code> contract intact (Part 03).</p>
+
+      <h3>Migration strategy</h3>
+      <p>The original report's Part 12 (copy → rewrite DB → backward-compatible fallback route → validate → cutover) remains structurally sound and is <strong>not</strong> being replaced — only its inputs change: the path segment inserted is <code>tenant_storage_key</code> rather than the Spring profile name, and the DB rewrite target is the Option C logical key rather than a full relative URL. Because no tenant has been migrated yet, this costs nothing extra to correct now.</p>
+
+      <h3>Backup strategy</h3>
+      <p>Independent per-tenant, per-asset-class backups (DB dump, upload snapshot) on a grandfather-father-son retention schedule, with scheduled restore-drill verification reusing the same validation checklist as migration cutover (Part 05).</p>
+
+      <h3>Security architecture</h3>
+      <p>Centralized in the shared storage layer: traversal-safe key construction, generated-only stored filenames, server-side MIME sniffing, per-category extension allow-lists, per-category size caps, executable-signature deny-listing, locked-down response headers — with a clean future insertion point for antivirus scanning as a provider decorator (Part 08).</p>
+
+      <h3>Kubernetes compatibility</h3>
+      <p>No structural change to the existing per-tenant PVC / <code>Recreate</code>-strategy / single-replica model (original report Part 07 stands). The <code>tenant_storage_key</code> subfolder lives inside the same mount point. The <code>ReadWriteOnce</code> constraint is explicitly *not* solved by this blueprint — it's solved later, by the object-storage swap-in described in Part 09, when and if multi-replica scaling is actually needed.</p>
+
+      <h3>Future cloud migration path</h3>
+      <p>Config-only <code>StorageProvider</code> swap (local → MinIO/S3/Azure/GCS), CDN URL resolution, ReadWriteMany or object storage removing the single-replica constraint, hybrid per-tenant provider routing — all reachable without touching business logic, per Part 09's table.</p>
+
+      <h3>Risks</h3>
+      <ul>
+        <li><strong>Scope creep risk:</strong> this blueprint adds a new table (<code>stored_file</code>), a new interface layer, and a new identity field on top of the original's simpler nine-call-site refactor. Recommend treating Parts 01–03 (tenant key, storage abstraction, logical DB key) as the non-negotiable core of Phase 1, and Parts 04–08 (export/import, DR automation, maintenance jobs, security hardening) as separately schedulable follow-on phases — see the phase table below.</li>
+        <li><strong>Frontend resolution cost:</strong> Option C (Part 03) requires the backend to resolve logical keys to URLs at serialization time — a small, real addition to every DTO mapper that currently returns a path column verbatim. Bounded and mechanical, but not literally "zero change" the way the original report's Option B was.</li>
+        <li><strong>Tenant-key provisioning discipline:</strong> the whole benefit of Part 01 depends on the storage key never being reused or reassigned. This needs to be a documented provisioning-checklist item, not just a good intention — a single accidental key collision between two tenants would recreate the exact cross-tenant exposure this report exists to prevent.</li>
+      </ul>
+
+      <h3>Trade-offs</h3>
+      <ul>
+        <li>Logical storage key (Option C) trades a small backend resolution cost for permanent independence from hostname, tenant-key, and storage-backend changes — judged worth it given this report's stated purpose is specifically to survive exactly those kinds of changes.</li>
+        <li>A dedicated <code>stored_file</code> metadata table trades one extra insert per upload for making Parts 04, 05, 07, and 08 straightforward queries instead of ad-hoc per-module logic — judged worth it since those four capabilities were explicitly requested.</li>
+        <li>Staying on local disk (not adopting object storage now) trades the CDN/horizontal-scaling benefits of Option C from the original report for zero new infrastructure risk today — judged worth it because nothing in the current single-replica-per-tenant K8s model needs those benefits yet, and the abstraction preserves the option cleanly for later.</li>
+      </ul>
+
+      <h3>Recommended implementation phases</h3>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Phase</th><th>Scope</th><th>Rough effort</th></tr></thead>
+          <tbody>
+            <tr><td><strong>0</strong></td><td>Decide and provision <code>tenant_storage_key</code> for all 14 existing tenants (Part 01) — a one-time administrative step, no code, before Phase 1 starts</td><td>&lt;0.5 day</td></tr>
+            <tr><td><strong>1</strong></td><td>Build <code>StorageProvider</code> interface + <code>LocalStorageProvider</code> + <code>StorageKey</code> + tenant-aware <code>TenantFileStorageService</code> (Part 02); refactor all 9 call sites; centralize sanitization/traversal/MIME/extension/size checks (Part 08) as part of the same refactor</td><td>2–2.5 days (absorbs the original report's Phase 1+2, plus security hardening done once instead of later)</td></tr>
+            <tr><td><strong>2</strong></td><td>Add <code>stored_file</code> metadata table (Part 06); wire population into <code>TenantFileStorageService.store()</code></td><td>0.5–1 day</td></tr>
+            <tr><td><strong>3</strong></td><td>Switch DB columns to Option C logical keys (Part 03); add backend-side URL resolution at DTO-serialization time; migrate the 2 absolute-path outliers (ReceiptVoucher, TaxFiling)</td><td>1–1.5 days</td></tr>
+            <tr><td><strong>4</strong></td><td>Batch migration + backward-compatible fallback route + validation (original report Part 12, using the corrected tenant key and logical-key format); dry run on one tenant, then roll out to the remaining 13</td><td>1 day build + ~0.5 day/tenant rollout, per original Part 14 pacing</td></tr>
+            <tr><td><strong>5</strong></td><td>Storage maintenance jobs — orphan detection, cleanup sweep, duplicate report, usage statistics, folder health check (Part 07)</td><td>1–1.5 days</td></tr>
+            <tr><td><strong>6</strong></td><td>Export/Import client tooling (Part 04) — manifest format, export flow, import flow with collision detection</td><td>1.5–2 days</td></tr>
+            <tr><td><strong>7</strong></td><td>Backup/DR automation — scheduled per-tenant, per-asset-class backups, retention rotation, scheduled restore-drill job (Part 05)</td><td>1–1.5 days</td></tr>
+            <tr><td><strong>8</strong></td><td>(Deferred, not scheduled) Swap in an object-storage <code>StorageProvider</code>, if/when multi-replica backend scaling becomes an actual requirement (Part 09)</td><td>Separate future initiative</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Phases 0–4 are the non-negotiable core — they alone deliver everything the original report set out to solve (independent client migration), corrected for long-term identity and database-format stability. Phases 5–7 are valuable, explicitly requested in this review, and cleanly separable — each can ship independently once Phases 0–4 are live, in any order that matches operational priority.</p>
+    </section>
+
+    <section id="p11">
+      <p class="part-eyebrow">Part 11</p>
+      <h2>What changed from the original report, and why</h2>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Decision</th><th>Original report (2026-07-23, first pass)</th><th>This review</th><th>Changed?</th></tr></thead>
+          <tbody>
+            <tr><td>Tenant identifier</td><td><code>spring.profiles.active</code> — "no new identity concept"</td><td>Dedicated immutable <code>tenant_storage_key</code>, provisioned once, never derived from deployment config</td><td><span class="pill pill-bad">Yes — corrected</span>. The profile name is a deployment label (and 3 of 14 profiles aren't even client names); reusing it re-couples storage identity to something the K8s work is explicitly trying to make swappable, and the existing <code>client1..6</code> → named-profile drift shows renames already happen in practice.</td></tr>
+            <tr><td>Storage abstraction</td><td>Single <code>TenantFileStorageService</code> class</td><td>Layered <code>StorageProvider</code> interface with a <code>LocalStorageProvider</code> implementation, wrapped by a thinner tenant-aware service</td><td><span class="pill pill-warn">Expanded, not reversed</span>. The original direction (one shared component) was correct; this review adds the interface boundary needed to actually make "swap the backend via config" true rather than aspirational.</td></tr>
+            <tr><td>Database storage format</td><td>Relative URL (<code>/uploads/{tenant}/products/{uuid}.jpg</code>), chosen explicitly for zero frontend change</td><td>Logical storage key only (<code>products/{uuid}.jpg</code>), resolved to a URL at serialization time</td><td><span class="pill pill-bad">Yes — corrected</span>. The original choice optimized for this migration's frontend cost at the expense of baking tenant identity and a local-disk-specific serving convention into ~10 DB columns — directly contradicting the original's own Part 09 goal of surviving a future storage-backend swap.</td></tr>
+            <tr><td>Folder structure (<code>{key}/{category}/</code> shape)</td><td>Recommended</td><td>Unchanged in shape; only what fills <code>{key}</code> changes</td><td><span class="pill pill-ok">No change</span></td></tr>
+            <tr><td>K8s / PVC model</td><td>No structural change; RWO constraint acknowledged and deferred</td><td>Same conclusion, reaffirmed after review</td><td><span class="pill pill-ok">No change</span></td></tr>
+            <tr><td>Object storage adoption timing</td><td>Deferred — local disk now, object storage as a documented future step</td><td>Same conclusion, reaffirmed — and now concretely reachable via config alone, per Part 09's capability table</td><td><span class="pill pill-ok">No change in decision; strengthened justification</span></td></tr>
+            <tr><td>Migration plan shape (copy → rewrite → validate → cutover)</td><td>Defined</td><td>Same shape retained; only its two inputs (tenant key, DB value format) are corrected before it's ever run</td><td><span class="pill pill-ok">No change in shape</span></td></tr>
+            <tr><td>Security hardening</td><td>Not addressed</td><td>Full review added (Part 08) — real gaps in the current system, independent of this migration</td><td><span class="pill pill-accent">New scope</span>, not a correction</td></tr>
+            <tr><td>File metadata, maintenance, export/import, backup/DR</td><td>Not addressed (out of original scope)</td><td>Fully designed (Parts 04–07)</td><td><span class="pill pill-accent">New scope</span>, not a correction — the original report's scope was narrower by request</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Which architecture is the final, production-ready one</h3>
+      <div class="callout ok">
+        <span class="cal-label">Verdict</span>
+        <p>This document, <strong>File Storage Implementation Blueprint</strong>, is the final architecture to implement against — not because the original report was wrong in its overall direction (it correctly diagnosed the problem, correctly ruled out premature object-storage adoption, and correctly designed the folder/migration shape), but because two of its foundational choices — tenant identity source and database storage format — would have been expensive to unwind after Phase 1 shipped, and this review catches both while the cost of changing them is still zero. Treat the original report as the accurate <em>problem statement and audit</em> (Parts 01–08 of that document remain valid ground truth and are not superseded), and this blueprint as the <em>implementation-ready design</em> that supersedes its Parts 09–14 specifically for the tenant-key and database-format decisions, while carrying forward everything else unchanged.</p>
+      </div>
+    </section>
+
+    <footer class="doc-footer">
+      Prepared as a critical architecture review only — no code was written or changed, no existing report's findings were re-audited beyond confirming that no <code>tenant.code</code>/<code>company.code</code>-equivalent field or object-storage dependency already exists (both confirmed absent). All recommendations here are design decisions, not verified-against-code claims, except where explicitly cross-referenced to the original 2026-07-23 audit.
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

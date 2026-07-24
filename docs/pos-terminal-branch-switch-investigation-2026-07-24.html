@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POS Terminal &amp; Session Restoration — Branch-Switch Investigation</title>
+<style>
+  :root{
+    --bg:#faf9f6; --surface:#ffffff; --border:#e4ded0;
+    --ink:#1c1a15; --ink-soft:#5a5648; --ink-faint:#8a8574;
+    --accent:#8a6d1f; --accent-bg:#f5ecd3; --accent-border:#e3d29c;
+    --code-bg:#f1ede1; --code-border:#ddd5bf;
+    --ok:#2f6b3f; --warn:#a8501c; --bad:#a3311f; --bad-bg:#fbe9e6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#171510; --surface:#201d16; --border:#3a3527;
+      --ink:#ece7d8; --ink-soft:#b9b39e; --ink-faint:#847e69;
+      --accent:#e0bb56; --accent-bg:#2b2513; --accent-border:#4a3f1e;
+      --code-bg:#211f16; --code-border:#3a3527;
+      --ok:#7dbd8c; --warn:#e0935c; --bad:#e17b6a; --bad-bg:#2e1c17;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#171510; --surface:#201d16; --border:#3a3527;
+    --ink:#ece7d8; --ink-soft:#b9b39e; --ink-faint:#847e69;
+    --accent:#e0bb56; --accent-bg:#2b2513; --accent-border:#4a3f1e;
+    --code-bg:#211f16; --code-border:#3a3527;
+    --ok:#7dbd8c; --warn:#e0935c; --bad:#e17b6a; --bad-bg:#2e1c17;
+  }
+  :root[data-theme="light"]{
+    --bg:#faf9f6; --surface:#ffffff; --border:#e4ded0;
+    --ink:#1c1a15; --ink-soft:#5a5648; --ink-faint:#8a8574;
+    --accent:#8a6d1f; --accent-bg:#f5ecd3; --accent-border:#e3d29c;
+    --code-bg:#f1ede1; --code-border:#ddd5bf;
+    --ok:#2f6b3f; --warn:#a8501c; --bad:#a3311f; --bad-bg:#fbe9e6;
+  }
+
+  @font-face{
+    font-family:'Fraunces';
+    src:local('Georgia');
+    font-weight:400 700;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
+    font-size:16.5px; line-height:1.65;
+    max-width:100%;
+    overflow-x:hidden;
+  }
+  .page{
+    max-width:840px; margin:0 auto; padding:4.5rem 1.75rem 6rem;
+  }
+
+  .kicker{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    text-transform:uppercase; letter-spacing:.14em; font-size:.72rem;
+    color:var(--accent); font-weight:600; margin:0 0 .9rem;
+  }
+  h1{
+    font-size:2.15rem; line-height:1.18; font-weight:700; margin:0 0 .6rem;
+    text-wrap:balance; letter-spacing:-.01em;
+  }
+  .meta{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    font-size:.88rem; color:var(--ink-soft); display:flex; flex-wrap:wrap;
+    gap:.4rem 1.2rem; margin:0 0 2.2rem; padding-bottom:1.6rem;
+    border-bottom:1px solid var(--border);
+  }
+  .meta strong{color:var(--ink);}
+
+  .verdict{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    background:var(--accent-bg); border:1px solid var(--accent-border);
+    border-radius:3px; padding:1.1rem 1.3rem; margin:0 0 2.6rem;
+    font-size:.98rem; color:var(--ink);
+  }
+  .verdict b{color:var(--accent);}
+
+  h2{
+    font-size:1.4rem; font-weight:700; margin:3rem 0 1rem;
+    padding-bottom:.5rem; border-bottom:2px solid var(--border);
+    text-wrap:balance;
+  }
+  h3{
+    font-size:1.08rem; font-weight:700; margin:2rem 0 .7rem;
+    color:var(--ink);
+  }
+  p{margin:0 0 1.05rem; max-width:68ch;}
+  ul,ol{margin:0 0 1.1rem; padding-left:1.4rem;}
+  li{margin-bottom:.45rem; max-width:66ch;}
+  a{color:var(--accent); text-decoration-color:var(--accent-border); text-underline-offset:2px;}
+  a:hover{text-decoration-thickness:2px;}
+  a:focus-visible, button:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+  code{
+    font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    font-size:.86em; background:var(--code-bg); border:1px solid var(--code-border);
+    border-radius:3px; padding:.1em .38em; color:var(--ink);
+  }
+  pre{
+    background:var(--code-bg); border:1px solid var(--code-border); border-radius:5px;
+    padding:1.1rem 1.2rem; overflow-x:auto; margin:0 0 1.3rem;
+    font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    font-size:.83rem; line-height:1.6; max-width:100%;
+  }
+  pre code{background:none; border:none; padding:0; font-size:1em;}
+
+  .tablewrap{overflow-x:auto; margin:0 0 1.3rem;}
+  table{border-collapse:collapse; width:100%; min-width:480px; font-size:.92rem;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
+  th,td{text-align:left; padding:.55rem .8rem; border-bottom:1px solid var(--border);}
+  th{font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); font-weight:600;}
+  td code{font-size:.82em;}
+
+  .trace{
+    background:var(--code-bg); border:1px solid var(--code-border); border-radius:5px;
+    padding:1.3rem 1.4rem; margin:0 0 1.5rem; overflow-x:auto;
+    font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+    font-size:.8rem; line-height:1.75; white-space:pre;
+  }
+  .trace .step{color:var(--ink-faint);}
+  .trace .bad{color:var(--bad); font-weight:600;}
+  .trace .ok{color:var(--ok);}
+
+  .filelist{
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    font-size:.94rem;
+  }
+  .filelist .tag{
+    display:inline-block; font-size:.68rem; text-transform:uppercase; letter-spacing:.06em;
+    font-weight:700; padding:.15em .55em; border-radius:3px; margin-right:.6em;
+    vertical-align:middle;
+  }
+  .tag.be{background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent-border);}
+  .tag.fe{background:var(--bad-bg); color:var(--bad); border:1px solid color-mix(in srgb, var(--bad) 35%, transparent);}
+
+  .fixlist{list-style:none; padding-left:0; counter-reset:fixnum;}
+  .fixlist li{
+    counter-increment:fixnum; position:relative; padding-left:2.6rem; margin-bottom:1.1rem;
+  }
+  .fixlist li::before{
+    content:counter(fixnum); position:absolute; left:0; top:.05em;
+    width:1.9rem; height:1.9rem; border-radius:50%; background:var(--accent-bg);
+    border:1px solid var(--accent-border); color:var(--accent);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    font-weight:700; font-size:.85rem; display:flex; align-items:center; justify-content:center;
+  }
+
+  hr.rule{border:none; border-top:1px solid var(--border); margin:2.6rem 0;}
+
+  footer{
+    margin-top:3.5rem; padding-top:1.5rem; border-top:1px solid var(--border);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    font-size:.82rem; color:var(--ink-faint);
+  }
+
+  @media (max-width:600px){
+    .page{padding:2.8rem 1.2rem 4rem;}
+    h1{font-size:1.7rem;}
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <p class="kicker">Investigation Report — BillBull POS</p>
+  <h1>POS Terminal &amp; Session Restoration — Branch-Switch Investigation</h1>
+  <div class="meta">
+    <span><strong>Repo:</strong> BillBull Retail</span>
+    <span><strong>Branch:</strong> <code>feature/billpos</code></span>
+    <span><strong>Date:</strong> 2026-07-24</span>
+  </div>
+
+  <div class="verdict">
+    <b>Verdict:</b> architectural bug, not intentional branch-isolation behavior — confirmed by direct code read, not inference.
+  </div>
+
+  <h2>Executive summary</h2>
+  <p>Terminal identity is keyed on a single global <code>device_fingerprint</code> value with a database-level unique constraint, but a physical till is expected to hold one terminal identity <em>per branch</em>. There is no composite <code>(fingerprint, branch)</code> identity anywhere in the stack. Every time the registration code meets a fingerprint that already belongs to a different branch, it detaches the fingerprint from the old terminal row and mints a new one for the current branch — a one-way, destructive hand-off.</p>
+  <p>Branch switching on the frontend never signals the POS page at all, so the stale terminal/session state simply sits there until the page remounts, at which point the hand-off above fires.</p>
+  <p>Nothing here is a security or isolation feature. It is a missing key column and a missing event listener.</p>
+
+  <h2>Root cause, in order of appearance</h2>
+
+  <h3>1. The backend match key excludes branch by design, not by accident</h3>
+  <p><code>PosTerminalService.registerOrRefresh()</code> — <code>billbull-backend/.../pos/terminal/PosTerminalService.java:50</code></p>
+  <p>Two lookups are tried, in order:</p>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Step</th><th>Lookup</th><th>Branch-aware?</th></tr>
+    <tr><td>1</td><td><code>repo.findByTerminalId(terminalId)</code></td><td>Only used <em>after</em> the row is found — if branch doesn't match, falls through silently (no error, no cleanup)</td></tr>
+    <tr><td>2</td><td><code>repo.findByDeviceFingerprint(deviceFingerprint)</code></td><td><strong>No.</strong> Fingerprint is the sole key — <code>PosTerminalRepository.java:12</code></td></tr>
+  </table>
+  </div>
+  <p>The fingerprint column carries a database-level unique index (<code>PosTerminal.java:10</code>), so it is structurally impossible for the same device to hold two live terminal rows — one per branch — at once. When step 2 finds the fingerprint parked on a different branch's terminal:</p>
+  <pre><code>// PosTerminalService.java:107-111
+} else {
+    // Device fingerprint belongs to another branch. Unlink it so the new branch can claim it.
+    t.setDeviceFingerprint(null);
+    repo.saveAndFlush(t);
+}</code></pre>
+  <p>The old terminal is stripped of its fingerprint — permanently unreachable by any future lookup — and a brand-new terminal row is created for the current branch (<code>PosTerminalService.java:114-153</code>). The comment even documents the hand-off as deliberate — just scoped wrong. This directly consumes one terminal slot per branch per device, forever, since the orphaned rows are never deleted (only eventually caught by the unrelated auto-archive sweep on <code>lastActivityAt</code>).</p>
+
+  <h3>2. Frontend identity keys are global, not per-branch</h3>
+  <p><code>POSSales.jsx:1826-1837</code>:</p>
+  <pre><code>let fp = localStorage.getItem('billbull:pos:device_fingerprint');   // one per browser, forever
+...
+const cachedTerminalId = localStorage.getItem('billbull:pos:terminal_id') || null; // last branch registered wins</code></pre>
+  <p>Both keys are global — there is no <code>_${branchId}</code> suffix. Contrast with the scanner-config key three lines away in the same file, which <em>is</em> branch/terminal-scoped (<code>billbull:pos:scanner:${branchId}:${terminalId}</code>) — the pattern for doing this correctly already exists in the codebase, it just wasn't applied to terminal identity itself.</p>
+  <p>Net effect: after registering on Branch B, localStorage's <code>terminal_id</code> now points at Branch B's terminal. Any later attempt to resolve Branch A's terminal sends the wrong ID.</p>
+
+  <h3>3. Branch switching never notifies the POS page</h3>
+  <p><code>BranchContext.jsx:284-300</code> <code>switchBranch()</code> swaps the branch-scoped JWT and fires:</p>
+  <pre><code>window.dispatchEvent(new CustomEvent('billbull:branch-changed', { detail: { branchId: nextValue } }));</code></pre>
+  <p>17 other pages (Sales Orders, Sales Invoice, LPO, GRN, Ledger, Journal Voucher, etc.) listen for this event and re-fetch. <strong>POSSales.jsx has no listener for it at all.</strong> The terminal-registration effect is also mounted once, empty dependency array:</p>
+  <pre><code>useEffect(() => { ... }, []);   // POSSales.jsx:1860 — never re-runs on branch change</code></pre>
+  <p>So switching branch while POS is mounted changes nothing about <code>currentTerminal</code>/<code>currentSession</code> — the stale state is only disturbed on the next full remount of the page, which is exactly when the destructive hand-off in §1 fires.</p>
+
+  <h3>4. Session lookup silently returns "nothing" instead of surfacing the real cause</h3>
+  <p><code>GET /api/pos/sessions/active?terminalId=...</code> → <code>PosSessionService.getActiveSession()</code> (<code>PosSessionService.java:221-237</code>) resolves branch from the JWT server-side and queries:</p>
+  <pre><code>repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN)</code></pre>
+  <p>This composite lookup <em>is</em> correctly branch-aware. But if the client sends a <code>terminalId</code> from localStorage that belongs to a different branch than the current JWT, the row simply doesn't exist under that combination — the endpoint returns <code>204 No Content</code>. There's no distinct signal for "your terminal moved branches"; it looks identical to "you never had a session," which is why the session appears to just vanish.</p>
+
+  <h2>Full lifecycle trace — where it actually breaks</h2>
+  <div class="trace">Browser load (Branch A active)
+  └─ POSSales useEffect([]) fires once
+       ├─ read localStorage: device_fingerprint=F, terminal_id=null (first ever load)
+       ├─ registerPosTerminal(terminalId=null, fingerprint=F)
+       │    └─ backend: no terminalId → skip step 1
+       │       findByDeviceFingerprint(F) → not found → <span class="ok">CREATE Terminal-A (branch=A, fp=F)</span>
+       ├─ localStorage.terminal_id = "Terminal-A"
+       └─ getActivePosSession("Terminal-A") → none yet, fine
+
+User switches Branch A → Branch B (BranchContext.switchBranch)
+  ├─ new branch-scoped JWT issued
+  ├─ dispatches 'billbull:branch-changed'
+  └─ POSSales.jsx: <span class="bad">NO LISTENER</span> — currentTerminal/currentSession untouched, stale in memory
+     (bug surfaces only once the page is navigated away + back, or refreshed)
+
+User navigates away and back to POS (now branch B, per JWT)
+  └─ useEffect([]) fires again on remount
+       ├─ read localStorage: terminal_id="Terminal-A" (stale), fingerprint=F (same, correct)
+       ├─ registerPosTerminal(terminalId="Terminal-A", fingerprint=F)
+       │    └─ backend step 1: findByTerminalId("Terminal-A") → found, but branch A ≠ B → fall through
+       │       backend step 2: findByDeviceFingerprint(F) → finds Terminal-A again → branch mismatch
+       │         → <span class="bad">Terminal-A.deviceFingerprint = null   (ORPHANED — unreachable forever)</span>
+       │         → <span class="ok">CREATE Terminal-B (branch=B, fp=F)</span>
+       ├─ localStorage.terminal_id = "Terminal-B"   (overwrites the branch-A pointer)
+       └─ getActivePosSession("Terminal-B") → none yet on B, fine — but Terminal-A slot on
+          Branch A is now silently consumed with no way to reclaim it
+
+User switches back to Branch A, reopens POS
+  └─ localStorage still says terminal_id="Terminal-B" (branch B), fingerprint=F
+       ├─ registerPosTerminal(terminalId="Terminal-B", fingerprint=F)
+       │    └─ step 1: findByTerminalId("Terminal-B") → branch B ≠ A → fall through
+       │       step 2: findByDeviceFingerprint(F) → finds Terminal-B → branch mismatch
+       │         → <span class="bad">Terminal-B.deviceFingerprint = null   (ORPHANED too, now)</span>
+       │         → <span class="ok">CREATE Terminal-C (branch=A, fp=F)</span>
+       └─ Any session that had been open against "Terminal-A" is now unreachable:
+          nothing in the current state references Terminal-A's terminalId anymore.</div>
+  <p>Each round trip through a branch burns one terminal slot on that branch and abandons the previous terminal row permanently. This is precisely both symptoms reported: terminal-slot exhaustion (issue 1) and lost session/terminal association on return to a branch (issue 2).</p>
+
+  <h2>Is any of this intentional isolation?</h2>
+  <p>No. Branch scoping <em>is</em> enforced correctly in the one place it matters most for security — <code>PosSessionService</code> resolves the branch from the server-side JWT, not from client input, so a session can never be read cross-branch. That's the right pattern. The bug is one layer up: terminal identity has no branch dimension at its storage key, so the system cannot represent "this device has a distinct, simultaneously-valid terminal in both Branch A and Branch B" — which is exactly what a till that's shared or reassigned across branches needs.</p>
+
+  <h2>Files responsible</h2>
+  <div class="filelist">
+    <p><span class="tag be">Backend</span> <code>pos/terminal/PosTerminalService.java:50-154</code> — <code>registerOrRefresh</code>, the actual bug</p>
+    <p><span class="tag be">Backend</span> <code>pos/terminal/PosTerminalRepository.java:12-13</code> — missing composite finder</p>
+    <p><span class="tag be">Backend</span> <code>pos/terminal/PosTerminal.java:10</code> — unique index scoped to fingerprint alone</p>
+    <p><span class="tag be">Backend</span> <code>pos/session/PosSessionService.java:221-237</code> — correct branch-aware lookup (no change needed), but silent 204 on mismatch is a diagnosability gap</p>
+    <p><span class="tag fe">Frontend</span> <code>pages/Sales/POSSales.jsx:1824-1860</code> — global (non-branch-scoped) localStorage keys, mount-only effect</p>
+    <p><span class="tag fe">Frontend</span> <code>context/BranchContext.jsx:284-300</code> — emits <code>billbull:branch-changed</code>, which POSSales never listens for</p>
+  </div>
+  <p><strong>Frontend/backend split:</strong> both sides need changes — this is not fixable from either side alone.</p>
+
+  <h2>Recommended fix (preserves current architecture)</h2>
+  <ol class="fixlist">
+    <li><strong>Backend — make the identity key composite.</strong> Add a unique index on <code>(device_fingerprint, branch_id)</code> instead of <code>device_fingerprint</code> alone, and add <code>findByDeviceFingerprintAndBranchId(fp, branchId)</code> to the repository. Use it as the primary lookup in <code>registerOrRefresh</code> before falling back to a global fingerprint search. This alone lets the same device hold one live terminal row per branch simultaneously — no more forced hand-off.</li>
+    <li><strong>Backend — stop destructively unlinking on cross-branch match.</strong> Once lookup is composite, a cross-branch fingerprint hit means "this device has a different terminal on that other branch" — not an error, just create/reuse the branch-specific row and leave the other branch's row untouched.</li>
+    <li><strong>Frontend — scope the localStorage keys per branch</strong>, following the existing scanner-config pattern already in the file: <code>billbull:pos:terminal_id:${branchId}</code> and (optionally) keep <code>device_fingerprint</code> global since the fingerprint should describe the physical device, not the branch — branch scoping belongs on the terminal-ID cache, not the fingerprint.</li>
+    <li><strong>Frontend — react to <code>billbull:branch-changed</code> in POSSales.jsx.</strong> Re-run the terminal-registration/session-restoration effect (extract it out of the mount-only <code>useEffect([])</code> into a callback triggered both on mount and on the branch-changed event) so a live branch switch immediately looks up the correct branch's terminal instead of waiting for a remount to trigger the corrupting hand-off.</li>
+    <li><strong>Backend — surface the mismatch instead of a bare 204.</strong> When <code>getActiveSession</code> finds a terminal for a different branch than the caller's, return a distinguishable response (e.g. <code>409</code> with a "terminal registered to another branch" body) so the frontend can react explicitly instead of silently treating it as "no session."</li>
+    <li><strong>One-time cleanup migration</strong> to merge/close out currently-orphaned terminal rows (fingerprint stripped, branch mismatch history) so terminal-slot counts return to accurate before the fix ships.</li>
+  </ol>
+  <p>None of this requires touching the auto-archive lifecycle, RBAC, or session-locking logic — those are already correct and branch-aware.</p>
+
+  <footer>BillBull Retail — internal engineering investigation, not for external distribution.</footer>
+</div>
+</body>
+</html>

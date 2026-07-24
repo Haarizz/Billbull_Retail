@@ -3002,6 +3002,7 @@ export default function POSSales() {
         branchName: currentTerminal?.branchName || null,
         branchCode: currentTerminal?.branchCode || null,
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
+        taxInclusive: posSettings?.taxInclusive === true,
         shippingAddress: deliveryAddress,
         driverName: selectedDeliveryPerson?.name || null,
         deliveryPersonEmployeeCode: deliveryDriver || null,
@@ -3217,6 +3218,7 @@ export default function POSSales() {
         depositAmount: 0,
         reserveStockRequested: true,
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
+        taxInclusive: posSettings?.taxInclusive === true,
         items: cartItemsToPayload(currentInvoice.items),
       });
       clearInvoice();
@@ -3356,6 +3358,7 @@ export default function POSSales() {
         remarks: saveLayawayRemarks || null,
         reserveStockRequested: saveLayawayReserveStock,
         billDiscountAmount: currentInvoice.billDiscountAmount || 0,
+        taxInclusive: posSettings?.taxInclusive === true,
         items: cartItemsToPayload(currentInvoice.items),
       });
       if (print) {

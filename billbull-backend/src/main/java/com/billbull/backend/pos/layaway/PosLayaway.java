@@ -106,6 +106,9 @@ public class PosLayaway extends BaseEntity {
     @Column(name = "hold")
     private Boolean hold = Boolean.FALSE;
 
+    @Column(name = "tax_inclusive")
+    private Boolean taxInclusive = Boolean.FALSE;
+
     @Column(name = "converted_invoice_id")
     private Long convertedInvoiceId;
 
@@ -219,6 +222,9 @@ public class PosLayaway extends BaseEntity {
 
     public Boolean getHold() { return hold; }
     public void setHold(Boolean hold) { this.hold = hold; }
+
+    public Boolean getTaxInclusive() { return taxInclusive; }
+    public void setTaxInclusive(Boolean taxInclusive) { this.taxInclusive = taxInclusive; }
 
     public Long getConvertedInvoiceId() { return convertedInvoiceId; }
     public void setConvertedInvoiceId(Long convertedInvoiceId) { this.convertedInvoiceId = convertedInvoiceId; }
