@@ -9,7 +9,9 @@ import java.util.List;
 import java.util.Optional;
 
 public interface PosTerminalRepository extends JpaRepository<PosTerminal, Long> {
-    Optional<PosTerminal> findByDeviceFingerprint(String deviceFingerprint);
+    // Terminal identity is scoped per branch: the same device fingerprint may legitimately match
+    // a different terminal row in every branch it has been used in.
+    Optional<PosTerminal> findByDeviceFingerprintAndBranchId(String deviceFingerprint, Long branchId);
     Optional<PosTerminal> findByTerminalId(String terminalId);
     List<PosTerminal> findByBranchIdAndStatus(Long branchId, PosTerminalStatus status);
     List<PosTerminal> findByBranchIdOrderByTerminalIdAsc(Long branchId);

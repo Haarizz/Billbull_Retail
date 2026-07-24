@@ -7,7 +7,12 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "pos_terminals", indexes = {
     @Index(name = "idx_pos_terminal_branch", columnList = "branch_id"),
-    @Index(name = "idx_pos_terminal_device", columnList = "device_fingerprint", unique = true),
+    @Index(name = "idx_pos_terminal_device", columnList = "device_fingerprint"),
+    // A device's terminal identity is scoped per branch — the same fingerprint may hold one
+    // live terminal in Branch A and a separate one in Branch B simultaneously. See
+    // V47__pos_terminal_device_branch_composite_unique.sql, which drops the old global unique
+    // constraint on device_fingerprint alone in favour of this composite one.
+    @Index(name = "idx_pos_terminal_device_branch", columnList = "device_fingerprint, branch_id", unique = true),
     @Index(name = "idx_pos_terminal_counter", columnList = "counter_id"),
     @Index(name = "idx_pos_terminal_heartbeat", columnList = "last_heartbeat_at")
 })

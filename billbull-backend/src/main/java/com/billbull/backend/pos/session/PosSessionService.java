@@ -231,6 +231,17 @@ public class PosSessionService {
                 }
                 return Optional.of(session);
             }
+            // No open session under this branch+terminalId — if the terminalId exists but belongs
+            // to a different branch (e.g. a stale cached ID from before per-branch terminal
+            // identity, or a genuine cross-branch mismatch), say so explicitly instead of a bare
+            // "no session", so the caller can re-register for the current branch rather than
+            // silently treating a mismatch as "never had a session".
+            terminalRepository.findByTerminalId(terminalId).ifPresent(t -> {
+                if (!branchId.equals(t.getBranchId())) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "Terminal " + terminalId + " is registered to a different branch");
+                }
+            });
             return Optional.empty();
         }
         return Optional.empty();
