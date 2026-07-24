@@ -220,7 +220,10 @@ const QuickAddModal = ({ isOpen, onClose, onSuccess }) => {
                     defaultUnit: { id: parseInt(formData.unitId) },
                     packings: [{ unit: parseInt(formData.unitId), qty: 1, level: 1 }]
                 },
-                tax: { salesTax: 5, purchaseTax: 5 }
+                // No tax inputs on this quick-create form — leave both unset. Sales
+                // flows fall back to the branch's Default VAT Rate; Purchase flows
+                // fall back to 0% (no branch-level default exists for Purchase Tax).
+                tax: { salesTax: null, purchaseTax: null }
             };
 
             const fData = new FormData();

@@ -127,7 +127,9 @@ public class CustomerService {
     @Transactional(readOnly = true)
     public List<Customer> search(String q) {
         if (q == null || q.isBlank()) return List.of();
-        return repository.searchAllFields(q);
+        List<Customer> list = repository.searchAllFields(q);
+        list.forEach(c -> c.getSavedAddresses().size());
+        return list;
     }
 
     @Transactional(readOnly = true)
@@ -139,7 +141,9 @@ public class CustomerService {
         if (n.isEmpty() && m.isEmpty() && e.isEmpty() && t.isEmpty()) {
             return List.of();
         }
-        return repository.findPotentialDuplicates(n, m, e, t);
+        List<Customer> list = repository.findPotentialDuplicates(n, m, e, t);
+        list.forEach(c -> c.getSavedAddresses().size());
+        return list;
     }
 
     // =========================
@@ -468,7 +472,9 @@ public class CustomerService {
         // -------------------------
         // SAVE & RETURN
         // -------------------------
-        return repository.save(customer);
+        Customer saved = repository.save(customer);
+        saved.getSavedAddresses().size(); // Ensure lazy collection is initialized
+        return saved;
     }
 
     // =========================

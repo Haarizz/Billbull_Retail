@@ -33,16 +33,31 @@ public class ProductController {
     private final ProductExportService exportService;
     private final ProductImportService importService;
     private final ModulePermissionService modulePermissionService;
+    private final LegacyTaxAuditService legacyTaxAuditService;
 
     public ProductController(ProductService service, ObjectMapper objectMapper, AuditLogService auditLogService,
             ProductExportService exportService, ProductImportService importService,
-            ModulePermissionService modulePermissionService) {
+            ModulePermissionService modulePermissionService, LegacyTaxAuditService legacyTaxAuditService) {
         this.service = service;
         this.objectMapper = objectMapper;
         this.auditLogService = auditLogService;
         this.exportService = exportService;
         this.importService = importService;
         this.modulePermissionService = modulePermissionService;
+        this.legacyTaxAuditService = legacyTaxAuditService;
+    }
+
+    /**
+     * Phase 7 tax-architecture cleanup: read-only report of products whose Sales Tax %
+     * matches the old hardcoded 5% default and may never have been deliberately configured.
+     * Never modifies data — for an administrator to review before manually clearing a
+     * product's Sales Tax so it inherits the Branch Default VAT Rate.
+     */
+    @GetMapping("/reports/legacy-tax-defaults")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<LegacyTaxAuditEntry>> legacyTaxDefaultsReport() {
+        modulePermissionService.requireCanView("inventory.product");
+        return ResponseEntity.ok(legacyTaxAuditService.findLikelyLegacyDefaults());
     }
 
     // -------------------------------------------------

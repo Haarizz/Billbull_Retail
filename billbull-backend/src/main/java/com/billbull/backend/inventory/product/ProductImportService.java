@@ -259,8 +259,6 @@ public class ProductImportService {
                         "prdrate", "rate", "price");
                 Integer costInclTaxIdx = findContentIndex(headerMap, "cost incl tax", "cost including tax", "nlc");
                 Integer costMethodIdx = findContentIndex(headerMap, "cost method");
-                Integer costInclusiveIdx = findContentIndex(headerMap, "cost inclusive", "cost inclusive?",
-                        "is cost inclusive");
                 Integer wholesalePriceIdx = findContentIndex(headerMap, "wholesale price", "wholesale");
                 Integer minPriceIdx = findContentIndex(headerMap, "min price", "minimum price");
                 Integer maxPriceIdx = findContentIndex(headerMap, "max price", "maximum price");
@@ -553,9 +551,6 @@ public class ProductImportService {
                         if (pointIdx != null || product.getId() == null) {
                             pricing.setLoyaltyPoints(defaultZero(loyaltyPoints));
                         }
-                        pricing.setCostInclusive(costInclusiveIdx != null
-                                ? isChecked(cell(row, costInclusiveIdx))
-                                : costInclTax != null && costInclTax.compareTo(BigDecimal.ZERO) > 0);
                         product.setPricing(pricing);
 
                         Unit rowUnit = getOrCreateUnit(valUnit, fallbackUnit);
@@ -583,8 +578,19 @@ public class ProductImportService {
 
                         ProductTax tax = product.getTax() != null ? product.getTax() : new ProductTax();
                         tax.setTaxCategory(firstNonBlank(valTaxCategory, "Standard"));
-                        tax.setPurchaseTax(defaultZero(firstNonNullDecimal(purchaseTax, new BigDecimal("5"))));
-                        tax.setSalesTax(defaultZero(firstNonNullDecimal(salesTax, new BigDecimal("5"))));
+                        // Sales Tax and Purchase Tax are both left unset (null) when their column is
+                        // blank/missing, instead of silently locking in a hardcoded rate. An explicit
+                        // 0 in the sheet is honoured as a deliberate zero-rated item. On update, only
+                        // touch a field if this file actually carries that column — otherwise preserve
+                        // whatever the product already has. Sales Tax falls back to the Branch Default
+                        // VAT Rate at sale time; Purchase Tax falls back to 0% (no branch-level default
+                        // exists for Purchase Tax).
+                        if (purchaseTaxIdx != null || product.getId() == null) {
+                            tax.setPurchaseTax(purchaseTax);
+                        }
+                        if (salesTaxIdx != null || product.getId() == null) {
+                            tax.setSalesTax(salesTax);
+                        }
                         tax.setHsnCode(firstNonBlank(valHsn, tax.getHsnCode()));
                         product.setTax(tax);
 

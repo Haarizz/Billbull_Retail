@@ -46,6 +46,7 @@ public class PosLayawayService {
     private final BranchRepository branchRepository;
     private final WarehouseRepository warehouseRepository;
     private final PosAuditService auditService;
+    private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
 
     public PosLayawayService(PosLayawayRepository repo,
                              PosLayawayPaymentRepository paymentRepo,
@@ -56,7 +57,8 @@ public class PosLayawayService {
                              PostingEngineService postingEngine,
                              BranchRepository branchRepository,
                              WarehouseRepository warehouseRepository,
-                             PosAuditService auditService) {
+                             PosAuditService auditService,
+                             com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService) {
         this.repo = repo;
         this.paymentRepo = paymentRepo;
         this.productRepository = productRepository;
@@ -67,6 +69,7 @@ public class PosLayawayService {
         this.branchRepository = branchRepository;
         this.warehouseRepository = warehouseRepository;
         this.auditService = auditService;
+        this.branchTaxResolutionService = branchTaxResolutionService;
     }
 
     public PosLayaway create(PosLayawayCreateRequest req) {
@@ -121,7 +124,11 @@ public class PosLayawayService {
             item.setPrice(price);
             double discountPct = ir.getDiscount() != null ? ir.getDiscount() : 0.0;
             item.setDiscount(discountPct);
-            double taxRate = ir.getTaxRate() != null ? ir.getTaxRate() : 5.0;
+            double taxRate = ir.getTaxRate() != null
+                    ? ir.getTaxRate()
+                    : branchTaxResolutionService.resolveSalesTaxRateForProduct(
+                            productRepository.findByCode(ir.getItemCode()).map(Product::getId).orElse(null),
+                            req.getBranchId()).doubleValue();
             item.setTaxRate(taxRate);
 
             boolean itemVoided = Boolean.TRUE.equals(ir.getVoided());

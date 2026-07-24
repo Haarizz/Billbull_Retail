@@ -8,6 +8,7 @@ import {
     getBranches, createBranch, updateBranch, setDefaultBranch, deleteBranch,
     setHeadquartersBranch, uploadBranchLogo, uploadBranchStamp
 } from '../../api/branchApi';
+import { getBranchTaxConfigurationForBranch, saveBranchTaxConfiguration } from '../../api/branchTaxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getImageUrl } from '../../utils/urlUtils';
 import { useBranch } from '../../context/BranchContext';
@@ -61,8 +62,11 @@ const TABS = [
     { id: 'basic', label: 'Basic Info' },
     { id: 'address', label: 'Address & Contact' },
     { id: 'business', label: 'Business Details' },
+    { id: 'tax', label: 'Tax Configuration' },
     { id: 'assets', label: 'Assets' },
 ];
+
+const EMPTY_TAX_CONFIG = { taxEnabled: true, taxInclusive: false, branchDefaultVatRate: 0 };
 
 const FILTERS = ['All', 'Headquarters', 'Branch', 'Outlet', 'Showroom', 'Warehouse'];
 
@@ -86,6 +90,12 @@ const BranchOutlets = () => {
     const [activeTab, setActiveTab] = useState('basic');
     const [viewingBranch, setViewingBranch] = useState(null);
     const [detailsTab, setDetailsTab] = useState('overview');
+
+    // Tax Configuration tab — owned by BranchTaxConfiguration (branch-level), not PosSettings.
+    // Only loadable/savable for an existing branch (needs a branchId).
+    const [taxConfig, setTaxConfig] = useState(EMPTY_TAX_CONFIG);
+    const [taxConfigLoading, setTaxConfigLoading] = useState(false);
+    const [taxConfigLoadFailed, setTaxConfigLoadFailed] = useState(false);
 
     const branchWarehouses = useMemo(() => {
         if (!editId) return [];
@@ -137,6 +147,7 @@ const BranchOutlets = () => {
         setForm(EMPTY_FORM);
         setActiveTab('basic');
         setShowForm(true);
+        setTaxConfig(EMPTY_TAX_CONFIG);
     };
 
     const openEdit = (b) => {
@@ -178,6 +189,32 @@ const BranchOutlets = () => {
         });
         setActiveTab('basic');
         setShowForm(true);
+
+        loadTaxConfig(b.id);
+    };
+
+    // Loads (or reloads, via the Retry button) tax configuration for an existing branch.
+    // On failure we deliberately do NOT fall back to EMPTY_TAX_CONFIG for a branch that may
+    // already have real configuration — silently swapping in defaults risks the admin saving
+    // over a genuinely configured VAT rate without realizing the load failed. Instead we flag
+    // the failure, block the Tax Configuration section from saving, and let the admin retry.
+    const loadTaxConfig = (branchId) => {
+        setTaxConfig(EMPTY_TAX_CONFIG);
+        setTaxConfigLoadFailed(false);
+        setTaxConfigLoading(true);
+        getBranchTaxConfigurationForBranch(branchId)
+            .then(cfg => {
+                setTaxConfig({
+                    taxEnabled: cfg?.taxEnabled !== false,
+                    taxInclusive: !!cfg?.taxInclusive,
+                    branchDefaultVatRate: cfg?.branchDefaultVatRate ?? 0,
+                });
+            })
+            .catch(() => {
+                setTaxConfigLoadFailed(true);
+                toast.error('Failed to load Tax Configuration for this branch. Tax settings were not changed — retry before saving.');
+            })
+            .finally(() => setTaxConfigLoading(false));
     };
 
     const handleFileUpload = (e, fieldName) => {
@@ -196,6 +233,8 @@ const BranchOutlets = () => {
         setShowForm(false);
         setEditId(null);
         setForm(EMPTY_FORM);
+        setTaxConfig(EMPTY_TAX_CONFIG);
+        setTaxConfigLoadFailed(false);
     };
 
     const handleSave = async (e) => {
@@ -249,6 +288,20 @@ const BranchOutlets = () => {
                 const res = await createBranch(payload);
                 savedBranchId = res.id;
                 toast.success('Branch created.');
+            }
+
+            // Tax Configuration is a separate branch-owned resource (BranchTaxConfiguration),
+            // saved alongside the branch itself once a branchId exists. Skipped when the load
+            // failed for an existing branch — saving the in-memory EMPTY_TAX_CONFIG placeholder
+            // in that case would silently overwrite real, already-configured tax settings.
+            if (savedBranchId && !(editId && taxConfigLoadFailed)) {
+                await saveBranchTaxConfiguration(savedBranchId, {
+                    taxEnabled: !!taxConfig.taxEnabled,
+                    taxInclusive: !!taxConfig.taxInclusive,
+                    branchDefaultVatRate: Number(taxConfig.branchDefaultVatRate) || 0,
+                });
+            } else if (editId && taxConfigLoadFailed) {
+                toast.error('Branch saved, but Tax Configuration could not be updated — it failed to load. Reopen this branch and retry.');
             }
 
             if (form.logoFile && savedBranchId) {
@@ -1094,6 +1147,110 @@ const BranchOutlets = () => {
                                                 className={inputCls} placeholder="EBILAEAD" />
                                         </div>
                                     </div>
+                                )}
+
+                                {activeTab === 'tax' && (
+                                    !editId ? (
+                                        <div className="text-center py-10 text-sm text-slate-400">
+                                            Save the branch first to configure its tax settings.
+                                        </div>
+                                    ) : taxConfigLoading ? (
+                                        <div className="text-center py-10 text-sm text-slate-400">Loading tax configuration…</div>
+                                    ) : taxConfigLoadFailed ? (
+                                        <div className="text-center py-10">
+                                            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3 mx-auto max-w-sm">
+                                                Failed to load Tax Configuration for this branch. To avoid overwriting real settings, nothing here will be saved until this loads successfully.
+                                            </p>
+                                            <button type="button" onClick={() => loadTaxConfig(editId)}
+                                                className="mt-3 px-4 py-1.5 text-sm font-medium rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors">
+                                                Retry
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-6">
+                                            <p className="text-[11px] text-slate-400 -mt-1">
+                                                Tax is a branch-wide configuration used across POS, Sales, Purchasing, and Reports — not just POS.
+                                            </p>
+
+                                            {/* ── General ── */}
+                                            <div>
+                                                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">General</h4>
+                                                <label className="flex items-start gap-2 cursor-pointer">
+                                                    <input type="checkbox" checked={taxConfig.taxEnabled}
+                                                        onChange={e => setTaxConfig(c => ({ ...c, taxEnabled: e.target.checked }))}
+                                                        className="h-4 w-4 mt-0.5 text-[#F5C742] rounded border-slate-300 focus:ring-[#F5C742]" />
+                                                    <span>
+                                                        <span className="text-sm font-medium text-slate-700 block">Tax Enabled</span>
+                                                        <span className="text-xs text-slate-400">Turn off to stop applying tax on future transactions for this branch.</span>
+                                                    </span>
+                                                </label>
+                                                {!taxConfig.taxEnabled && (
+                                                    <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                                                        Tax calculations are disabled for this branch. Historical documents are not affected.
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            {/* ── Calculation ── */}
+                                            <div className={`pt-4 border-t border-slate-100 ${!taxConfig.taxEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
+                                                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Calculation</h4>
+                                                <div>
+                                                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Tax Mode</label>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        {[
+                                                            [false, 'Tax Exclusive', 'VAT added on top of price'],
+                                                            [true, 'Tax Inclusive', 'VAT extracted from price'],
+                                                        ].map(([val, label, desc]) => (
+                                                            <button
+                                                                key={String(val)}
+                                                                type="button"
+                                                                disabled={!taxConfig.taxEnabled}
+                                                                onClick={() => setTaxConfig(c => ({ ...c, taxInclusive: val }))}
+                                                                className={`p-3 rounded-lg border-2 text-left transition-all ${taxConfig.taxInclusive === val
+                                                                        ? 'border-[#F5C742] bg-[#FEF9E7]'
+                                                                        : 'border-slate-200 bg-white hover:border-slate-300'
+                                                                    }`}
+                                                            >
+                                                                <p className="text-xs font-semibold text-slate-800">{label}</p>
+                                                                <p className="text-[10px] text-slate-400 mt-0.5">{desc}</p>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className="mt-4">
+                                                    <label className="block text-xs font-medium text-slate-600 mb-1">Branch Default VAT Rate</label>
+                                                    <div className="relative w-40">
+                                                        <input type="number" min="0" max="100" step="0.01"
+                                                            disabled={!taxConfig.taxEnabled}
+                                                            value={taxConfig.branchDefaultVatRate}
+                                                            onChange={e => setTaxConfig(c => ({ ...c, branchDefaultVatRate: e.target.value }))}
+                                                            className={`${inputCls} disabled:bg-slate-50 disabled:text-slate-400 pr-7`} />
+                                                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">%</span>
+                                                    </div>
+                                                    <p className="mt-1 text-[11px] text-slate-400">Used only when a product has no Sales Tax configured.</p>
+                                                </div>
+                                            </div>
+
+                                            {/* ── Coming Soon placeholders — no backend fields or logic yet ── */}
+                                            {[
+                                                { title: 'General Tax', fields: ['Tax Registration Number', 'Tax Authority', 'Fiscal Country'] },
+                                                { title: 'Calculation', fields: ['Tax Rounding Method', 'Decimal Precision'] },
+                                                { title: 'Advanced', fields: ['Reverse Charge', 'Zero Rated Rules', 'Exempt Rules', 'Future Tax Categories'] },
+                                            ].map(section => (
+                                                <div key={section.title} className="pt-4 border-t border-slate-100">
+                                                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">{section.title}</h4>
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        {section.fields.map(field => (
+                                                            <div key={field} className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2.5 flex items-center justify-between">
+                                                                <span className="text-xs text-slate-400">{field}</span>
+                                                                <span className="text-[9px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-200 rounded-full px-2 py-0.5">Coming Soon</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )
                                 )}
 
                                 {activeTab === 'assets' && (

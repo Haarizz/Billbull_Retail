@@ -2,6 +2,7 @@ import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRender
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
 import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
 import { voidedLineNet } from '../../../utils/documentSummaryUtils';
+import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../../utils/documentTaxType';
 
 /**
  * Build-time cutover switch for the POS <-> Back Office PrintTemplate unification
@@ -1538,15 +1539,13 @@ export const buildPosPrintData = (full, footerNote = '', customersList = [], tit
     ? (customersList || []).find(c => c.code === full.customerCode || c.id === full.customerCode)
     : null;
   const { subTotal, discountTotal, lineDiscountTotal, billDiscountTotal, taxableAmount } = resolveInvoiceGrossTotals(full);
-  const hasTax = Number(full.taxTotal ?? full.tax ?? 0) > 0;
+  const hasTax = isTaxInvoiceDocument(full);
   return {
     // titleOverride lets the caller pass the merchant's SAVED template header
     // (POS Receipt tab header when no tax, Tax Invoice tab header when taxed) so
     // the A4 title matches the thermal receipt instead of a generic fixed label.
-    // Falls back to the fixed SALES/TAX INVOICE label when no override is given.
-    title: (titleOverride && String(titleOverride).trim())
-      ? String(titleOverride).trim()
-      : (hasTax ? 'TAX INVOICE' : 'SALES INVOICE'),
+    // Falls back to the tax-aware SALES/TAX INVOICE label when no override is given.
+    title: getInvoiceDocumentTitle(full, { titleOverride: titleOverride && String(titleOverride).trim() }),
     docNo: full.invoiceNumber || '',
     date: full.invoiceDate || '',
     customer: {
@@ -1573,7 +1572,7 @@ export const buildPosPrintData = (full, footerNote = '', customersList = [], tit
         // Backend persists the line discount rate under `discount` (a percentage);
         // fall back to discountPercent/disc for cart-shaped inputs.
         disc: it.discountPercent ?? it.discount ?? it.disc ?? 0,
-        tax: it.taxPercent || it.taxRate || 5,
+        tax: it.taxPercent || it.taxRate || 0,
         // When a stored voided line came back with taxAmount/netAmount zeroed
         // (older POS posts), pass them as undefined so the renderer re-derives
         // taxable/tax/total from qty×price×disc rather than printing 0.00.

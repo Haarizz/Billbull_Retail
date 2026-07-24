@@ -32,7 +32,7 @@ public class PosSettingsController {
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSettings> save(@RequestBody PosSettings settings) {
-        System.out.println("SAVE REQUEST RECEIVED. taxInclusive=" + settings.getTaxInclusive() + " defaultTaxRate=" + settings.getDefaultTaxRate());
+        System.out.println("SAVE REQUEST RECEIVED. maxTerminalsPerBranch=" + settings.getMaxTerminalsPerBranch());
         return ResponseEntity.ok(service.save(settings));
     }
 

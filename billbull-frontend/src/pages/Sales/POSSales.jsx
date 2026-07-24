@@ -35,11 +35,13 @@ import {
   getDeliveryOrders, settleDeliveryOrder,
   reprintPosReceipt,
 } from '../../api/posApi';
+import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from '../../api/branchTaxApi';
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { resolvePrintTemplate } from '../../api/printTemplateApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
-import { computeLineTaxTotals } from '../../utils/vatMath';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -352,6 +354,16 @@ export default function POSSales() {
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
+  // Guards state updates in registerTerminalAndResumeSession, which can be invoked from either
+  // the mount-time init effect or the branch-changed listener below, both of which may outlive
+  // an unmount. Must set current = true on (re-)mount, not just clear it on cleanup — StrictMode
+  // (dev only) mounts every effect, fires its cleanup immediately, then mounts again, so a
+  // cleanup-only assignment left this permanently false for the rest of the real session.
+  const posTerminalMountedRef = useRef(true);
+  useEffect(() => {
+    posTerminalMountedRef.current = true;
+    return () => { posTerminalMountedRef.current = false; };
+  }, []);
   const [isIdleLocked, setIsIdleLocked] = useState(false);
   const [showTakeoverDialog, setShowTakeoverDialog] = useState(false);
   // Logged-in POS user shown as "Cashier" on the receipt (§2A). Prefers the
@@ -1083,7 +1095,7 @@ export default function POSSales() {
       // template the real checkout print will use (see buildThermalReceiptArtifacts'
       // hasTax routing) — otherwise a no-tax cart would preview "TAX INVOICE" and
       // then print "SALES INVOICE", confusing the cashier before they even tender.
-      const previewHasTax = Number(currentInvoice.tax) > 0;
+      const previewHasTax = isTaxInvoiceDocument(currentInvoice);
       const previewShowQRCodeToggle = previewHasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
       const stampAvailable = previewShowQRCodeToggle && !!tplStampDataUrl;
       const showQrInPreview = previewShowQRCodeToggle && !stampAvailable;
@@ -1280,7 +1292,7 @@ export default function POSSales() {
   // branch never sees an A4 preview attempt). Uses the same draft-cart -> printData
   // pipeline the real print/reprint path already uses via buildPosPrintData, so the
   // checkout preview and the actual printed A4 output are guaranteed to agree.
-  const _previewHasTax = currentInvoice ? Number(currentInvoice.tax) > 0 : false;
+  const _previewHasTax = currentInvoice ? isTaxInvoiceDocument(currentInvoice) : false;
   const _activePreviewPaper = _previewHasTax ? tplInvoicePaper : tplReceiptPaper;
   // User request: always use 80mm print preview in the checkout window.
   const showA4CheckoutPreview = false;
@@ -1326,7 +1338,7 @@ export default function POSSales() {
         showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner,
         colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode,
         colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt,
-      }, Number(currentInvoice.tax) > 0);
+      }, isTaxInvoiceDocument(currentInvoice));
       const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: activeCurrency || 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
       return generateDocumentPrintHtml(template, draftData, options);
     } catch (e) {
@@ -1660,6 +1672,60 @@ export default function POSSales() {
     };
   }, []);
 
+  // Registers (or resumes) this device's terminal for the CURRENTLY ACTIVE branch and, if one
+  // exists, restores the open session on it. Terminal identity is per-branch — the same device
+  // holds an independent terminal in every branch it's used in — so the cached terminal_id is
+  // scoped by branch, not global (see docs/pos-terminal-branch-switch-investigation-2026-07-24.html).
+  // Invoked on initial POS mount and again whenever the active branch changes, so a live branch
+  // switch reconnects the correct branch's terminal/session immediately rather than only on the
+  // next full remount.
+  const registerTerminalAndResumeSession = useCallback(async () => {
+    const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
+    const activeBranchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL' ? activeBranchIdRaw : 'default';
+
+    const nav = window.navigator;
+    let fp = localStorage.getItem('billbull:pos:device_fingerprint');
+    if (!fp) {
+      fp = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
+      localStorage.setItem('billbull:pos:device_fingerprint', fp);
+    }
+    const terminalIdKey = `billbull:pos:terminal_id:${activeBranchId}`;
+    const cachedTerminalId = localStorage.getItem(terminalIdKey) || null;
+    const deviceInfo = `${nav.userAgent.split('(')[1]?.split(')')[0] || 'Unknown'} – ${screen.width}×${screen.height}`;
+
+    const regResult = await registerPosTerminal({ terminalId: cachedTerminalId, deviceFingerprint: fp, deviceInfo }).catch(() => null);
+    if (!posTerminalMountedRef.current || !regResult?.terminal) return;
+    setCurrentTerminal(regResult.terminal);
+    localStorage.setItem(terminalIdKey, regResult.terminal.terminalId);
+
+    // Try to resume an existing open session for this terminal
+    const termId = regResult.terminal.terminalId;
+    try {
+      const active = await getActivePosSession(termId);
+      if (posTerminalMountedRef.current && active?.id) {
+        setCurrentSession(active);
+      }
+    } catch (err) {
+      if (err.response?.status === 409 && posTerminalMountedRef.current) {
+        setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
+      }
+    }
+  }, []);
+
+  // Re-run terminal/session resolution whenever the active branch changes while POS stays
+  // mounted — without this, switching branches leaves the previous branch's terminal/session in
+  // memory until the page is remounted.
+  useEffect(() => {
+    const handleBranchChanged = () => {
+      setCurrentTerminal(null);
+      setCurrentSession(null);
+      setTerminalLockedBy(null);
+      registerTerminalAndResumeSession();
+    };
+    window.addEventListener('billbull:branch-changed', handleBranchChanged);
+    return () => window.removeEventListener('billbull:branch-changed', handleBranchChanged);
+  }, [registerTerminalAndResumeSession]);
+
   // ── POS initialization: load settings + register terminal + resume session ──
   useEffect(() => {
     let cancelled = false;
@@ -1669,6 +1735,23 @@ export default function POSSales() {
         const settings = await getPosSettings().catch(() => null);
         if (!cancelled && settings) {
           setPosSettings(settings);
+          // Tax Enabled / Tax Mode / Branch Default VAT Rate live in BranchTaxConfiguration
+          // now, not PosSettings — merge them into the same client-side posSettings object
+          // so the rest of the POS UI (which reads posSettings.taxInclusive /
+          // branchDefaultVatRate) keeps working unchanged. Source of truth and editing both
+          // belong to Branch Settings > Tax Configuration; this is read-only here. Resolve
+          // against the Branch Selector's active branch (not the ambiguous "current branch"
+          // endpoint) so switching branches on this terminal picks up that branch's own Tax
+          // Enabled / Tax Mode / VAT rate instead of the cashier's home/HQ branch.
+          const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
+          const activeBranchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL'
+            ? Number(activeBranchIdRaw)
+            : null;
+          (activeBranchId ? getBranchTaxConfigurationForBranch(activeBranchId) : getBranchTaxConfiguration()).then(taxConfig => {
+            if (!cancelled && taxConfig) {
+              setPosSettings(prev => ({ ...(prev || {}), ...taxConfig }));
+            }
+          }).catch(() => {});
           // Seed layout state from persisted settings
           if (settings.defaultLayout) setPosTemplate(settings.defaultLayout);
           if (settings.layoutHideCategoryPanel != null) setHideCategoriesPanel(settings.layoutHideCategoryPanel);
@@ -1809,33 +1892,8 @@ export default function POSSales() {
           }
         }
 
-        // Generate or retrieve persistent device fingerprint and terminal ID
-        const nav = window.navigator;
-        let fp = localStorage.getItem('billbull:pos:device_fingerprint');
-        if (!fp) {
-          fp = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
-          localStorage.setItem('billbull:pos:device_fingerprint', fp);
-        }
-        const cachedTerminalId = localStorage.getItem('billbull:pos:terminal_id') || null;
-        const deviceInfo = `${nav.userAgent.split('(')[1]?.split(')')[0] || 'Unknown'} – ${screen.width}×${screen.height}`;
-
-        const regResult = await registerPosTerminal({ terminalId: cachedTerminalId, deviceFingerprint: fp, deviceInfo }).catch(() => null);
-        if (!cancelled && regResult?.terminal) {
-          setCurrentTerminal(regResult.terminal);
-          localStorage.setItem('billbull:pos:terminal_id', regResult.terminal.terminalId);
-
-          // Try to resume an existing open session for this terminal
-          const termId = regResult.terminal.terminalId;
-          try {
-            const active = await getActivePosSession(termId);
-            if (!cancelled && active?.id) {
-              setCurrentSession(active);
-            }
-          } catch (err) {
-            if (err.response?.status === 409) {
-              if (!cancelled) setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
-            }
-          }
+        if (!cancelled) {
+          await registerTerminalAndResumeSession();
         }
       } catch (e) {
         console.warn('POS init error', e);
@@ -2323,7 +2381,7 @@ export default function POSSales() {
           retailPrice: product.retailPrice != null && product.retailPrice !== '' ? toNumber(product.retailPrice) : null,
           quantity: qtyToAdd,
           discount: toNumber(product.defaultDiscount, 0),
-          taxRate: product.salesTax != null ? product.salesTax : toNumber(posSettings?.defaultTaxRate, 5),
+          taxRate: resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false),
           total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
@@ -2577,8 +2635,6 @@ export default function POSSales() {
       cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
       cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
       cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
-      taxInclusive: !!posSettings?.taxInclusive,
-      defaultTaxRate: posSettings?.defaultTaxRate ?? 5,
     });
   };
 
@@ -2600,20 +2656,6 @@ export default function POSSales() {
       setSettingsDraft(null);
     } finally {
       setSettingsSaving(false);
-    }
-  };
-
-  // Tax mode (Exclusive/Inclusive + default VAT rate) is edited directly from the
-  // POS Configure quick sidebar, independent of the Behavior tab's settingsDraft,
-  // so it applies immediately without requiring a trip to Configure & customize.
-  const patchTaxSettings = async (changes) => {
-    const payload = { ...(posSettings || {}), ...changes };
-    setPosSettings(payload);
-    try {
-      const saved = await savePosSettings(payload);
-      setPosSettings(saved || payload);
-    } catch (err) {
-      console.warn('Failed to save POS tax settings', err);
     }
   };
 
@@ -2685,9 +2727,11 @@ export default function POSSales() {
   const recalculateInvoice = (items, billDiscountAmount = 0) => {
     const activeItems = items.filter(i => !i.isVoided);
     // Global VAT mode: Inclusive means the entered price already contains VAT,
-    // Exclusive means VAT is added on top. Fallback rate from POS settings.
+    // Exclusive means VAT is added on top. Fallback rate from the branch's Tax
+    // Configuration — 0 outright when Tax Enabled is off (kill switch), regardless of the
+    // configured Branch Default VAT Rate.
     const taxInclusive = !!posSettings?.taxInclusive;
-    const fallbackRate = toNumber(posSettings?.defaultTaxRate, 5);
+    const fallbackRate = posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0);
 
     let subtotal = 0;       // gross line value (entered price x qty) before discount —
                              // matches the backoffice invoice's "Sub Total" presentation
@@ -2761,12 +2805,12 @@ export default function POSSales() {
         unit: 'Each',
         price: item.price,
         discount: item.discount || 0,
-        taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
+        taxRate: toNumber(item.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
         batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
         serialNumber: item.isVoided ? null : (item.serialNumber || null),
         voided: !!item.isVoided,
       }));
-  }, [posSettings?.voidMode, posSettings?.defaultTaxRate]);
+  }, [posSettings?.voidMode, posSettings?.branchDefaultVatRate]);
 
   // ── Delivery ───────────────────────────────────────────────────────────────
 
@@ -2903,8 +2947,8 @@ export default function POSSales() {
 
       try {
         if (tplInvoicePaper === 'A4') {
-          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(savedInvoice?.taxTotal) > 0);
-          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, Number(savedInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(savedInvoice));
+          const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
           printHtml(await generatePrintHtmlAsync(template, data, options));
         } else {
@@ -3321,7 +3365,7 @@ export default function POSSales() {
         price: it.price || 0,
         quantity: it.quantity || 0,
         discount: it.discount || 0,
-        taxRate: it.taxRate != null ? it.taxRate : 5,
+        taxRate: it.taxRate != null ? it.taxRate : (posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
         total: (it.price || 0) * (it.quantity || 0) * (1 - (it.discount || 0) / 100),
         pinnedBatchNumber: it.pinnedBatchNumber || null,
         serialNumber: it.serialNumber || null,
@@ -3547,7 +3591,7 @@ export default function POSSales() {
     // print/reprint always fell back to the POS Receipt tab config regardless of
     // tax — diverging from the checkout preview (which reads currentInvoice.tax)
     // and from buildPosPrintData/the A4 sites (which already read taxTotal).
-    const hasTax = Number(full.taxTotal ?? full.tax ?? 0) > 0;
+    const hasTax = isTaxInvoiceDocument(full);
     // Credit/Account Balance toggle is per-sub-tab too (POS Receipt tab's
     // tplReceiptShowBankDetails vs Tax Invoice tab's tplInvoiceShowBankDetails) —
     // same rule as activeShowLogo etc. below. Previously this always read the
@@ -3957,7 +4001,7 @@ export default function POSSales() {
           unit: 'Each',
           price: item.price,
           discount: item.discount || 0,
-          taxRate: toNumber(item.taxRate, toNumber(posSettings?.defaultTaxRate, 5)),
+          taxRate: toNumber(item.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
           batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
           serialNumber: item.isVoided ? null : (item.serialNumber || null),
           voided: !!item.isVoided,
@@ -4114,8 +4158,8 @@ export default function POSSales() {
 
           try {
             if (printPaper === 'A4') {
-              const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(savedInvoice?.taxTotal) > 0);
-              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, Number(savedInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+              const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(savedInvoice));
+              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
               const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
               printHtml(await generatePrintHtmlAsync(template, data, options));
               openCashDrawer('RECEIPT_PRINT');
@@ -4280,8 +4324,8 @@ export default function POSSales() {
           : i));
         const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
-          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
-          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
+          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
           const html = await generatePrintHtmlAsync(template, data, companyOptions);
           if (reprintPrintMode === 'pdf') {
             const filename = `${full.invoiceNumber || reprintSelectedInvoice}.pdf`;
@@ -7722,6 +7766,13 @@ export default function POSSales() {
           cost: parseFloat(quickProductForm.purchasePrice) || 0,
           purchasePrice: parseFloat(quickProductForm.purchasePrice) || 0
         },
+        tax: {
+          // Blank means "not configured" -> falls back to the branch's Default VAT
+          // Rate at sale time; an explicit 0 is sent through as a zero-rated item.
+          salesTax: quickProductForm.taxRate === '' || quickProductForm.taxRate === null || quickProductForm.taxRate === undefined
+            ? null
+            : Number(quickProductForm.taxRate)
+        },
         inventory: {
           openingStock: parseFloat(quickProductForm.initialStock) || 0,
           minStock: parseFloat(quickProductForm.alertQuantity) || 0,
@@ -7955,7 +8006,11 @@ export default function POSSales() {
                   onClick={() => {
                     if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
                       localStorage.removeItem('billbull:pos:device_fingerprint');
-                      localStorage.removeItem('billbull:pos:terminal_id');
+                      // Clear every branch-scoped terminal_id cached on this device, not just the
+                      // active branch's, so no stale pointer survives the fingerprint reset.
+                      Object.keys(localStorage)
+                        .filter(k => k.startsWith('billbull:pos:terminal_id'))
+                        .forEach(k => localStorage.removeItem(k));
                       window.location.reload();
                     }
                   }}
@@ -8530,8 +8585,8 @@ export default function POSSales() {
                       try {
                         const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
                         if (tplInvoicePaper === 'A4') {
-                          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
-                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+                          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
+                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                           const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
@@ -9772,8 +9827,8 @@ export default function POSSales() {
                 const full = reprintResult.invoice;
                 openCashDrawer('RECEIPT_PRINT');
                 if (tplInvoicePaper === 'A4') {
-                  const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(full?.taxTotal) > 0);
-                  const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, Number(full?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+                  const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
+                  const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                   const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                   printHtml(await generatePrintHtmlAsync(template, data, options));
                 } else {
@@ -10453,7 +10508,7 @@ export default function POSSales() {
                   customerNotes: orderNotes || null,
                   branch: branchId ? { id: branchId } : null,
                   items: activeItems.map(item => {
-                    const taxRate = item.taxRate != null ? item.taxRate : 5;
+                    const taxRate = item.taxRate != null ? item.taxRate : (posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0));
                     const { taxableAmount, taxAmount, total: lineTotal } = computeLineTaxTotals({
                       netAfterDiscount: item.total,
                       taxPercent: taxRate,
@@ -10710,7 +10765,7 @@ export default function POSSales() {
                           </div>
                           {toNumber((sel || selOrder).vatAmount || (sel || selOrder).taxAmount, 0) > 0 && (
                             <div className="flex justify-between text-gray-500">
-                              <span>VAT ({toNumber((sel || selOrder).vatRate || (sel || selOrder).taxRate, 5)}%)</span>
+                              <span>VAT ({toNumber((sel || selOrder).vatRate || (sel || selOrder).taxRate, 0)}%)</span>
                               <span>{formatCurrency(toNumber((sel || selOrder).vatAmount || (sel || selOrder).taxAmount, 0))}</span>
                             </div>
                           )}
@@ -11407,7 +11462,7 @@ export default function POSSales() {
                                 <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</td>
                                 <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}><CurrencyAmount amount={item.price} prefix={item.isVoided ? '- ' : ''} /></td>
                                 <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : 'text-red-500'}`}>{item.discount > 0 ? `${item.discount}%` : '—'}</td>
-                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}>{toNumber(item.taxRate, 5)}%</td>
+                                <td className={`px-3 py-1.5 text-right ${item.isVoided ? 'text-red-500' : ''}`}>{toNumber(item.taxRate, 0)}%</td>
                                 <td className={`px-3 py-1.5 text-right font-semibold ${item.isVoided ? 'text-red-500' : ''}`}><CurrencyAmount amount={item.quantity * item.price * (1 - item.discount / 100)} prefix={item.isVoided ? '- ' : ''} /></td>
                               </tr>
                             ))}
@@ -11516,7 +11571,7 @@ export default function POSSales() {
           const disc = gross * (parseFloat(it.discountPercent || 0) / 100);
           return computeLineTaxTotals({
             netAfterDiscount: gross - disc,
-            taxPercent: parseFloat(it.taxRate || 5),
+            taxPercent: parseFloat(it.taxRate || 0),
             vatMode: returnVatMode,
           });
         });
@@ -11575,7 +11630,7 @@ export default function POSSales() {
               if (!grouped[key]) {
                 grouped[key] = {
                   itemCode: b.itemCode, itemName: b.itemName, unit: b.unit,
-                  soldQty: 0, alreadyReturned: 0, returnable: 0, unitPrice: 0, taxRate: 5, discountPercent: 0, batches: []
+                  soldQty: 0, alreadyReturned: 0, returnable: 0, unitPrice: 0, taxRate: 0, discountPercent: 0, batches: []
                 };
               }
               grouped[key].soldQty += parseFloat(b.originalQty || 0);
@@ -11589,7 +11644,7 @@ export default function POSSales() {
                   itemCode: invItem.itemCode, itemName: invItem.itemName,
                   unit: invItem.unit || 'Each', soldQty: parseFloat(invItem.quantity || 0),
                   alreadyReturned: 0, returnable: 0,
-                  unitPrice: parseFloat(invItem.price || 0), taxRate: parseFloat(invItem.taxRate || 5),
+                  unitPrice: parseFloat(invItem.price || 0), taxRate: parseFloat(invItem.taxRate || 0),
                   discountPercent: parseFloat(invItem.discount || 0), batches: []
                 };
               }
@@ -11597,7 +11652,7 @@ export default function POSSales() {
 
             Object.values(grouped).forEach(g => {
               const invItem = invoiceItems.find(i => i.itemCode === g.itemCode);
-              if (invItem) { g.unitPrice = parseFloat(invItem.price || 0); g.taxRate = parseFloat(invItem.taxRate || 5); g.discountPercent = parseFloat(invItem.discount || 0); }
+              if (invItem) { g.unitPrice = parseFloat(invItem.price || 0); g.taxRate = parseFloat(invItem.taxRate || 0); g.discountPercent = parseFloat(invItem.discount || 0); }
 
               const totalSold = g.soldQty;
               const alreadyRet = alreadyReturnedMap[g.itemCode] || 0;
@@ -11629,7 +11684,7 @@ export default function POSSales() {
                 const discountAmt = grossAmt * (parseFloat(it.discountPercent || 0) / 100);
                 const { taxAmount: taxAmt, total: itemTotal } = computeLineTaxTotals({
                   netAfterDiscount: grossAmt - discountAmt,
-                  taxPercent: parseFloat(it.taxRate || 5),
+                  taxPercent: parseFloat(it.taxRate || 0),
                   vatMode: returnVatMode,
                 });
                 const batchesForItem = it.batches.slice(0, qty).map(b => ({
@@ -11691,7 +11746,7 @@ export default function POSSales() {
                   price: i.price,
                   discountPercent: i.discountPercent || 0,
                   discountAmount: i.discountAmount || 0,
-                  tax: i.taxRate || 5,
+                  tax: i.taxRate || 0,
                   taxAmt: i.taxAmount || 0,
                   total: i.total,
                   batchNumber: i.batches?.[0]?.batchNumber || '',
@@ -11928,7 +11983,7 @@ export default function POSSales() {
                                   const selQty = returnSelectedItems[it.itemCode] || 0;
                                   const lineGross = selQty * parseFloat(it.unitPrice || 0);
                                   const lineDisc = lineGross * (parseFloat(it.discountPercent || 0) / 100);
-                                  const lineAmt = (lineGross - lineDisc) * (1 + parseFloat(it.taxRate || 5) / 100);
+                                  const lineAmt = (lineGross - lineDisc) * (1 + parseFloat(it.taxRate || 0) / 100);
                                   return (
                                     <tr key={it.itemCode} className={`border-b border-gray-50 ${returnable === 0 ? 'bg-gray-50 opacity-60' : ''}`}>
                                       <td className="px-2 py-2 text-gray-500">{it.itemCode}</td>
@@ -11944,7 +11999,7 @@ export default function POSSales() {
                                         ) : <span className="text-[10px] bg-gray-100 text-gray-400 rounded px-1.5 py-0.5">N/A</span>}
                                       </td>
                                       <td className="px-2 py-2 text-right"><CurrencyAmount amount={parseFloat(it.unitPrice || 0)} /></td>
-                                      <td className="px-2 py-2 text-right">{it.taxRate || 5}%</td>
+                                      <td className="px-2 py-2 text-right">{it.taxRate || 0}%</td>
                                       <td className="px-2 py-2 text-right font-semibold text-[#327F74]"><CurrencyAmount amount={lineAmt} /></td>
                                       <td className="px-2 py-2">
                                         {returnable > 0 ? (
@@ -13181,45 +13236,27 @@ export default function POSSales() {
                 </div>
               </div>
 
-              {/* Tax Mode */}
+              {/* Tax Mode / Default VAT Rate — Branch-level configuration (moved out of POS
+                  Settings; owned by BranchTaxConfiguration). Shown here read-only so cashiers
+                  understand the active mode; edited from Branch Settings > Tax Configuration. */}
               <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Tax Mode</h3>
-                <p className="text-[10px] text-gray-500 mb-3">Decide whether product prices already include VAT or VAT is added at checkout.</p>
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  {[
-                    [false, 'Exclusive', 'VAT added on top'],
-                    [true, 'Inclusive', 'VAT extracted from price'],
-                  ].map(([val, label, desc]) => (
-                    <button
-                      key={String(val)}
-                      type="button"
-                      onClick={() => patchTaxSettings({ taxInclusive: val })}
-                      className={`p-3 rounded-xl border-2 text-left transition-all ${!!posSettings?.taxInclusive === val
-                          ? 'border-[#F5C742] bg-[#FEF9E7]'
-                          : 'border-gray-100 bg-white hover:border-gray-300'
-                        }`}
-                    >
-                      <p className={`text-xs font-semibold ${!!posSettings?.taxInclusive === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
-                      <p className="text-[10px] text-gray-500 mt-0.5">{desc}</p>
-                      {!!posSettings?.taxInclusive === val && <CheckCircle className="h-3.5 w-3.5 text-[#F5C742] mt-1.5" />}
-                    </button>
-                  ))}
-                </div>
-                <div>
-                  <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Default VAT Rate (%)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    defaultValue={toNumber(posSettings?.defaultTaxRate, 5)}
-                    onBlur={(e) => {
-                      const rate = e.target.value === '' ? 0 : Number(e.target.value);
-                      if (rate !== toNumber(posSettings?.defaultTaxRate, 5)) patchTaxSettings({ defaultTaxRate: rate });
-                    }}
-                    className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1">Used when a product has no VAT rate of its own.</p>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-3">Tax Configuration</h3>
+                <div className="rounded-xl border-2 border-gray-100 bg-gray-50 p-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-500">Tax Enabled</span>
+                    <span className="font-semibold text-[#1E293B]">{posSettings?.taxEnabled === false ? 'Off' : 'On'}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-500">Tax Mode</span>
+                    <span className="font-semibold text-[#1E293B]">{posSettings?.taxInclusive ? 'Inclusive' : 'Exclusive'}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-500">Branch Default VAT Rate</span>
+                    <span className="font-semibold text-[#1E293B]">{toNumber(posSettings?.branchDefaultVatRate, 0)}%</span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 pt-1 border-t border-gray-200">
+                    Managed centrally in Branch Settings &gt; Tax Configuration — applies to this branch across POS, Sales, and every other module.
+                  </p>
                 </div>
               </div>
 
@@ -13642,8 +13679,8 @@ export default function POSSales() {
               const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
               const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
               if (tplInvoicePaper === 'A4') {
-                const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, Number(receiptInvoice?.taxTotal) > 0);
-                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, Number(receiptInvoice?.taxTotal) > 0 ? tplInvoiceHeader : tplReceiptHeader);
+                const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(receiptInvoice));
+                const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(receiptInvoice) ? tplInvoiceHeader : tplReceiptHeader);
                 const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                 printHtml(await generatePrintHtmlAsync(template, data, options));
               } else {

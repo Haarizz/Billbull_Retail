@@ -287,7 +287,6 @@ public class ProductService {
             effective.setLandingCost(base.getLandingCost());
             effective.setNlc(base.getNlc());
             effective.setCostMethod(base.getCostMethod());
-            effective.setCostInclusive(base.isCostInclusive());
             effective.setRetailPrice(base.getRetailPrice());
             effective.setWholesalePrice(base.getWholesalePrice());
             effective.setMinPrice(base.getMinPrice());
@@ -512,7 +511,6 @@ public class ProductService {
             pricing.setLandingCost(reqPricing.getLandingCost());
             pricing.setNlc(reqPricing.getNlc());
             pricing.setCostMethod(reqPricing.getCostMethod());
-            pricing.setCostInclusive(reqPricing.isCostInclusive());
             pricing.setRetailPrice(reqPricing.getRetailPrice());
             pricing.setWholesalePrice(reqPricing.getWholesalePrice());
             pricing.setMinPrice(reqPricing.getMinPrice());

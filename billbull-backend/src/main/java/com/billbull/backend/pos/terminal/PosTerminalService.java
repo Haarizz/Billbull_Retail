@@ -84,31 +84,28 @@ public class PosTerminalService {
             }
         }
 
-        // 2. Fallback to lookup by deviceFingerprint
-        Optional<PosTerminal> existing = repo.findByDeviceFingerprint(deviceFingerprint);
+        // 2. Fallback to lookup by (deviceFingerprint, branchId) — a device's terminal identity is
+        // per-branch, so this only ever matches a terminal already registered in the CURRENT
+        // branch. A fingerprint match belonging to a different branch is a distinct, independently
+        // valid terminal there and must be left untouched (see V47 migration + class javadoc).
+        Optional<PosTerminal> existing = repo.findByDeviceFingerprintAndBranchId(deviceFingerprint, branchId);
         if (existing.isPresent()) {
             PosTerminal t = existing.get();
-            if (t.getBranchId().equals(branchId)) {
-                if (t.getStatus() == PosTerminalStatus.BLOCKED
-                        || t.getStatus() == PosTerminalStatus.MAINTENANCE
-                        || t.getStatus() == PosTerminalStatus.DECOMMISSIONED
-                        || t.getStatus() == PosTerminalStatus.ARCHIVED) {
-                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
-                }
-                t.setLastSeenAt(LocalDateTime.now());
-                t.setLastHeartbeatAt(LocalDateTime.now());
-                if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
-                if (operatingSystem != null) t.setOperatingSystem(operatingSystem);
-                if (browser != null) t.setBrowser(browser);
-                if (ipAddress != null) t.setIpAddress(ipAddress);
-                repo.save(t);
-                boolean pending = "PENDING".equals(t.getRegistrationStatus());
-                return Map.of("terminal", t, "isNew", false, "pending", pending);
-            } else {
-                // Device fingerprint belongs to another branch. Unlink it so the new branch can claim it.
-                t.setDeviceFingerprint(null);
-                repo.saveAndFlush(t);
+            if (t.getStatus() == PosTerminalStatus.BLOCKED
+                    || t.getStatus() == PosTerminalStatus.MAINTENANCE
+                    || t.getStatus() == PosTerminalStatus.DECOMMISSIONED
+                    || t.getStatus() == PosTerminalStatus.ARCHIVED) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
             }
+            t.setLastSeenAt(LocalDateTime.now());
+            t.setLastHeartbeatAt(LocalDateTime.now());
+            if (deviceInfo != null) t.setDeviceInfo(deviceInfo);
+            if (operatingSystem != null) t.setOperatingSystem(operatingSystem);
+            if (browser != null) t.setBrowser(browser);
+            if (ipAddress != null) t.setIpAddress(ipAddress);
+            repo.save(t);
+            boolean pending = "PENDING".equals(t.getRegistrationStatus());
+            return Map.of("terminal", t, "isNew", false, "pending", pending);
         }
 
         // 3. New terminal — check limit (non-archived)

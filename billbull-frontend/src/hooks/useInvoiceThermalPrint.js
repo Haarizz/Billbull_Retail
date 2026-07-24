@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { getPosPrinters } from '../api/posPrinterApi';
 import { buildEscPosReceiptBase64 } from '../utils/escPosReceipt';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../utils/localPrintAgent';
+import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../utils/documentTaxType';
 
 // Thermal (58mm/80mm) printing of a back-office Sales Invoice.
 //
@@ -49,7 +50,8 @@ export function useInvoiceThermalPrint({ branchId, company } = {}) {
             const dataBase64 = await buildEscPosReceiptBase64(paperSize, invoice, {
                 companyName: company?.companyName || company?.name || 'BillBull',
                 trn: company?.trn || '',
-                documentTitle: 'TAX INVOICE',
+                documentTitle: getInvoiceDocumentTitle(invoice),
+                hasTax: isTaxInvoiceDocument(invoice),
                 currency: company?.currency || company?.currencySymbol || 'AED',
                 outletAddress: company?.address || '',
                 outletPhone: company?.phone || '',

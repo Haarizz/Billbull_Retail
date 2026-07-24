@@ -67,6 +67,7 @@ public class LpoService {
     private jakarta.persistence.EntityManager entityManager;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
+    private final com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService;
 
     public LpoService(
             LpoRepository repository,
@@ -86,7 +87,8 @@ public class LpoService {
             com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             PaymentVoucherRepository paymentVoucherRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
-            com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
+            com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService,
+            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -105,6 +107,7 @@ public class LpoService {
         this.paymentVoucherRepository = paymentVoucherRepository;
         this.notifPublisher = notifPublisher;
         this.documentNumberingService = documentNumberingService;
+        this.purchaseTaxResolutionService = purchaseTaxResolutionService;
     }
 
     /* ================= CREATE ================= */
@@ -411,13 +414,8 @@ public class LpoService {
         }
     }
 
-    private static final BigDecimal DEFAULT_PURCHASE_TAX = BigDecimal.valueOf(5);
-
     private BigDecimal resolveItemPurchaseTax(Product product) {
-        if (product != null && product.getTax() != null && product.getTax().getPurchaseTax() != null) {
-            return product.getTax().getPurchaseTax();
-        }
-        return DEFAULT_PURCHASE_TAX;
+        return purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(product);
     }
 
     private void calculateTotals(Lpo lpo) {

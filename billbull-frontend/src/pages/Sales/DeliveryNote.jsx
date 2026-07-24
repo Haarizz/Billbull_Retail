@@ -56,7 +56,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice } from '../../utils/salesPricing';
 import { resolveLineTaxRate, computeLineTaxTotals } from '../../utils/vatMath';
-import { getActiveVatRate } from '../../api/taxApi';
+import { getBranchTaxSummary } from '../../api/taxApi';
 import CurrencyAmount from '../../components/CurrencyAmount';
 import BatchSelectionModal from '../../components/BatchSelectionModal';
 import { usePermissions } from '../../context/PermissionContext';
@@ -296,8 +296,24 @@ const DeliveryNote = () => {
     const [warehousesList, setWarehousesList] = useState([]);
     const [binsList, setBinsList] = useState([]);
     const [salesSettings, setSalesSettings] = useState(null);
-    const [activeVatRate, setActiveVatRate] = useState(null);
-    useEffect(() => { getActiveVatRate().then(setActiveVatRate); }, []);
+    // Branch Tax Configuration — Branch Default VAT Rate (used only when a product has no
+    // Sales Tax configured) and Tax Enabled (a full kill switch: when off, resolveLineTaxRate
+    // returns 0 regardless of product tax or branch default — see vatMath.js).
+    const [branchDefaultVatRate, setBranchDefaultVatRate] = useState(null);
+    const [branchTaxEnabled, setBranchTaxEnabled] = useState(true);
+    useEffect(() => {
+        getBranchTaxSummary(activeBranch?.id).then(cfg => {
+            if (!cfg) return;
+            setBranchDefaultVatRate(cfg.branchDefaultVatRate ?? null);
+            setBranchTaxEnabled(cfg.taxEnabled !== false);
+            // Seed the initial Tax Mode for a brand-new delivery note from the Branch Tax
+            // Configuration (not hardcoded EXCLUSIVE). Opening an existing DN for edit always
+            // overwrites this afterwards via its own load path (setCurrentDnId/setVatMode),
+            // which only ever runs from an explicit later user action here — never a
+            // mount-time race.
+            setVatMode(cfg.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
+        });
+    }, [activeBranch?.id]);
     const deliveryAutoNumbering = isAutoNumberingEnabled(salesSettings, 'DELIVERY_NOTE');
 
     // âœ… NEW STATE: Warehouse Stock Cache (Map: ProductCode -> Qty)
@@ -1443,7 +1459,7 @@ const DeliveryNote = () => {
             foc: 0,
             focUnit: product.unitName || product.unit || 'PCS',
             price: pickSalesItemPrice(product, salesSettings?.salesItemPricePolicy),
-            tax: resolveLineTaxRate(product, activeVatRate),
+            tax: resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled),
             disc: 0,
             taxAmt: 0,
             margin: 0,
@@ -1500,7 +1516,7 @@ const DeliveryNote = () => {
             foc: 0,
             focUnit: product.unitName || product.unit || 'PCS',
             price,
-            tax: resolveLineTaxRate(product, activeVatRate),
+            tax: resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled),
             disc,
             taxAmt: 0,
             margin: 0,
