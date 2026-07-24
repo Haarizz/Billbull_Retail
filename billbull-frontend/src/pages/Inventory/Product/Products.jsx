@@ -43,7 +43,7 @@ import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } f
 import { useBranch } from '../../../context/BranchContext';
 import { getCompanyProfile } from '../../../api/companyProfileApi';
 import { getBranchTaxSummary } from '../../../api/taxApi';
-import { resolveLineTaxRate } from '../../../utils/vatMath';
+import { resolveLineTaxRate, computeLineTaxTotals, VAT_MODES } from '../../../utils/vatMath';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -853,10 +853,18 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
     }
   };
 
+  // Metrics breakdown — Retail Price is always Tax Inclusive.
+  // Use the shared computeLineTaxTotals utility with INCLUSIVE mode so the
+  // extraction formula (retailPrice / (1 + rate)) matches every other module.
+  const metricsBreakdown = computeLineTaxTotals({
+    netAfterDiscount: parseFloat(formData.retailPrice) || 0,
+    taxPercent: effectiveMetricsTaxRate,
+    vatMode: VAT_MODES.INCLUSIVE,
+  });
+
   const calculateProfit = () => {
-    const price = parseFloat(formData.retailPrice) || 0;
     const cost = parseFloat(formData.cost) || 0;
-    return (price - cost).toFixed(2);
+    return (metricsBreakdown.taxableAmount - cost).toFixed(2);
   };
 
   const isStepValid = () => {
@@ -1258,11 +1266,11 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Incl. Tax</span>
-                    <CurrencyAmount value={formData.retailPrice * (1 + effectiveMetricsTaxRate / 100)} className="font-mono font-semibold" />
+                    <CurrencyAmount value={metricsBreakdown.total} className="font-mono font-semibold" />
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Excl. Tax</span>
-                    <CurrencyAmount value={formData.retailPrice} className="font-mono font-semibold" />
+                    <CurrencyAmount value={metricsBreakdown.taxableAmount} className="font-mono font-semibold" />
                   </div>
                   <div className="mt-6 pt-4 border-t border-slate-100">
                     <div className="bg-emerald-50 border border-emerald-100 p-4 rounded-lg text-center">
