@@ -25,7 +25,9 @@ import BranchSelector from "../components/common/BranchSelector";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => {
+    return localStorage.getItem("sidebarCollapsed") === "true";
+  });
   const rawUsername = getUsernameFromToken() || "";
   const username = formatUserDisplayName(rawUsername.includes('@') ? rawUsername.split('@')[0] : rawUsername) || "BillBull Admin";
   const { canView, canAction, permissionsLoaded } = usePermissions();
@@ -57,14 +59,27 @@ const Sidebar = ({ children }) => {
       setIsMobile(mobile);
       if (!mobile) {
         setMobileOpen(false);
-        setCollapsed(false);
-      } else {
-        setCollapsed(false); // Ensure full width when opened on mobile
       }
     };
     window.addEventListener("resize", handleResize);
     handleResize(); // Init check
     return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // Keyboard Shortcut (Ctrl+B or Cmd+B)
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setCollapsed((prev) => {
+          const newVal = !prev;
+          localStorage.setItem("sidebarCollapsed", newVal);
+          return newVal;
+        });
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   // --- AUTO-EXPAND LOGIC ---
@@ -87,6 +102,7 @@ const Sidebar = ({ children }) => {
   const handleToggle = (isOpen, setIsOpen) => {
     if (collapsed) {
       setCollapsed(false);
+      localStorage.setItem("sidebarCollapsed", "false");
       setTimeout(() => setIsOpen(true), 200);
     } else {
       setIsOpen(!isOpen);
@@ -329,9 +345,10 @@ const Sidebar = ({ children }) => {
       border-right: 1px solid var(--border-color);
       display: flex;
       flex-direction: column;
-      transition: all 0.3s ease;
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       z-index: 50;
       flex-shrink: 0;
+      overflow-x: hidden;
     }
 
     .sidebar.collapsed { width: 70px; }
@@ -560,11 +577,23 @@ const Sidebar = ({ children }) => {
     }
 
     /* COLLAPSED STATE LOGIC */
+    .brand-info, .nav-label, .chevron-icon, .user-text, .logout-text {
+      transition: opacity 0.2s ease, width 0.2s ease, flex 0.2s ease;
+      opacity: 1;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
     .sidebar.collapsed .brand-info, 
     .sidebar.collapsed .nav-label, 
     .sidebar.collapsed .chevron-icon,
     .sidebar.collapsed .user-text,
-    .sidebar.collapsed .logout-text { display: none; }
+    .sidebar.collapsed .logout-text { 
+      opacity: 0;
+      width: 0;
+      flex: none;
+      pointer-events: none;
+    }
     
     .sidebar.collapsed .sidebar-header { justify-content: center; padding: 16px 0; }
     .sidebar.collapsed .header-content { justify-content: center; flex-direction: column; gap: 8px; }
@@ -740,7 +769,11 @@ const Sidebar = ({ children }) => {
             )}
             {/* DESKTOP COLLAPSE TRIGGER — always visible in header */}
             {!isMobile && (
-              <button className="collapse-trigger" style={{ marginLeft: 'auto' }} onClick={() => setCollapsed(!collapsed)}>
+              <button className="collapse-trigger" style={{ marginLeft: 'auto' }} onClick={() => {
+                const newVal = !collapsed;
+                setCollapsed(newVal);
+                localStorage.setItem("sidebarCollapsed", newVal);
+              }}>
                 {collapsed ? <FaChevronRight /> : <FaChevronDown style={{ transform: 'rotate(90deg)' }} />}
               </button>
             )}
