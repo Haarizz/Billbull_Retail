@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull ERP — File Storage &amp; Multi-Tenant Upload Architecture Study</title>
+<style>
+  @font-face {
+    font-family: 'Source Serif';
+    src: local('Source Serif 4'), local('Source Serif Pro');
+  }
+
+  :root {
+    --bg: #f7f8fa;
+    --bg-raised: #ffffff;
+    --bg-sunken: #eef0f3;
+    --ink: #1b1e24;
+    --ink-soft: #4a4f59;
+    --ink-faint: #7a8090;
+    --border: #dcdfe5;
+    --border-soft: #e8eaee;
+    --accent: #9a5d16;
+    --accent-strong: #7a4810;
+    --accent-bg: #fbf1e2;
+    --accent-border: #e8c98f;
+    --ok: #1d7a4c;
+    --ok-bg: #e7f5ed;
+    --warn: #a15c00;
+    --warn-bg: #fdf1dc;
+    --bad: #b3271f;
+    --bad-bg: #fdeceb;
+    --terminal: #445070;
+    --terminal-bg: #eaedf5;
+    --code-bg: #eef0f3;
+    --shadow: 0 1px 2px rgba(20, 22, 30, 0.06), 0 4px 16px rgba(20, 22, 30, 0.05);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12141a;
+    --bg-raised: #1a1d25;
+    --bg-sunken: #0e1015;
+    --ink: #eef0f4;
+    --ink-soft: #b6bac6;
+    --ink-faint: #7d8394;
+    --border: #2c303c;
+    --border-soft: #23262f;
+    --accent: #e0a94a;
+    --accent-strong: #f0bc63;
+    --accent-bg: #2b2213;
+    --accent-border: #4a3a1a;
+    --ok: #4fbf87;
+    --ok-bg: #133025;
+    --warn: #e0a94a;
+    --warn-bg: #2b2213;
+    --bad: #e8746c;
+    --bad-bg: #331815;
+    --terminal: #8d9ac2;
+    --terminal-bg: #1c2030;
+    --code-bg: #1c1f28;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12141a;
+      --bg-raised: #1a1d25;
+      --bg-sunken: #0e1015;
+      --ink: #eef0f4;
+      --ink-soft: #b6bac6;
+      --ink-faint: #7d8394;
+      --border: #2c303c;
+      --border-soft: #23262f;
+      --accent: #e0a94a;
+      --accent-strong: #f0bc63;
+      --accent-bg: #2b2213;
+      --accent-border: #4a3a1a;
+      --ok: #4fbf87;
+      --ok-bg: #133025;
+      --warn: #e0a94a;
+      --warn-bg: #2b2213;
+      --bad: #e8746c;
+      --bad-bg: #331815;
+      --terminal: #8d9ac2;
+      --terminal-bg: #1c2030;
+      --code-bg: #1c1f28;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, pre, .mono, td.mono, th.mono {
+    font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Source Serif', Georgia, "Times New Roman", serif;
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.toc { display: none; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.25rem 1.25rem 2.5rem 1.75rem;
+    border-right: 1px solid var(--border-soft);
+  }
+
+  .toc-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1rem;
+  }
+
+  .toc-list { list-style: none; margin: 0; padding: 0; }
+  .toc-list a {
+    display: block;
+    padding: 0.32rem 0.6rem;
+    margin: 0.05rem 0;
+    border-radius: 5px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 0.86rem;
+    border-left: 2px solid transparent;
+  }
+  .toc-list a:hover { color: var(--ink); background: var(--bg-sunken); }
+  .toc-list a .num { color: var(--accent); font-family: ui-monospace, monospace; font-size: 0.78rem; margin-right: 0.5em; }
+
+  main {
+    padding: 2.5rem clamp(1.25rem, 4vw, 4rem) 6rem;
+    min-width: 0;
+  }
+
+  .cover {
+    padding-bottom: 2.25rem;
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    padding: 0.3rem 0.65rem;
+    border-radius: 4px;
+    margin-bottom: 1.1rem;
+  }
+  .cover h1 {
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+    line-height: 1.12;
+    margin: 0 0 0.85rem;
+    max-width: 22ch;
+  }
+  .cover .dek {
+    font-size: 1.05rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 1.4rem;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+  .meta-row strong { color: var(--ink-soft); font-weight: 600; }
+
+  section { margin-bottom: 3.25rem; scroll-margin-top: 1.5rem; }
+  section > .part-eyebrow {
+    font-family: ui-monospace, monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+  }
+  h2 {
+    font-size: 1.5rem;
+    margin: 0 0 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.14rem; margin: 1.8rem 0 0.7rem; }
+  h4 { font-size: 0.98rem; margin: 1.3rem 0 0.5rem; color: var(--ink-soft); }
+  p { max-width: 74ch; margin: 0 0 0.9rem; color: var(--ink-soft); }
+  p.lead { font-size: 1.03rem; color: var(--ink); max-width: 70ch; }
+  ul, ol { max-width: 72ch; color: var(--ink-soft); padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.35rem; }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent-strong); }
+
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.4em;
+    font-size: 0.86em;
+    color: var(--ink);
+  }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0 1.3rem;
+    max-width: 74ch;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout .cal-label {
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+    display: block;
+  }
+  .callout.warn .cal-label { color: var(--warn); }
+  .callout.bad .cal-label { color: var(--bad); }
+  .callout.ok .cal-label { color: var(--ok); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0 0 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.86rem; }
+  table.wide { min-width: 980px; }
+  thead th {
+    text-align: left;
+    background: var(--bg-sunken);
+    color: var(--ink-faint);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg-sunken); }
+  td.mono, th.mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+  td strong { color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .pill {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    padding: 0.14rem 0.55rem;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pill-ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .pill-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .pill-bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .pill-terminal { background: var(--terminal-bg); color: var(--terminal); border-color: var(--terminal); }
+  .pill-accent { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    margin: 0 0 1.3rem;
+  }
+  .code-block pre {
+    margin: 0;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    white-space: pre;
+  }
+  .code-block .arrow { color: var(--accent); }
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 0 0 1.3rem;
+    max-width: 46ch;
+  }
+  .flow-step {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.86rem;
+    color: var(--ink);
+  }
+  .flow-connector {
+    display: flex;
+    justify-content: center;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    padding: 0.1rem 0;
+  }
+  .flow-step.branch { border-color: var(--accent-border); background: var(--accent-bg); }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.85rem;
+    margin: 0 0 1.4rem;
+  }
+  .card {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    box-shadow: var(--shadow);
+  }
+  .card h4 { margin: 0 0 0.4rem; font-size: 0.92rem; color: var(--ink); }
+  .card p { font-size: 0.82rem; margin: 0; color: var(--ink-faint); max-width: none; }
+
+  hr.sep { border: none; border-top: 1px solid var(--border); margin: 2.4rem 0; }
+
+  footer.doc-footer {
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+  }
+
+  ::selection { background: var(--accent-border); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="toc">
+    <p class="toc-label">Contents</p>
+    <ul class="toc-list">
+      <li><a href="#p1"><span class="num">01</span>Current architecture</a></li>
+      <li><a href="#p2"><span class="num">02</span>Every upload endpoint</a></li>
+      <li><a href="#p3"><span class="num">03</span>Root cause analysis</a></li>
+      <li><a href="#p4"><span class="num">04</span>Impact analysis</a></li>
+      <li><a href="#p5"><span class="num">05</span>Risk assessment</a></li>
+      <li><a href="#p6"><span class="num">06</span>Storage strategies A–D</a></li>
+      <li><a href="#p7"><span class="num">07</span>Kubernetes readiness</a></li>
+      <li><a href="#p8"><span class="num">08</span>Client migration strategy</a></li>
+      <li><a href="#p9"><span class="num">09</span>Recommended architecture</a></li>
+      <li><a href="#p10"><span class="num">10</span>Folder &amp; API design</a></li>
+      <li><a href="#p11"><span class="num">11</span>Database impact</a></li>
+      <li><a href="#p12"><span class="num">12</span>Zero-loss migration plan</a></li>
+      <li><a href="#p13"><span class="num">13</span>Rollback &amp; validation</a></li>
+      <li><a href="#p14"><span class="num">14</span>Implementation phases</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <div class="cover">
+      <span class="eyebrow">Architecture study &middot; analysis only, no code changed</span>
+      <h1>File Storage &amp; Multi-Tenant Upload Architecture</h1>
+      <p class="dek">A ground-truth audit of every place BillBull writes an uploaded file, why the current flat <code>uploads/</code> layout blocks independent client migration, and a production-grade redesign that makes one tenant's files exportable, importable, and disposable without touching anyone else's.</p>
+      <div class="meta-row">
+        <span><strong>Branch</strong> feature/billpos</span>
+        <span><strong>Scope</strong> backend, frontend, schema, K8s manifests — 1 research pass</span>
+        <span><strong>Status</strong> no code changed, no data moved</span>
+        <span><strong>Prepared</strong> 2026-07-23</span>
+      </div>
+    </div>
+
+    <section id="p1">
+      <p class="part-eyebrow">Part 01</p>
+      <h2>Current architecture, documented ground-truth</h2>
+      <p class="lead">Every uploaded file — product image, logo, stamp, avatar, attachment — lands under one relative directory, <code>./uploads/</code>, resolved against the JVM's working directory. There is no tenant identifier anywhere in the write path. Isolation between clients today exists only because each tenant happens to run as its own OS process (or, on the new k3s pilot, its own pod with its own PVC) — never because the application code segments paths by client.</p>
+
+      <h3>The one static resource mapping</h3>
+      <p><code>config/StaticResourceConfig.java</code> registers exactly one handler for the whole backend:</p>
+      <div class="code-block"><pre>registry.addResourceHandler("/uploads/**")
+        .addResourceLocations("file:./uploads/");</pre></div>
+      <p>Every uploaded asset, regardless of module, is served back to the frontend under this single <code>/uploads/**</code> URL prefix, resolved to <code>./uploads/</code> relative to wherever the JVM was launched from.</p>
+
+      <h3>upload.path — configured, but dead</h3>
+      <div class="callout bad">
+        <span class="cal-label">Finding</span>
+        <p>The base <code>application.properties</code> defines <code>upload.path=uploads/</code> (line 85), and four of the fourteen tenant profile files (<code>demo</code>, <code>leroyalflowers</code>, <code>leroyalgifts</code>, <code>royaltools</code>) override it with what looks like a tenant-specific subfolder, e.g. <code>uploads/leroyalflowers/</code>. A repo-wide search of <code>src/main/java</code> found <strong>zero</strong> classes that read or inject this property. It is orphaned configuration — even those four tenants get no actual namespacing effect from it. Whoever wrote those four overrides was reaching for exactly the isolation this report recommends, half a step ahead of the code that would have honored it.</p>
+      </div>
+      <p>A second, unrelated property key, <code>file.upload-dir</code>, appears as a constructor default in two services (<code>TaxService.java:46</code>, <code>ReceiptVoucherService.java:63</code>) but is never set in any properties file either, so both always fall through to their hardcoded defaults (<code>uploads/tax_filings</code>, <code>uploads/receipts</code>) — identical across every tenant.</p>
+
+      <h3>What actually decides a file's path: 7 independent hardcoded literals</h3>
+      <p>There is no shared storage abstraction. Each module either hardcodes its own directory constant or writes inline in the controller. All eight patterns coexist side by side:</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Class</th><th>Directory constant</th><th>Filename pattern</th><th>Path style stored to DB</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">FileUploadUtil</td><td class="mono">uploads/avatars</td><td class="mono">{uuid}_{origname}</td><td>relative <code>/uploads/...</code></td></tr>
+            <tr><td class="mono">EmployeeServiceImpl</td><td class="mono">uploads/employees</td><td class="mono">{epochMillis}_{origname}</td><td>relative</td></tr>
+            <tr><td class="mono">ProductImageStorageService</td><td class="mono">uploads/products</td><td class="mono">{uuid}.{ext}</td><td>relative</td></tr>
+            <tr><td class="mono">BrandLogoStorageService</td><td class="mono">uploads/brands</td><td class="mono">{uuid}.{ext}</td><td>relative</td></tr>
+            <tr><td class="mono">CompanyProfileService</td><td class="mono">uploads/company</td><td class="mono">{uuid}.{ext}</td><td>relative</td></tr>
+            <tr><td class="mono">BranchService</td><td class="mono">uploads/branch</td><td class="mono">{uuid}.{ext}</td><td>relative</td></tr>
+            <tr><td class="mono">SalesOrderController (inline)</td><td class="mono">uploads/sales-orders/{orderId}</td><td class="mono">{origname} — <span class="pill pill-bad">no UUID</span></td><td>relative</td></tr>
+            <tr><td class="mono">ReceiptVoucherService</td><td class="mono">uploads/receipts</td><td class="mono">{uuid}_{origname}</td><td><strong>absolute</strong> path — the outlier</td></tr>
+            <tr><td class="mono">TaxService</td><td class="mono">uploads/tax_filings</td><td class="mono">tax_filing_{id}_{uuid}_{origname}</td><td><strong>absolute</strong> path — the outlier</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Two more modules don't write files to disk at all today: <strong>Quotation attachments</strong> are stored as a raw byte-array BLOB directly in the <code>QuotationAttachment</code> entity (<code>QuotationService.java:804</code>), and <strong>Salary Advance attachments</strong> are a known stub — only the original filename string is persisted, with a source comment reading <em>"In real app, save file to storage (AWS S3 / Local)"</em> (<code>SalaryAdvanceService.java:34</code>). Both are worth folding into whatever storage abstraction this report recommends, rather than being left as two more one-off patterns.</p>
+
+      <h3>No tenant identity exists in the request pipeline</h3>
+      <p>Tenancy in BillBull today is "one Spring Boot process, one Postgres database, selected by <code>spring.profiles.active</code>" — full stop. There is no <code>TenantContext</code>, no <code>CompanyContext</code>, no client code anywhere in the JWT claims or security context that upload code could consult. The only per-request context holder that exists is <code>security/BranchContextHolder</code>, and that's <em>intra</em>-tenant branch scoping (multiple outlets inside one client's single DB) — a different axis entirely, and one worth not confusing with the client/tenant axis this report is about.</p>
+      <p>This matters for the redesign: there is currently nothing to key a path on except the Spring profile name itself, which is exactly what four tenant properties files already guessed at (and what the recommendation in Part 9 formalizes properly).</p>
+    </section>
+
+    <section id="p2">
+      <p class="part-eyebrow">Part 02</p>
+      <h2>Every upload endpoint, traced to file:line</h2>
+      <p class="lead">Fourteen endpoints across nine modules accept a file. Two more accept a file but never persist bytes (Excel import parses in-memory; Salary Advance is a stub). Everything routes through the same single static handler in Part 01.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Module</th><th>Endpoint</th><th>Controller</th><th>Storage path</th></tr></thead>
+          <tbody>
+            <tr><td>User avatar</td><td class="mono">PUT /api/auth/profile</td><td class="mono">AuthController.java:136,159</td><td class="mono">uploads/avatars/</td></tr>
+            <tr><td>Employee avatar</td><td class="mono">POST/PUT /api/employees[/{id}]</td><td class="mono">EmployeeController.java:108,122</td><td class="mono">uploads/employees/</td></tr>
+            <tr><td>Product image</td><td class="mono">POST/PUT /api/products[/{id}]</td><td class="mono">ProductController.java:81,253</td><td class="mono">uploads/products/</td></tr>
+            <tr><td>Product image (Excel import)</td><td class="mono">POST /api/products/import/excel</td><td class="mono">ProductImportService.java:916</td><td class="mono">uploads/products/</td></tr>
+            <tr><td>Brand logo</td><td class="mono">POST/PUT /api/brands[/{id}]</td><td class="mono">BrandController.java:61,73</td><td class="mono">uploads/brands/</td></tr>
+            <tr><td>Company logo</td><td class="mono">POST /api/settings/company-profile/logo</td><td class="mono">CompanyProfileController.java:52</td><td class="mono">uploads/company/</td></tr>
+            <tr><td>Company stamp</td><td class="mono">POST /api/settings/company-profile/stamp</td><td class="mono">CompanyProfileController.java:69</td><td class="mono">uploads/company/</td></tr>
+            <tr><td>Branch logo</td><td class="mono">POST /api/branches/{id}/logo</td><td class="mono">BranchController.java:82</td><td class="mono">uploads/branch/</td></tr>
+            <tr><td>Branch stamp</td><td class="mono">POST /api/branches/{id}/stamp</td><td class="mono">BranchController.java:95</td><td class="mono">uploads/branch/</td></tr>
+            <tr><td>Sales Order attachment</td><td class="mono">POST /api/sales/sales-orders/{id}/attachments</td><td class="mono">SalesOrderController.java:163</td><td class="mono">uploads/sales-orders/{id}/</td></tr>
+            <tr><td>Quotation attachment</td><td class="mono">POST /api/sales/quotations/{id}/attachments</td><td class="mono">QuotationController.java:148</td><td><span class="pill pill-warn">DB BLOB, no disk path</span></td></tr>
+            <tr><td>Receipt Voucher attachment</td><td class="mono">POST/PUT /api/sales/receipt-vouchers[/{id}]</td><td class="mono">ReceiptVoucherController.java:86,95</td><td class="mono">uploads/receipts/ (absolute)</td></tr>
+            <tr><td>Tax filing document</td><td class="mono">POST /api/financials/tax/filings/{id}/upload</td><td class="mono">TaxController.java:84</td><td class="mono">uploads/tax_filings/ (absolute)</td></tr>
+            <tr><td>Salary advance attachment</td><td class="mono">POST /api/salary-advances</td><td class="mono">SalaryAdvanceController.java:39</td><td><span class="pill pill-bad">filename only — stub, no bytes stored</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Product/Customer/Vendor Excel import endpoints also accept a file (<code>POST .../import/excel</code> on Products, Customers, Vendors) but parse the workbook entirely in memory without persisting the raw file — not part of the uploads-directory problem, no change needed there.</p>
+
+      <h3>Database columns holding the resulting path</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Entity</th><th>Field(s)</th><th>Module</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">User</td><td class="mono">avatarUrl</td><td>User account</td></tr>
+            <tr><td class="mono">Employee</td><td class="mono">avatarUrl</td><td>HR</td></tr>
+            <tr><td class="mono">ProductMedia</td><td class="mono">imageUrl</td><td>Inventory</td></tr>
+            <tr><td class="mono">Brand</td><td class="mono">logoPath</td><td>Inventory</td></tr>
+            <tr><td class="mono">CompanyProfile</td><td class="mono">logoPath, stampPath</td><td>Company settings</td></tr>
+            <tr><td class="mono">Branch</td><td class="mono">logoUrl, stampUrl</td><td>Branch settings</td></tr>
+            <tr><td class="mono">SalesOrderAttachment</td><td class="mono">filePath</td><td>Sales</td></tr>
+            <tr><td class="mono">ReceiptVoucher</td><td class="mono">attachmentPath, attachmentName</td><td>Financials</td></tr>
+            <tr><td class="mono">TaxFiling</td><td class="mono">attachmentPath, attachmentName</td><td>Financials</td></tr>
+            <tr><td class="mono">SalaryAdvanceRequest</td><td class="mono">attachmentFileName</td><td>HR (filename only, no bytes)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The frontend consumes all of this through one funnel: <code>utils/urlUtils.js</code> exports <code>getImageUrl(path)</code>, used across ~35 page components, which passes through absolute/<code>data:</code>/<code>blob:</code> URLs and otherwise prefixes the backend origin onto the stored relative path. This single choke point is the good news for migration — the frontend needs zero changes if the new scheme still resolves through the same <code>/uploads/**</code> URL space (see Part 10).</p>
+    </section>
+
+    <section id="p3">
+      <p class="part-eyebrow">Part 03</p>
+      <h2>Root cause analysis</h2>
+      <p class="lead">The flat layout isn't a bug in any one class — it's the absence of a decision. Four compounding root causes:</p>
+      <ol>
+        <li><strong>No storage abstraction ever existed.</strong> Each module that needed to save a file wrote its own three-line "resolve dir, create if missing, write" logic, independently, over the life of the codebase. Nine call sites, nine copies, zero shared interface — the same failure pattern already documented for reservation logic in the companion stock study (duplication instead of generalization).</li>
+        <li><strong>Tenancy is external to the app, not modeled inside it.</strong> Because "which tenant is this?" is answered entirely by which properties file activated the process — never by a value available inside a request — no upload code had a tenant key to segment by even if someone had wanted to.</li>
+        <li><strong>The one config knob that could have fixed it was never wired up.</strong> <code>upload.path</code> exists, four tenants even set it distinctively — but nothing reads it. This is the closest the codebase ever came to solving this problem, and it silently didn't work.</li>
+        <li><strong>Multi-tenant deployment concerns arrived after the storage code was written.</strong> The single-tenant-per-process model made a flat <code>uploads/</code> harmless for years — each tenant's process had its own working directory, so files never actually mixed <em>until</em> multiple tenants started sharing one host/filesystem (confirmed by the k3s <code>RUNBOOK.md</code>: four legacy tenants previously shared one systemd <code>WorkingDirectory</code>, meaning their <code>uploads/</code> trees were commingled on the same disk before any K8s migration began). The problem was latent, then became active the moment infrastructure consolidated.</li>
+      </ol>
+      <div class="callout warn">
+        <span class="cal-label">Corroborating evidence from the K8s pilot</span>
+        <p>The existing <code>k8s/max/RUNBOOK.md</code> (client2's completed 2026-07-16 migration) explicitly notes that tenant "max" had zero real uploads at cutover, so the uploads-migration step was skipped — and separately flags that the <em>next</em> tenants queued for migration "likely do have real data" and will need a real upload-directory migration. This report exists to answer exactly that flagged need, for every remaining tenant, once and for good rather than tenant-by-tenant.</p>
+      </div>
+    </section>
+
+    <section id="p4">
+      <p class="part-eyebrow">Part 04</p>
+      <h2>Impact analysis — every affected surface</h2>
+      <p class="lead">Anything that reads Part 02's table is affected. Grouped by blast radius:</p>
+      <div class="card-grid">
+        <div class="card"><h4>Backend storage classes (7)</h4><p>FileUploadUtil, EmployeeServiceImpl, ProductImageStorageService, BrandLogoStorageService, CompanyProfileService, BranchService, ReceiptVoucherService, TaxService, plus the inline SalesOrderController writer — all need their directory-resolution logic replaced by one shared, tenant-aware component.</p></div>
+        <div class="card"><h4>StaticResourceConfig</h4><p>The single <code>/uploads/**</code> → <code>./uploads/</code> mapping must be revisited so old URLs keep resolving during transition (see Part 10 backward-compat routing).</p></div>
+        <div class="card"><h4>10 DB path/URL columns</h4><p>Every stored path (Part 02 table) either needs a migration to a new value or a URL-rewrite layer that keeps old values valid (Part 12).</p></div>
+        <div class="card"><h4>Frontend: single choke point</h4><p><code>getImageUrl()</code> in <code>urlUtils.js</code> is the only place that builds a browser-facing URL from a stored path — ~35 consuming pages need zero changes if new paths still resolve under <code>/uploads/**</code>.</p></div>
+        <div class="card"><h4>K8s manifests</h4><p><code>k8s/*/pvc.yaml</code>, <code>deployment.yaml</code> volume mounts — no structural change needed (see Part 07), but backup/DR tooling built against "the PVC = the tenant" assumption should be checked against the new subpath convention.</p></div>
+        <div class="card"><h4>Backend Dockerfile</h4><p>No <code>VOLUME /app/uploads</code> declared today; worth adding explicitly once the path convention is finalized, for local/dev parity with the K8s mount.</p></div>
+        <div class="card"><h4>Two stub/edge paths</h4><p>Quotation attachments (DB BLOB, no disk path — unaffected either way) and Salary Advance attachments (currently a no-op stub) should be decided on: fold into the new scheme now, or explicitly deferred and tracked.</p></div>
+      </div>
+      <p>Every module named in the original ask — product images, company/branch logos and stamps, customer/supplier/employee images (customer and supplier image upload were not found as implemented endpoints in this audit — see caveat below), user avatars, attachments, POS assets, receipt logos — maps onto the table in Part 02 with one exception worth flagging explicitly.</p>
+      <div class="callout">
+        <span class="cal-label">Scope caveat</span>
+        <p>This audit found no dedicated upload endpoint for <strong>customer images</strong> or <strong>supplier/vendor images</strong> in the current backend — only Excel <em>import</em> endpoints exist for those two entities, and those parse in-memory without persisting a file. If customer/supplier photo upload is planned or exists in a part of the codebase this pass didn't surface, it should be added to Part 02's table before implementation begins; the storage abstraction in Part 09 is designed to make adding a new upload type a one-line registration, not a new copy of the pattern.</p>
+      </div>
+    </section>
+
+    <section id="p5">
+      <p class="part-eyebrow">Part 05</p>
+      <h2>Risk assessment</h2>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Risk</th><th>Likelihood today</th><th>Severity</th><th>Trigger condition</th></tr></thead>
+          <tbody>
+            <tr><td>Cross-tenant file exposure on shared hosts</td><td><span class="pill pill-bad">Confirmed historical</span></td><td>High</td><td>Multiple tenants sharing one systemd <code>WorkingDirectory</code> / one disk — already happened per the RUNBOOK, prior to K8s migration.</td></tr>
+            <tr><td>Cannot export one client's files independently</td><td><span class="pill pill-bad">Confirmed, present</span></td><td>High</td><td>Any client offboarding, migration to a dedicated server, or per-client backup request today.</td></tr>
+            <tr><td>Filename collision overwrites another record's file</td><td><span class="pill pill-warn">Possible</span></td><td>Medium</td><td>Sales Order attachments use the raw original filename with no UUID prefix — two uploads with the same filename on the same order silently overwrite.</td></tr>
+            <tr><td>Absolute-path columns break on container/host move</td><td><span class="pill pill-warn">Possible</span></td><td>Medium</td><td>ReceiptVoucher/TaxFiling store an absolute path baked in at write time; moving the mount point, the container filesystem layout, or restoring to a different host invalidates those two columns while every other module's relative path survives unchanged.</td></tr>
+            <tr><td>Backup/DR scripts built off "one PVC = one tenant" silently include future in-app tenant subfolders they weren't written for</td><td><span class="pill pill-warn">Possible</span></td><td>Low–Medium</td><td>Whoever writes the per-tenant backup job needs to know the new subpath convention exists.</td></tr>
+            <tr><td>Data loss during migration to new path scheme</td><td><span class="pill pill-warn">Avoidable</span></td><td>High if mishandled</td><td>Mitigated entirely by the copy-then-verify-then-cutover plan in Part 12 — never a move/delete of the source of truth until validated.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="p6">
+      <p class="part-eyebrow">Part 06</p>
+      <h2>Storage strategy comparison</h2>
+      <p class="lead">Four options, scored against the criteria the task specifies. All four assume the same in-app fix regardless of backend choice: a shared storage abstraction that takes a tenant key, a category, and a file — the physical backend (local disk vs. object store) becomes an implementation detail behind one interface.</p>
+
+      <h3>Option A — <code>uploads/{client}/</code> flat per-client</h3>
+      <p>Every tenant gets one top-level folder; all its files (of every type) sit inside it undifferentiated.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Criterion</th><th>Assessment</th></tr></thead>
+          <tbody>
+            <tr><td>Client migration</td><td><span class="pill pill-ok">Solved</span> — one folder = one client, trivially tarball-able</td></tr>
+            <tr><td>K8s compatibility</td><td>Fine — still local disk, still one PVC per tenant pod</td></tr>
+            <tr><td>Maintainability</td><td><span class="pill pill-warn">Weak</span> — no per-category structure inside the client folder, same nine hardcoded subfolder names collide again one level down</td></tr>
+            <tr><td>Future cloud migration</td><td>Requires a second migration later to add category structure</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Option B — <code>uploads/{tenant-code}/{category}/</code> (recommended local layout)</h3>
+      <p>Client-level isolation <em>and</em> category structure in one scheme — the natural evolution of what four tenant properties files already half-attempted with <code>upload.path</code>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Criterion</th><th>Assessment</th></tr></thead>
+          <tbody>
+            <tr><td>Client migration</td><td><span class="pill pill-ok">Solved</span> — copy <code>uploads/{tenant-code}/</code>, done</td></tr>
+            <tr><td>K8s compatibility</td><td><span class="pill pill-ok">Excellent</span> — no infra change; still one PVC per tenant, mounted at the same path</td></tr>
+            <tr><td>Backup / DR</td><td>Per-category selective restore possible (e.g. restore only <code>products/</code> without touching <code>logos/</code>)</td></tr>
+            <tr><td>Performance</td><td>Identical to today — local disk I/O</td></tr>
+            <tr><td>Security / isolation</td><td>Filesystem-level only; no cryptographic tenant boundary, but matches the trust model already in place (one process per tenant DB)</td></tr>
+            <tr><td>Future cloud migration</td><td>The tenant-code/category prefix maps directly onto an S3 key prefix later — zero rework of the path convention, only the storage backend swaps out</td></tr>
+            <tr><td>Ease of deployment</td><td><span class="pill pill-ok">Highest of all four</span> — no new infrastructure, no new dependency, ships as an app-only change</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Option C — Object storage (MinIO/S3-compatible) with tenant-prefixed keys</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Criterion</th><th>Assessment</th></tr></thead>
+          <tbody>
+            <tr><td>Client migration</td><td><span class="pill pill-ok">Solved</span>, and more elegantly — prefix-based export/import via bucket replication or <code>mc mirror</code>, no filesystem access needed at all</td></tr>
+            <tr><td>K8s compatibility</td><td><span class="pill pill-ok">Best</span> — removes the ReadWriteOnce PVC constraint entirely, so the backend can finally run <code>RollingUpdate</code> with &gt;1 replica instead of the current <code>Recreate</code>/single-replica limitation the K8s handbook documents</td></tr>
+            <tr><td>Scalability / HA</td><td>MinIO itself can be deployed as a multi-node erasure-coded cluster; trivially horizontally scalable</td></tr>
+            <tr><td>Performance</td><td>Adds one network hop per file read/write versus local disk — usually sub-10ms in-cluster, negligible for this workload (receipts, product images, logos), but non-zero</td></tr>
+            <tr><td>Security</td><td>Per-bucket or per-prefix IAM policy gives a real access boundary, stronger than filesystem permissions</td></tr>
+            <tr><td>Ease of deployment</td><td><span class="pill pill-warn">New moving part</span> — MinIO deployment, credentials, bucket lifecycle policy, backend SDK dependency, code changes to every one of the 9 write sites</td></tr>
+            <tr><td>Future cloud migration</td><td><span class="pill pill-ok">Zero rework</span> — MinIO's S3 API is what AWS S3 speaks; swapping the endpoint is a config change, not a code change</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Option D — Hybrid: local disk (Option B layout) now, object storage later</h3>
+      <p>Adopt the Option B path <em>convention</em> immediately (cheap, ships fast, solves the migration problem today) while designing the storage abstraction's interface so that swapping the backend to MinIO/S3 later touches only one class, not nine call sites.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Criterion</th><th>Assessment</th></tr></thead>
+          <tbody>
+            <tr><td>Time to value</td><td><span class="pill pill-ok">Fastest</span> — Option B alone is a contained, low-risk change deployable in the current architecture</td></tr>
+            <tr><td>Future-proofing</td><td>The tenant-prefixed key convention designed for Option B is identical to the S3 key convention Option C would use — no wasted work, no second migration of the <em>path scheme</em>, only of the <em>storage backend</em> if/when K8s scale-out demands it</td></tr>
+            <tr><td>Risk</td><td>Lowest — no new infrastructure dependency introduced in the phase that actually solves the stated problem (independent client migration)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout ok">
+        <span class="cal-label">Recommendation preview</span>
+        <p>Option D. Solve the actual stated problem — a client's files trapped inside a shared flat directory — with Option B's tenant/category path convention now, behind a storage-abstraction interface. Defer Option C (object storage) as a backend swap-in for whenever multi-replica horizontal scaling of the backend actually becomes a requirement, since today's single-tenant-per-pod K8s model doesn't yet need it. Full reasoning in Part 09.</p>
+      </div>
+    </section>
+
+    <section id="p7">
+      <p class="part-eyebrow">Part 07</p>
+      <h2>Kubernetes readiness</h2>
+      <p class="lead">The existing <code>k8s/max/</code> pilot already answers most of this — worth restating precisely what it already solved versus what remains open, since the two are easy to conflate.</p>
+
+      <h3>Already solved by the existing K8s pilot</h3>
+      <ul>
+        <li><strong>Persistent Volumes.</strong> <code>k8s/max/pvc.yaml</code> provisions a 10Gi <code>ReadWriteOnce</code> PVC (<code>local-path</code> storage class) per tenant, mounted at <code>/app/uploads</code> in that tenant's Deployment — durable across pod restarts, unlike the container's ephemeral filesystem.</li>
+        <li><strong>Per-tenant isolation at the volume level.</strong> Each tenant Deployment gets its own dedicated PVC — "max" (client2) has <code>max-uploads-pvc</code>; a new tenant gets its own named PVC. Tenant A's pod cannot mount Tenant B's volume.</li>
+        <li><strong>Pod replacement / self-healing.</strong> Standard Deployment/ReplicaSet reconciliation already covers this — a crashed pod is replaced and re-mounts the same PVC.</li>
+      </ul>
+
+      <h3>The real constraint: ReadWriteOnce forces single-replica, Recreate-only</h3>
+      <p>Because the uploads PVC is <code>ReadWriteOnce</code>, only one pod can hold it at a time. This is why the backend Deployment is pinned to <code>replicas: 1</code> and uses the <code>Recreate</code> strategy (kill old pod, then start new) instead of <code>RollingUpdate</code> (start new pod before killing old — briefly two pods, both wanting the volume). The handbook is explicit and correct about this trade-off: it accepts brief downtime on every deploy in exchange for never risking split-brain writes to the shared disk.</p>
+      <div class="callout">
+        <span class="cal-label">Not solved by this report's recommendation, by design</span>
+        <p>Adopting Option B's tenant/category path convention (Part 06) does not remove the RWO constraint — it's still one PVC, one writer. If horizontal scaling of a single tenant's backend (multiple replicas serving one client) becomes a real requirement, that specifically requires Option C (object storage) or a <code>ReadWriteMany</code>-capable storage class (e.g. NFS-backed, EFS on AWS) — a separate decision from the one this report is making. Flagging this now so it isn't rediscovered as a surprise later.</p>
+      </div>
+
+      <h3>What does need to change for K8s</h3>
+      <ul>
+        <li><strong>Nothing structural.</strong> Option B's <code>uploads/{tenant-code}/{category}/</code> layout lives entirely inside the existing mount point (<code>/app/uploads</code>) — the PVC, the volume mount, the <code>Recreate</code> strategy, the ingress rule routing <code>/uploads</code> to the backend Service all stay exactly as they are.</li>
+        <li><strong>Backend Dockerfile</strong> should gain an explicit <code>VOLUME /app/uploads</code> declaration for local/dev-Docker parity with the K8s mount — currently absent, harmless in K8s (the PVC mount overrides it anyway) but worth adding for consistency.</li>
+        <li><strong>Backup tooling</strong> (whatever job snapshots the PVC — not found as existing automation in this repo, likely a manual/host-level `kubectl cp` or volume-snapshot process today) should be aware of the new per-tenant-code subfolder so a "restore just this tenant's uploads" operation can target the correct in-volume path, not just the whole PVC.</li>
+        <li><strong>High availability</strong> for the backend tier specifically remains bounded by the RWO PVC regardless of this report's recommendation — see the callout above. HA for the frontend tier is already unaffected (stateless, <code>replicas: 2</code> today).</li>
+      </ul>
+    </section>
+
+    <section id="p8">
+      <p class="part-eyebrow">Part 08</p>
+      <h2>Client migration strategy</h2>
+      <p class="lead">The goal: move Tenant A to a different database/server/cluster touching only Tenant A's data — database and uploads both — with zero risk to any other tenant's files.</p>
+      <div class="flow">
+        <div class="flow-step"><strong>1.</strong> Export Tenant A's database (existing per-tenant Postgres dump — already independent today, no change needed)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>2.</strong> Export Tenant A's uploads: <code>tar -czf {tenant-code}.tar.gz uploads/{tenant-code}/</code> — a single directory tree, self-contained, no cross-tenant references possible because DB path columns store <code>/uploads/{tenant-code}/...</code>-relative values that never point outside that tree</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>3.</strong> Transfer both artifacts to the destination environment (new server, new K8s namespace, new PVC)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>4.</strong> Restore DB dump into the new Postgres instance; extract the uploads tarball into the destination's <code>/app/uploads/{tenant-code}/</code> (same relative subpath, so every stored path column resolves without a single UPDATE)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>5.</strong> Point the new Spring profile / ConfigMap at the restored DB; boot; verify a sample of images/logos/attachments render</div>
+      </div>
+      <p>Step 2 and step 4's subpath match is what makes this <em>zero-touch on the database</em> — because the tenant-code segment is already the first path component under the shared root, moving the whole subtree preserves every relative URL stored in every DB column untouched. This is the direct payoff of choosing tenant-code as the top-level segment (Option B) rather than nesting it deeper.</p>
+      <div class="callout ok">
+        <span class="cal-label">Why this beats today's alternative</span>
+        <p>Today, the equivalent operation requires copying the <em>entire shared</em> <code>uploads/</code> directory (every tenant's files) and then manually identifying and stripping out everything that doesn't belong to Tenant A — file-by-file, with no directory boundary to lean on, and no way to be fully sure the DB's absolute-path columns (ReceiptVoucher, TaxFiling) will even still resolve on the new host. The new layout makes this a single <code>tar</code> command over one subtree, matching the DB export's own independence.</p>
+      </div>
+    </section>
+
+    <section id="p9">
+      <p class="part-eyebrow">Part 09</p>
+      <h2>Recommended final architecture</h2>
+      <p class="lead"><strong>Local disk, Option B layout (<code>uploads/{tenant-code}/{category}/</code>), behind one shared storage-abstraction service, with the tenant code resolved from the active Spring profile — no new infrastructure, no new dependency, ships as an application-only change.</strong> Object storage (Option C) is documented as the deliberate next step, not adopted now, because nothing in the current single-replica-per-tenant K8s model needs it yet, and introducing MinIO today would add an operational dependency to solve a problem (horizontal scale-out) that doesn't exist yet.</p>
+
+      <h3>Why this beats the alternatives, specifically</h3>
+      <ul>
+        <li><strong>vs. Option A (client-only, no category folders):</strong> B avoids re-colliding all nine hardcoded subfolder names one level down inside each client folder; category structure makes per-type backup/retention policy possible later (e.g. purge old receipt attachments on a schedule without touching product images).</li>
+        <li><strong>vs. Option C (object storage now):</strong> B ships without a new service to deploy, secure, and operate; it fully solves the stated problem (independent client migration) with dramatically less risk and time; and because the path convention is chosen to be S3-key-compatible, adopting C later is a backend swap, not a redesign.</li>
+        <li><strong>vs. doing nothing:</strong> the RUNBOOK.md already flags that upcoming tenant migrations "likely do have real data" — this is not a hypothetical future problem, it's the literal next migration in the queue.</li>
+      </ul>
+
+      <h3>Tenant code source</h3>
+      <p>Use the active Spring profile name itself (<code>client1</code>, <code>demo</code>, <code>geebu</code>, etc. — the same string already in <code>SPRING_PROFILES_ACTIVE</code>) as the tenant-code path segment. No new identity concept is introduced; it's the one tenant key that already exists and is already unique per deployed process. A single new <code>@Value("${spring.profiles.active}")</code>-backed bean (or reuse of <code>Environment.getActiveProfiles()[0]</code>) is the only "tenant context" this recommendation requires — deliberately not building a general-purpose multi-tenant-in-one-process framework, since that isn't how BillBull is deployed and isn't in scope.</p>
+
+      <h3>The storage abstraction</h3>
+      <p>One new component, e.g. <code>common.storage.TenantFileStorageService</code>, with a signature shaped like:</p>
+      <div class="code-block"><pre>String store(String category, MultipartFile file)   // returns "/uploads/{tenant}/{category}/{uuid}.{ext}"
+Resource load(String relativeUrl)
+void delete(String relativeUrl)</pre></div>
+      <p>All nine existing call sites (Part 02) are refactored to call this instead of their own hardcoded directory logic — collapsing seven duplicated implementations into one. This is the same "generalize the duplicated concept instead of leaving parallel copies" fix already recommended for <code>PosStockReservation</code> vs. <code>BatchAllocation</code> in the companion reservation study; the same anti-pattern shows up here in a different subsystem.</p>
+    </section>
+
+    <section id="p10">
+      <p class="part-eyebrow">Part 10</p>
+      <h2>Folder structure, API, and frontend impact</h2>
+      <h3>Proposed folder structure</h3>
+      <div class="code-block"><pre>uploads/
+  client1/
+    products/
+    brands/
+    company/
+    branch/
+    employees/
+    avatars/
+    sales-orders/{orderId}/
+    receipts/
+    tax_filings/
+  demo/
+    products/
+    ...
+  royaltools/
+    ...</pre></div>
+      <p>Category folder names are kept identical to today's (<code>products</code>, <code>brands</code>, <code>company</code>, <code>branch</code>, <code>employees</code>, <code>avatars</code>, <code>sales-orders</code>, <code>receipts</code>, <code>tax_filings</code>) — no renaming, purely inserting the tenant-code segment above them.</p>
+
+      <h3>API impact</h3>
+      <p><strong>None of the fourteen endpoints in Part 02 change their request contract.</strong> Only the internal path-construction logic changes (call the new shared service instead of each class's own hardcoded logic). Response payloads keep returning a <code>/uploads/...</code>-relative string — just now with one extra path segment.</p>
+
+      <h3><code>StaticResourceConfig</code> impact</h3>
+      <p>The single resource handler mapping stays <code>/uploads/** → file:./uploads/</code> — unchanged. The tenant-code segment is just another path component under that same root; no new mapping is needed, and no per-tenant static-resource configuration is required since each tenant is already its own JVM process with its own working directory.</p>
+
+      <h3>Frontend impact</h3>
+      <p><strong>Zero code changes expected.</strong> <code>getImageUrl()</code> in <code>urlUtils.js</code> already treats the stored value as an opaque backend-relative path and prefixes the origin — it does not parse or assume anything about the path's internal structure. Every one of the ~35 consuming pages calls through this one function. Confirm with a smoke test post-migration (Part 13), but no source change is anticipated.</p>
+    </section>
+
+    <section id="p11">
+      <p class="part-eyebrow">Part 11</p>
+      <h2>Database impact</h2>
+      <p class="lead">Ten columns across nine entities (Part 02 table) hold a stored path. All but two store a value that's already relative to the <code>uploads/</code> root and prefixed with <code>/uploads/</code> — those need only a string segment inserted after <code>/uploads/</code> and before the existing category. Two are the outliers.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column(s)</th><th>Migration action</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">User.avatarUrl, Employee.avatarUrl, ProductMedia.imageUrl, Brand.logoPath, CompanyProfile.logoPath/stampPath, Branch.logoUrl/stampUrl, SalesOrderAttachment.filePath</td><td>String rewrite: <code>/uploads/{category}/...</code> → <code>/uploads/{tenant-code}/{category}/...</code>. Same tenant-code literal for every row in a given tenant's database (single DB per tenant, so this is a single deterministic <code>UPDATE ... SET col = REPLACE(...)</code> per column, not a row-by-row decision).</td></tr>
+            <tr><td class="mono">ReceiptVoucher.attachmentPath, TaxFiling.attachmentPath</td><td><strong>Outliers</strong> — these store an absolute filesystem path, not a relative URL. Recommend fixing these two to store the same relative-URL convention as every other column as part of this migration (they should never have diverged), then applying the same rewrite.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>No new Flyway migration adds a column — this is a data-only change (an <code>UPDATE</code> migration script, run per tenant database, guarded and re-runnable per the project's existing Flyway convention of idempotent, <code>to_regclass</code>-guarded scripts). Full script design in Part 12.</p>
+    </section>
+
+    <section id="p12">
+      <p class="part-eyebrow">Part 12</p>
+      <h2>Zero-data-loss migration plan</h2>
+      <p class="lead">Copy-verify-cutover, never move-then-hope. The existing flat directory is never deleted until the new layout is confirmed serving traffic correctly for that tenant.</p>
+      <div class="flow">
+        <div class="flow-step"><strong>Step 1 — Snapshot.</strong> Back up the tenant's current <code>uploads/</code> directory and take a DB backup, before touching anything.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Step 2 — Copy, don't move.</strong> For each existing category folder, copy (not move) its contents into <code>uploads/{tenant-code}/{category}/</code>. The old flat paths remain live and fully functional throughout.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Step 3 — Rewrite DB path columns.</strong> Run the guarded <code>UPDATE</code> script from Part 11 against a copy of the DB first (or inside a transaction with a pre-commit row-count sanity check), inserting the tenant-code segment into every stored path.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Step 4 — Backward-compatible fallback route (transition safety net).</strong> Temporarily extend <code>StaticResourceConfig</code> with a second handler serving the old flat paths (<code>/uploads/{category}/**</code>, distinguishable from the new <code>/uploads/{tenant-code}/{category}/**</code> because tenant codes are a known, enumerable set) so any URL cached client-side, in an email, or in a previously-generated PDF still resolves during the transition window.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Step 5 — Validate.</strong> Automated script fetches every rewritten path via HTTP and confirms 200 + non-zero content-length for a sample (or all) rows per affected table; manual spot-check of product images, a company logo, and one receipt attachment through the actual UI.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Step 6 — Cutover.</strong> Only after Step 5 passes for a tenant: remove that tenant's old flat-path files and retire the Step 4 fallback handler for that tenant (or leave the fallback in place permanently if the cost of doing so is negligible — it's a static resource handler, not a runtime branch).</div>
+      </div>
+
+      <h3>Batch migration script shape</h3>
+      <p>One script, parameterized by tenant code, run once per tenant (the whole client fleet is 14 tenants — this is a bounded, enumerable, one-time job, not an ongoing process):</p>
+      <div class="code-block"><pre>for each tenant in {client1, client2, ..., royaltools}:
+    rsync -a  uploads/{category}/  →  uploads/{tenant-code}/{category}/   (per category, filtered by that tenant's known file list from DB)
+    run  V{next}__namespace_upload_paths.sql   against that tenant's DB only
+    run  validate_uploads.sh {tenant-code}      (HTTP HEAD every path in the 10 columns, report any 404)
+    on all-green: mark tenant migrated; old flat files retained N days before deletion (grace window, not immediate delete)</pre></div>
+      <p>Because each tenant already lives in its own database and (per the K8s pilot) increasingly its own filesystem/PVC, tenants can be migrated one at a time, independently, with no coordination required between them — matching exactly the independence this whole report is trying to establish for the running system, not just the tooling that migrates it.</p>
+
+      <h3>Backward compatibility during transition</h3>
+      <p>Step 4's fallback handler is the key device: nothing breaks between "DB rewritten" and "old files deleted," because both the old and new physical files, and both the old and new resolvable URLs, coexist during that window. This is the same category of caution the project already uses for schema changes (Flyway scripts guarded with <code>to_regclass</code> checks) applied to a filesystem/URL migration instead of a schema migration.</p>
+    </section>
+
+    <section id="p13">
+      <p class="part-eyebrow">Part 13</p>
+      <h2>Rollback strategy and validation</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Stage</th><th>Rollback action</th></tr></thead>
+          <tbody>
+            <tr><td>After Step 2 (files copied, DB untouched)</td><td>Delete the new <code>{tenant-code}/</code> tree; nothing else changed. Zero risk — trivial rollback.</td></tr>
+            <tr><td>After Step 3 (DB rewritten)</td><td>Re-run the inverse <code>REPLACE</code> (strip the tenant-code segment back out) from the pre-migration DB backup, or restore that tenant's DB backup directly since each tenant's DB is already fully independent of every other tenant's.</td></tr>
+            <tr><td>After Step 6 (old files deleted)</td><td>Restore old flat files from the Step 1 snapshot; re-run the Step 3 rollback. This is why Step 6 enforces a grace window before deletion rather than deleting immediately on validation pass.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Validation checklist per tenant</h3>
+      <ul>
+        <li>Row counts in each of the 10 path columns match before/after the <code>UPDATE</code> (no rows silently skipped or double-rewritten).</li>
+        <li>Automated HTTP fetch of every rewritten path returns 200 with expected content-type/length.</li>
+        <li>Manual UI smoke test: view a product with an image, view Company Settings logo/stamp, view a Branch logo, open one Receipt Voucher attachment, open one Tax Filing attachment, view an employee avatar, view own profile avatar.</li>
+        <li>Confirm the K8s PVC mount for that tenant shows the new <code>{tenant-code}/</code> subfolder present and correctly populated (<code>kubectl exec ... -- ls /app/uploads</code>).</li>
+      </ul>
+    </section>
+
+    <section id="p14">
+      <p class="part-eyebrow">Part 14</p>
+      <h2>Implementation phases (estimate)</h2>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Phase</th><th>Scope</th><th>Rough effort</th></tr></thead>
+          <tbody>
+            <tr><td><strong>1</strong></td><td>Build <code>TenantFileStorageService</code> (store/load/delete), resolve tenant-code from active profile, unit tests</td><td>0.5–1 day</td></tr>
+            <tr><td><strong>2</strong></td><td>Refactor all 9 write call sites (Part 02) to the new service; fix the 2 absolute-path outliers (ReceiptVoucher, TaxFiling) to relative-URL convention; retire dead <code>upload.path</code>/<code>file.upload-dir</code> properties</td><td>1–1.5 days</td></tr>
+            <tr><td><strong>3</strong></td><td>Add Step-4 backward-compatible fallback resource handler; write the batch migration + validation scripts (Part 12)</td><td>1 day</td></tr>
+            <tr><td><strong>4</strong></td><td>Dry-run migration against one low-risk tenant (e.g. <code>demo</code>), full validation checklist, fix issues found</td><td>0.5–1 day</td></tr>
+            <tr><td><strong>5</strong></td><td>Roll out to remaining 13 tenants, one at a time, each with its own validation pass and grace-window deletion</td><td>~0.5 day per tenant, spread over the grace windows — not a single continuous block</td></tr>
+            <tr><td><strong>6</strong></td><td>(Deferred, not scheduled) Swap local-disk backend for MinIO/S3-compatible object storage behind the same <code>TenantFileStorageService</code> interface, if/when multi-replica backend scaling becomes an actual requirement</td><td>Separate future initiative, not part of this rollout</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Total for Phases 1–4 (the part that actually needs to ship before any more tenants migrate to K8s): roughly <strong>3–4.5 engineering days</strong>, plus a rollout window across Phase 5 gated by each tenant's own grace period rather than one big-bang cutover.</p>
+    </section>
+
+    <footer class="doc-footer">
+      Prepared as an architecture study only — no code was written or changed, no uploaded files or database rows were modified in the course of this audit. All file:line references were verified against the current <code>feature/billpos</code> branch as of 2026-07-23.
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

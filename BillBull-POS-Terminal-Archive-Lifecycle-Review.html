@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull ERP — POS Terminal Archive Lifecycle Review</title>
+<style>
+  @font-face {
+    font-family: 'Source Serif';
+    src: local('Source Serif 4'), local('Source Serif Pro');
+  }
+
+  :root {
+    --bg: #f7f8fa;
+    --bg-raised: #ffffff;
+    --bg-sunken: #eef0f3;
+    --ink: #1b1e24;
+    --ink-soft: #4a4f59;
+    --ink-faint: #7a8090;
+    --border: #dcdfe5;
+    --border-soft: #e8eaee;
+    --accent: #9a5d16;
+    --accent-strong: #7a4810;
+    --accent-bg: #fbf1e2;
+    --accent-border: #e8c98f;
+    --ok: #1d7a4c;
+    --ok-bg: #e7f5ed;
+    --warn: #a15c00;
+    --warn-bg: #fdf1dc;
+    --bad: #b3271f;
+    --bad-bg: #fdeceb;
+    --terminal: #445070;
+    --terminal-bg: #eaedf5;
+    --code-bg: #eef0f3;
+    --shadow: 0 1px 2px rgba(20, 22, 30, 0.06), 0 4px 16px rgba(20, 22, 30, 0.05);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12141a;
+    --bg-raised: #1a1d25;
+    --bg-sunken: #0e1015;
+    --ink: #eef0f4;
+    --ink-soft: #b6bac6;
+    --ink-faint: #7d8394;
+    --border: #2c303c;
+    --border-soft: #23262f;
+    --accent: #e0a94a;
+    --accent-strong: #f0bc63;
+    --accent-bg: #2b2213;
+    --accent-border: #4a3a1a;
+    --ok: #4fbf87;
+    --ok-bg: #133025;
+    --warn: #e0a94a;
+    --warn-bg: #2b2213;
+    --bad: #e8746c;
+    --bad-bg: #331815;
+    --terminal: #8d9ac2;
+    --terminal-bg: #1c2030;
+    --code-bg: #1c1f28;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12141a;
+      --bg-raised: #1a1d25;
+      --bg-sunken: #0e1015;
+      --ink: #eef0f4;
+      --ink-soft: #b6bac6;
+      --ink-faint: #7d8394;
+      --border: #2c303c;
+      --border-soft: #23262f;
+      --accent: #e0a94a;
+      --accent-strong: #f0bc63;
+      --accent-bg: #2b2213;
+      --accent-border: #4a3a1a;
+      --ok: #4fbf87;
+      --ok-bg: #133025;
+      --warn: #e0a94a;
+      --warn-bg: #2b2213;
+      --bad: #e8746c;
+      --bad-bg: #331815;
+      --terminal: #8d9ac2;
+      --terminal-bg: #1c2030;
+      --code-bg: #1c1f28;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, pre, .mono, td.mono, th.mono {
+    font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Source Serif', Georgia, "Times New Roman", serif;
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.toc { display: none; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.25rem 1.25rem 2.5rem 1.75rem;
+    border-right: 1px solid var(--border-soft);
+  }
+
+  .toc-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1rem;
+  }
+
+  .toc-list { list-style: none; margin: 0; padding: 0; }
+  .toc-list a {
+    display: block;
+    padding: 0.32rem 0.6rem;
+    margin: 0.05rem 0;
+    border-radius: 5px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 0.86rem;
+    border-left: 2px solid transparent;
+  }
+  .toc-list a:hover { color: var(--ink); background: var(--bg-sunken); }
+  .toc-list a .num { color: var(--accent); font-family: ui-monospace, monospace; font-size: 0.78rem; margin-right: 0.5em; }
+
+  main {
+    padding: 2.5rem clamp(1.25rem, 4vw, 4rem) 6rem;
+    min-width: 0;
+  }
+
+  .cover {
+    padding-bottom: 2.25rem;
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    padding: 0.3rem 0.65rem;
+    border-radius: 4px;
+    margin-bottom: 1.1rem;
+  }
+  .cover h1 {
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+    line-height: 1.12;
+    margin: 0 0 0.85rem;
+    max-width: 24ch;
+  }
+  .cover .dek {
+    font-size: 1.05rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 1.4rem;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+  .meta-row strong { color: var(--ink-soft); font-weight: 600; }
+
+  section { margin-bottom: 3.25rem; scroll-margin-top: 1.5rem; }
+  section > .part-eyebrow {
+    font-family: ui-monospace, monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+  }
+  h2 {
+    font-size: 1.5rem;
+    margin: 0 0 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.14rem; margin: 1.8rem 0 0.7rem; }
+  h4 { font-size: 0.98rem; margin: 1.3rem 0 0.5rem; color: var(--ink-soft); }
+  p { max-width: 74ch; margin: 0 0 0.9rem; color: var(--ink-soft); }
+  p.lead { font-size: 1.03rem; color: var(--ink); max-width: 70ch; }
+  ul, ol { max-width: 72ch; color: var(--ink-soft); padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.35rem; }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent-strong); }
+
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.4em;
+    font-size: 0.86em;
+    color: var(--ink);
+  }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0 1.3rem;
+    max-width: 74ch;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout .cal-label {
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+    display: block;
+  }
+  .callout.warn .cal-label { color: var(--warn); }
+  .callout.bad .cal-label { color: var(--bad); }
+  .callout.ok .cal-label { color: var(--ok); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0 0 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.86rem; }
+  table.wide { min-width: 980px; }
+  thead th {
+    text-align: left;
+    background: var(--bg-sunken);
+    color: var(--ink-faint);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg-sunken); }
+  td.mono, th.mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+  td strong { color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .pill {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    padding: 0.14rem 0.55rem;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pill-ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .pill-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .pill-bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .pill-terminal { background: var(--terminal-bg); color: var(--terminal); border-color: var(--terminal); }
+  .pill-accent { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    margin: 0 0 1.3rem;
+  }
+  .code-block pre {
+    margin: 0;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    white-space: pre;
+  }
+  .code-block .arrow { color: var(--accent); }
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 0 0 1.3rem;
+    max-width: 46ch;
+  }
+  .flow-step {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.86rem;
+    color: var(--ink);
+  }
+  .flow-connector {
+    display: flex;
+    justify-content: center;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    padding: 0.1rem 0;
+  }
+  .flow-step.branch { border-color: var(--accent-border); background: var(--accent-bg); }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.85rem;
+    margin: 0 0 1.4rem;
+  }
+  .card {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    box-shadow: var(--shadow);
+  }
+  .card h4 { margin: 0 0 0.4rem; font-size: 0.92rem; color: var(--ink); }
+  .card p { font-size: 0.82rem; margin: 0; color: var(--ink-faint); max-width: none; }
+
+  hr.sep { border: none; border-top: 1px solid var(--border); margin: 2.4rem 0; }
+
+  footer.doc-footer {
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+  }
+
+  ::selection { background: var(--accent-border); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="toc">
+    <p class="toc-label">Contents</p>
+    <ul class="toc-list">
+      <li><a href="#p1"><span class="num">01</span>What already exists</a></li>
+      <li><a href="#p2"><span class="num">02</span>State purpose &amp; behavior</a></li>
+      <li><a href="#p3"><span class="num">03</span>ARCHIVED: Option A vs B</a></li>
+      <li><a href="#p4"><span class="num">04</span>ARCHIVE vs DECOMMISSION</a></li>
+      <li><a href="#p5"><span class="num">05</span>State transition diagram</a></li>
+      <li><a href="#p6"><span class="num">06</span>Licensing behavior</a></li>
+      <li><a href="#p7"><span class="num">07</span>Admin &amp; device workflows</a></li>
+      <li><a href="#p8"><span class="num">08</span>UI recommendations</a></li>
+      <li><a href="#p9"><span class="num">09</span>Should anything change?</a></li>
+      <li><a href="#p10"><span class="num">10</span>Implementation plan</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <div class="cover">
+      <span class="eyebrow">Architecture review &middot; ground-truth audited, no code changed</span>
+      <h1>POS Terminal Archive Lifecycle Review</h1>
+      <p class="dek">The premise behind this review — that Archive permanently frees the device and forces a new registration — turns out not to match the code. The backend already supports exactly the reversible behavior the concern describes; the actual gap is that this only exists on the admin side, and the cashier-facing dialog can't tell an admin what to do because it doesn't know why the terminal is unavailable.</p>
+      <div class="meta-row">
+        <span><strong>Branch</strong> feature/billpos</span>
+        <span><strong>Scope</strong> backend + frontend, full lifecycle re-audit</span>
+        <span><strong>Status</strong> no code changed</span>
+        <span><strong>Prepared</strong> 2026-07-24</span>
+      </div>
+    </div>
+
+    <section id="p1">
+      <p class="part-eyebrow">Part 01</p>
+      <h2>What already exists — read before anything else</h2>
+      <p class="lead">Before recommending an architecture, it's worth being precise about what's already shipped, because it changes the shape of the problem. The concern as stated assumes ARCHIVED is a one-way door. It isn't — not on the backend, and not even in one place on the frontend. It's a one-way door in exactly one screen: the cashier-facing POS terminal-pairing dialog.</p>
+
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Capability</th><th>Exists today?</th><th>Where</th></tr></thead>
+          <tbody>
+            <tr><td>Backend: restore an ARCHIVED terminal</td><td><span class="pill pill-ok">Yes</span></td><td><code>POST /api/pos/terminals/{id}/restore</code> — <code>PosTerminalController.java:97-100</code> → <code>PosTerminalLifecycleService.restore()</code> → <code>PosTerminalService.restore()</code> (<code>PosTerminalService.java:237-257</code>)</td></tr>
+            <tr><td>Restore clears archive fields, re-checks slot limit, reactivates</td><td><span class="pill pill-ok">Yes</span></td><td>Clears <code>archivedAt</code>/<code>archiveReason</code>, sets status <code>INACTIVE</code> (not directly <code>ACTIVE</code> — a subsequent heartbeat completes the return to <code>ACTIVE</code>/<code>IDLE</code>), re-enables <code>isActive</code> soft-delete flag, and re-checks <code>maxTerminalsPerBranch</code> before allowing it — <code>PosTerminalService.java:237-257</code></td></tr>
+            <tr><td>ARCHIVED terminals excluded from the slot-count limit</td><td><span class="pill pill-ok">Yes, already</span></td><td><code>countActiveLimitByBranchId</code> excludes only <code>ARCHIVED</code> — <code>PosTerminalRepository.java:60-62</code></td></tr>
+            <tr><td>Admin UI to restore an archived terminal</td><td><span class="pill pill-ok">Yes</span></td><td><code>POSTerminals.jsx:87-92</code> (<code>handleRestore</code>), wired to a visible <strong>Restore</strong> button at <code>POSTerminals.jsx:209-211</code></td></tr>
+            <tr><td>A truly permanent, non-reversible status</td><td><span class="pill pill-bad">No</span></td><td><code>DECOMMISSIONED</code> is defined in <code>PosTerminalStatus.java:13</code> and is checked/excluded everywhere ARCHIVED is, but <strong>nothing in the codebase ever assigns it</strong> — confirmed via grep across <code>pos/terminal/</code>: zero calls to <code>setStatus(PosTerminalStatus.DECOMMISSIONED)</code>. It's a defined-but-dead value for terminals specifically (sibling entities — cash drawers, scanners, printers, hardware profiles — do actively assign their own DECOMMISSIONED equivalents).</td></tr>
+            <tr><td>Device-side dialog differentiates why the terminal is unavailable</td><td><span class="pill pill-bad">No</span></td><td><code>POSSales.jsx:1705-1712</code> catches any HTTP 403 from registration generically; the dialog at <code>POSSales.jsx:7906-7943</code> shows one hardcoded heading ("Terminal Not Available") and one hardcoded body paragraph listing all four causes (archived/blocked/decommissioned/maintenance) without knowing which one actually happened — the only status-specific text is the raw backend string (<code>"Terminal is ARCHIVED"</code>) interpolated once, unstyled, mid-paragraph.</td></tr>
+            <tr><td>Device-side action offered</td><td><span class="pill pill-bad">Single, unconditional</span></td><td>"Register as New Terminal" (<code>POSSales.jsx:7925-7939</code>) is the only button, regardless of cause — always clears local device identity and re-registers, always consumes a slot via the new-terminal branch of <code>registerOrRefresh()</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout ok">
+        <span class="cal-label">Reframing the question</span>
+        <p>The concern asks "should ARCHIVED be Option A (temporary, restorable) or Option B (permanent, forces re-registration)?" The backend already implemented Option A in full, correctly, months ago. The actual open question is narrower and different: <strong>the system has no Option B at all</strong> — no status currently means "this device/terminal relationship is permanently over, register fresh." <code>DECOMMISSIONED</code> is the obvious candidate for that role, and it's sitting there unused. The rest of this review is built around that reframing.</p>
+      </div>
+    </section>
+
+    <section id="p2">
+      <p class="part-eyebrow">Part 02</p>
+      <h2>Purpose and behavior of each state</h2>
+      <p class="lead">The enum has 11 values today (<code>NEW, PENDING_REGISTRATION, ACTIVE, IDLE, OFFLINE, INACTIVE, MAINTENANCE, BLOCKED, STALE, DECOMMISSIONED, ARCHIVED</code>) — more than the five named in the review request. Below, every value that's actually reachable in practice, with the six behavioral questions from the task answered for each. <code>NEW</code> and <code>PENDING_REGISTRATION</code> are pre-activation states (before a terminal is approved) and are out of scope for this review, which is about the post-activation lifecycle.</p>
+
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>State</th><th>Can start a session?</th><th>Can device reconnect?</th><th>Shown in Terminal Mgmt?</th><th>Consumes a slot?</th><th>Restorable?</th><th>Reused automatically?</th></tr></thead>
+          <tbody>
+            <tr><td><strong>ACTIVE</strong></td><td>Yes</td><td>Yes (heartbeat succeeds)</td><td>Yes</td><td>Yes</td><td>n/a</td><td>n/a — normal working state</td></tr>
+            <tr><td><strong>IDLE</strong></td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>n/a</td><td>n/a — set by heartbeat when no open session</td></tr>
+            <tr><td><strong>OFFLINE</strong></td><td class="mono">Blocked until heartbeat resumes</td><td>Yes — heartbeat auto-recovers to ACTIVE/IDLE</td><td>Yes</td><td>Yes</td><td>Automatic (no admin action)</td><td>Yes, automatically on next heartbeat</td></tr>
+            <tr><td><strong>STALE</strong></td><td class="mono">Blocked, warning state</td><td><span class="pill pill-ok">Yes — any recorded activity auto-recovers it</span> (<code>PosTerminalLifecycleService.recoverFromStale()</code>, triggered automatically by <code>PosTerminalActivityService.recordActivity()</code>)</td><td>Yes, with a visible "stale/warning" badge (recommended, see Part 08)</td><td>Yes</td><td>Automatic on activity, or admin "Keep Active"</td><td>Yes, automatically</td></tr>
+            <tr><td><strong>MAINTENANCE</strong></td><td>No</td><td class="mono">Blocked (403) — <em>currently ungated on heartbeat but gated on registration</em>, see note below</td><td>Yes</td><td>Yes</td><td>Admin toggles off manually</td><td>No — deliberate admin hold, must be lifted explicitly</td></tr>
+            <tr><td><strong>BLOCKED</strong></td><td>No</td><td>No (403)</td><td>Yes</td><td>Yes</td><td>Admin action required</td><td>No — punitive/security hold, must be lifted explicitly</td></tr>
+            <tr><td><strong>ARCHIVED</strong> (recommended: temporary/soft-retired)</td><td>No</td><td>No (403) — device sees "unavailable," not silently rejected</td><td>Yes, filterable to a separate "Archived" view (see Part 08)</td><td><span class="pill pill-ok">No — already excluded today</span></td><td><span class="pill pill-ok">Yes — already works</span> via admin Restore</td><td>No — requires an explicit admin decision (restore, or let it eventually become DECOMMISSIONED per retention policy)</td></tr>
+            <tr><td><strong>DECOMMISSIONED</strong> (recommended: permanent/hard-retired)</td><td>No</td><td>No (403) — device is told to register fresh</td><td>Yes, in a separate "Decommissioned" archive view, not the active list</td><td><span class="pill pill-ok">No</span></td><td><span class="pill pill-bad">No — by design, this is the actual permanent state</span></td><td>No — the device/terminal pairing is over; a fresh registration is the only path forward, and it correctly consumes a new slot</td></tr>
+            <tr><td><strong>INACTIVE</strong></td><td class="mono">Ambiguous today — see Part 09</td><td>Not explicitly gated in the reconnect check (only BLOCKED/MAINTENANCE/DECOMMISSIONED/ARCHIVED are checked)</td><td>Yes</td><td>Yes</td><td>n/a</td><td>Currently used only as restore's landing state — see Part 09 finding</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warn">
+        <span class="cal-label">Note on MAINTENANCE reconnect gating</span>
+        <p>Registration correctly blocks MAINTENANCE (<code>PosTerminalService.java:67-72, 94-99</code>), but the heartbeat guard only lists <code>ARCHIVED</code>/<code>DECOMMISSIONED</code>/<code>BLOCKED</code>, not <code>MAINTENANCE</code> (<code>PosTerminalService.java:169-173</code>). A terminal already holding a valid session that gets put into MAINTENANCE mid-shift would keep heartbeating successfully until that session naturally ends, rather than being cut off immediately. This may be intentional (let an active sale finish before maintenance takes effect) or may be an oversight — flagged as a decision point in Part 09, not assumed either way.</p>
+      </div>
+    </section>
+
+    <section id="p3">
+      <p class="part-eyebrow">Part 03</p>
+      <h2>Resolving ARCHIVED: Option A, confirmed correct — and already built</h2>
+      <p class="lead">Directly answering the task's central question: <strong>ARCHIVED should be, and already is, Option A</strong> — a temporary inactive state, restorable, with the device-terminal relationship preserved and no new registration required. Option B's behavior (permanent, forces new registration, consumes a new slot) is a real and needed concept, but it belongs to a <em>different</em> status — DECOMMISSIONED — not to ARCHIVED.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>Option A (ARCHIVED, as built)</th><th>Option B (belongs to DECOMMISSIONED instead)</th></tr></thead>
+          <tbody>
+            <tr><td>Reversible</td><td><span class="pill pill-ok">Yes</span> — admin Restore, already live</td><td>No, by design</td></tr>
+            <tr><td>Device-terminal relationship</td><td>Preserved — same <code>PosTerminal</code> row, same <code>deviceFingerprint</code></td><td>Ended — device must pair to a brand-new row</td></tr>
+            <tr><td>New registration required</td><td>No</td><td>Yes</td></tr>
+            <tr><td>Consumes a new slot</td><td>No — restoring reuses the existing (already-excluded) row</td><td>Yes — correctly, since it's genuinely a new terminal identity</td></tr>
+            <tr><td>Typical trigger</td><td>Auto-archive after inactivity (<code>PosTerminalAutoArchiveJob</code>), or a deliberate "temporarily take this till out of service" admin action</td><td>Terminal hardware retired/replaced, branch closed, device permanently reassigned, admin explicitly ends the relationship</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Why this split is the right one, not just the existing one: the whole point of the auto-archive sweep (<code>PosTerminalAutoArchiveJob</code>, daily at 02:00, per-branch opt-in, 30-day default threshold) is to quietly reclaim slots from terminals nobody is actively touching — a seasonal till, a device that broke and was forgotten, a till from a temporarily-closed department. None of those situations are "this hardware is gone forever" — they're "nobody's used this in a month, and if they come back, restoring should be one click, not a full re-registration that eats another slot and loses the device's history/fingerprint continuity." That is precisely Option A, and building the auto-archive job to feed into anything else would have made the whole feature actively hostile to the exact scenario it was built to handle.</p>
+    </section>
+
+    <section id="p4">
+      <p class="part-eyebrow">Part 04</p>
+      <h2>ARCHIVE and DECOMMISSION should be separate concepts — and already are, on paper</h2>
+      <p class="lead">Yes, they should be separate — and the enum already reflects that design intent (<code>DECOMMISSIONED</code> is deliberately excluded from the same queries as <code>ARCHIVED</code> everywhere, not merged with it). The gap isn't conceptual; it's that <code>DECOMMISSIONED</code> was defined and wired into every read-side check but never wired into a write-side trigger. It's a state nothing can ever enter.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>ARCHIVE</th><th>DECOMMISSION</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Semantic</strong></td><td>"Not in use right now"</td><td>"Retired — this pairing is finished"</td></tr>
+            <tr><td><strong>Who triggers it</strong></td><td>Auto-archive job (system) or admin "Archive Now"</td><td>Admin only — a decommission should never happen automatically, since it's irreversible and slot-consuming to undo</td></tr>
+            <tr><td><strong>Reversible</strong></td><td>Yes</td><td>No</td></tr>
+            <tr><td><strong>What happens to the device</strong></td><td>Told terminal is unavailable; if it's their terminal, an admin can bring it back exactly as it was</td><td>Told to register as a new terminal — correctly, since there's nothing left to restore</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>This mirrors a pattern already established elsewhere in the POS device layer: cash drawers, scanners, printers, and hardware profiles all have their own DECOMMISSIONED-equivalent status that <em>is</em> actively assigned somewhere in their respective services (<code>PosCashDrawerService.java:66</code>, <code>PosScannerService.java:56</code>, <code>PosDeviceController.java:133</code>, <code>HardwareProfileService.java:82</code>, <code>PosPrinterService.java:86</code>). Terminals are the one device type in this family where that final step was left unfinished. This isn't a new concept being introduced — it's completing a pattern the rest of the module already follows.</p>
+    </section>
+
+    <section id="p5">
+      <p class="part-eyebrow">Part 05</p>
+      <h2>Recommended state transition diagram</h2>
+      <div class="code-block"><pre>                    ┌──────────────────────────────────────────────┐
+                    │                                                │
+   NEW ──approve──▶ ACTIVE ◀──heartbeat──┐                          │
+                    │  │                 │                          │
+                    │  │ no open session │                          │
+                    │  ▼                 │                          │
+                    │ IDLE ──heartbeat───┘                          │
+                    │  │                                            │
+                    │  │ 15 min no heartbeat (PosTerminalScheduler) │
+                    │  ▼                                            │
+                    │ OFFLINE ──heartbeat resumes──▶ ACTIVE/IDLE    │
+                    │  │                                            │
+                    │  │ archiveAfterDays − warningDays elapsed     │
+                    │  │ (auto-archive sweep, opt-in per branch)    │
+                    │  ▼                                            │
+                    │ STALE ──any activity recorded────────────────▶│  (auto-recover, no admin action)
+                    │  │        or admin "Keep Active"
+                    │  │
+                    │  │ archiveAfterDays elapsed, still no activity
+                    │  ▼
+                    │ ARCHIVED ◀────── admin "Archive Now" (any active-family status, direct)
+                    │  │      │
+                    │  │      └──admin Restore──▶ INACTIVE ──heartbeat──▶ ACTIVE/IDLE
+                    │  │                          (existing device-terminal
+                    │  │                           relationship preserved,
+                    │  │                           no new slot consumed)
+                    │  │
+                    │  │ admin explicit "Decommission"
+                    │  │ (retention policy: e.g. ARCHIVED > 180 days
+                    │  │  with no restore → eligible for decommission review)
+                    │  ▼
+                    │ DECOMMISSIONED  (terminal state)
+                    │      │
+                    │      └── device reconnects with old fingerprint ──▶ 403,
+                    │          UI: "Register as New Terminal" ──▶ brand-new
+                    │          PosTerminal row, consumes a slot, no restore possible
+
+   BLOCKED  ◀──admin block (from any active-family status)── ── admin Unblock ──▶ prior status
+   MAINTENANCE ◀──admin toggle (from ACTIVE/IDLE/OFFLINE)── ── admin toggle off ──▶ prior status</pre></div>
+      <p>No circular or ambiguous paths: ARCHIVED and DECOMMISSIONED are both reachable only via explicit admin action or the auto-archive job (for ARCHIVED only — DECOMMISSIONED is never automatic, per Part 04). BLOCKED and MAINTENANCE are orthogonal holds that suspend from, and return to, whatever operational status the terminal was in before — they don't interact with the ARCHIVE/DECOMMISSION axis at all.</p>
+    </section>
+
+    <section id="p6">
+      <p class="part-eyebrow">Part 06</p>
+      <h2>Terminal licensing behavior</h2>
+      <p class="lead">Directly answering the task's licensing question: <strong>archiving should free a slot immediately; only decommissioning should also permanently forfeit the ability to silently reclaim it.</strong> This is already exactly how ARCHIVED behaves today. The only new piece is confirming DECOMMISSIONED's behavior once it's wired up.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Status</th><th>Counts against <code>maxTerminalsPerBranch</code>?</th><th>Rationale</th></tr></thead>
+          <tbody>
+            <tr><td>ACTIVE / IDLE / OFFLINE / STALE / MAINTENANCE / BLOCKED / INACTIVE</td><td><span class="pill pill-warn">Yes</span></td><td>All represent a live, reusable terminal identity — even BLOCKED/MAINTENANCE, since those are meant to be temporary and the slot should stay reserved for that specific terminal, not freed for someone else to grab</td></tr>
+            <tr><td>ARCHIVED</td><td><span class="pill pill-ok">No — already correct today</span></td><td>The whole point of auto-archive is to free up slots occupied by dormant terminals without losing the ability to bring them back exactly as they were</td></tr>
+            <tr><td>DECOMMISSIONED</td><td><span class="pill pill-ok">No</span> (once wired — already excluded from the same query as ARCHIVED)</td><td>The relationship is over; the freed slot is available for a genuinely new terminal registration, which is the correct incentive since decommissioning is an admin-only, deliberate, irreversible action</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>One nuance worth deciding explicitly rather than assuming: today, BLOCKED and MAINTENANCE terminals still consume a slot indefinitely. That's defensible (they're not gone, just paused, and a malicious or careless admin shouldn't be able to free up "extra" slots just by blocking terminals) — but it means a branch that has, say, 3 of its 5 terminals permanently BLOCKED for a legitimate reason (recurring fraud, retired-but-not-yet-decommissioned hardware) is effectively down to 2 usable slots with no path to reclaim them short of unblocking or decommissioning. Recommend surfacing this explicitly in the admin UI (a "blocked/maintenance terminals are still counted against your limit" note) rather than changing the underlying behavior — the current behavior is correct, it just isn't visible.</p>
+    </section>
+
+    <section id="p7">
+      <p class="part-eyebrow">Part 07</p>
+      <h2>Administrator and device workflows</h2>
+      <h3>Administrator workflows</h3>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Scenario</th><th>Recommended path</th><th>Already works today?</th></tr></thead>
+          <tbody>
+            <tr><td>Admin archives by mistake</td><td>Restore button, immediately available in Terminal Management's archived view</td><td><span class="pill pill-ok">Yes</span> — <code>POSTerminals.jsx:209-211</code></td></tr>
+            <tr><td>Admin wants to temporarily disable a terminal</td><td>Archive Now (manual), or MAINTENANCE if the reason is "device needs physical attention" specifically rather than "just don't need it right now"</td><td><span class="pill pill-ok">Yes</span> — <code>archiveTerminalNow</code> API exists (<code>posApi.js:49-51</code>); confirm it's wired to a visible button in <code>POSTerminals.jsx</code> during implementation (Part 10)</td></tr>
+            <tr><td>Admin permanently removes a terminal</td><td>Decommission action — <strong>does not exist today</strong>, this is the actual net-new work (Part 10)</td><td><span class="pill pill-bad">No</span></td></tr>
+            <tr><td>Device reconnects after archive</td><td>403 with a clear reason; if the terminal is later restored by an admin, the same device reconnects seamlessly with no re-registration</td><td>Backend: yes. Frontend: dialog doesn't currently tell the cashier "ask your admin to restore this" (Part 08)</td></tr>
+            <tr><td>Device reconnects after decommission</td><td>403, and — correctly — the only path forward is fresh registration, consuming a new slot</td><td>Backend gate exists (DECOMMISSIONED already checked in all three guard points); the transition into DECOMMISSIONED itself doesn't exist yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Device/cashier workflow</h3>
+      <p>Today: any 403 → identical dialog → single "Register as New Terminal" button, regardless of cause. Recommended: the dialog's heading, body, and available action all become conditional on the actual status returned by the backend (which the backend already knows and returns as a distinguishable string — <code>"Terminal is ARCHIVED"</code>, <code>"Terminal is BLOCKED"</code>, <code>"Terminal is DECOMMISSIONED"</code>, <code>"Terminal is MAINTENANCE"</code> — it just isn't parsed on the frontend today). Full per-state UI copy in Part 08.</p>
+    </section>
+
+    <section id="p8">
+      <p class="part-eyebrow">Part 08</p>
+      <h2>UI recommendations per terminal state</h2>
+      <p class="lead">Directly implementing the example the task sketched, refined against what the backend actually returns.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Status (parsed from error message)</th><th>Dialog heading</th><th>Body copy</th><th>Primary action</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">ARCHIVED</td><td>Terminal Archived</td><td>"This device's terminal was archived and can be restored by an administrator — your sales history and settings will be preserved."</td><td><strong>Contact Administrator to Restore</strong> (no self-service restore from the device — that's a deliberate admin gate, not a technical limitation)</td></tr>
+            <tr><td class="mono">BLOCKED</td><td>Terminal Blocked</td><td>"This terminal has been blocked by an administrator."</td><td><strong>Contact Administrator</strong></td></tr>
+            <tr><td class="mono">MAINTENANCE</td><td>Terminal Under Maintenance</td><td>"This terminal is temporarily unavailable for maintenance. Try again shortly, or use a different terminal."</td><td><strong>Retry</strong> (with a short auto-retry or manual refresh, since this is expected to self-resolve)</td></tr>
+            <tr><td class="mono">DECOMMISSIONED</td><td>Terminal No Longer Available</td><td>"This terminal has been permanently retired. Register this device as a new terminal to continue."</td><td><strong>Register as New Terminal</strong> (the only case where this action is actually correct)</td></tr>
+            <tr><td>Unrecognized / fallback</td><td>Terminal Not Available</td><td>Current generic copy, kept as a safety net for any future status not yet special-cased</td><td>Both "Contact Administrator" and "Register as New Terminal" shown, letting the user pick — safer than guessing</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Terminal Management (admin) screen</h3>
+      <ul>
+        <li><strong>Archived view:</strong> already exists conceptually; recommend a distinct filter/tab from the active list (not mixed in), each row showing Restore and — once built — Decommission.</li>
+        <li><strong>Decommissioned view:</strong> new — a separate, clearly-labeled read-only(-ish) archive, since these rows can never be restored; mainly useful for audit history ("what happened to till #4 last year") rather than action-taking.</li>
+        <li><strong>Slot usage indicator:</strong> surface "3 of 5 terminal slots in use (2 archived, not counted)" near the Add Terminal button, directly answering the licensing-visibility gap from Part 06.</li>
+      </ul>
+    </section>
+
+    <section id="p9">
+      <p class="part-eyebrow">Part 09</p>
+      <h2>Should the current implementation change?</h2>
+      <p class="lead">Yes, but narrowly. The lifecycle architecture itself does not need to change — Part 03 confirms ARCHIVED's existing design (Option A) is the correct one. What needs to change is completing one missing state transition and fixing the frontend's blindness to the states the backend already distinguishes.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Area</th><th>Change needed?</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>ARCHIVED semantics</td><td><span class="pill pill-ok">No change</span></td><td>Already correctly Option A — reversible, no forced re-registration, slot already freed</td></tr>
+            <tr><td>DECOMMISSIONED transitions</td><td><span class="pill pill-bad">Change needed</span></td><td>Currently unreachable — needs an admin-triggered "Decommission" action added to close the gap the task is actually describing</td></tr>
+            <tr><td>Device-side dialog</td><td><span class="pill pill-bad">Change needed</span></td><td>Currently undifferentiated across 4 distinct causes; the backend already returns enough information to fix this without any new backend work</td></tr>
+            <tr><td>Slot-count visibility for BLOCKED/MAINTENANCE</td><td><span class="pill pill-warn">Minor UI addition recommended</span></td><td>Behavior is correct, but currently invisible to admins, which risks confusing "why can't I add a terminal" support tickets</td></tr>
+            <tr><td>MAINTENANCE heartbeat gating inconsistency (Part 02 note)</td><td><span class="pill pill-warn">Needs an explicit decision, not necessarily a code change</span></td><td>Could be intentional (let active session finish) — confirm intent before treating as a bug</td></tr>
+            <tr><td><code>INACTIVE</code> as restore's landing state</td><td><span class="pill pill-warn">Worth a naming/behavior review</span></td><td>Restoring an ARCHIVED terminal lands it in INACTIVE rather than directly in ACTIVE/IDLE — functionally fine (next heartbeat resolves it) but worth confirming this is deliberate rather than an artifact, since INACTIVE isn't otherwise a state anything else in the lifecycle produces</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>None of these are architecture changes — they're completing and exposing an architecture that was already built correctly in its core design. There is no case here for revisiting whether ARCHIVED should behave differently than it does today.</p>
+    </section>
+
+    <section id="p10">
+      <p class="part-eyebrow">Part 10</p>
+      <h2>Implementation plan — preserving the existing architecture</h2>
+      <p class="lead">Four small, independently deployable changes. None require a new migration for the core concept (the DECOMMISSIONED enum value and all its guard-clause checks already exist) — only new write-side code and frontend logic.</p>
+
+      <h3>1. Wire up the Decommission action (backend)</h3>
+      <ul>
+        <li>New endpoint, mirroring the existing archive/restore pair: <code>POST /api/pos/terminals/{id}/decommission</code> (with an optional reason, matching <code>archiveReason</code>'s pattern).</li>
+        <li>New service method in <code>PosTerminalLifecycleService</code>/<code>PosTerminalService</code>, following the exact structure of the existing <code>archive()</code> method — sets <code>status = DECOMMISSIONED</code>, no restore path offered (intentionally no <code>PosTerminalStatus.DECOMMISSIONED → ACTIVE</code> transition should ever be added to <code>restore()</code>).</li>
+        <li>Recommend gating this behind a confirmation step in the API/UI ("this cannot be undone") rather than a new backend safeguard, since the existing pattern (archive/restore) doesn't have extra backend confirmation machinery either — consistency with the established pattern.</li>
+        <li>Optional: a retention-policy note (not a scheduled job requirement for v1) that ARCHIVED terminals older than N days become <em>eligible for</em> decommission review in the admin UI — surfaced as a filter/sort, not an automatic transition, keeping DECOMMISSIONED admin-only per Part 04.</li>
+      </ul>
+
+      <h3>2. Admin UI: Decommission button + Decommissioned view</h3>
+      <ul>
+        <li><code>POSTerminals.jsx</code>: add a "Decommission" action alongside the existing Archive/Restore actions, with a confirmation dialog stating the irreversibility explicitly.</li>
+        <li>New filter/tab for Decommissioned terminals, separate from Archived (Part 08).</li>
+        <li>Slot-usage indicator near Add Terminal (Part 06/08).</li>
+      </ul>
+
+      <h3>3. Device-side dialog: parse status, branch UI (frontend only)</h3>
+      <ul>
+        <li>In <code>POSSales.jsx</code>'s 403 handler (~line 1705), instead of storing the raw message string only, parse which of ARCHIVED/BLOCKED/MAINTENANCE/DECOMMISSIONED it corresponds to (simple string match against the known backend message format, or — cleaner — have the backend return a structured error code alongside the message, which is a small, low-risk backend addition to the existing exception response rather than a new endpoint).</li>
+        <li>Render the dialog (~line 7906) conditionally per Part 08's table — heading, body, and action button all keyed off the parsed status.</li>
+        <li>No backend contract change is strictly required (string-matching the existing message works), but adding a structured field (e.g. <code>errorCode: "TERMINAL_ARCHIVED"</code>) to the existing <code>ResponseStatusException</code> body is the more robust option and touches only the exception-throwing lines already identified (<code>PosTerminalService.java:67-72, 94-99, 169-173</code>) — no new migration, no new endpoint.</li>
+      </ul>
+
+      <h3>4. Decide and document the two open questions from Part 09</h3>
+      <ul>
+        <li>Confirm whether MAINTENANCE should block an in-progress heartbeat immediately or allow the current session to finish — update <code>PosTerminalService.java:169-173</code> only if the decision is "block immediately."</li>
+        <li>Confirm INACTIVE-as-restore-landing-state is intentional; if not, change <code>PosTerminalService.java:252</code> to set ACTIVE/IDLE directly based on the same recent-heartbeat check <code>keepActive()</code> already uses (<code>PosTerminalLifecycleService.java:188-200</code>) rather than introducing a code change purely to standardize naming.</li>
+      </ul>
+
+      <div class="callout ok">
+        <span class="cal-label">Why this plan preserves the existing architecture</span>
+        <p>Every change above extends the existing archive/restore pattern by one more sibling action (decommission) and makes the frontend aware of distinctions the backend has made since the auto-archive feature shipped. Nothing here revisits the STALE/OFFLINE/auto-archive machinery, the slot-counting logic, or the ARCHIVED semantics — all of which this review confirms are already correctly designed. The scope is deliberately the smallest change that closes the actual gap: a permanent-retirement path that was designed into the enum but never finished, and a UI that doesn't yet use the information the backend already provides.</p>
+      </div>
+    </section>
+
+    <footer class="doc-footer">
+      Prepared as an architecture review only — no code was written or changed. All file:line references were verified against the current <code>feature/billpos</code> branch as of 2026-07-24, including direct confirmation that the admin-side Restore button and API wrapper already exist and are wired end-to-end.
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

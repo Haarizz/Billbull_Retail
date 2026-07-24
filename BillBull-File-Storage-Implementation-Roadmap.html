@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull ERP — File Storage Implementation Roadmap</title>
+<style>
+  @font-face {
+    font-family: 'Source Serif';
+    src: local('Source Serif 4'), local('Source Serif Pro');
+  }
+
+  :root {
+    --bg: #f7f8fa;
+    --bg-raised: #ffffff;
+    --bg-sunken: #eef0f3;
+    --ink: #1b1e24;
+    --ink-soft: #4a4f59;
+    --ink-faint: #7a8090;
+    --border: #dcdfe5;
+    --border-soft: #e8eaee;
+    --accent: #9a5d16;
+    --accent-strong: #7a4810;
+    --accent-bg: #fbf1e2;
+    --accent-border: #e8c98f;
+    --ok: #1d7a4c;
+    --ok-bg: #e7f5ed;
+    --warn: #a15c00;
+    --warn-bg: #fdf1dc;
+    --bad: #b3271f;
+    --bad-bg: #fdeceb;
+    --terminal: #445070;
+    --terminal-bg: #eaedf5;
+    --code-bg: #eef0f3;
+    --shadow: 0 1px 2px rgba(20, 22, 30, 0.06), 0 4px 16px rgba(20, 22, 30, 0.05);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12141a;
+    --bg-raised: #1a1d25;
+    --bg-sunken: #0e1015;
+    --ink: #eef0f4;
+    --ink-soft: #b6bac6;
+    --ink-faint: #7d8394;
+    --border: #2c303c;
+    --border-soft: #23262f;
+    --accent: #e0a94a;
+    --accent-strong: #f0bc63;
+    --accent-bg: #2b2213;
+    --accent-border: #4a3a1a;
+    --ok: #4fbf87;
+    --ok-bg: #133025;
+    --warn: #e0a94a;
+    --warn-bg: #2b2213;
+    --bad: #e8746c;
+    --bad-bg: #331815;
+    --terminal: #8d9ac2;
+    --terminal-bg: #1c2030;
+    --code-bg: #1c1f28;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12141a;
+      --bg-raised: #1a1d25;
+      --bg-sunken: #0e1015;
+      --ink: #eef0f4;
+      --ink-soft: #b6bac6;
+      --ink-faint: #7d8394;
+      --border: #2c303c;
+      --border-soft: #23262f;
+      --accent: #e0a94a;
+      --accent-strong: #f0bc63;
+      --accent-bg: #2b2213;
+      --accent-border: #4a3a1a;
+      --ok: #4fbf87;
+      --ok-bg: #133025;
+      --warn: #e0a94a;
+      --warn-bg: #2b2213;
+      --bad: #e8746c;
+      --bad-bg: #331815;
+      --terminal: #8d9ac2;
+      --terminal-bg: #1c2030;
+      --code-bg: #1c1f28;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, pre, .mono, td.mono, th.mono {
+    font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Source Serif', Georgia, "Times New Roman", serif;
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.toc { display: none; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.25rem 1.25rem 2.5rem 1.75rem;
+    border-right: 1px solid var(--border-soft);
+  }
+
+  .toc-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1rem;
+  }
+
+  .toc-list { list-style: none; margin: 0; padding: 0; }
+  .toc-list a {
+    display: block;
+    padding: 0.32rem 0.6rem;
+    margin: 0.05rem 0;
+    border-radius: 5px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 0.86rem;
+    border-left: 2px solid transparent;
+  }
+  .toc-list a:hover { color: var(--ink); background: var(--bg-sunken); }
+  .toc-list a .num { color: var(--accent); font-family: ui-monospace, monospace; font-size: 0.78rem; margin-right: 0.5em; }
+
+  main {
+    padding: 2.5rem clamp(1.25rem, 4vw, 4rem) 6rem;
+    min-width: 0;
+  }
+
+  .cover {
+    padding-bottom: 2.25rem;
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    padding: 0.3rem 0.65rem;
+    border-radius: 4px;
+    margin-bottom: 1.1rem;
+  }
+  .cover h1 {
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+    line-height: 1.12;
+    margin: 0 0 0.85rem;
+    max-width: 24ch;
+  }
+  .cover .dek {
+    font-size: 1.05rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 1.4rem;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+  .meta-row strong { color: var(--ink-soft); font-weight: 600; }
+
+  section { margin-bottom: 3.25rem; scroll-margin-top: 1.5rem; }
+  section > .part-eyebrow {
+    font-family: ui-monospace, monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+  }
+  h2 {
+    font-size: 1.5rem;
+    margin: 0 0 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.14rem; margin: 1.8rem 0 0.7rem; }
+  h4 { font-size: 0.98rem; margin: 1.3rem 0 0.5rem; color: var(--ink-soft); }
+  p { max-width: 74ch; margin: 0 0 0.9rem; color: var(--ink-soft); }
+  p.lead { font-size: 1.03rem; color: var(--ink); max-width: 70ch; }
+  ul, ol { max-width: 72ch; color: var(--ink-soft); padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.35rem; }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent-strong); }
+
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.4em;
+    font-size: 0.86em;
+    color: var(--ink);
+  }
+
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0 1.3rem;
+    max-width: 74ch;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout .cal-label {
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+    display: block;
+  }
+  .callout.warn .cal-label { color: var(--warn); }
+  .callout.bad .cal-label { color: var(--bad); }
+  .callout.ok .cal-label { color: var(--ok); }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0 0 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.86rem; }
+  table.wide { min-width: 980px; }
+  thead th {
+    text-align: left;
+    background: var(--bg-sunken);
+    color: var(--ink-faint);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg-sunken); }
+  td.mono, th.mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+  td strong { color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .pill {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    padding: 0.14rem 0.55rem;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pill-ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .pill-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .pill-bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .pill-terminal { background: var(--terminal-bg); color: var(--terminal); border-color: var(--terminal); }
+  .pill-accent { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    margin: 0 0 1.3rem;
+  }
+  .code-block pre {
+    margin: 0;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    white-space: pre;
+  }
+  .code-block .arrow { color: var(--accent); }
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 0 0 1.3rem;
+    max-width: 46ch;
+  }
+  .flow-step {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.86rem;
+    color: var(--ink);
+  }
+  .flow-connector {
+    display: flex;
+    justify-content: center;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    padding: 0.1rem 0;
+  }
+  .flow-step.branch { border-color: var(--accent-border); background: var(--accent-bg); }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.85rem;
+    margin: 0 0 1.4rem;
+  }
+  .card {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    box-shadow: var(--shadow);
+  }
+  .card h4 { margin: 0 0 0.4rem; font-size: 0.92rem; color: var(--ink); }
+  .card p { font-size: 0.82rem; margin: 0; color: var(--ink-faint); max-width: none; }
+
+  hr.sep { border: none; border-top: 1px solid var(--border); margin: 2.4rem 0; }
+
+  footer.doc-footer {
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+  }
+
+  ::selection { background: var(--accent-border); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="toc">
+    <p class="toc-label">Contents</p>
+    <ul class="toc-list">
+      <li><a href="#p1"><span class="num">01</span>Impact analysis</a></li>
+      <li><a href="#p2"><span class="num">02</span>Dependency graph</a></li>
+      <li><a href="#p3"><span class="num">03</span>Module inventory</a></li>
+      <li><a href="#p4"><span class="num">04</span>Database migration</a></li>
+      <li><a href="#p5"><span class="num">05</span>Storage migration</a></li>
+      <li><a href="#p6"><span class="num">06</span>Security checkpoints</a></li>
+      <li><a href="#p7"><span class="num">07</span>Testing strategy</a></li>
+      <li><a href="#p8"><span class="num">08</span>Risk matrix</a></li>
+      <li><a href="#p9"><span class="num">09</span>Implementation phases</a></li>
+      <li><a href="#p10"><span class="num">10</span>Architecture validation</a></li>
+      <li><a href="#p11"><span class="num">11</span>Go / No-Go decision</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <div class="cover">
+      <span class="eyebrow">Execution roadmap &middot; baseline: Implementation Blueprint (2026-07-23) &middot; no code written</span>
+      <h1>File Storage Implementation Roadmap</h1>
+      <p class="dek">Converts the finalized blueprint into a step-by-step execution plan: exactly which files change and why, in what order, with what tests, what rollback, and what stays deliberately untouched. Grounded in a fresh verification pass over the current codebase — module coverage, existing tests, DTO mapping points, and Flyway state were all re-confirmed rather than assumed from the prior reports.</p>
+      <div class="meta-row">
+        <span><strong>Branch</strong> feature/billpos</span>
+        <span><strong>Baseline</strong> BillBull-File-Storage-Implementation-Blueprint.html</span>
+        <span><strong>Scope</strong> planning only — no code, no data touched</span>
+        <span><strong>Prepared</strong> 2026-07-23</span>
+      </div>
+    </div>
+
+    <section id="p1">
+      <p class="part-eyebrow">Part 01</p>
+      <h2>Implementation impact analysis</h2>
+      <p class="lead">Every component that must change to implement the blueprint, with the current file:line ground truth re-verified for this roadmap (not carried over unchecked from the earlier audit).</p>
+
+      <h3>Backend — new components</h3>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>File/Class (new)</th><th>Reason</th><th>Type</th><th>Complexity</th><th>Risk</th><th>Dependencies</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">common/storage/StorageProvider.java</td><td>Interface boundary — blueprint Part 02</td><td>New</td><td>Low</td><td>Low</td><td>None</td></tr>
+            <tr><td class="mono">common/storage/StorageKey.java</td><td>Shared value type: path construction, sanitization, traversal guard</td><td>New</td><td>Medium (security-bearing)</td><td>Medium — every downstream call site trusts this</td><td>None</td></tr>
+            <tr><td class="mono">common/storage/LocalStorageProvider.java</td><td>Concrete disk-backed implementation</td><td>New</td><td>Medium</td><td>Medium — replaces 7 existing hand-rolled implementations</td><td>StorageProvider, StorageKey</td></tr>
+            <tr><td class="mono">common/storage/TenantFileStorageService.java</td><td>Tenant-aware wrapper injecting <code>tenant_storage_key</code> + category</td><td>New</td><td>Medium</td><td>Medium — single choke point, high blast radius if wrong</td><td>StorageProvider, tenant storage key config (below)</td></tr>
+            <tr><td class="mono">common/storage/StoredFile.java (entity)</td><td>Centralized metadata table — blueprint Part 06</td><td>New</td><td>Low</td><td>Low</td><td>BaseEntity</td></tr>
+            <tr><td class="mono">common/storage/StoredFileRepository.java</td><td>JPA repository for the above</td><td>New</td><td>Low</td><td>Low</td><td>StoredFile</td></tr>
+            <tr><td class="mono">db/migration/V43__stored_file.sql</td><td>New table for StoredFile</td><td>New Flyway migration</td><td>Low</td><td>Low — additive only, no existing table touched</td><td>Confirmed current ceiling is V42 (verified this session, not V30 as the original report's context assumed)</td></tr>
+            <tr><td class="mono">config/TenantStorageProperties.java (or similar <code>@ConfigurationProperties</code>)</td><td>Binds new <code>tenant.storage-key</code> property per tenant profile</td><td>New</td><td>Low</td><td>Low</td><td>None</td></tr>
+            <tr><td class="mono">config/UploadMaintenanceJobs.java (orphan sweep, folder health)</td><td>Blueprint Part 07 — reuses the existing scheduled-job idiom (confirmed this session via <code>PosTerminalAutoArchiveJob.java</code>: <code>@Component</code>, constructor injection, SLF4J logger, <code>@Scheduled(cron=...)</code> + <code>@Transactional</code>, per-tenant settings toggle before acting)</td><td>New</td><td>Medium</td><td>Low — read-mostly, delete path is a separate confirm-then-sweep phase</td><td>StoredFile, StorageProvider</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Backend — existing components that change</h3>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>File/Class</th><th>Reason</th><th>Type</th><th>Complexity</th><th>Risk</th><th>Dependencies</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">util/FileUploadUtil.java</td><td>Hardcoded <code>uploads/avatars</code>; replace body with a call to <code>TenantFileStorageService</code></td><td>Refactor</td><td>Low</td><td>Low — single caller (AuthController.java:159)</td><td>TenantFileStorageService</td></tr>
+            <tr><td class="mono">hr/employees/EmployeeServiceImpl.java:307 (handleAvatarUpload)</td><td>Hardcoded <code>uploads/employees</code>, epoch-millis filename</td><td>Refactor</td><td>Low</td><td>Low</td><td>TenantFileStorageService</td></tr>
+            <tr><td class="mono">inventory/product/ProductImageStorageService.java</td><td>Hardcoded <code>uploads/products</code> via <code>System.getProperty("user.dir")</code>; also has a second entry point (<code>storeRawBytes</code>, line 48) used by Excel-embedded-image import — both must route through the new service</td><td>Refactor</td><td>Medium — 2 call patterns, not 1</td><td>Medium</td><td>TenantFileStorageService</td></tr>
+            <tr><td class="mono">inventory/brand/BrandLogoStorageService.java</td><td>Hardcoded <code>uploads/brands</code></td><td>Refactor</td><td>Low</td><td>Low</td><td>TenantFileStorageService</td></tr>
+            <tr><td class="mono">settings/company/CompanyProfileService.java</td><td>Hardcoded <code>uploads/company</code>; logo (line ~104) and stamp (line ~71) share one constant</td><td>Refactor</td><td>Low</td><td>Low</td><td>TenantFileStorageService</td></tr>
+            <tr><td class="mono">settings/branch/BranchService.java:250-274</td><td>Hardcoded <code>uploads/branch</code>; logo + stamp share one constant</td><td>Refactor</td><td>Low</td><td>Low</td><td>TenantFileStorageService</td></tr>
+            <tr><td class="mono">sales/salesorder/SalesOrderController.java:163-181</td><td>Inline write in the controller itself, no UUID prefix (collision risk) — the one call site with no dedicated service class at all today</td><td>Refactor + extract to service</td><td>Medium — needs a new thin service extracted, not just a swap</td><td>Medium — collision-prone path being fixed simultaneously</td><td>TenantFileStorageService</td></tr>
+            <tr><td class="mono">financials/receiptvoucher/ReceiptVoucherService.java:276 (storeFile)</td><td>Absolute-path outlier — must also migrate stored value convention (Part 03 of blueprint), not just the write location</td><td>Refactor + data format change</td><td>Medium-High</td><td>Medium-High — the one class doing two things at once</td><td>TenantFileStorageService, DB migration (Part 04 below)</td></tr>
+            <tr><td class="mono">financials/tax/TaxService.java:305 (storeFile), :326 (deleteExistingAttachment)</td><td>Absolute-path outlier, same as above, plus an explicit physical-delete path to also update</td><td>Refactor + data format change</td><td>Medium-High</td><td>Medium-High</td><td>TenantFileStorageService, DB migration</td></tr>
+            <tr><td class="mono">config/StaticResourceConfig.java</td><td>Add the Step-4 backward-compatible fallback handler (blueprint's migration Part 12) alongside the existing mapping</td><td>Additive change</td><td>Low</td><td>Low — additive, doesn't remove the existing mapping</td><td>None — can ship ahead of the storage refactor itself</td></tr>
+            <tr><td class="mono">application.properties + all 14 application-{tenant}.properties</td><td>Retire dead <code>upload.path</code>; add new <code>tenant.storage-key</code> per tenant (blueprint Part 01)</td><td>Config change</td><td>Low</td><td><span class="pill pill-warn">Medium — a typo or duplicate key here directly causes cross-tenant file exposure</span></td><td>None — can be authored/reviewed independently of code</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Backend — DTO/response mapping insertion points (Option C URL resolution, blueprint Part 03)</h3>
+      <p>Verified this session — one important correction to the blueprint's assumption surfaced here: <strong>not every entity in the original table has a mapper today.</strong> Three return the raw JPA entity directly, and the actual Product response type in production use is different from what earlier context implied.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Entity</th><th>Current state</th><th>Insertion point for URL resolution</th></tr></thead>
+          <tbody>
+            <tr><td>Product</td><td><span class="pill pill-warn">Correction</span> — no image field exists on <code>Product</code>/<code>ProductAggregateResponse</code> today. Images live in a separate <code>ProductMedia</code> entity/repository. <code>ProductResponse.image</code> (a different, unused class) is dead code — zero references from <code>ProductService</code>/<code>ProductController</code>.</td><td><code>ProductService.java:1384 buildResponse()</code> would need to also map <code>ProductMedia</code> rows if/when this migration reaches product images — treat as its own small design confirmation step in Phase 3, not an assumption to carry in blind.</td></tr>
+            <tr><td>Brand</td><td><code>BrandService.java:150 map(Brand)</code>, sets <code>res.logoUrl</code> at line 158</td><td>Insert resolution call at line 158</td></tr>
+            <tr><td>CompanyProfile</td><td><span class="pill pill-warn">No mapper — entity returned raw</span> from <code>CompanyProfileController.java</code> (getProfile, updateProfile, uploadLogo, uploadStamp)</td><td>Requires introducing a thin response wrapper/mapper first — this is new work, not a one-line edit</td></tr>
+            <tr><td>Branch</td><td><code>BranchResponse.java:36 from(Branch)</code>, sets logoUrl/stampUrl at lines 51-52</td><td>Insert resolution calls there</td></tr>
+            <tr><td>Employee</td><td><span class="pill pill-warn">No dedicated response DTO found</span> — entity/getters used directly</td><td>Same gap as CompanyProfile — needs a thin wrapper introduced</td></tr>
+            <tr><td>User</td><td><code>UserSafeDto.java:40</code> constructor — <strong>no avatar field present in this DTO today</strong>, worth confirming avatar is even surfaced to the frontend via this path before assuming it needs a resolution step</td><td>Add avatar field + resolution if/when confirmed needed</td></tr>
+            <tr><td>SalesOrderAttachment</td><td>No response DTO found — entity used directly</td><td>Needs a thin wrapper introduced</td></tr>
+            <tr><td>ReceiptVoucher</td><td><span class="pill pill-warn">No mapper — entity returned raw</span> from <code>ReceiptVoucherController.java:75,81</code></td><td>Needs a thin wrapper introduced</td></tr>
+            <tr><td>TaxFiling</td><td><code>TaxFilingDTO.java:25 fromEntity()</code>, sets attachmentPath/Name at lines 37-38</td><td>Insert resolution calls there</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warn">
+        <span class="cal-label">Scope correction versus the blueprint</span>
+        <p>The blueprint's Part 03 described inserting "one extra step in the DTO mapper" for each entity as if a mapper uniformly exists. Verified this session: <strong>4 of 9 entities (CompanyProfile, Employee, SalesOrderAttachment, ReceiptVoucher) have no mapper today</strong> — they return JPA entities directly to the controller. For these four, the Option C resolution step requires first introducing a response DTO/wrapper class, which is more work than "insert one line" — still small and mechanical, but this roadmap's Phase 3 estimate (below) accounts for it explicitly rather than understating it.</p>
+      </div>
+
+      <h3>Frontend</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>File</th><th>Reason</th><th>Type</th><th>Risk</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">src/utils/urlUtils.js (getImageUrl)</td><td>No change expected — contract preserved per blueprint Part 03</td><td>Verify only</td><td>Low</td></tr>
+            <tr><td>~35 consuming pages (Products, Brand, Employees, CompanySettings, BranchOutlets, MyProfile, ReceiptVoucher, etc.)</td><td>No change expected</td><td>Verify only (smoke test, Part 07)</td><td>Low</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Database, configuration, infrastructure</h3>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Component</th><th>Reason</th><th>Type</th><th>Complexity</th><th>Risk</th></tr></thead>
+          <tbody>
+            <tr><td>10 existing path/URL columns (Product/Brand/CompanyProfile/Branch/SalesOrderAttachment/ReceiptVoucher/TaxFiling/User/Employee)</td><td>Rewrite to logical storage key format (blueprint Part 03) — see Part 04 below for full migration design</td><td>Data migration</td><td>Medium</td><td>Medium — mitigated by copy-verify-cutover discipline, never destructive until validated</td></tr>
+            <tr><td>New <code>stored_file</code> table</td><td>Centralized metadata</td><td>Schema migration (additive)</td><td>Low</td><td>Low</td></tr>
+            <tr><td>14 <code>application-{tenant}.properties</code> files</td><td>Add <code>tenant.storage-key</code>, remove dead <code>upload.path</code></td><td>Config</td><td>Low</td><td>Medium (typo risk, see above)</td></tr>
+            <tr><td><code>k8s/{tenant}/pvc.yaml</code>, <code>deployment.yaml</code></td><td>No structural change — confirmed by blueprint Part 07; only the subpath written inside the existing mount changes</td><td>None required</td><td>—</td><td>Low</td></tr>
+            <tr><td>Backend Dockerfile</td><td>Add explicit <code>VOLUME /app/uploads</code> for dev/prod parity (blueprint Part 04 note)</td><td>Additive</td><td>Low</td><td>Low</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="p2">
+      <p class="part-eyebrow">Part 02</p>
+      <h2>Dependency graph — correct implementation order</h2>
+      <p class="lead">Nine layers, strictly sequential where marked, parallelizable where marked. No circular dependencies: each layer only depends on layers above it.</p>
+      <div class="flow">
+        <div class="flow-step"><strong>Layer 1 — Tenant Storage Configuration</strong><br><span style="font-size:0.82rem">Decide + provision <code>tenant.storage-key</code> for all 14 tenants. Pure config/admin, zero code.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Layer 2 — Storage Abstraction Core</strong><br><span style="font-size:0.82rem"><code>StorageProvider</code> interface, <code>StorageKey</code> value type, <code>LocalStorageProvider</code>, <code>TenantFileStorageService</code>. No existing call site touched yet.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Layer 3 — Metadata Table</strong><br><span style="font-size:0.82rem"><code>stored_file</code> entity + repository + Flyway V43. Wired into <code>TenantFileStorageService.store()</code> so it's populated from Layer 4 onward. Independent of Layer 4/5 — can build in parallel with them.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Layer 4 — Static Serving + Backward-Compat Route</strong><br><span style="font-size:0.82rem"><code>StaticResourceConfig</code> fallback handler. Additive, safe to ship standalone ahead of everything below — this is deliberately out of strict sequence because it has no dependency on Layers 2-3 and de-risks Layer 6 by existing before any DB row changes.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Layer 5 — Call-Site Refactor (9 sites)</strong><br><span style="font-size:0.82rem">FileUploadUtil, EmployeeServiceImpl, ProductImageStorageService (2 entry points), BrandLogoStorageService, CompanyProfileService, BranchService, SalesOrderController (extract to service), ReceiptVoucherService, TaxService. Each depends only on Layer 2 — parallelizable across developers, sequential only in the sense that Layer 2 must be done first.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Layer 6 — DTO/Response Mapping (Option C resolution)</strong><br><span style="font-size:0.82rem">4 new thin wrappers (CompanyProfile, Employee, SalesOrderAttachment, ReceiptVoucher) + 5 existing-mapper edits. Depends on Layer 2 (needs <code>resolvePublicUrl()</code> to exist) and logically follows Layer 5 (no point resolving URLs for paths not yet being written in the new format) but does not depend on Layer 5 being complete for every module — can start on already-refactored modules while Layer 5 continues on others.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Layer 7 — Database Migration (10 columns → logical key)</strong><br><span style="font-size:0.82rem">Requires Layers 2, 4, 5, 6 all complete first — this is the one truly hard sequencing constraint: rewriting DB values before the code that resolves them exists would break every image/logo/attachment in production.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Layer 8 — Storage Migration (physical file copy, per tenant)</strong><br><span style="font-size:0.82rem">Can run in parallel with Layer 7's DB rewrite for the same tenant (they operate on different systems — filesystem vs. database) but both must complete and both must pass validation before that tenant's Layer 9 cutover.</span></div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Layer 9 — Validation, Testing, Cutover</strong><br><span style="font-size:0.82rem">Per-tenant rollout, one at a time, each independently deployable and independently rollback-able.</span></div>
+      </div>
+      <div class="callout">
+        <span class="cal-label">Why Layer 4 is deliberately out of strict sequence</span>
+        <p>The blueprint's migration plan (Part 12) needs the backward-compatible fallback route to exist <em>before</em> any DB row is rewritten, but the fallback route itself has zero code dependency on the storage abstraction (Layers 2-3) — it's a second static resource handler. Shipping it early, standalone, removes it from the critical path of the harder refactor work and gives the team a trivially low-risk first deploy to validate the deployment pipeline itself before touching anything riskier.</p>
+      </div>
+    </section>
+
+    <section id="p3">
+      <p class="part-eyebrow">Part 03</p>
+      <h2>Complete module inventory — re-verified, not assumed</h2>
+      <p class="lead">Every module named in the task's checklist was re-grepped this session specifically for <code>MultipartFile</code> usage, not carried over from memory. The result narrows the scope, not widens it: <strong>file/image upload in BillBull is confined to exactly 9 call sites across 7 modules.</strong> Everything else on the requested checklist was checked and found to have no upload surface at all.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Module (from task checklist)</th><th>Upload surface found?</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Products</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>ProductController.java:81,253</code>; also <code>ProductImportService.java:916</code> (Excel-embedded images) → both route through <code>ProductImageStorageService</code> (2 entry points: <code>store()</code> and <code>storeRawBytes()</code>)</td></tr>
+            <tr><td><strong>Brands</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>BrandController.java:61,73</code> → <code>BrandLogoStorageService</code></td></tr>
+            <tr><td><strong>Company</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>CompanyProfileController.java:52,69</code> (logo + stamp) → <code>CompanyProfileService</code></td></tr>
+            <tr><td><strong>Branch</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>BranchController.java:82,95</code> (logo + stamp) → <code>BranchService</code></td></tr>
+            <tr><td><strong>Employee</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>EmployeeController.java:108,122</code> → <code>EmployeeServiceImpl.handleAvatarUpload</code></td></tr>
+            <tr><td><strong>User Avatar</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>AuthController.java:136,159</code> → <code>FileUploadUtil</code></td></tr>
+            <tr><td><strong>Receipt Voucher</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>ReceiptVoucherController.java:86,95</code> → <code>ReceiptVoucherService.storeFile</code> (absolute-path outlier)</td></tr>
+            <tr><td><strong>Tax Filing</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>TaxController.java:84</code> → <code>TaxService.storeFile</code> (absolute-path outlier)</td></tr>
+            <tr><td><strong>Sales Orders</strong></td><td><span class="pill pill-ok">Yes</span></td><td><code>SalesOrderController.java:163</code> — inline in controller, no dedicated service, no UUID prefix</td></tr>
+            <tr><td><strong>Quotations</strong></td><td><span class="pill pill-warn">Partial</span></td><td><code>QuotationController.java:148</code> accepts a file but stores it as a DB BLOB (<code>QuotationService.java:804</code>) — never touches <code>uploads/</code>, so it's outside this migration's physical-file scope but worth a deliberate decision (see callout below)</td></tr>
+            <tr><td><strong>Purchase</strong></td><td><span class="pill pill-bad">No</span> (image/file)</td><td>Re-verified this session: only <code>VendorController.java:59</code> / <code>VendorImportService.java:27</code> — Excel <em>import</em>, parsed in-memory, never written to <code>uploads/</code>. GRN, LPO, Payment: no <code>MultipartFile</code> found anywhere.</td></tr>
+            <tr><td><strong>Inventory</strong> (beyond Product/Brand)</td><td><span class="pill pill-bad">No</span></td><td>Re-verified: <code>warehouse</code>, <code>stocktake</code>, <code>reports</code> subpackages have zero <code>MultipartFile</code> usage. Export services (Product/Brand/Department/SubDepartment/Unit) stream POI workbooks in-memory, never write to <code>uploads/</code>.</td></tr>
+            <tr><td><strong>POS</strong></td><td><span class="pill pill-bad">No</span></td><td>Re-verified: zero <code>MultipartFile</code> matches anywhere under <code>pos/</code>, across all 12+ subpackages.</td></tr>
+            <tr><td><strong>Attachments</strong></td><td>Covered above</td><td>Sales Order + Receipt Voucher + Tax Filing are the three attachment-bearing modules; Quotation is BLOB-based (see below); Salary Advance is a stub (below)</td></tr>
+            <tr><td><strong>Reports</strong></td><td><span class="pill pill-bad">No</span></td><td>All report/export paths stream a generated response body (Excel via POI, PDF via Playwright/HtmlPdfService) — none persist to <code>uploads/</code></td></tr>
+            <tr><td><strong>Documents</strong></td><td>Covered above</td><td><code>document/HtmlPdfService</code> generates PDFs on demand for the response stream; not a stored-upload concern</td></tr>
+            <tr><td><strong>HR</strong> (beyond Employee)</td><td><span class="pill pill-warn">One stub, nothing else</span></td><td>Re-verified across all HR subpackages: only <code>SalaryAdvanceController.java:39</code> accepts a file, and <code>SalaryAdvanceService.java:28,34</code> never persists it — a known stub (source comment: "In real app, save file to storage"). No payroll/attendance/leave upload found.</td></tr>
+            <tr><td><strong>Financials</strong> (beyond Receipt Voucher/Tax)</td><td><span class="pill pill-bad">No</span></td><td>Re-verified across all financials subpackages (bankreconciliation, pdc, expense, fixedasset, generalledger, reports, statement, currency, period, prepaid, settlement, chartofaccounts): zero <code>MultipartFile</code> usage found. Bank statement import, if it exists as a concept, does not currently accept a file upload in this codebase.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout ok">
+        <span class="cal-label">Net finding</span>
+        <p>The module inventory is now closed, not open. Nine call sites, seven refactor targets (Sales Order needs a new service extracted; Product has two entry points in one class), two already-flagged edge cases (Quotation BLOB, Salary Advance stub). No hidden upload surface exists in Purchase, POS, Inventory-beyond-Product/Brand, Reports, Documents, or the bulk of HR/Financials. This closes the scope-creep risk the blueprint flagged in its own Part 10 risk list.</p>
+      </div>
+      <h3>Decision needed before Phase 3 (not before Phase 1)</h3>
+      <ul>
+        <li><strong>Quotation attachments (DB BLOB):</strong> leave as-is (out of scope, no tenant-isolation problem since it's not a shared-filesystem concern) or migrate to the new storage abstraction for consistency and to get file-size/BLOB-bloat benefits. Recommend: leave as-is for this migration; revisit separately since it's not contributing to the cross-tenant file exposure problem this whole effort exists to solve.</li>
+        <li><strong>Salary Advance attachments (stub):</strong> either wire it to the new <code>TenantFileStorageService</code> as part of this effort (cheap, since the abstraction will already exist) or explicitly leave the stub and track it as a separate known gap. Recommend: wire it in Phase 3 alongside the other 7 call sites — it's a ~10-line addition once the service exists, and closes a known gap for free.</li>
+      </ul>
+    </section>
+
+    <section id="p4">
+      <p class="part-eyebrow">Part 04</p>
+      <h2>Database migration strategy</h2>
+      <p class="lead">Two distinct migrations, deliberately separated: (A) the additive <code>stored_file</code> table, and (B) the rewrite of 10 existing path/URL columns to the logical-key format. A is zero-risk; B is the one migration in this whole roadmap that touches live production data and needs the full discipline below.</p>
+
+      <h3>Migration A — <code>stored_file</code> table (Flyway V43)</h3>
+      <p>Purely additive — <code>CREATE TABLE IF NOT EXISTS</code>-guarded per the project's existing Flyway convention (confirmed this session: idempotent, <code>to_regclass</code>-style guards are the house style). No existing row touched. Safe to run against every tenant DB immediately, independent of everything else in this roadmap. Zero downtime, zero data-loss risk.</p>
+
+      <h3>Migration B — path/URL column rewrite (10 columns, 9 entities)</h3>
+      <p>This is a data migration, not a schema migration — no Flyway <code>ALTER</code> needed (column types don't change, only values), but it must run per-tenant, guarded, and only after that tenant's Layer 5/6 code is deployed (per the dependency graph, Part 02).</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Property</th><th>Design</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Idempotency</strong></td><td>Each <code>UPDATE</code> is a string-prefix transform (strip old format, apply new). Guard every statement with a <code>WHERE column LIKE 'old-pattern%' AND column NOT LIKE 'new-pattern%'</code> so re-running the script after partial success only touches unconverted rows — safe to re-run to completion after any interruption.</td></tr>
+            <tr><td><strong>Existing data migration</strong></td><td>Per tenant DB (already isolated 1:1), one script touching all 10 columns in a single transaction — either the whole tenant's rewrite commits or none of it does, avoiding a half-migrated intermediate state for that tenant.</td></tr>
+            <tr><td><strong>Backward compatibility</strong></td><td>Not needed at the DB layer itself if Layer 4 (static-resource fallback route) is live first — old cached URLs still resolve physically even after the DB stops producing them, because the fallback route serves the old flat-path files independent of what the DB currently says.</td></tr>
+            <tr><td><strong>Validation</strong></td><td>Pre-migration: snapshot row counts and a content hash of a sample per column. Post-migration: re-run and diff — same row counts, and an HTTP-fetch spot-check (reusing the checklist already defined in the earlier study) confirms every rewritten value still resolves to a real file via the new resolution path.</td></tr>
+            <tr><td><strong>Rollback</strong></td><td>Restore that tenant's pre-migration DB snapshot (already independent per tenant), or run the inverse string-transform if the forward transform is a clean, reversible prefix substitution (recommended: design it to be reversible from the start, so rollback doesn't require a separate backup restore for a same-day catch of a bad row).</td></tr>
+            <tr><td><strong>Downtime</strong></td><td><span class="pill pill-ok">None required</span> — because Layer 4's fallback route means old and new values both resolve during the transition window, the <code>UPDATE</code> can run against a live tenant without a maintenance window, as long as it completes inside one DB transaction so no request ever reads a half-updated row.</td></tr>
+            <tr><td><strong>Data-loss risk</strong></td><td>The only real risk is a script bug silently mismatching prefixes on an edge-case value (e.g. an already-absolute-path row from ReceiptVoucher/TaxFiling that doesn't match the expected relative-path pattern). Mitigation: the 2 absolute-path outliers get their own narrower pre-pass (convert absolute→relative first, verified separately) before the common rewrite script runs against all 10 columns uniformly.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warn">
+        <span class="cal-label">Why ReceiptVoucher/TaxFiling need a pre-pass, not the same script</span>
+        <p>These two store an absolute filesystem path today (<code>Paths.get(uploadDir).toAbsolutePath()</code>), while the other 8 columns store a relative <code>/uploads/...</code> URL. A single rewrite script written for the relative-path pattern would silently no-op (or worse, mismatch) on these two. Treat them as their own migration step, run and validated before the common script, exactly as flagged in the blueprint's Part 03 — this roadmap makes that sequencing explicit rather than implicit.</td>
+      </div>
+    </section>
+
+    <section id="p5">
+      <p class="part-eyebrow">Part 05</p>
+      <h2>Storage migration strategy — resumable, verifiable, safe</h2>
+      <p class="lead">Physical file copy from the flat <code>uploads/{category}/</code> layout into <code>uploads/{tenant-storage-key}/{category}/</code>, per tenant. Copy-then-verify-then-cutover, exactly as the earlier study specified — this section adds the resume/failure/duplicate handling the task now explicitly asks for.</p>
+
+      <h3>Process</h3>
+      <div class="flow">
+        <div class="flow-step"><strong>1. Enumerate.</strong> For the tenant being migrated, query all 10 DB columns for every currently-referenced relative path — this is the authoritative "files that matter" list, not a blind directory walk.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>2. Copy with a manifest.</strong> For each enumerated path, copy (never move) into the new tenant-keyed location, appending one line to a per-tenant migration manifest file (source path, dest path, size, sha256, status: pending/done/failed) as each copy completes.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>3. Verify.</strong> Compare source and dest checksums for every "done" row. Any mismatch flips that row to <code>failed</code>, logged, not silently retried without record.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>4. Resume on re-run.</strong> The script is re-entrant: on any interruption (crash, timeout, manual stop), re-running it re-reads the manifest, skips every row already marked <code>done</code> and verified, and only processes <code>pending</code>/<code>failed</code> rows. No file is ever copied twice unnecessarily, and no partial state is lost.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>5. Handle missing source files.</strong> A DB row referencing a path with no corresponding physical file (possible today — nothing currently guarantees referential integrity between the 10 columns and the actual filesystem) is logged as <code>source-missing</code> in the manifest, not treated as a migration failure — it's a pre-existing data-quality issue this migration surfaces, not one it causes. Recommend a report of these rows delivered to the module owner before cutover, not silently ignored.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>6. Handle duplicates.</strong> If two DB rows reference the same physical source file (legitimate — e.g. two entities pointing at a shared logo), the copy step is naturally idempotent (copying the same source to the same dest twice is a no-op past the first time) — no special case needed beyond the manifest already deduping by dest path.</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>7. Cutover gate.</strong> Only once every enumerated row is <code>done</code>-and-verified (or explicitly triaged as <code>source-missing</code> and accepted) does that tenant proceed to Migration B (Part 04) and then the grace-window-delayed deletion of old flat-path files.</div>
+      </div>
+
+      <h3>Failed-migration recovery</h3>
+      <p>Because the manifest is the source of truth for progress (not "did the DB get updated," which only happens after full storage-copy success per the dependency graph), a failed run at any point leaves the tenant's live system completely unaffected — old flat paths are untouched, DB still points at them, nothing has cut over. Recovery is simply: fix the root cause (disk space, permissions, a bad path), re-run the same script, let the manifest's resume logic pick up where it stopped.</p>
+
+      <h3>Rollback (post-cutover)</h3>
+      <p>Matches the earlier study's Part 13: restore old flat files from the pre-deletion grace-window snapshot, restore the DB rewrite via Part 04's rollback. Because deletion of old files only happens after a grace window (recommend 30 days, matching the soft-delete convention already used elsewhere), a rollback decision doesn't need to be made same-day — there's real time to catch a problem.</p>
+    </section>
+
+    <section id="p6">
+      <p class="part-eyebrow">Part 06</p>
+      <h2>Security review before implementation — exact enforcement points</h2>
+      <p class="lead">The blueprint's Part 08 named the concerns; this roadmap pins each one to the exact class/method where it must be enforced, so it isn't left to individual judgment across 9 call sites.</p>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Concern</th><th>Enforced exactly where</th><th>Why there, not elsewhere</th></tr></thead>
+          <tbody>
+            <tr><td>Path traversal</td><td><code>StorageKey</code> constructor/factory (Layer 2) — reject or normalize any component containing <code>..</code>, absolute-path markers, or null bytes before a <code>StorageKey</code> can even be constructed</td><td>Single choke point every one of the 9 call sites passes through — impossible to bypass per-module because there's no other path to construct a physical path</td></tr>
+            <tr><td>Unauthorized access</td><td>Existing Spring Security filter chain (unchanged) plus: <code>LocalStorageProvider.load()</code> must verify the requested <code>StorageKey</code>'s tenant segment matches the currently authenticated request's tenant — a defense-in-depth check, not the primary access control</td><td>The primary boundary is already "which DB/tenant is this JWT for" (existing architecture); this is a second check specifically against directory-traversal-style cross-tenant reads slipping past the first check via a crafted key</td></tr>
+            <tr><td>File overwrite</td><td><code>LocalStorageProvider.store()</code> — always generate the stored filename (UUID-based), never accept a caller-supplied destination filename that could collide with an existing file</td><td>Centralizing filename generation here is what actually fixes the Sales Order attachment gap (today's one call site using the raw original filename) as a side effect of the refactor, not a separate fix</td></tr>
+            <tr><td>Duplicate upload</td><td><code>TenantFileStorageService.store()</code> — optional pre-check against <code>StoredFile.checksum_sha256</code> for the same tenant+category before writing, surfaced as a warning/dedupe opportunity, not a hard block (a user re-uploading the same logo twice is legitimate)</td><td>Needs the metadata table (Layer 3) to exist — not enforceable before then, correctly sequenced after Layer 3 in the dependency graph</td></tr>
+            <tr><td>Filename collision</td><td>Same as "file overwrite" above — solved by never trusting a caller-supplied filename for the physical write</td><td>—</td></tr>
+            <tr><td>MIME validation</td><td><code>TenantFileStorageService.store()</code>, before delegating to the provider — sniff actual bytes (magic-number detection), reject on mismatch with the claimed <code>Content-Type</code></td><td>Business-logic layer, not the provider — MIME policy is a domain decision (what's allowed for "brand logos" vs. "tax filing documents"), while the provider should stay a dumb byte-mover</td></tr>
+            <tr><td>Extension validation</td><td>Same layer, same method — per-category allow-list (a map passed in by each of the 9 call sites, e.g. brand logos: jpg/png/webp; tax filings: pdf)</td><td>Category-specific policy belongs with the caller's category declaration, enforced centrally so no call site can skip it</td></tr>
+            <tr><td>Storage isolation</td><td><code>LocalStorageProvider</code> — every physical path is constructed exclusively via <code>StorageKey.toPhysicalPath(root)</code>; no code path in the provider ever accepts a raw string path from a caller</td><td>Structural guarantee, not a runtime check — the type system (only <code>StorageKey</code>, never <code>String</code>, is accepted by <code>store</code>/<code>load</code>/<code>delete</code>) makes bypassing this a compile error, not a code-review catch</td></tr>
+            <tr><td>Tenant isolation</td><td><code>TenantFileStorageService</code> — the only class permitted to construct a <code>StorageKey</code> with a tenant segment, always sourced from the resolved <code>tenant.storage-key</code> config (Layer 1), never from request input</td><td>If tenant segment could ever come from a request parameter instead of server-side config, that alone would reopen the entire cross-tenant exposure problem this project exists to close</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout bad">
+        <span class="cal-label">Single highest-priority security invariant</span>
+        <p>The tenant segment of every <code>StorageKey</code> must originate <em>only</em> from server-side, per-deployment configuration (Layer 1's <code>tenant.storage-key</code>) — never from a JWT claim, request header, or request parameter that a client could influence. Because each tenant already runs as its own isolated process/DB, this is enforceable simply by reading the config value once at startup and never accepting an override — but it must be reviewed explicitly in code review for every one of the 9 refactored call sites, since a single mistake here (e.g. one developer wiring the tenant segment from a request param "to make testing easier") reintroduces the exact vulnerability class this whole migration is meant to close.</p>
+      </div>
+    </section>
+
+    <section id="p7">
+      <p class="part-eyebrow">Part 07</p>
+      <h2>Testing strategy</h2>
+      <p class="lead">Verified this session: <strong>zero existing tests reference any of the 7 current storage classes.</strong> This is a green field for test design, not a retrofit — and it means the new abstraction should be built test-first, since there's no legacy test suite to accidentally break.</p>
+
+      <h3>Backend — unit tests</h3>
+      <ul>
+        <li><code>StorageKeyTest</code> — path traversal rejection (`../`, absolute paths, null bytes, encoded traversal sequences), valid-key construction, category/filename edge cases (empty, overlong, non-ASCII).</li>
+        <li><code>LocalStorageProviderTest</code> — store/load/delete/exists round-trip against a temp directory (JUnit <code>@TempDir</code>); confirms it never writes outside the configured root regardless of what a (theoretically already-validated) <code>StorageKey</code> contains — defense in depth, testing the provider assuming <code>StorageKey</code>'s guarantees could somehow be bypassed.</li>
+        <li><code>TenantFileStorageServiceTest</code> — mocked <code>StorageProvider</code>; confirms tenant segment always comes from injected config, never from a method parameter; confirms MIME/extension/size validation actually rejects bad input before delegating to the provider.</li>
+        <li>Per-call-site tests for all 9 refactored classes (currently zero exist) — at minimum, confirm each still produces a resolvable stored reference after the refactor, using the project's existing Mockito + builder-fixture convention (per CLAUDE.md's documented test style).</li>
+      </ul>
+
+      <h3>Backend — integration tests</h3>
+      <ul>
+        <li>End-to-end upload→store→retrieve for each of the 9 endpoints (Part 03's table), using <code>@SpringBootTest</code> with a real (test) filesystem root — confirms the full controller→service→provider chain, not just the isolated unit.</li>
+        <li>Cross-tenant isolation test: two simulated tenants (different <code>tenant.storage-key</code> config), confirm tenant A's stored file is never reachable via any manipulation of tenant B's request — this is the single most important new test given Part 06's highest-priority invariant.</li>
+        <li><code>PosCheckoutControllerTest</code>-style existing-pattern test for the URL-resolution DTO changes (Part 01, Layer 6) — confirm the 4 newly-introduced thin wrappers (CompanyProfile, Employee, SalesOrderAttachment, ReceiptVoucher) serialize correctly and don't leak the old raw-entity shape to any existing frontend consumer.</li>
+      </ul>
+
+      <h3>Backend — migration tests</h3>
+      <ul>
+        <li>DB rewrite script (Part 04) tested against a seeded copy of a representative tenant DB — assert row counts unchanged, assert idempotency by running the script twice and confirming the second run is a no-op.</li>
+        <li>Storage migration script (Part 05) tested against a seeded temp directory with deliberately-injected edge cases: a missing source file, a duplicate reference, a mid-run interruption (kill and resume) — confirms the manifest-driven resume logic actually resumes correctly rather than re-copying or skipping incorrectly.</li>
+      </ul>
+
+      <h3>Frontend</h3>
+      <ul>
+        <li><strong>Image loading:</strong> manual + automated smoke check that <code>getImageUrl()</code> output still renders for all ~35 consuming pages after backend URL-resolution changes (Layer 6) — no frontend code change expected, so this is a regression check, not new test development.</li>
+        <li><strong>Upload flow:</strong> exercise each of the 9 upload UI flows (product image, brand logo, company logo/stamp, branch logo/stamp, employee avatar, own-profile avatar, sales order attachment, receipt voucher attachment, tax filing attachment) end-to-end in a running dev instance, confirming success and error states both render correctly against the refactored backend.</li>
+        <li><strong>Existing UI compatibility:</strong> because Product's image handling was found to be different from what a naive read of the entity suggests (separate <code>ProductMedia</code> table, dead <code>ProductResponse.image</code> field), specifically verify the Products page's image display end-to-end before assuming any change there is safe.</li>
+      </ul>
+
+      <h3>Infrastructure</h3>
+      <ul>
+        <li><strong>Kubernetes:</strong> deploy the refactored backend into the existing <code>k8s/max</code> pilot namespace; confirm the tenant-keyed subfolder appears correctly under the existing PVC mount (<code>kubectl exec ... -- ls /app/uploads</code>); confirm the <code>Recreate</code> deployment strategy still behaves correctly (no split-brain writes during a rollout).</li>
+        <li><strong>Docker:</strong> confirm the new explicit <code>VOLUME /app/uploads</code> declaration doesn't change existing local-dev behavior for anyone running the backend via plain <code>mvn spring-boot:run</code> (no Docker) — this is additive Dockerfile metadata, should be a no-op outside a container.</li>
+        <li><strong>Volume mounts:</strong> confirm a pod restart correctly re-mounts the same PVC and the tenant-keyed subfolder survives — direct extension of the K8s pilot's already-proven PVC durability, just re-verified with the new subpath in place.</li>
+        <li><strong>Backup/restore:</strong> dry-run a full backup-then-restore of one tenant's uploads PVC subfolder into a scratch environment, confirming file integrity (checksum match) end to end — this exercises Part 05's design of Blueprint's Part 05 (Backup & DR) for the first time against real infrastructure, not just in the abstract.</li>
+      </ul>
+
+      <h3>Migration tests (full rollout rehearsal)</h3>
+      <ul>
+        <li><strong>Existing tenant:</strong> full dry run against a cloned copy of one live tenant's DB + uploads (recommend <code>demo</code> — lowest risk, matches the original report's Phase 4 choice) — the complete Part 04 + Part 05 process end to end, followed by the validation checklist.</li>
+        <li><strong>New tenant:</strong> provision a brand-new tenant from scratch using the post-refactor code path (no legacy flat-path files to migrate at all) — confirms the new-tenant onboarding path is clean and doesn't accidentally depend on migration-specific code.</li>
+        <li><strong>Rollback:</strong> deliberately trigger a rollback at each of the three stages defined in the earlier study's Part 13 (after copy, after DB rewrite, after old-file deletion) against the scratch tenant, confirming each rollback path actually restores a working system.</li>
+        <li><strong>Export:</strong> exercise the blueprint's Part 04 export flow against the migrated scratch tenant, confirm the manifest + checksums are correct.</li>
+        <li><strong>Import:</strong> import that export into a second scratch environment under a different <code>tenant-storage-key</code> (proving the clone/rename capability Part 04 of the blueprint specifically called out as "free" once Layer 1/2 are correct) and confirm collision detection correctly rejects an import attempt that reuses an existing key.</li>
+      </ul>
+    </section>
+
+    <section id="p8">
+      <p class="part-eyebrow">Part 08</p>
+      <h2>Risk matrix</h2>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Phase</th><th>Risk</th><th>Impact</th><th>Probability</th><th>Mitigation</th><th>Recovery</th></tr></thead>
+          <tbody>
+            <tr><td>Layer 1 (tenant keys)</td><td>Duplicate or typo'd <code>tenant.storage-key</code> across two tenants</td><td><span class="pill pill-bad">High</span> — direct cross-tenant file exposure, the exact problem this project exists to prevent</td><td>Low, if a checklist/peer-review step is mandated for this specific config change</td><td>Mandatory second-reviewer sign-off on every tenant properties file change touching this key; a startup-time uniqueness assertion is not possible across independent processes, so this is a process control, not a code control</td><td>Detected via the folder-health-check maintenance job (blueprint Part 07) flagging an unexpected file under a tenant's expected subfolder</td></tr>
+            <tr><td>Layer 2 (abstraction core)</td><td>Bug in <code>StorageKey</code> traversal-guard logic</td><td>High — a single bug here undermines every downstream call site simultaneously</td><td>Low, given dedicated unit test coverage (Part 07) before any call site depends on it</td><td>Test-first development of this specific class; security-focused code review before Layer 5 begins</td><td>Caught pre-production by the integration test suite (Part 07) specifically designed to attempt traversal</td></tr>
+            <tr><td>Layer 5 (call-site refactor)</td><td>Regression in one of 9 refactored upload flows</td><td>Medium — isolated to one feature (e.g. brand logo upload breaks, others unaffected)</td><td>Medium — 9 independent refactors, mechanical but numerous</td><td>Per-call-site integration test (Part 07) before merging each; feature-flag-free but reviewed/merged one call site at a time rather than a single giant PR</td><td>Revert that one call site's commit; the layered design means other 8 call sites are unaffected by one bad refactor</td></tr>
+            <tr><td>Layer 5 — ReceiptVoucher/TaxService specifically</td><td>These two also change stored-value <em>format</em> (absolute→relative), not just write location — higher complexity than the other 7</td><td><span class="pill pill-warn">Medium-High</span></td><td>Medium</td><td>Treat as its own sub-phase with its own validation pass (Part 04's "pre-pass" design) rather than bundling with the other 7's simpler refactor</td><td>Rollback via that tenant's Migration B rollback (Part 04)</td></tr>
+            <tr><td>Layer 6 (new DTO wrappers)</td><td>Introducing a response wrapper for CompanyProfile/Employee/SalesOrderAttachment/ReceiptVoucher changes the JSON shape returned to the frontend in ways not anticipated</td><td>Medium — could silently break a frontend page reading a field from the old raw-entity JSON that the new wrapper doesn't include</td><td>Medium — this is new work, not a mechanical swap, so it carries more uncertainty than Layer 5</td><td>Wrapper design should include every field the raw entity currently exposes, verified against actual frontend usage (grep the consuming pages) before finalizing the wrapper's shape, not just the fields this migration cares about</td><td>Straightforward revert of the wrapper class; no data has moved, this is a response-shape-only change</td></tr>
+            <tr><td>Layer 7 (DB rewrite)</td><td>Script bug silently mismatches or corrupts a rewritten path</td><td><span class="pill pill-bad">High</span> — broken images/attachments across a whole tenant</td><td>Low, given the idempotent-guarded, pre/post-validated design in Part 04</td><td>Full validation checklist (row counts, checksums, HTTP-fetch sample) mandatory before that tenant's cutover; absolute-path outliers handled as a separate pre-pass</td><td>Restore that tenant's pre-migration DB snapshot; because Layer 4's fallback route is already live, no user-facing outage occurs even mid-recovery</td></tr>
+            <tr><td>Layer 8 (storage migration)</td><td>Interrupted mid-copy (disk full, process killed, network share hiccup on a K8s node)</td><td>Low — by design (Part 05), an interruption leaves the live system fully untouched</td><td>Medium — real-world interruptions happen, especially at scale across 14 tenants</td><td>Manifest-driven resume logic (Part 05) specifically designed for this — re-run picks up cleanly</td><td>Re-run the same script; no manual intervention needed for the common case</td></tr>
+            <tr><td>Layer 9 (cutover, old-file deletion)</td><td>Deleting old flat-path files before a rare-but-real edge case is discovered</td><td>High if it happens — original data gone</td><td>Low, given the mandatory grace window</td><td>30-day grace window before physical deletion (Part 05), non-negotiable regardless of how confident validation looked</td><td>Restore from the grace-window snapshot, which by definition still exists</td></tr>
+            <tr><td>Cross-cutting</td><td>Security invariant violated by a well-intentioned future change (e.g. someone wires tenant segment from a request param "for testing")</td><td><span class="pill pill-bad">High</span> — reopens the core vulnerability this whole project closes</td><td>Low if the code-review checklist (Part 06's callout) is actually enforced, not just documented</td><td>Explicit review-checklist item, not just a design doc note; consider a static-analysis rule or architecture test (e.g. ArchUnit) asserting only <code>TenantFileStorageService</code> constructs tenant-scoped <code>StorageKey</code>s</td><td>Caught by the cross-tenant isolation integration test (Part 07) before reaching production, if that test is actually run in CI</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout bad">
+        <span class="cal-label">Highest-risk tasks, flagged explicitly</span>
+        <p><strong>1)</strong> Tenant storage key provisioning (Layer 1) — a config typo here is the single highest-impact failure mode in the entire roadmap, and it's a manual/config risk, not a code risk, so normal code review doesn't automatically catch it. <strong>2)</strong> The Layer 7 database rewrite — the one step in the whole plan that mutates production data at rest, mitigated by the copy-verify-cutover discipline but still the point of no return for each tenant. <strong>3)</strong> The absolute-path pre-pass for ReceiptVoucher/TaxFiling — more complex than the other 7 call sites and easy to underestimate if bundled in with them instead of treated as its own step.</p>
+      </div>
+    </section>
+
+    <section id="p9">
+      <p class="part-eyebrow">Part 09</p>
+      <h2>Final implementation phases</h2>
+      <p class="lead">Nine phases, each independently deployable where the dependency graph (Part 02) allows it. Phases 1-4 build the foundation with zero effect on production data; Phase 5 is the one true data-migration phase, run per-tenant; Phases 6-9 are the blueprint's previously-deferred capabilities, cleanly separable.</p>
+
+      <h3>Phase 1 — Tenant Storage Configuration</h3>
+      <p><strong>Objective:</strong> establish a stable, immutable identifier per tenant, independent of Spring profile naming.<br>
+      <strong>Files to modify:</strong> all 14 <code>application-{tenant}.properties</code> files (add <code>tenant.storage-key=...</code>); remove dead <code>upload.path</code> from base + 4 tenant files.<br>
+      <strong>Expected output:</strong> every tenant profile carries a unique, permanent storage key.<br>
+      <strong>Validation checklist:</strong> manual cross-check that all 14 keys are distinct (no automated uniqueness check possible across independent processes); confirm no code currently reads the removed <code>upload.path</code> (already verified — zero references).<br>
+      <strong>Rollback:</strong> revert the properties files; no code or data affected.<br>
+      <strong>Completion criteria:</strong> 14/14 tenants have a reviewed, unique storage key committed.</p>
+
+      <h3>Phase 2 — Storage Abstraction Core</h3>
+      <p><strong>Objective:</strong> ship <code>StorageProvider</code>, <code>StorageKey</code>, <code>LocalStorageProvider</code>, <code>TenantFileStorageService</code> — fully tested, zero existing call sites touched yet.<br>
+      <strong>Files to modify:</strong> new files only (Part 01's "new components" table).<br>
+      <strong>Expected output:</strong> a working, independently testable storage layer with no production behavior change (nothing calls it yet).<br>
+      <strong>Validation checklist:</strong> full unit test suite (Part 07) green; manual traversal-attack test against <code>StorageKey</code>.<br>
+      <strong>Rollback:</strong> trivial — delete the new files; nothing else in the system references them yet.<br>
+      <strong>Completion criteria:</strong> code review approved with explicit sign-off on the Part 06 security checklist.</p>
+
+      <h3>Phase 3 — Metadata Table + Backward-Compat Route</h3>
+      <p><strong>Objective:</strong> add <code>stored_file</code> (Flyway V43) and the <code>StaticResourceConfig</code> fallback handler — both additive, both independently deployable, can ship together or separately.<br>
+      <strong>Files to modify:</strong> <code>db/migration/V43__stored_file.sql</code>, <code>common/storage/StoredFile.java</code>, <code>StoredFileRepository.java</code>, <code>config/StaticResourceConfig.java</code>.<br>
+      <strong>Expected output:</strong> new table exists in all 14 tenant DBs (via normal Flyway boot); old flat-path URLs still resolve (unchanged) alongside a new (currently unused) fallback route ready for Phase 5.<br>
+      <strong>Validation checklist:</strong> Flyway migration runs clean on every tenant DB on next boot; confirm old <code>/uploads/**</code> URLs still resolve exactly as before (regression check, not a new behavior).<br>
+      <strong>Rollback:</strong> Flyway migration is additive-only — safe to leave in place even if the rest of the effort pauses; fallback route removal is a one-line revert if needed.<br>
+      <strong>Completion criteria:</strong> table present and empty (no writer yet) in all tenant DBs; static resource regression test green.</p>
+
+      <h3>Phase 4 — Call-Site Refactor + DTO Mapping (Layers 5-6)</h3>
+      <p><strong>Objective:</strong> migrate all 9 upload call sites onto <code>TenantFileStorageService</code>; introduce URL resolution at the 9 DTO/mapping points (4 requiring new wrapper classes).<br>
+      <strong>Files to modify:</strong> the full "existing components that change" + "DTO/response mapping" tables from Part 01 — 9 storage call sites, 5 existing mappers edited, 4 new wrapper classes.<br>
+      <strong>Expected output:</strong> new uploads for all 9 flows are written under <code>uploads/{tenant-storage-key}/{category}/</code> and stored in the DB as logical keys; existing (pre-Phase-4) uploads are unaffected until Phase 5 migrates them.<br>
+      <strong>Validation checklist:</strong> full integration test suite (Part 07) green, including the cross-tenant isolation test; manual smoke test of all 9 upload UI flows; confirm existing (unmigrated) files still render via the Phase-3 fallback route.<br>
+      <strong>Rollback:</strong> per-call-site revert is possible since each of the 9 refactors is an independent commit — a regression in one doesn't require rolling back all 9.<br>
+      <strong>Completion criteria:</strong> all 9 call sites merged, tested, and deployed; new uploads verified end-to-end in a live (non-production) environment.</p>
+
+      <h3>Phase 5 — Per-Tenant Data Migration (Layers 7-8-9, repeated per tenant)</h3>
+      <p><strong>Objective:</strong> migrate one tenant's existing files + DB rows to the new scheme, validate, cut over.<br>
+      <strong>Files to modify:</strong> none (this phase runs migration scripts and SQL, not application code changes) — recommend <code>demo</code> first, then the remaining 13 tenants one at a time.<br>
+      <strong>Expected output:</strong> that tenant's <code>uploads/{tenant-storage-key}/</code> populated and verified; that tenant's 10 DB columns rewritten to logical keys; old flat-path files retained through the grace window, then deleted.<br>
+      <strong>Validation checklist:</strong> full Part 04 + Part 05 validation (row counts, checksums, HTTP-fetch sample, manual UI spot-check across all 9 upload types) for that specific tenant.<br>
+      <strong>Rollback:</strong> per Part 04/05's three-stage rollback design, available up until the grace window closes for that tenant.<br>
+      <strong>Completion criteria:</strong> that tenant fully validated and cut over; repeat for the next tenant. <strong>Independently deployable per tenant</strong> — a problem discovered on tenant 3 doesn't block or need to unwind tenants 1-2.</p>
+
+      <h3>Phase 6 — Storage Maintenance</h3>
+      <p><strong>Objective:</strong> orphan detection, cleanup sweep, duplicate report, usage statistics, folder health check (blueprint Part 07).<br>
+      <strong>Files to modify:</strong> new scheduled-job classes following the confirmed <code>PosTerminalAutoArchiveJob</code> idiom.<br>
+      <strong>Expected output:</strong> scheduled jobs running in report-only mode initially (no auto-delete until confidence is established).<br>
+      <strong>Validation checklist:</strong> first several runs manually reviewed before enabling any auto-delete behavior.<br>
+      <strong>Rollback:</strong> disable the <code>@Scheduled</code> job (config toggle); no destructive action has occurred by default.<br>
+      <strong>Completion criteria:</strong> at least one full report-only cycle reviewed and judged accurate before any auto-cleanup is enabled.</p>
+
+      <h3>Phase 7 — Export / Import Tooling</h3>
+      <p><strong>Objective:</strong> blueprint Part 04's export/import capability, built entirely on the now-stable Phase 1-2 abstractions.<br>
+      <strong>Expected output:</strong> a working export-one-tenant / import-into-new-environment tool, tested against the scratch tenant from Part 07's migration-test rehearsal.<br>
+      <strong>Validation checklist:</strong> full round-trip (export → import into a differently-keyed environment → validate) exercised at least once against a non-production tenant.<br>
+      <strong>Completion criteria:</strong> documented, tested export/import runbook exists.</p>
+
+      <h3>Phase 8 — Backup / DR Automation</h3>
+      <p><strong>Objective:</strong> blueprint Part 05's independent per-tenant, per-asset-class backup schedule and restore-drill automation.<br>
+      <strong>Expected output:</strong> scheduled backups running; at least one automated restore drill completed successfully.<br>
+      <strong>Completion criteria:</strong> a documented, tested DR runbook, with at least one full restore-drill success on record.</p>
+
+      <h3>Phase 9 — (Deferred) Object Storage Swap-In</h3>
+      <p><strong>Objective:</strong> not scheduled as part of this rollout — tracked as a future initiative, triggered only if/when multi-replica backend scaling becomes an actual operational requirement, per the blueprint's explicit deferral (Part 09).</p>
+    </section>
+
+    <section id="p10">
+      <p class="part-eyebrow">Part 10</p>
+      <h2>Architecture validation — critical re-review of the blueprint itself</h2>
+      <p class="lead">Before converting the blueprint into these phases, it was re-examined for weaknesses that only surface once you try to sequence real implementation work against it. Most of it holds up. Three points are worth surfacing explicitly, none of which are severe enough to block starting Phase 1.</p>
+
+      <h3>Hidden assumption found: not every entity has a mapper</h3>
+      <p>The blueprint's Part 03 assumed a uniform "insert one line in the DTO mapper" cost for the URL-resolution step. Verified this session: 4 of 9 entities (CompanyProfile, Employee, SalesOrderAttachment, ReceiptVoucher) return raw JPA entities today with no mapper at all. This isn't a flaw in the blueprint's direction — Option C is still correct — but Phase 4's effort estimate needs to account for 4 new wrapper classes, not just line edits. Reflected in Part 01/09 above; no architecture change needed, just a corrected estimate.</p>
+
+      <h3>Hidden assumption found: Product's image handling doesn't match a naive read of the entity list</h3>
+      <p>Both the original audit and the blueprint listed "ProductMedia.imageUrl" as if it were a straightforward peer of Brand's <code>logoPath</code> or Branch's <code>logoUrl</code>. In practice, product images live in a genuinely separate entity/repository (<code>ProductMedia</code>), and a differently-named, unrelated class (<code>ProductResponse.image</code>) is dead code that could mislead a developer skimming for "the" product image field. Recommend Phase 4 include a short, explicit design note confirming how <code>ProductMedia</code> rows map into the response before writing that one call site's DTO resolution — a small scoping task, not an architecture concern.</p>
+
+      <h3>Scalability concern: none new, previously-identified constraint stands</h3>
+      <p>The <code>ReadWriteOnce</code> PVC / single-replica-per-tenant backend constraint (blueprint Part 07) is unchanged by this roadmap and remains correctly deferred to a future object-storage phase (Phase 9, not scheduled). No new scalability concern surfaced in this review — the phased plan above doesn't make this constraint worse or better; it simply doesn't touch it, as intended.</p>
+
+      <h3>Maintainability: verified as an improvement, not a new concern</h3>
+      <p>Collapsing 9 independent hardcoded implementations into one abstraction, backed by a previously-nonexistent test suite (all-new per Part 07), is a maintainability improvement over the current state by every measure re-checked this session — no maintainability regression identified.</p>
+
+      <h3>Kubernetes concern: none new</h3>
+      <p>Re-confirmed: no structural K8s change required: existing PVC, mount point, <code>Recreate</code> strategy, and ingress rules all remain valid under the new subpath convention. This was true in the original blueprint and remains true after this review.</p>
+
+      <h3>Multi-client concern: the one genuinely load-bearing risk, already flagged, worth restating</h3>
+      <p>The entire architecture's tenant-isolation guarantee rests on Phase 1 being done correctly and reviewed carefully (Part 08's highest-risk item). This isn't a weakness in the blueprint's design — it's an inherent property of any tenant-keyed system — but it deserves to be named plainly here: <strong>the security of this whole redesign is only as strong as the discipline applied to provisioning and reviewing tenant storage keys.</strong> No architecture change mitigates this further than what's already specified (Part 06); it is a process discipline, and the roadmap accounts for that by making it its own reviewed phase rather than a config afterthought.</p>
+
+      <h3>Future cloud migration concern: none new</h3>
+      <p>Re-confirmed against the layered <code>StorageProvider</code> design: every forward path named in the blueprint's Part 09 (CDN, object storage, multi-region, horizontal scaling, ReadWriteMany, hybrid) remains reachable through config/new-provider-implementation alone, with no business-logic change, exactly as designed.</p>
+
+      <div class="callout ok">
+        <span class="cal-label">Verdict</span>
+        <p>The blueprint is <strong>implementation-ready</strong>. Nothing found in this review requires a change to the architecture itself — only two effort-estimate corrections (DTO wrapper count, Product's image-handling scoping) and one restated (not new) emphasis on Phase 1's process discipline. Proceed to Phase 1 as specified.</p>
+      </div>
+    </section>
+
+    <section id="p11">
+      <p class="part-eyebrow">Part 11</p>
+      <h2>Final Go / No-Go decision</h2>
+      <div class="callout ok">
+        <span class="cal-label">Decision</span>
+        <p><strong>GO.</strong> Implementation should begin immediately, starting with Phase 1. No further architecture changes are required before starting. This roadmap's Part 10 review confirms the blueprint is sound; the module inventory (Part 03) confirms scope is fully bounded (9 call sites, not an open-ended search); the dependency graph (Part 02) confirms a safe, non-circular build order; and the risk matrix (Part 08) confirms every identified risk has a concrete mitigation and recovery path, with the single highest-risk item (Phase 1 key provisioning) being a process control that can be enforced starting on day one.</p>
+      </div>
+
+      <h3>Recommended implementation order, Phase 1 through final deployment</h3>
+      <div class="flow">
+        <div class="flow-step"><strong>Phase 1</strong> — Tenant Storage Configuration (all 14 tenants)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Phase 2</strong> — Storage Abstraction Core (StorageProvider / StorageKey / LocalStorageProvider / TenantFileStorageService)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Phase 3</strong> — Metadata Table (stored_file, V43) + Backward-Compat Static Route</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Phase 4</strong> — Call-Site Refactor (9 sites) + DTO Mapping (4 new wrappers + 5 edits)</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Phase 5</strong> — Per-Tenant Data Migration: <code>demo</code> first (dry run), then the remaining 13 tenants one at a time, each independently validated and cut over</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Phase 6</strong> — Storage Maintenance (orphan detection, cleanup, usage stats, folder health) — report-only first, auto-cleanup enabled only after review</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Phase 7</strong> — Export / Import Tooling</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step branch"><strong>Phase 8</strong> — Backup / DR Automation, with at least one completed restore drill</div>
+        <div class="flow-connector">↓</div>
+        <div class="flow-step"><strong>Phase 9 (deferred, not scheduled)</strong> — Object storage swap-in, only if/when multi-replica scaling becomes an actual requirement</div>
+      </div>
+      <p>Phases 1-5 are the non-negotiable core that delivers the original stated goal — independent client migration, corrected for long-term tenant-identity and database-format stability. Phases 6-8 are valuable, explicitly requested, and cleanly separable; they can be resequenced relative to each other based on operational priority without affecting Phases 1-5's correctness. Phase 9 remains, as in every prior document in this series, deliberately not adopted now.</p>
+    </section>
+
+    <footer class="doc-footer">
+      Prepared as a planning and roadmap document only — no code was written or modified, no database rows or files were touched. All file:line references were re-verified against the current <code>feature/billpos</code> branch during this session (2026-07-23), not carried over unchecked from the prior two reports in this series.
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

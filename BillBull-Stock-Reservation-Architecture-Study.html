@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BillBull ERP — Stock Reservation Architecture Study</title>
+<style>
+  @font-face {
+    font-family: 'Source Serif';
+    src: local('Source Serif 4'), local('Source Serif Pro');
+  }
+
+  :root {
+    --bg: #f7f8fa;
+    --bg-raised: #ffffff;
+    --bg-sunken: #eef0f3;
+    --ink: #1b1e24;
+    --ink-soft: #4a4f59;
+    --ink-faint: #7a8090;
+    --border: #dcdfe5;
+    --border-soft: #e8eaee;
+    --accent: #9a5d16;
+    --accent-strong: #7a4810;
+    --accent-bg: #fbf1e2;
+    --accent-border: #e8c98f;
+    --ok: #1d7a4c;
+    --ok-bg: #e7f5ed;
+    --warn: #a15c00;
+    --warn-bg: #fdf1dc;
+    --bad: #b3271f;
+    --bad-bg: #fdeceb;
+    --terminal: #445070;
+    --terminal-bg: #eaedf5;
+    --code-bg: #eef0f3;
+    --shadow: 0 1px 2px rgba(20, 22, 30, 0.06), 0 4px 16px rgba(20, 22, 30, 0.05);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #12141a;
+    --bg-raised: #1a1d25;
+    --bg-sunken: #0e1015;
+    --ink: #eef0f4;
+    --ink-soft: #b6bac6;
+    --ink-faint: #7d8394;
+    --border: #2c303c;
+    --border-soft: #23262f;
+    --accent: #e0a94a;
+    --accent-strong: #f0bc63;
+    --accent-bg: #2b2213;
+    --accent-border: #4a3a1a;
+    --ok: #4fbf87;
+    --ok-bg: #133025;
+    --warn: #e0a94a;
+    --warn-bg: #2b2213;
+    --bad: #e8746c;
+    --bad-bg: #331815;
+    --terminal: #8d9ac2;
+    --terminal-bg: #1c2030;
+    --code-bg: #1c1f28;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12141a;
+      --bg-raised: #1a1d25;
+      --bg-sunken: #0e1015;
+      --ink: #eef0f4;
+      --ink-soft: #b6bac6;
+      --ink-faint: #7d8394;
+      --border: #2c303c;
+      --border-soft: #23262f;
+      --accent: #e0a94a;
+      --accent-strong: #f0bc63;
+      --accent-bg: #2b2213;
+      --accent-border: #4a3a1a;
+      --ok: #4fbf87;
+      --ok-bg: #133025;
+      --warn: #e0a94a;
+      --warn-bg: #2b2213;
+      --bad: #e8746c;
+      --bad-bg: #331815;
+      --terminal: #8d9ac2;
+      --terminal-bg: #1c2030;
+      --code-bg: #1c1f28;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, pre, .mono, td.mono, th.mono {
+    font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Source Serif', Georgia, "Times New Roman", serif;
+    font-weight: 600;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+
+  /* ---------- Shell layout ---------- */
+  .shell {
+    display: grid;
+    grid-template-columns: 272px minmax(0, 1fr);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  @media (max-width: 900px) {
+    .shell { grid-template-columns: 1fr; }
+    nav.toc { display: none; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 2.25rem 1.25rem 2.5rem 1.75rem;
+    border-right: 1px solid var(--border-soft);
+  }
+
+  .toc-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1rem;
+  }
+
+  .toc-list { list-style: none; margin: 0; padding: 0; }
+  .toc-list a {
+    display: block;
+    padding: 0.32rem 0.6rem;
+    margin: 0.05rem 0;
+    border-radius: 5px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    font-size: 0.86rem;
+    border-left: 2px solid transparent;
+  }
+  .toc-list a:hover { color: var(--ink); background: var(--bg-sunken); }
+  .toc-list a .num { color: var(--accent); font-family: ui-monospace, monospace; font-size: 0.78rem; margin-right: 0.5em; }
+
+  main {
+    padding: 2.5rem clamp(1.25rem, 4vw, 4rem) 6rem;
+    min-width: 0;
+  }
+
+  /* ---------- Cover ---------- */
+  .cover {
+    padding-bottom: 2.25rem;
+    margin-bottom: 2.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    padding: 0.3rem 0.65rem;
+    border-radius: 4px;
+    margin-bottom: 1.1rem;
+  }
+  .cover h1 {
+    font-size: clamp(1.9rem, 4vw, 2.7rem);
+    line-height: 1.12;
+    margin: 0 0 0.85rem;
+    max-width: 18ch;
+  }
+  .cover .dek {
+    font-size: 1.05rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 1.4rem;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+  .meta-row strong { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---------- Sections ---------- */
+  section { margin-bottom: 3.25rem; scroll-margin-top: 1.5rem; }
+  section > .part-eyebrow {
+    font-family: ui-monospace, monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+  }
+  h2 {
+    font-size: 1.5rem;
+    margin: 0 0 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.14rem; margin: 1.8rem 0 0.7rem; }
+  h4 { font-size: 0.98rem; margin: 1.3rem 0 0.5rem; color: var(--ink-soft); }
+  p { max-width: 74ch; margin: 0 0 0.9rem; color: var(--ink-soft); }
+  p.lead { font-size: 1.03rem; color: var(--ink); max-width: 70ch; }
+  ul, ol { max-width: 72ch; color: var(--ink-soft); padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.35rem; }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent-strong); }
+
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.4em;
+    font-size: 0.86em;
+    color: var(--ink);
+  }
+
+  /* ---------- Callouts ---------- */
+  .callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0 1.3rem;
+    max-width: 74ch;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.ok { border-left-color: var(--ok); }
+  .callout .cal-label {
+    font-family: ui-monospace, monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+    display: block;
+  }
+  .callout.warn .cal-label { color: var(--warn); }
+  .callout.bad .cal-label { color: var(--bad); }
+  .callout.ok .cal-label { color: var(--ok); }
+
+  /* ---------- Tables ---------- */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 0 0 1.4rem;
+    box-shadow: var(--shadow);
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 0.86rem; }
+  table.wide { min-width: 980px; }
+  thead th {
+    text-align: left;
+    background: var(--bg-sunken);
+    color: var(--ink-faint);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-soft);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg-sunken); }
+  td.mono, th.mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+  td strong { color: var(--ink); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* ---------- Pills ---------- */
+  .pill {
+    display: inline-block;
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    padding: 0.14rem 0.55rem;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .pill-ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .pill-warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .pill-bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .pill-terminal { background: var(--terminal-bg); color: var(--terminal); border-color: var(--terminal); }
+  .pill-accent { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-border); }
+
+  /* ---------- Code blocks / diagrams ---------- */
+  .code-block {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    margin: 0 0 1.3rem;
+  }
+  .code-block pre {
+    margin: 0;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    white-space: pre;
+  }
+  .code-block .arrow { color: var(--accent); }
+
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 0 0 1.3rem;
+    max-width: 46ch;
+  }
+  .flow-step {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 6px;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.86rem;
+    color: var(--ink);
+  }
+  .flow-connector {
+    display: flex;
+    justify-content: center;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+    padding: 0.1rem 0;
+  }
+  .flow-step.branch { border-color: var(--accent-border); background: var(--accent-bg); }
+
+  /* ---------- Cards (module grid) ---------- */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.85rem;
+    margin: 0 0 1.4rem;
+  }
+  .card {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+    box-shadow: var(--shadow);
+  }
+  .card h4 { margin: 0 0 0.4rem; font-size: 0.92rem; color: var(--ink); }
+  .card p { font-size: 0.82rem; margin: 0; color: var(--ink-faint); max-width: none; }
+
+  hr.sep { border: none; border-top: 1px solid var(--border); margin: 2.4rem 0; }
+
+  footer.doc-footer {
+    margin-top: 3.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.78rem;
+    color: var(--ink-faint);
+  }
+
+  ::selection { background: var(--accent-border); }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <nav class="toc">
+    <p class="toc-label">Contents</p>
+    <ul class="toc-list">
+      <li><a href="#p1"><span class="num">01</span>Functional flows</a></li>
+      <li><a href="#p2"><span class="num">02</span>Backend components</a></li>
+      <li><a href="#p3"><span class="num">03</span>Database objects</a></li>
+      <li><a href="#p4"><span class="num">04</span>Quantity logic</a></li>
+      <li><a href="#p5"><span class="num">05</span>Lifecycle diagrams</a></li>
+      <li><a href="#p6"><span class="num">06</span>Frontend</a></li>
+      <li><a href="#p7"><span class="num">07</span>API surface</a></li>
+      <li><a href="#p8"><span class="num">08</span>Dependency map</a></li>
+      <li><a href="#p9"><span class="num">09</span>Current architecture</a></li>
+      <li><a href="#p10"><span class="num">10</span>Reservation matrix</a></li>
+      <li><a href="#p11"><span class="num">11</span>Problems found</a></li>
+      <li><a href="#p12"><span class="num">12</span>Recommendations</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <div class="cover">
+      <span class="eyebrow">Architecture study &middot; read-only</span>
+      <h1>Stock Reservation Architecture in BillBull ERP</h1>
+      <p class="dek">A ground-truth trace of every place the system holds, computes, or forgets to hold stock — from POS scan to warehouse ledger — prepared to inform a redesign decision.</p>
+      <div class="meta-row">
+        <span><strong>Branch</strong> feature/billpos</span>
+        <span><strong>Scope</strong> backend, frontend, schema, 3 research passes</span>
+        <span><strong>Status</strong> no code changed</span>
+        <span><strong>Prepared</strong> 2026-07-22</span>
+      </div>
+    </div>
+
+    <section id="p1">
+      <p class="part-eyebrow">Part 1</p>
+      <h2>Functional reservation flows</h2>
+      <p class="lead">Seven document types were checked against the codebase, not assumed. Three (POS Layaway, Sales Order, Sales Invoice) write hard reservation rows for batch-controlled lines; two (Quotation, Proforma) compute a live "soft" reservation from document status at query time; two (Stock Transfer, GRN/LPO) never reserve at all.</p>
+
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Flow</th><th>Reserves?</th><th>Mechanism</th><th>Created</th><th>Released</th><th>Consumed</th></tr></thead>
+          <tbody>
+            <tr><td><strong>POS Layaway / Hold</strong></td><td><span class="pill pill-ok">Hard</span></td><td class="mono">BatchAllocation (batch items) + PosStockReservation (non-batch)</td><td>On save, per line</td><td>Cancel / expire / manual release / convert</td><td>Never directly — new sale re-reserves at checkout</td></tr>
+            <tr><td><strong>Sales Order</strong></td><td><span class="pill pill-ok">Hard</span> (batch) / <span class="pill pill-warn">Soft</span> (non-batch)</td><td class="mono">BatchAllocation; live SUM query for non-batch</td><td>Batch pick at confirm; non-batch is check-only</td><td>Edit/re-link, delete, DN dispatch cleanup</td><td>At Delivery Note delivery</td></tr>
+            <tr><td><strong>Sales Invoice</strong></td><td><span class="pill pill-ok">Hard</span> (batch) / <span class="pill pill-warn">Soft</span> (non-batch)</td><td class="mono">BatchAllocation, sourceDocumentType=SALES_INVOICE — manual pick (Direct Sale), auto-FEFO (Fast Sale post), or scanned-unit pin (POS unified scan)</td><td>At post/checkout, per batch-controlled line</td><td>Delete, cancel, or linked SO transitioning to INVOICED</td><td>Indirectly, via its own auto-generated Delivery Note</td></tr>
+            <tr><td><strong>Quotation</strong></td><td><span class="pill pill-bad">None</span></td><td class="mono">sumReservedQuantity() JPQL, read-only</td><td>&mdash;</td><td>&mdash; (ages out via status/date filter)</td><td>&mdash;</td></tr>
+            <tr><td><strong>Proforma</strong></td><td><span class="pill pill-bad">None</span></td><td class="mono">sumReservedQuantityForProductsByWarehouse(), read-only</td><td>&mdash;</td><td>&mdash; (excluded once a DN exists)</td><td>&mdash;</td></tr>
+            <tr><td><strong>Delivery Note</strong></td><td><span class="pill pill-ok">Hard + fresh</span></td><td class="mono">Consumes inherited BatchAllocation; fresh FEFO walk for non-batch</td><td>Dispatch validates; deliver consumes/deducts</td><td>Cancel pre-delivery frees; DRAFT delete frees</td><td>At <code>markDelivered()</code>, posts StockMovement</td></tr>
+            <tr><td><strong>Stock Transfer</strong></td><td><span class="pill pill-bad">None</span></td><td class="mono">Immediate StockMovement OUT/IN, no hold</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+            <tr><td><strong>GRN / LPO</strong></td><td><span class="pill pill-bad">None</span></td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td><td>&mdash;</td></tr>
+            <tr><td><strong>Manufacturing / Service Orders</strong></td><td><span class="pill pill-terminal">N/A</span></td><td colspan="4">Module does not exist in this codebase — confirmed by package listing, not assumed.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>POS Layaway / Hold</h3>
+      <p>The only flow with a genuinely dual-mechanism reservation: batch-controlled lines go through <code>BatchSelectionService</code> (pin a scanned unit, or FEFO-auto-reserve the line quantity); non-batch lines go through the new <code>PosStockReservationService</code>, a warehouse-level soft hold with no batch/bin identity. Both are invoked from the same loop in <code>PosLayawayService.create()</code>, and both are released together on every exit path — cancel, void, expire, manual release, convert. A "Hold" is the identical code path with <code>depositRequired=false</code>; there is no separate hold entity.</p>
+      <div class="callout">
+        <span class="cal-label">Verified detail</span>
+        <p>A daily job, <code>PosLayawayExpiryReleaseJob</code> (cron <code>0 30 2 * * *</code>), sweeps layaways past their due date and calls the same <code>releaseExpired()</code> path. The layaway's displayed status flips to <em>EXPIRED</em> at read time via a computed getter; the job's only job is to stop the stock hold from silently understating availability forever. It is idempotent by construction.</p>
+      </div>
+
+      <h3>Sales Order</h3>
+      <p>Confirming an order with batch-controlled lines requires an exact <code>BatchAllocation</code> match — either FEFO auto-pick or a manual pick via the same modal used by Delivery Note and Sales Invoice. Non-batch lines are only availability-<em>checked</em>, never held; their contribution to "reserved" everywhere in the app is a live JPQL <code>SUM</code> over open, non-invoiced sales-order lines, computed fresh on every read.</p>
+
+      <h3>Sales Invoice — a third hard-reservation path, easy to miss</h3>
+      <p>Sales Invoice reserves stock through the same <code>BatchSelectionService</code> engine as Sales Order and Delivery Note, tagged <code>sourceDocumentType=SALES_INVOICE</code> — it is not a pass-through of the Sales Order's reservation, it creates its own. Three distinct entry points feed it, matching the three ways an invoice line can be filled: <strong>manual pick</strong> (<code>saveSalesInvoiceLineSelection</code>, only on Direct-Sale invoices — Workflow-Driven invoices instead inherit batches from their Delivery Note and never call this), <strong>auto-FEFO at post time</strong> (<code>autoReserveFefoForSalesInvoiceLine</code>, the Fast-Sale path, since Fast Sale has no manual-picking step at all), and <strong>scanned-unit pin</strong> (<code>reserveScannedBatchForSalesInvoiceLine</code>, POS unified-scan — the physical scan is treated as the authorization, bypassing the manual-select permission check). Non-batch lines on an invoice are not held by this mechanism; they fall back to the same live-query "soft" contribution described for Sales Order below.</p>
+      <p>Release happens on invoice delete, on invoice cancel, and — notably — when a <em>linked Sales Order</em> transitions to <code>INVOICED</code>: at that point the SO-level reservation is explicitly released (<code>releaseSalesOrder</code>) because the invoice's own reservation, and eventually its auto-generated Delivery Note's consumption, now owns the stock. This is the one clean, explicit hand-off in the whole system — everywhere else (Proforma&rarr;DN, SO&rarr;DN when linked directly) the "hand-off" is implicit, done by a query excluding the older document rather than an explicit release call.</p>
+
+      <h3>Quotation &amp; Proforma — soft only</h3>
+      <p>Neither document writes a reservation row anywhere. <code>QuotationItem.java</code> carries an explicit developer comment stating stock flags are resolved at read time precisely because quotations don't reserve. Their contribution to system-wide "available" is a live sum over <code>APPROVED</code>/<code>ISSUED</code> documents; insufficient stock at approval only logs a warning — the code literally names this the <strong>"Soft Reservation Rule."</strong> Proforma's query explicitly excludes any proforma with an active Delivery Note against it, which the source comment describes as the DN "taking over" the reservation — a hand-off in effect, not in data.</p>
+
+      <h3>Delivery Note — the actual pivot</h3>
+      <p>This is where reservation becomes physical. For SO-sourced batch lines, DN does not allocate fresh — it looks up the SO's existing <code>RESERVED</code> rows and flips them to <code>CONSUMED</code> at <code>markDelivered()</code>, posting one outbound <code>StockMovement</code> per allocation. For non-batch lines (and for batch lines the DN itself originates), it performs a genuine FEFO walk over bin stock identities at delivery time and deducts directly. Cancelling a delivered DN reverses both: <code>StockMovement</code> is reversed and consumed allocations return to <code>RESERVED</code>.</p>
+
+      <h3>Stock Transfer, GRN/LPO — no reservation concept</h3>
+      <p>Transfer posts an immediate negative <code>StockMovement</code> at source on <em>Send</em> and an immediate positive one at destination on <em>Receive</em> — a two-leg debit/credit, confirmed by the complete absence of any <code>BatchAllocation</code>/<code>PosStockReservation</code> import in the 647-line service. In-transit stock is simply absent from both ledgers; there is no in-transit hold bucket. GRN/LPO never reserve expected incoming stock against a downstream sales order — grepped clean.</p>
+    </section>
+
+    <section id="p2">
+      <p class="part-eyebrow">Part 2</p>
+      <h2>Backend components</h2>
+      <p class="lead">Everything that creates, releases, or consumes a reservation funnels through exactly two services. Nothing else constructs a <code>BatchAllocation</code> or <code>PosStockReservation</code> row directly.</p>
+
+      <h3>inventory.batch.BatchSelectionService — the batch-controlled engine</h3>
+      <p>The single write choke-point for all batch reservation. Every public "save" method (one per source document type) funnels through a private <code>saveSourceLineSelection()</code> that: validates the requested quantity against the document line, resolves FEFO vs. manual, enforces a <code>batch_manual_select</code> permission (bypassed only for a physical scan-pin, since the scan itself is the authorization), <strong>releases any existing reservation on that exact line first</strong> — re-selection always supersedes rather than adds — pessimistic-locks the candidate <code>BatchMaster</code> rows, re-checks for a race under lock, then writes.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Method group</th><th>Representative methods</th><th>Effect</th></tr></thead>
+          <tbody>
+            <tr><td>Preview (read-only)</td><td class="mono">getSelectionOptions(...)</td><td>FEFO-vs-manual preview, powers the batch-picker modal. Writes nothing.</td></tr>
+            <tr><td>Create / reserve</td><td class="mono">saveSalesOrderLineSelection, saveSalesInvoiceLineSelection, autoReserveFefoForSalesInvoiceLine, reserveScannedBatchForSalesInvoiceLine, reserveBatchForLayawayLine, autoReserveFefoForLayawayLine, saveDeliveryLineSelection</td><td>One entry point per source document type; all converge on the same internal engine.</td></tr>
+            <tr><td>Release</td><td class="mono">releaseSourceLine, releaseSourceDocument, releaseStaleOrderLines, releaseSalesOrder, releaseSalesInvoice, releaseDeliveryNote, releaseLayaway</td><td><code>RESERVED &rarr; RELEASED</code>; underlying <code>BatchMaster</code> reverts to <code>AVAILABLE</code>.</td></tr>
+            <tr><td>Consume</td><td class="mono">markConsumedForDelivery</td><td><code>RESERVED &rarr; CONSUMED</code>; called by <code>DeliveryNoteService</code> immediately after posting the matching <code>StockMovement</code> — two service calls, one transaction.</td></tr>
+            <tr><td>Restore</td><td class="mono">restoreConsumedDeliveryNote</td><td>Reverses consumption on a post-delivery DN cancel. Distinguishes allocations the DN itself owns (fully un-reserves) from ones it merely depleted (un-consumes but leaves the upstream reservation intact).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout warn">
+        <span class="cal-label">Gap found, not fixed</span>
+        <p><code>BatchAllocationStatus.RETURNED</code> and the <code>parentAllocationId</code> field exist and are fully modeled — <code>sumAlreadyReturned()</code> and <code>findReturnableAllocations()</code> are wired to read them — but no call site anywhere in the codebase ever sets <code>status = RETURNED</code>. Either the sales-return batch-reversal flow lives outside this service entirely, or this is unfinished scaffolding.</p>
+      </div>
+
+      <h3>inventory.reservation.PosStockReservationService — the non-batch counterpart</h3>
+      <p>New (uncommitted at time of writing), deliberately minimal — its own Javadoc calls it a mirror of <code>BatchAllocation</code> "but carries no batch/bin." Two methods: <code>reserveForLayawayLine()</code> and <code>releaseSourceDocument()</code>/<code>releaseLayaway()</code>. No FEFO, no pessimistic locking, no manual-pick modal, no consume/restore pair — because it is scoped to a single caller (POS layaway) and a single unit of granularity (warehouse, not bin or batch).</p>
+
+      <h3>inventory.warehouse.WarehouseStockService — the read-side aggregator</h3>
+      <p>Where every screen's "Reserved"/"Available" number actually comes from. It branches on <code>product.isBatch()</code>: batch products sum <code>BatchAllocation</code> rows; non-batch products sum three unrelated sources — live Sales Order/Proforma queries, dispatched-not-delivered Delivery Note quantities, and <code>PosStockReservation</code> rows — added together. This three-way sum is duplicated with a variance at the bin level (see Part 11).</p>
+
+      <h3>Everything else that touches these tables</h3>
+      <div class="card-grid">
+        <div class="card"><h4>SalesOrderService</h4><p>Calls into BatchSelectionService at confirm, save (item-churn cleanup), and delete. Never writes StockMovement itself.</p></div>
+        <div class="card"><h4>SalesInvoiceService</h4><p>Owns Fast-Sale auto-FEFO and the POS unified-scan pin path. Releases on SO&rarr;INVOICED transition, delete, and cancel.</p></div>
+        <div class="card"><h4>DeliveryNoteService</h4><p>The only service that pairs BatchAllocation mutation with StockMovement posting in the same transaction. Owns FEFO deduction for non-batch lines.</p></div>
+        <div class="card"><h4>PosLayawayService</h4><p>Calls both reservation services from the same loop; releases both together on every exit path.</p></div>
+        <div class="card"><h4>BinStockService</h4><p>A second, narrower aggregator — reserved math for the bin-drill-down screen. Omits PosStockReservation entirely (see Part 11).</p></div>
+        <div class="card"><h4>StockMovementService</h4><p>The actual ledger writer — <code>postOutboundStock</code> / <code>reverseOutboundStock</code>. Never reads or writes a reservation table; reservation and movement are cleanly separated services.</p></div>
+      </div>
+    </section>
+
+    <section id="p3">
+      <p class="part-eyebrow">Part 3</p>
+      <h2>Database objects</h2>
+      <p class="lead">Only <strong>one</strong> table in the entire schema is dedicated to reservation state. Everything else is either physical stock ledger or live-query aggregation over ordinary document tables.</p>
+
+      <h3>batch_allocation</h3>
+      <p>Hibernate-generated (<code>ddl-auto=update</code>) — there is no Flyway migration defining this table; the <code>@Entity</code> annotations on <code>BatchAllocation.java</code> are the schema source of truth. No foreign key constraint exists at the database level for <code>batch_master_id</code> or <code>product_id</code>/<code>bin_id</code> — those relationships are enforced only in application code.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Column</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">source_document_type / _id / _line_id</td><td>NOT NULL. One of SALES_ORDER, SALES_INVOICE, DELIVERY_NOTE, SALES_RETURN (unused), POS_LAYAWAY.</td></tr>
+            <tr><td class="mono">batch_master_id</td><td><code>@ManyToOne</code> to the physical batch unit. Each row is effectively one physical unit — <code>quantity</code> is almost always 1.</td></tr>
+            <tr><td class="mono">status</td><td>RESERVED &middot; CONSUMED &middot; RELEASED &middot; RETURNED (declared, never written)</td></tr>
+            <tr><td class="mono">allocation_method</td><td>AUTO_FEFO or MANUAL. No FIFO value exists — the system models FEFO or explicit override only.</td></tr>
+            <tr><td class="mono">depleted_by_document_type / _id / _line_id</td><td>Set when a different document (typically a DN) consumes a reservation created by another (typically an SO) — the hand-off trail.</td></tr>
+            <tr><td class="mono">parent_allocation_id</td><td>Return-reversal linkage — modeled, unused (see Part 2 gap).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Three indexes: <code>(source_document_type, source_document_id, source_line_id, status)</code>, <code>(batch_master_id, status)</code>, <code>(product_code, bin_code, status)</code> — all read-path optimized, matching how the service actually queries.</p>
+
+      <h3>pos_stock_reservations</h3>
+      <p>Defined in <code>V41__pos_stock_reservation.sql</code> — the one reservation table that <em>does</em> have a real migration. Flat and small: <code>source_document_type/_id/_line_id</code>, <code>product_id</code>, <code>warehouse_id</code> (no bin), <code>quantity</code>, <code>status</code> (RESERVED/RELEASED), <code>reserved_by</code>/<code>reserved_at</code>/<code>released_at</code>. No FK constraints, mirroring <code>batch_allocation</code>.</p>
+
+      <h3>Tables that participate without being reservation tables</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Table</th><th>Role in reservation math</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">stock_movement</td><td>Append-only physical ledger. Reservation never writes here; only delivery/transfer/GRN do. On-hand is always <code>SUM(quantity)</code> over this table.</td></tr>
+            <tr><td class="mono">batch_master</td><td>One row per physical batch unit. Its own <code>status</code> column (AVAILABLE/RESERVED/CONSUMED/QUARANTINE) is flipped in lockstep with <code>batch_allocation</code> by the same service call — effectively a denormalized mirror.</td></tr>
+            <tr><td class="mono">sales_orders / sales_order_items</td><td>Read live via JPQL <code>SUM</code> for non-batch "reserved" — no persisted reservation quantity column.</td></tr>
+            <tr><td class="mono">proforma_invoice / _items</td><td>Same pattern, filtered to ISSUED status, excluded once a Delivery Note exists.</td></tr>
+            <tr><td class="mono">delivery_notes / _items</td><td>Read live for DRAFT/DISPATCHED (not yet DELIVERED) rows — contributes to "reserved" until physically deducted.</td></tr>
+            <tr><td class="mono">quotation / quotation_items</td><td>Read live, APPROVED &amp; not-expired — feeds the "soft reservation" warning only, never blocks.</td></tr>
+            <tr><td class="mono">bin_stock</td><td>Carries a <code>reserved_quantity</code> column that is <strong>never written</strong> by any service — see Part 11.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="p4">
+      <p class="part-eyebrow">Part 4</p>
+      <h2>Inventory quantity logic</h2>
+      <p class="lead">The formula is constant everywhere &mdash; <code>available = onHand &minus; reserved</code> &mdash; but what counts as <em>reserved</em> silently changes depending on product type and which screen is asking.</p>
+
+      <div class="code-block"><pre>on-hand (any product)
+  = SUM(stock_movement.quantity) WHERE product/warehouse[/bin] matches
+    <span class="arrow">// the only source of physical truth in the system</span>
+
+reserved, batch-controlled product (every screen, consistently)
+  = SUM(batch_allocation.quantity) WHERE status = 'RESERVED'
+                                      AND product/warehouse[/bin] matches
+    <span class="arrow">// CONSUMED rows excluded — that stock is already gone via StockMovement</span>
+
+reserved, non-batch product — WAREHOUSE level (WarehouseStockService)
+  = sales_order_reserved      <span class="arrow">// live SUM, CONFIRMED/PARTIALLY_PAID/FULLY_PAID, no active DN</span>
+  + proforma_reserved         <span class="arrow">// live SUM, ISSUED, no active DN</span>
+  + delivery_note_reserved    <span class="arrow">// live SUM, status IN (DRAFT, DISPATCHED)</span>
+  + pos_stock_reservation     <span class="arrow">// hard rows, status = RESERVED</span>
+
+reserved, non-batch product — BIN level (BinStockService)
+  = sales_order_reserved
+  + delivery_note_reserved
+    <span class="arrow">// proforma_reserved and pos_stock_reservation are OMITTED at this level</span>
+
+available = on-hand − reserved   <span class="arrow">// same formula, different "reserved" input</span></pre></div>
+
+      <div class="callout bad">
+        <span class="cal-label">Confirmed defect</span>
+        <p>The bin-level formula silently drops two of the four non-batch reservation sources. For a non-batch product with an active POS layaway, warehouse-level "Available" and bin-level "Available" for the same physical stock will disagree by exactly the layaway (and proforma) quantity — and both numbers are one click apart on the same Warehouse Detail page.</p>
+      </div>
+
+      <h3>Sales Order "reserved" is coarser than it looks</h3>
+      <p>The live query excludes an SO entirely once <em>any</em> non-cancelled Delivery Note exists against it — via <code>NOT EXISTS</code>, a boolean gate, not a partial-quantity subtraction. A sales order with 100 units confirmed and 1 unit dispatched on a DN drops to <strong>zero</strong> contribution to "reserved," understating held stock for the other 99 units until that DN reaches DELIVERED and the units are physically deducted from on-hand. The window is normally short (dispatch usually precedes delivery closely) but it is a real, reproducible gap, not a hypothetical.</p>
+
+      <h3>Batch quantity vs. warehouse/bin quantity</h3>
+      <p>Batch-controlled availability is computed at unit granularity — each <code>BatchMaster</code> row is one physical unit, so "batch quantity" is really a row count filtered by status, not a summed decimal. Non-batch quantities are true decimal sums with unit-of-measure conversion applied via <code>ProductPacking.conversion</code> in every JPQL query that touches them (visible in every SO/Proforma/DN reservation query cited above).</p>
+
+      <h3>Serial quantity</h3>
+      <p>Not part of the reservation graph at all. Serials are marked <code>SOLD</code> at Delivery Note delivery (a status flip on the serial row itself), not reserved ahead of time through any of the mechanisms above.</p>
+    </section>
+
+    <section id="p5">
+      <p class="part-eyebrow">Part 5</p>
+      <h2>Reservation lifecycle diagrams</h2>
+
+      <h3>POS Layaway / Hold</h3>
+      <div class="flow">
+        <div class="flow-step">Cashier saves cart as Layaway/Hold</div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step branch">Batch line &rarr; BatchAllocation RESERVED (pin or FEFO)</div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step branch">Non-batch line &rarr; PosStockReservation RESERVED</div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step">Available = on-hand &minus; reservation, everywhere it's displayed</div>
+        <div class="flow-connector">&darr; cancel / expire (daily job) / manual release / convert</div>
+        <div class="flow-step">Both reservation types RELEASED together</div>
+        <div class="flow-connector">&darr; (convert only)</div>
+        <div class="flow-step">New POS sale re-reserves its own batches independently at checkout</div>
+      </div>
+
+      <h3>Sales Order &rarr; Delivery Note (batch-controlled)</h3>
+      <div class="flow">
+        <div class="flow-step">Quotation approved <span class="pill pill-warn">soft only</span></div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step">Sales Order confirmed + batch line picked</div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step branch">BatchAllocation RESERVED, sourceDocumentType=SALES_ORDER</div>
+        <div class="flow-connector">&darr; dispatch</div>
+        <div class="flow-step">DN validates existing allocation matches; prunes stale SO-line allocations</div>
+        <div class="flow-connector">&darr; deliver</div>
+        <div class="flow-step branch">StockMovement OUT posted, then allocation &rarr; CONSUMED</div>
+        <div class="flow-connector">&darr; (cancel post-delivery only)</div>
+        <div class="flow-step">StockMovement reversed, allocation restored to RESERVED</div>
+      </div>
+
+      <h3>Proforma &rarr; Delivery Note</h3>
+      <div class="flow">
+        <div class="flow-step">Proforma issued <span class="pill pill-warn">soft only</span></div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step">Contributes to live "reserved" SUM until a DN exists</div>
+        <div class="flow-connector">&darr; DN created against this proforma</div>
+        <div class="flow-step">Query-level exclusion — DN's own reservation math takes over</div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step">Same DN dispatch/deliver/cancel lifecycle as above</div>
+      </div>
+
+      <h3>Stock Transfer — no hold state</h3>
+      <div class="flow">
+        <div class="flow-step">Transfer created (DRAFT)</div>
+        <div class="flow-connector">&darr; Send</div>
+        <div class="flow-step branch">StockMovement OUT posted immediately at source (negative qty)</div>
+        <div class="flow-connector">&darr;</div>
+        <div class="flow-step">In transit — absent from both warehouses' on-hand, no reserved bucket exists</div>
+        <div class="flow-connector">&darr; Receive</div>
+        <div class="flow-step branch">StockMovement IN posted immediately at destination (positive qty)</div>
+      </div>
+    </section>
+
+    <section id="p6">
+      <p class="part-eyebrow">Part 6</p>
+      <h2>Frontend investigation</h2>
+      <p class="lead">Eight screens surface reservation data. One shared modal drives batch selection for three document types; layaway state lives entirely inside one 13,800-line POS page; and the same "Reserved" label means different things depending on which screen you're looking at.</p>
+
+      <h3>BatchSelectionModal — the shared batch picker</h3>
+      <p>One component, three callers: Sales Order, Delivery Note (read-only when inherited from an upstream document), Sales Invoice. Calls <code>GET /api/inventory/batches/selection-options</code> for the FEFO-vs-manual preview, then one of three document-scoped <code>POST</code>/<code>DELETE .../batch-selection</code> endpoints to commit or clear. Shows available units, days-to-expiry, and a warning badge per row.</p>
+      <div class="callout">
+        <span class="cal-label">Minor finding</span>
+        <p>The component fabricates a local <code>reserved: true</code> flag on already-saved rows that is never rendered anywhere — vestigial, harmless, but suggests the frontend author once expected a <code>reserved</code> boolean from the API that the backend response never actually carries.</p>
+      </div>
+
+      <h3>POS Layaway UI</h3>
+      <p>Entirely owned by <code>POSSales.jsx</code>; the touch-screen and console variants are presentational children driven by the same parent state, not separate implementations. Save/Hold, the Layaways list, the detail drawer's "Reserved Items" table, and Convert/Cancel are all wired up.</p>
+      <div class="callout bad">
+        <span class="cal-label">Confirmed capability gap</span>
+        <p>The backend exposes <code>POST /api/pos/layaways/{id}/release-reservation</code> (supervisor-gated manual release without cancelling) and both instalment-payment endpoints (<code>POST</code>/<code>GET .../payments</code>) — none of the three have a frontend API wrapper, anywhere. The only stock-release action reachable from the UI is a full Cancel. Two backend capabilities are currently dead code from the frontend's perspective.</p>
+      </div>
+
+      <h3>Stock Availability Modal</h3>
+      <p>Pure information display — per-location On Hand / Reserved / Available plus incoming LPO quantities, with a footer disclaimer explaining reservations are created at order confirmation and released on expiry/cancellation. No reserve/release action lives here; it only reads.</p>
+
+      <h3>Warehouse Detail — two reservation numbers, one page apart</h3>
+      <p>The product-level stock table and stat tiles include layaway reservations in their "Reserved" figure. The bin-level drill-down on the exact same page does not — it omits <code>PosStockReservation</code> entirely, matching the backend gap described in Part 4. This is the single clearest example of the architecture's inconsistency being directly visible to an end user.</p>
+
+      <h3>Stock Transfer, Batch Editor, Transaction Preview</h3>
+      <p>Stock Transfer shows an "Available" figure for transfer purposes that was not confirmed to net out the same SO/DN/Layaway reservations as the Warehouse screens — a follow-up worth a dedicated check before relying on it. The Stock Taking Batch Editor is purely a data-entry tool for batch identity correction and shows no reservation data at all. Transaction Preview (and its Sales Order / Invoice preview siblings) show financial summaries only — no reservation information appears on any read-only preview surface in the app.</p>
+    </section>
+
+    <section id="p7">
+      <p class="part-eyebrow">Part 7</p>
+      <h2>API surface</h2>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Method</th><th>Endpoint</th><th>Purpose</th><th>Backend chain</th><th>DB write</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">GET</td><td class="mono">/api/inventory/batches/selection-options</td><td>FEFO/manual preview for a product+location</td><td>BatchSelectionController &rarr; BatchSelectionService.getSelectionOptions</td><td>None (read-only)</td></tr>
+            <tr><td class="mono">POST/DELETE</td><td class="mono">/api/sales-orders/{id}/items/{itemId}/batch-selection</td><td>Commit / clear batch reservation on an SO line</td><td>SalesOrderController &rarr; SalesOrderService &rarr; BatchSelectionService</td><td>batch_allocation, batch_master.status</td></tr>
+            <tr><td class="mono">POST/DELETE</td><td class="mono">/api/delivery-notes/{id}/items/{itemId}/batch-selection</td><td>Commit / clear batch reservation on a DN line</td><td>DeliveryNoteController &rarr; DeliveryNoteService &rarr; BatchSelectionService</td><td>batch_allocation, batch_master.status</td></tr>
+            <tr><td class="mono">POST/DELETE</td><td class="mono">/api/sales-invoices/{id}/items/{itemId}/batch-selection</td><td>Commit / clear batch reservation on an invoice line</td><td>SalesInvoiceController &rarr; SalesInvoiceService &rarr; BatchSelectionService</td><td>batch_allocation, batch_master.status</td></tr>
+            <tr><td class="mono">POST</td><td class="mono">/api/pos/layaways</td><td>Create layaway/hold, reserve every line</td><td>PosLayawayController &rarr; PosLayawayService &rarr; BatchSelectionService + PosStockReservationService</td><td>pos_layaways, batch_allocation, pos_stock_reservations</td></tr>
+            <tr><td class="mono">POST</td><td class="mono">/api/pos/layaways/{id}/cancel</td><td>Cancel, release all holds</td><td>PosLayawayService.cancel</td><td>Both reservation tables, status &rarr; RELEASED</td></tr>
+            <tr><td class="mono">POST</td><td class="mono">/api/pos/layaways/{id}/release-reservation</td><td>Supervisor release without cancelling</td><td>PosLayawayService.releaseReservation</td><td>Both reservation tables — <strong>no frontend caller exists</strong></td></tr>
+            <tr><td class="mono">POST</td><td class="mono">/api/pos/layaways/{id}/convert</td><td>Stamp converted post-checkout, release holds</td><td>PosLayawayService.markConverted</td><td>Both reservation tables</td></tr>
+            <tr><td class="mono">POST/GET</td><td class="mono">/api/pos/layaways/{id}/payments</td><td>Record / list instalments</td><td>PosLayawayService.recordPayment / getPayments</td><td>pos_layaway_payments — <strong>no frontend caller exists</strong></td></tr>
+            <tr><td class="mono">GET</td><td class="mono">/api/inventory/stock-availability/by-code/{code}</td><td>Read-only per-location on-hand/reserved/available</td><td>StockAvailabilityController &rarr; service, reads all reservation sources</td><td>None (read-only)</td></tr>
+            <tr><td class="mono">GET</td><td class="mono">/api/warehouses/{id}/stock, /stock/summary</td><td>Warehouse-level reservation aggregate</td><td>WarehouseController &rarr; WarehouseStockService</td><td>None (read-only)</td></tr>
+            <tr><td class="mono">GET</td><td class="mono">/api/warehouses/bins/{binId}/stock</td><td>Bin-level reservation aggregate (narrower formula)</td><td>BinStockController &rarr; BinStockService</td><td>None (read-only)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="p8">
+      <p class="part-eyebrow">Part 8</p>
+      <h2>Dependency map</h2>
+      <p class="lead">Two independent write paths converge on the same read aggregator. Both eventually resolve down to the one physical ledger, <code>stock_movement</code>.</p>
+      <div class="code-block"><pre>BATCH-CONTROLLED PATH
+BatchSelectionModal.jsx  /  POSSales.jsx (scan-pin)
+        <span class="arrow">│</span>  POST .../batch-selection, createLayaway
+        <span class="arrow">▼</span>
+SalesOrderController / DeliveryNoteController / SalesInvoiceController / PosLayawayController
+        <span class="arrow">│</span>
+        <span class="arrow">▼</span>
+SalesOrderService / DeliveryNoteService / SalesInvoiceService / PosLayawayService
+        <span class="arrow">│</span>  delegates reservation logic
+        <span class="arrow">▼</span>
+BatchSelectionService  ──────────────►  BatchAllocationRepository ──► batch_allocation
+        <span class="arrow">│</span>                                          │
+        <span class="arrow">│</span> (delivery only)                          │ status mirrored
+        <span class="arrow">▼</span>                                          ▼
+StockMovementService ──► StockMovementRepository ──► stock_movement   batch_master.status
+
+
+NON-BATCH PATH
+POSSales.jsx (product grid)
+        <span class="arrow">│</span>  createLayaway
+        <span class="arrow">▼</span>
+PosLayawayController ──► PosLayawayService ──► PosStockReservationService
+                                                        <span class="arrow">│</span>
+                                                        <span class="arrow">▼</span>
+                                     PosStockReservationRepository ──► pos_stock_reservations
+
+
+READ / AGGREGATE PATH (all products, every "Reserved" figure in the app)
+Warehouse.jsx / StockAvailabilityModal.jsx / warehouse stock tables
+        <span class="arrow">│</span>  GET .../stock, .../stock/summary, .../bins/{id}/stock
+        <span class="arrow">▼</span>
+WarehouseStockService  (warehouse-level)   BinStockService  (bin-level, narrower)
+        <span class="arrow">│</span> reads                                    <span class="arrow">│</span> reads
+        <span class="arrow">▼</span>                                          <span class="arrow">▼</span>
+BatchAllocationRepository, PosStockReservationRepository,        BatchAllocationRepository,
+SalesOrderRepository, ProformaRepository, DeliveryNoteRepository  SalesOrderRepository, DeliveryNoteRepository
+                                                                    (PosStockReservation & Proforma OMITTED)</pre></div>
+    </section>
+
+    <section id="p9">
+      <p class="part-eyebrow">Part 9</p>
+      <h2>Current architecture: single system or several?</h2>
+      <p class="lead"><strong>Three independent mechanisms</strong>, not one, coexist with no shared interface or common base type between them.</p>
+
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Mechanism</th><th>Scope</th><th>Granularity</th><th>Locking</th><th>Advantages</th><th>Problems</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>BatchAllocation</strong></td>
+              <td>Batch-controlled products, all sales-side documents</td>
+              <td>Physical unit (bin + batch)</td>
+              <td>Pessimistic row lock at selection time</td>
+              <td>Mature, well-tested, one write engine for five source types, clean consume/restore pair</td>
+              <td>No FK constraints in the DB; RETURNED status modeled but never used; ownership hand-off (SO&rarr;DN) is implicit via sourceLineId lookup, not an explicit transfer</td>
+            </tr>
+            <tr>
+              <td><strong>PosStockReservation</strong></td>
+              <td>Non-batch products, POS layaway only</td>
+              <td>Warehouse (no bin, no batch)</td>
+              <td>None — plain save/update</td>
+              <td>Simple, purpose-built, easy to reason about in isolation</td>
+              <td>A second, structurally similar table exists purely because BatchAllocation is hard-wired to require a BatchMaster; the "mirror but simpler" design duplicates the reservation concept instead of generalizing it</td>
+            </tr>
+            <tr>
+              <td><strong>Soft / live-query reservation</strong></td>
+              <td>Quotation, Proforma, non-batch Sales Order lines, in-flight Delivery Notes</td>
+              <td>Warehouse, summed live</td>
+              <td>None — no row, no lock, pure read-time aggregation</td>
+              <td>Zero write cost, self-cleaning (aging/status naturally drops rows out of the sum)</td>
+              <td>Boolean SO/DN exclusion instead of partial-quantity subtraction (Part 4); every consumer must independently know which four sources to sum and in what combination — two call sites (warehouse vs. bin) already disagree</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The overlap is real but narrow: all three ultimately feed the same <code>available = onHand − reserved</code> formula, and <code>WarehouseStockService</code> is the one place that already knows how to reconcile all three into a single number — it just doesn't do so consistently at every call site (<code>BinStockService</code> reimplements a subset rather than calling through). The coupling is shallow (no shared interface, no common entity), which made it cheap to bolt on <code>PosStockReservation</code> without touching <code>BatchAllocation</code> — but that same shallowness is why the bin-level formula could drift without anything failing loudly. Technical debt is concentrated in exactly one place: the "what counts as reserved for a non-batch product" logic is duplicated in two services instead of owned by one.</p>
+    </section>
+
+    <section id="p10">
+      <p class="part-eyebrow">Part 10</p>
+      <h2>Reservation matrix</h2>
+      <div class="table-wrap">
+        <table class="wide">
+          <thead><tr><th>Source</th><th>Table</th><th>Service</th><th>Frontend</th><th>Reserve timing</th><th>Release timing</th><th>Consume timing</th><th>Batch</th><th>Bin</th><th>Serial</th><th>Customer link</th><th>Audit</th></tr></thead>
+          <tbody>
+            <tr><td>POS Layaway (batch)</td><td class="mono">batch_allocation</td><td>BatchSelectionService</td><td>POSSales.jsx</td><td>On save</td><td>Cancel/expire/manual/convert</td><td>Never (re-reserved at sale)</td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-terminal">No</span></td><td>Optional (WALK-IN allowed)</td><td><code>reserved_by</code>/<code>_at</code></td></tr>
+            <tr><td>POS Layaway (non-batch)</td><td class="mono">pos_stock_reservations</td><td>PosStockReservationService</td><td>POSSales.jsx</td><td>On save</td><td>Cancel/expire/manual/convert</td><td>Never</td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-terminal">No</span></td><td>Optional</td><td><code>reserved_by</code>/<code>_at</code></td></tr>
+            <tr><td>Sales Order (batch)</td><td class="mono">batch_allocation</td><td>BatchSelectionService</td><td>BatchSelectionModal</td><td>At confirm + pick</td><td>Edit/delete/DN cleanup</td><td>At DN delivery</td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-terminal">No</span></td><td>Required</td><td><code>selected_by</code>/<code>_at</code></td></tr>
+            <tr><td>Sales Order (non-batch)</td><td class="mono">— (live query)</td><td>SalesOrderRepository</td><td>Warehouse/Stock Availability screens</td><td>n/a — computed</td><td>n/a — self-excludes on DN</td><td>n/a</td><td><span class="pill pill-terminal">n/a</span></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-terminal">No</span></td><td>Required</td><td>None</td></tr>
+            <tr><td>Sales Invoice (batch)</td><td class="mono">batch_allocation</td><td>BatchSelectionService</td><td>BatchSelectionModal (Direct Sale) / POS scan (Fast Sale)</td><td>At post/checkout</td><td>Delete, cancel, linked SO&rarr;INVOICED</td><td>Indirectly via own Delivery Note</td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-terminal">No</span></td><td>Required</td><td><code>selected_by</code>/<code>_at</code></td></tr>
+            <tr><td>Sales Invoice (non-batch)</td><td class="mono">— (live query, via SO/DN sums)</td><td>SalesOrderRepository / DeliveryNoteRepository</td><td>Warehouse/Stock Availability screens</td><td>n/a — computed</td><td>n/a</td><td>n/a</td><td><span class="pill pill-terminal">n/a</span></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-terminal">No</span></td><td>Required</td><td>None</td></tr>
+            <tr><td>Quotation</td><td class="mono">— (live query)</td><td>QuotationRepository</td><td>none dedicated</td><td>n/a</td><td>n/a — ages out</td><td>n/a</td><td><span class="pill pill-terminal">n/a</span></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-terminal">No</span></td><td>Required</td><td>None</td></tr>
+            <tr><td>Proforma</td><td class="mono">— (live query)</td><td>ProformaRepository</td><td>none dedicated</td><td>n/a</td><td>n/a — excludes once DN exists</td><td>n/a</td><td><span class="pill pill-terminal">n/a</span></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-terminal">No</span></td><td>Required</td><td>None</td></tr>
+            <tr><td>Delivery Note (in-flight)</td><td class="mono">— (live query, DRAFT/DISPATCHED)</td><td>DeliveryNoteRepository</td><td>Warehouse/Stock Availability screens</td><td>n/a</td><td>n/a — self-excludes at DELIVERED</td><td>At delivery</td><td><span class="pill pill-ok">Yes</span> (via allocation)</td><td><span class="pill pill-ok">Yes</span></td><td><span class="pill pill-ok">Yes</span></td><td>Required</td><td>DeliveryNoteBatchConsumption</td></tr>
+            <tr><td>Stock Transfer</td><td>&mdash;</td><td>StockTransferService</td><td>StockTransfer.jsx</td><td>n/a — immediate movement</td><td>n/a</td><td>n/a</td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-bad">No</span></td><td><span class="pill pill-terminal">No</span></td><td>n/a</td><td>StockMovement audit only</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="p11">
+      <p class="part-eyebrow">Part 11</p>
+      <h2>Current problems</h2>
+
+      <h3>Confirmed, high confidence</h3>
+      <ul>
+        <li><strong>Bin-level vs. warehouse-level disagreement.</strong> <code>BinStockService</code> omits <code>PosStockReservation</code> and Proforma from its reserved sum; <code>WarehouseStockService</code> includes both. Same page, one click apart, different numbers for the same non-batch product.</li>
+        <li><strong>Boolean, not quantity-aware, SO/DN hand-off.</strong> The <code>NOT EXISTS</code> gate in <code>SalesOrderRepository.sumReservedQuantityForProductsByWarehouse</code> drops an order's entire reserved contribution to zero the moment any single unit is dispatched, understating held stock for the remaining undelivered quantity.</li>
+        <li><strong>Dead column.</strong> <code>bin_stock.reserved_quantity</code> exists in the schema and is set on a response DTO but never persisted to the entity — a trap for any future developer who assumes it's live data.</li>
+        <li><strong>Modeled-but-unused return path.</strong> <code>BatchAllocationStatus.RETURNED</code> and <code>parentAllocationId</code> are fully wired for reads (<code>sumAlreadyReturned</code>, <code>findReturnableAllocations</code>) but nothing ever writes them — either dead scaffolding or a return flow that bypasses this service entirely and should be reconciled.</li>
+        <li><strong>Two backend capabilities unreachable from the UI.</strong> Supervisor release-without-cancel and layaway instalment recording both exist server-side with no frontend caller — either finish the UI or remove the endpoints; right now they're untested-by-usage surface area.</li>
+        <li><strong>No database-level referential integrity.</strong> Neither reservation table has an FK constraint on its target entity (batch, product, warehouse, bin) — correctness depends entirely on application code never producing an orphaned row.</li>
+      </ul>
+
+      <h3>Architectural, moderate confidence</h3>
+      <ul>
+        <li><strong>Reservation concept duplicated, not generalized.</strong> <code>PosStockReservation</code> was built as a parallel-but-simpler mirror of <code>BatchAllocation</code> rather than as a generalization of it (e.g., an optional bin/batch on one reservation table). Every future non-batch reservation need will face the same choice again.</li>
+        <li><strong>"Reserved" has at least three distinct definitions</strong> depending on product type and screen — batch sum, four-source non-batch sum, or two-source non-batch sum — with no single function any developer can call to get "the" reserved quantity without knowing which screen they're building.</li>
+        <li><strong>Race conditions are only guarded on the batch path.</strong> <code>BatchSelectionService</code> pessimistic-locks; <code>PosStockReservationService</code> does a plain save with no lock — two concurrent layaways on the same non-batch product's last unit could both succeed.</li>
+        <li><strong>Soft reservation on Quotation/Proforma is a warning, not a guard</strong> — by design, per the source comments, but worth surfacing explicitly to stakeholders since it means overselling from stacked quotations is possible in principle.</li>
+      </ul>
+
+      <h3>Not investigated further (flagged for follow-up)</h3>
+      <ul>
+        <li>Whether Stock Transfer's "Available" figure nets out the same SO/DN/Layaway sources as the Warehouse screens — the frontend research pass could not fully pin down which <code>warehouseApi.js</code> call it uses in the time available.</li>
+        <li>Whether Stock Availability Modal and Warehouse Detail, which are fed by two different backend services, are guaranteed to return identical numbers for the same input — the frontend alone cannot rule out drift; needs a backend-side check.</li>
+      </ul>
+    </section>
+
+    <section id="p12">
+      <p class="part-eyebrow">Part 12</p>
+      <h2>Improvement recommendations</h2>
+
+      <h3>Option A — Keep current architecture</h3>
+      <p><strong>Pros:</strong> zero migration risk, zero regression surface, batch-controlled reservation (the higher-stakes half, since it covers pessimistic locking and FEFO) is already solid. <strong>Cons:</strong> the three-definitions-of-reserved problem and the bin/warehouse drift persist and will resurface every time a new screen needs a reservation number. <strong>Effort:</strong> none beyond the point-fixes below. <strong>Risk:</strong> low today, compounding over time as more screens are added.</p>
+
+      <h3>Option B — Unified Reservation Query Layer (read-only aggregation)</h3>
+      <p>Introduce one function — <code>ReservationQueryService.getReserved(productId, warehouseId, binId?)</code> — that internally branches on batch vs. non-batch and sums exactly the sources <code>WarehouseStockService</code> already sums today, then make <code>BinStockService</code> call through it instead of reimplementing a subset. No schema change, no write-path change. <strong>Pros:</strong> fixes the bin/warehouse drift (Part 11's most visible bug) with a small, low-risk change; establishes one place to fix the SO boolean-exclusion issue later. <strong>Cons:</strong> doesn't address the underlying duplication between <code>BatchAllocation</code> and <code>PosStockReservation</code>, or the missing locking on the non-batch path. <strong>Effort:</strong> small — a few days. <strong>Risk:</strong> low. <strong>Backward compatibility:</strong> full — it's a refactor of read paths only.</p>
+
+      <h3>Option C — Central Reservation Service (common reservation engine)</h3>
+      <p>Generalize <code>BatchAllocation</code> into a single reservation table with optional <code>bin_id</code>/<code>batch_master_id</code>, and migrate <code>PosStockReservation</code> rows into it; give every write path (SO, DN, Invoice, Layaway) the same pessimistic-locking, FEFO, and consume/restore semantics regardless of whether the product is batch-controlled. <strong>Pros:</strong> one mental model, one set of race-condition guarantees, one place to add the RETURNED flow properly. <strong>Cons:</strong> nontrivial data migration (existing <code>pos_stock_reservations</code> rows need backfilling with nullable bin/batch), touches every call site listed in Part 2's card grid, and the "no FK constraints" debt would need addressing at the same time to be worth doing properly. <strong>Effort:</strong> large — multi-week, cross-module. <strong>Risk:</strong> moderate-high, concentrated in the POS layaway non-batch path since it has the least test coverage today. <strong>Backward compatibility:</strong> breaking at the data layer, requires a migration window.</p>
+
+      <h3>Recommendation</h3>
+      <div class="callout ok">
+        <span class="cal-label">Recommended</span>
+        <p><strong>Option B now, Option C only if a concrete new requirement demands it</strong> (e.g., bin-level or batch-level POS reservation, which the current <code>PosStockReservation</code> design cannot support without exactly the generalization Option C proposes). The immediate, user-visible bug — bin and warehouse screens disagreeing — is fixed by centralizing the read side, which is low-risk and ships fast. Option C's cost is justified by a specific future need, not by architectural tidiness alone; the two mechanisms today are duplicated but not actually in conflict with each other, and the write-side risk of merging them (particularly around the un-locked non-batch path) is higher than the benefit until there's a concrete reason — such as bin-precise layaway reservation — to take it on.</p>
+      </div>
+    </section>
+
+    <footer class="doc-footer">
+      Prepared as a read-only architecture study. No source files were modified in the course of this investigation. Findings verified against <code>feature/billpos</code> via direct file reads and three targeted research passes (backend BatchAllocation internals, sales/transfer/purchasing flows, frontend UI trace); every claim above is traceable to a specific file and, where cited in the underlying research, a specific line.
+    </footer>
+  </main>
+</div>
+</body>
+</html>

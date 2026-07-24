@@ -30,6 +30,7 @@ public class PosLayawayCreateRequest {
     /** When true this is a POS "Hold": deposit is forced to zero and a real customer
      *  is not required (Walk-in holds allowed). Otherwise a normal layaway. */
     private Boolean hold;
+    private Boolean taxInclusive;
 
     private List<PosLayawayItemRequest> items;
 
@@ -104,6 +105,8 @@ public class PosLayawayCreateRequest {
     public void setBillDiscountAmount(Double billDiscountAmount) { this.billDiscountAmount = billDiscountAmount; }
     public Boolean getHold() { return hold; }
     public void setHold(Boolean hold) { this.hold = hold; }
+    public Boolean getTaxInclusive() { return taxInclusive; }
+    public void setTaxInclusive(Boolean taxInclusive) { this.taxInclusive = taxInclusive; }
     public List<PosLayawayItemRequest> getItems() { return items; }
     public void setItems(List<PosLayawayItemRequest> items) { this.items = items; }
 }

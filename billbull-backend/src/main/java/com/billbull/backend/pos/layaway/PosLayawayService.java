@@ -109,6 +109,7 @@ public class PosLayawayService {
         layaway.setRemarks(req.getRemarks());
         layaway.setReserveStockRequested(req.getReserveStockRequested() == null || req.getReserveStockRequested());
         layaway.setBillDiscountAmount(nz(req.getBillDiscountAmount()));
+        layaway.setTaxInclusive(Boolean.TRUE.equals(req.getTaxInclusive()));
 
         BigDecimal subtotal = BigDecimal.ZERO;
         BigDecimal taxTotal = BigDecimal.ZERO;
@@ -153,12 +154,12 @@ public class PosLayawayService {
 
             // Voided lines are stored for display but excluded from totals/reservations.
             if (!itemVoided) {
-                // net = price * qty * (1 - discountPct/100); tax = net * (taxRate/100).
-                // discountPct/taxRate are percentages (not money) so stay double-derived.
-                BigDecimal discountFactor = BigDecimal.valueOf(1 - discountPct / 100.0);
-                BigDecimal net = price.multiply(BigDecimal.valueOf(qty)).multiply(discountFactor);
-                subtotal = subtotal.add(net);
-                taxTotal = taxTotal.add(net.multiply(BigDecimal.valueOf(taxRate / 100.0)));
+                com.billbull.backend.sales.common.VatCalculator.LineResult lr =
+                        com.billbull.backend.sales.common.VatCalculator.compute(
+                                BigDecimal.valueOf(qty), price, BigDecimal.valueOf(discountPct),
+                                BigDecimal.ZERO, BigDecimal.valueOf(taxRate), layaway.getTaxInclusive());
+                subtotal = subtotal.add(lr.taxableAmount);
+                taxTotal = taxTotal.add(lr.taxAmount);
             }
 
             item.setPosLayaway(layaway);
