@@ -34,7 +34,7 @@ Severity: **P0 = correctness/data-loss/security**, **P1 = scale-blocking perform
 - **Impact:** Eliminates the entire class of "stale-schema upgrade" outages; makes the fleet reproducible.
 
 ### 1.2 [P0] Money stored as floating point
-- **What:** `Double`/`double` used for amounts in POS (`PosSession`, `PosCashMovement`, `PosHeldSale`, `PosLayaway*`, `PosSettings.defaultTaxRate`), Sales (`SalesInvoice` ~10 cols `:72-98`, `SalesInvoiceItem` ~8 cols `:27-35`, `SalesOrder` `:45-51`, `SalesOrderItem`, `Payment` `:38-42`, `SalesReturn*`), `Expense.java:43-46`, `TaxFiling.java:36`, `Employee.basicSalary:85`, `InquiryItem`.
+- **What:** `Double`/`double` used for amounts in POS (`PosSession`, `PosCashMovement`, `PosHeldSale`, `PosLayaway*`, `PosSettings.branchDefaultVatRate`), Sales (`SalesInvoice` ~10 cols `:72-98`, `SalesInvoiceItem` ~8 cols `:27-35`, `SalesOrder` `:45-51`, `SalesOrderItem`, `Payment` `:38-42`, `SalesReturn*`), `Expense.java:43-46`, `TaxFiling.java:36`, `Employee.basicSalary:85`, `InquiryItem`.
 - **Risk:** Cent drift accumulates; Z-reports and cash settlements fail to balance; tax totals are off; reconciliation against the (correctly `BigDecimal`) GL **will** drift. The Financials core (`JournalLine`, `GlAccountBalance`, `Quotation`, `ProformaInvoice`) already uses `BigDecimal` — the rest is inconsistent.
 - **Fix:** Convert every monetary field to `BigDecimal` with `@Column(precision=15, scale=2)` (rates `scale=4..6`). SQL widens columns to `NUMERIC`. See §2.1 + §9 script `01_money_types.sql`.
 - **Impact:** Correctness. Removes a whole category of "books don't tie out" bugs. (Conversion is `double precision → numeric`, lossy in the wrong direction only if values already corrupted; convert early.)

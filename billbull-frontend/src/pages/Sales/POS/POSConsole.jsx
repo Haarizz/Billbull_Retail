@@ -826,8 +826,6 @@ const POSConsole = React.memo((props) => {
               cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
               cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
               cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
-              taxInclusive: !!posSettings?.taxInclusive,
-              defaultTaxRate: posSettings?.defaultTaxRate ?? 5,
             };
             const patch = (changes) => setSettingsDraft({ ...d, ...changes });
             const credLabel = d.supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN';

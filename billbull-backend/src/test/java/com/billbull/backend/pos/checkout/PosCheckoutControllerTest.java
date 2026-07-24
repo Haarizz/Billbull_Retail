@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -58,6 +59,7 @@ class PosCheckoutControllerTest {
     @Mock private ProductPricingRepository pricingRepository;
     @Mock private RolePermissionService permissionService;
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
+    @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
 
     @InjectMocks private PosCheckoutController controller;
 
@@ -66,6 +68,8 @@ class PosCheckoutControllerTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
+        lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
+                .thenReturn(BigDecimal.ZERO);
     }
 
     @Test

@@ -65,6 +65,7 @@ public class PosCheckoutController {
     private final EmployeeRepository employeeRepository;
     private final PaymentRepository paymentRepository;
     private final com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
+    private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -76,7 +77,8 @@ public class PosCheckoutController {
                                   ProductService productService,
                                   EmployeeRepository employeeRepository,
                                   PaymentRepository paymentRepository,
-                                  com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService) {
+                                  com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService,
+                                  com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -91,6 +93,7 @@ public class PosCheckoutController {
         this.employeeRepository = employeeRepository;
         this.paymentRepository = paymentRepository;
         this.terminalActivityService = terminalActivityService;
+        this.branchTaxResolutionService = branchTaxResolutionService;
     }
 
     @PostMapping
@@ -609,6 +612,10 @@ public class PosCheckoutController {
         // to reverse if the product's cost is ever cleared/changed after the sale — Returns
         // approval then refuses to post (an unbalanced COGS/Inventory entry is worse than none).
         Map<String, ProductPricing> pricingByCode = new java.util.HashMap<>();
+        // Batch-loaded product ids by code, used to resolve the Branch Default VAT Rate
+        // fallback (via BranchTaxResolutionService) for any line whose taxRate the client
+        // didn't send.
+        Map<String, Long> productIdByCode = new java.util.HashMap<>();
 
         // §2.4 Price override gate: batch-load product pricings and verify that any
         // below-list-price sale is made by a user with the pos_price_override permission.
@@ -619,6 +626,7 @@ public class PosCheckoutController {
                     .distinct().collect(Collectors.toList());
             if (!codes.isEmpty()) {
                 productRepository.findByCodeIn(codes).forEach(p -> {
+                    productIdByCode.put(p.getCode(), p.getId());
                     pricingRepository.findByProductId(p.getId()).ifPresent(pr -> pricingByCode.put(p.getCode(), pr));
                 });
                 for (PosCheckoutRequest.PosCheckoutItem item : req.getItems()) {
@@ -648,7 +656,11 @@ public class PosCheckoutController {
                 si.setUnit(item.getUnit() != null ? item.getUnit() : "Each");
                 si.setPrice(item.getPrice() != null ? java.math.BigDecimal.valueOf(item.getPrice()) : null);
                 si.setDiscount(item.getDiscount() != null ? item.getDiscount() : 0.0);
-                si.setTaxRate(item.getTaxRate() != null ? item.getTaxRate() : 5.0);
+                si.setTaxRate(item.getTaxRate() != null
+                        ? item.getTaxRate()
+                        : branchTaxResolutionService.resolveSalesTaxRateForProduct(
+                                item.getItemCode() != null ? productIdByCode.get(item.getItemCode()) : null,
+                                req.getBranchId()).doubleValue());
                 // Cost-at-sale snapshot, so a later Sales Return can reverse COGS/Inventory
                 // even if the product's cost is changed/cleared after this sale.
                 ProductPricing itemPricing = item.getItemCode() != null ? pricingByCode.get(item.getItemCode()) : null;

@@ -42,6 +42,8 @@ import { GlobalBadge, BranchStockLabel } from '../../../components/inventory/Bra
 import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../../utils/serialNumbering';
 import { useBranch } from '../../../context/BranchContext';
 import { getCompanyProfile } from '../../../api/companyProfileApi';
+import { getBranchTaxSummary } from '../../../api/taxApi';
+import { resolveLineTaxRate } from '../../../utils/vatMath';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -131,7 +133,6 @@ const INITIAL_FORM_STATE = {
   landingCost: 0,
   nlc: 0,
   costMethod: 'FIFO',
-  isCostInclusive: false,
   markup: 0,
   gp: 0,
   retailPrice: '',
@@ -140,8 +141,11 @@ const INITIAL_FORM_STATE = {
   maxPrice: '',
   onlinePrice: '',
   defaultDiscount: 0,
-  purchaseTax: 5,
-  salesTax: 5,
+  // Left blank by default — an unset Purchase/Sales Tax resolves to 0% at
+  // calculation time (Purchase Tax has no branch-level default, unlike Sales
+  // Tax). Only an explicit value (including 0) overrides it.
+  purchaseTax: '',
+  salesTax: '',
   taxCategory: 'Standard',
   hsnCode: '',
 
@@ -273,7 +277,6 @@ const buildProductPayload = (formData) => {
       landingCost: formData.landingCost,
       nlc: formData.nlc,
       costMethod: formData.costMethod,
-      isCostInclusive: formData.isCostInclusive,
       retailPrice: formData.retailPrice,
       wholesalePrice: formData.wholesalePrice,
       minPrice: formData.minPrice,
@@ -284,8 +287,17 @@ const buildProductPayload = (formData) => {
       defaultDiscount: formData.defaultDiscount || 0
     },
     tax: {
-      purchaseTax: formData.purchaseTax,
-      salesTax: formData.salesTax,
+      // Blank means "not configured" -> resolves to 0% at calculation time; an
+      // explicit 0 is sent through the same way (both are stored as null vs 0
+      // distinctly, but 0% is the system fallback either way for Purchase Tax).
+      purchaseTax: formData.purchaseTax === '' || formData.purchaseTax === null || formData.purchaseTax === undefined
+        ? null
+        : Number(formData.purchaseTax),
+      // Blank means "not configured" -> falls back to the branch's Default VAT
+      // Rate at sale time; an explicit 0 is sent through as a zero-rated item.
+      salesTax: formData.salesTax === '' || formData.salesTax === null || formData.salesTax === undefined
+        ? null
+        : Number(formData.salesTax),
       taxCategory: formData.taxCategory,
       hsnCode: formData.hsnCode
     },
@@ -347,6 +359,14 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   const [categoriesLocal, setCategoriesLocal] = useState([
     'General', 'Premium', 'Clearance',
   ]);
+  // Branch Tax Configuration — used only for the "Price Incl. Tax" metrics preview below, so
+  // it matches what the resolver (BranchTaxResolutionService) would actually charge at sale
+  // time: product's own Sales Tax if set, else the Branch Default VAT Rate, else 0 — and 0
+  // outright when Tax Enabled is off for the branch.
+  const [branchTaxConfig, setBranchTaxConfig] = useState(null);
+  useEffect(() => {
+    getBranchTaxSummary(activeBranchId !== 'ALL' ? activeBranchId : null).then(setBranchTaxConfig);
+  }, [activeBranchId]);
   const [formData, setFormData] = useState(() => {
     if (initialData) return { ...initialData, imageFile: null };
     return {
@@ -362,6 +382,16 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
       ]
     };
   });
+
+  // Effective Sales Tax % for the "Price Incl. Tax" metrics preview — mirrors
+  // BranchTaxResolutionService's own priority: Tax Enabled is a full kill switch (checked
+  // first, inside resolveLineTaxRate itself), then product's own Sales Tax (if set) overrides
+  // the Branch Default VAT Rate.
+  const effectiveMetricsTaxRate = resolveLineTaxRate(
+    { salesTax: formData.salesTax },
+    branchTaxConfig?.branchDefaultVatRate,
+    branchTaxConfig?.taxEnabled !== false
+  );
 
   useEffect(() => {
     if (!Array.isArray(branches) || branches.length === 0) return;
@@ -1137,12 +1167,6 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     </select>
                   </div>
                 </div>
-                <div className="mt-4">
-                  <label className="flex items-center gap-2 cursor-pointer text-sm text-slate-600 hover:text-slate-900 transition-colors">
-                    <input type="checkbox" checked={formData.isCostInclusive} onChange={(e) => handleInputChange('isCostInclusive', e.target.checked)} className="rounded text-[#F5C742] focus:ring-[#F5C742]" />
-                    Cost Inclusive of Tax
-                  </label>
-                </div>
               </div>
 
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -1200,11 +1224,13 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Purchase Tax %</label>
-                    <input type="number" value={formData.purchaseTax} onChange={(e) => handleInputChange('purchaseTax', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                    <input type="number" placeholder="0 (none)" value={formData.purchaseTax} onChange={(e) => handleInputChange('purchaseTax', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                    <p className="text-[10px] text-slate-400">Leave blank if not applicable; no branch-level default applies to Purchase Tax.</p>
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Sales Tax %</label>
-                    <input type="number" value={formData.salesTax} onChange={(e) => handleInputChange('salesTax', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                    <input type="number" placeholder="Branch default" value={formData.salesTax} onChange={(e) => handleInputChange('salesTax', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" />
+                    <p className="text-[10px] text-slate-400">Leave blank to use the branch's Default VAT Rate. Enter 0 for zero-rated.</p>
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Tax Category</label>
@@ -1232,7 +1258,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Incl. Tax</span>
-                    <CurrencyAmount value={formData.retailPrice * (1 + formData.salesTax / 100)} className="font-mono font-semibold" />
+                    <CurrencyAmount value={formData.retailPrice * (1 + effectiveMetricsTaxRate / 100)} className="font-mono font-semibold" />
                   </div>
                   <div className="flex justify-between items-center p-3 bg-white rounded-lg border border-slate-100 shadow-sm">
                     <span className="text-sm text-slate-500">Price Excl. Tax</span>
@@ -2546,7 +2572,6 @@ const Products = () => {
         landingCost: pricing?.landingCost || 0,
         nlc: pricing?.nlc || 0,
         costMethod: pricing?.costMethod || 'FIFO',
-        isCostInclusive: pricing?.isCostInclusive || false,
         markup: pricing?.markup || 0,
         gp: pricing?.gp || 0,
         retailPrice: pricing?.retailPrice || '',
@@ -2558,8 +2583,8 @@ const Products = () => {
 
         // Use ?? not || here — a deliberate 0% (zero-rated item) must not
         // silently fall through to the 5% default on each save round-trip.
-        purchaseTax: tax?.purchaseTax ?? 5,
-        salesTax: tax?.salesTax ?? 5,
+        purchaseTax: tax?.purchaseTax ?? '',
+        salesTax: tax?.salesTax ?? '',
         taxCategory: tax?.taxCategory || 'Standard',
         hsnCode: tax?.hsnCode || '',
 

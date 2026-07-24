@@ -80,6 +80,23 @@ public class BranchAccessService {
         return branch != null ? branch.getId() : null;
     }
 
+    /**
+     * The branch that should govern branch-wide READ configuration (e.g. Branch Tax
+     * Configuration) for the current request — the Branch Selector's active branch if one is
+     * narrowed, otherwise the user's primary branch. Unlike {@link #getCurrentUserBranchId},
+     * which always returns the user's primary/home branch regardless of context, this honors
+     * {@link BranchContextHolder} the same way {@link #getRequiredCurrentUserBranch} does for
+     * transaction stamping — so an admin who switched the Branch Selector to Branch B reads
+     * Branch B's configuration, not HQ's.
+     */
+    public Long getActiveBranchId() {
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        if (ctx != null && ctx.activeBranchId() != null) {
+            return ctx.activeBranchId();
+        }
+        return getCurrentUserBranchId();
+    }
+
     public Branch findBranchByName(String name) {
         if (name == null || name.isBlank()) {
             return null;

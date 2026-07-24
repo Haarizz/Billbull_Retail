@@ -948,7 +948,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     disc: 0,
     foc: 0,
     focUnit: '',
-    tax: 5,
+    tax: 0,
     taxAmt: 0,
     remarks: '',
     image: null,
@@ -1079,7 +1079,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
             disc: i.discountPercent || 0,
             foc: i.focQty || i.foc || 0,
             focUnit: i.focUnit || i.uom || 'PCS',
-            tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5,
+            tax: parseFloat(i.purchaseTax) || parseFloat(i.tax) || 0,
             taxAmt: Number(i.taxAmt || 0),
             remarks: i.remarks || '',
             image: i.image || i.imageUrl || null,
@@ -1150,7 +1150,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: 0,
       foc: 0,
       focUnit: '',
-      tax: 5,
+      tax: 0,
       taxAmt: 0,
       remarks: '',
       image: null,
@@ -1185,7 +1185,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc: product.maxDiscount || 0,
       foc: 0,
       focUnit: defaultUnit,
-      tax: parseFloat(product.purchaseTax) || 5,
+      tax: parseFloat(product.purchaseTax) || 0,
       taxAmt: 0,
       remarks: product.detailedDesc || '',
       image: product.primaryImage || product.image || product.thumbnailUrl || product.imageUrl || null,
@@ -1235,7 +1235,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       disc,
       foc: 0,
       focUnit: defaultUnit,
-      tax: parseFloat(product.purchaseTax) || 5,
+      tax: parseFloat(product.purchaseTax) || 0,
       taxAmt: 0,
       remarks: product.detailedDesc || '',
       image: product.primaryImage || product.image || null,
@@ -1338,8 +1338,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       totalTaxable += lineTotal;
       totalQty += qty;
 
-      const taxAmt = lineTotal * ((Number(item.tax) || 5) / 100);
-      return { ...item, tax: Number(item.tax) || 5, taxAmt, lineTotal, total: lineTotal + taxAmt };
+      const taxAmt = lineTotal * ((Number(item.tax) || 0) / 100);
+      return { ...item, tax: Number(item.tax) || 0, taxAmt, lineTotal, total: lineTotal + taxAmt };
     });
 
     const tax = calculatedItems.reduce((sum, item) => sum + item.taxAmt, 0);

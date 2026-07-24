@@ -55,7 +55,7 @@ import { getImageUrl } from '../../utils/urlUtils';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { resolveLineTaxRate, computeLineTaxTotals } from '../../utils/vatMath';
-import { getActiveVatRate } from '../../api/taxApi';
+import { getBranchTaxSummary } from '../../api/taxApi';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
 import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
@@ -140,8 +140,23 @@ const ProformaInvoice = () => {
   const [quotationsList, setQuotationsList] = useState([]);
   const [salesOrdersList, setSalesOrdersList] = useState([]);
   const [salesSettings, setSalesSettings] = useState(null);
-  const [activeVatRate, setActiveVatRate] = useState(null);
-  useEffect(() => { getActiveVatRate().then(setActiveVatRate); }, []);
+  // Branch Tax Configuration — Branch Default VAT Rate (used only when a product has no Sales
+  // Tax configured) and Tax Enabled (a full kill switch: when off, resolveLineTaxRate returns
+  // 0 regardless of product tax or branch default — see vatMath.js).
+  const [branchDefaultVatRate, setBranchDefaultVatRate] = useState(null);
+  const [branchTaxEnabled, setBranchTaxEnabled] = useState(true);
+  useEffect(() => {
+    getBranchTaxSummary(activeBranch?.id).then(cfg => {
+      if (!cfg) return;
+      setBranchDefaultVatRate(cfg.branchDefaultVatRate ?? null);
+      setBranchTaxEnabled(cfg.taxEnabled !== false);
+      // Seed the initial Tax Mode for a brand-new proforma from the Branch Tax Configuration
+      // (not hardcoded EXCLUSIVE). Opening an existing proforma for edit always overwrites
+      // this afterwards via its own load path, which only ever runs from an explicit later
+      // user action here — never a mount-time race.
+      setVatMode(cfg.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
+    });
+  }, [activeBranch?.id]);
   const proformaAutoNumbering = isAutoNumberingEnabled(salesSettings, 'PROFORMA_INVOICE');
 
   // --- PROFORMA LIST STATE ---
@@ -205,7 +220,7 @@ const ProformaInvoice = () => {
     unitConversions: { PCS: 1 },
     unitPrices: {},
     disc: 0,
-    tax: 5,
+    tax: 0,
     taxAmt: 0,
     total: 0
   });
@@ -706,7 +721,7 @@ const ProformaInvoice = () => {
       unitConversions: item.unitConversions || {},
       unitPrices: item.unitPrices || {},
       disc: Number(item.disc ?? item.discount ?? item.discountPercent ?? item.discPercent) || 0,
-      tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
+      tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 0,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
       total: Number(item.total ?? item.lineTotal) || 0,
       billDiscount: Number(item.billDiscount) || 0
@@ -732,7 +747,7 @@ const ProformaInvoice = () => {
       });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
-    const tax = resolveLineTaxRate(product, activeVatRate);
+    const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
 
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),
@@ -786,7 +801,7 @@ const ProformaInvoice = () => {
     if (isReadOnly) return;
     const defaultUnit = getDefaultProductUnit(product);
     const cost = parseFloat(product.cost) || 0;
-    const tax = resolveLineTaxRate(product, activeVatRate);
+    const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
 
     const newItem = normalizeProformaItem({
       id: Date.now() + Math.random(),

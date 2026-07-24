@@ -47,6 +47,7 @@ class PosLayawayServiceTest {
     @Mock private BranchRepository branchRepository;
     @Mock private WarehouseRepository warehouseRepository;
     @Mock private PosAuditService auditService;
+    @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
 
     private PosLayawayService service;
 
@@ -54,7 +55,9 @@ class PosLayawayServiceTest {
     void setUp() {
         service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService,
                 stockReservationService, permissionService, postingEngine, branchRepository, warehouseRepository,
-                auditService);
+                auditService, branchTaxResolutionService);
+        lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
+                .thenReturn(java.math.BigDecimal.ZERO);
         // save() returns the same entity with ids assigned, so the reserve loop can run.
         lenient().when(repo.save(any(PosLayaway.class))).thenAnswer(inv -> {
             PosLayaway l = inv.getArgument(0);

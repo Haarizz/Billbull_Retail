@@ -4,7 +4,7 @@ import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber, getCartPriceWarning } from './posUtils';
-import { computeLineTaxTotals } from '../../../utils/vatMath';
+import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
 
 const POSTouchScreen = React.memo((props) => {
   const {
@@ -432,7 +432,7 @@ const POSTouchScreen = React.memo((props) => {
                   const qty = lastScannedItem.qty || 1;
                   const unitPrice = cartItem?.price || matchingProduct?.price || (lastScannedItem.total / qty);
                   const discountPct = cartItem?.discount || matchingProduct?.defaultDiscount || 0;
-                  const taxRate = cartItem?.taxRate ?? matchingProduct?.salesTax ?? 5;
+                  const taxRate = cartItem?.taxRate ?? resolveLineTaxRate(matchingProduct, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false);
                   const discountedUnitPrice = unitPrice * (1 - discountPct / 100);
                   const { taxableAmount: netPrice, taxAmount: vatAmount } = computeLineTaxTotals({
                     netAfterDiscount: discountedUnitPrice,
@@ -1041,7 +1041,7 @@ const POSTouchScreen = React.memo((props) => {
                 )}
                 <div className="flex justify-between text-xs text-gray-500">
                   <span>{(() => {
-                    const rates = [...new Set(currentInvoice.items.filter(i => !i.isVoided).map(i => toNumber(i.taxRate, 5)))];
+                    const rates = [...new Set(currentInvoice.items.filter(i => !i.isVoided).map(i => toNumber(i.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0))))];
                     const base = rates.length === 1 ? `VAT (${rates[0]}%)` : 'VAT';
                     return currentInvoice.taxInclusive ? `${base} incl.` : base;
                   })()}</span><span>{formatCurrency(currentInvoice.tax)}</span>
@@ -1847,13 +1847,12 @@ const POSTouchScreen = React.memo((props) => {
                     className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
                 </div>
                 <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Tax Rate (%)</label>
-                  <select value={quickProductForm.taxRate ?? 5}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, taxRate: parseFloat(e.target.value) })}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white">
-                    <option value={5}>5% VAT</option>
-                    <option value={0}>0% (Exempt / Zero-rated)</option>
-                  </select>
+                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Sales Tax (%)</label>
+                  <input type="number" min="0" max="100" step="0.01" placeholder="Branch default"
+                    value={quickProductForm.taxRate ?? ''}
+                    onChange={e => setQuickProductForm({ ...quickProductForm, taxRate: e.target.value === '' ? '' : e.target.value })}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
+                  <p className="text-[10px] text-gray-400 mt-1">Leave blank to use the branch's Default VAT Rate. Enter 0 for zero-rated.</p>
                 </div>
                 <div className="col-span-2 border-t border-gray-100 pt-3">
                   <label className="flex items-center gap-2 cursor-pointer">

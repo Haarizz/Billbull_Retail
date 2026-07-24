@@ -1267,7 +1267,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             uom: item.uom,
             qty: item.quantity,
             cost: item.unitPrice,
-            tax: parseFloat(item.purchaseTax ?? item.taxPercent) || 5,
+            tax: parseFloat(item.purchaseTax ?? item.taxPercent) || 0,
             taxAmt: Number(item.taxAmount || 0),
             taxAmount: Number(item.taxAmount || 0),
             disc: item.discountPercent || 0,
@@ -1348,7 +1348,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       }, 0);
       const calculatedItemTax = rawItems.reduce((sum, item) => {
         const lineTotal = Number(item.total ?? item.lineTotal ?? 0);
-        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
+        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 0);
         const lineTax = Number(item.taxAmt ?? item.taxAmount ?? 0) || (lineTotal * taxPercent) / 100;
         return sum + lineTax;
       }, 0);
@@ -1385,7 +1385,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         const inferredDiscountPercent = originalGross > 0 ? (inferredDiscount / originalGross) * 100 : 0;
 
         // Preserve the actual per-item tax rate (not a hardcoded 5%).
-        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 5);
+        const taxPercent = Number(item.purchaseTax ?? item.taxPercent ?? item.tax ?? 0);
 
         // Distribute header-level tax proportionally if item-level taxAmt is missing.
         let itemTaxAmt = Number(item.taxAmt ?? item.taxAmount ?? 0);
@@ -1490,7 +1490,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       uom: defaultUnit,
       qty: 1,
       cost: resolvedCost,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5, // Default tax
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0, // Default tax
       taxAmt: 0,
       taxAmount: 0,
       disc: product.maxDiscount || 0,
@@ -1544,7 +1544,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       uom: defaultUnit,
       qty,
       cost: price,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0,
       taxAmt: 0,
       taxAmount: 0,
       disc,
@@ -2297,7 +2297,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                                   const blankRow = {
                                     id: Date.now() + Math.random(),
                                     code: '', barcode: '', name: '', shortDesc: '', detailedDesc: '',
-                                    uom: 'PCS', qty: 0, cost: 0, tax: 5, taxAmt: 0, taxAmount: 0,
+                                    uom: 'PCS', qty: 0, cost: 0, tax: 0, taxAmt: 0, taxAmount: 0,
                                     disc: 0, discount: 0, foc: 0, focUnit: 'PCS',
                                     serialEnabled: false, serials: [], batchEnabled: false,
                                     availableUnits: ['PCS'], unitConversions: {}, unitPrices: {}, unitCosts: {}

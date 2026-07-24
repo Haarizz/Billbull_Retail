@@ -913,8 +913,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
 
               disc: discount,
               netCost: netCost, // Initially calculated for reference
-              tax: parseFloat(lpoItem.purchaseTax) || 5,
-              taxAmt: pending * netCost * ((parseFloat(lpoItem.purchaseTax) || 5) / 100),
+              tax: parseFloat(lpoItem.purchaseTax) || 0,
+              taxAmt: pending * netCost * ((parseFloat(lpoItem.purchaseTax) || 0) / 100),
               foc: Number(lpoItem.focQty || lpoItem.foc || 0),
               focUnit: lpoItem.focUnit || lpoItem.uom || lpoItem.unit || "Unit",
               remarks: lpoItem.remarks || '',
@@ -1014,7 +1014,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         const inferredDiscountPercent = grossLineTotal > 0
           ? (inferredDiscountAmount / grossLineTotal) * 100
           : 0;
-        const taxPercent = parseFloat(i.purchaseTax) || parseFloat(i.tax) || 5;
+        const taxPercent = parseFloat(i.purchaseTax) || parseFloat(i.tax) || 0;
 
         return recalculateItemTotals({
           ...i,
@@ -1176,8 +1176,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       lpoPrice: 0,
       disc: product.maxDiscount || 0,
       netCost: unitCost,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
-      taxAmt: unitCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0,
+      taxAmt: unitCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0) / 100),
       total: unitCost,
       variance: 1, // Received 1 without LPO
       batch: Boolean(product.isBatch ?? product.batch),
@@ -1323,8 +1323,8 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       lpoPrice: 0,
       disc,
       netCost,
-      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5,
-      taxAmt: netCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 5) / 100),
+      tax: parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0,
+      taxAmt: netCost * ((parseFloat(product.purchaseTax) || parseFloat(product.taxRate) || 0) / 100),
       total: netCost * qty,
       variance: qty,
       batch: Boolean(product.isBatch ?? product.batch),
@@ -1361,7 +1361,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       batch: false,
       serialEnabled: false,
       serials: [],
-      tax: 5,
+      tax: 0,
       taxAmt: 0,
       remarks: '',
       foc: 0,
@@ -1378,7 +1378,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     const qty = Number(item.accepted) || 0;
     const unitPrice = Number(item.unitCost) || 0;
     const discPercent = Number(item.disc) || 0;
-    const taxPercent = Number(item.tax) || 5;
+    const taxPercent = Number(item.tax) || 0;
 
     const focQty = Number(item.foc) || 0;
     let focDeduction = 0;
@@ -2040,7 +2040,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                                     code: '', barcode: '', name: '',
                                     uom: 'PCS', lpoQty: 0, received: 0, accepted: 0, rejected: 0,
                                     unitCost: 0, lpoPrice: 0, disc: 0, netCost: 0, total: 0,
-                                    variance: 0, batch: false, serialEnabled: false, serials: [], tax: 5, taxAmt: 0,
+                                    variance: 0, batch: false, serialEnabled: false, serials: [], tax: 0, taxAmt: 0,
                                     foc: 0, focUnit: 'PCS', availableUnits: ['PCS'],
                                     unitConversions: {}, unitPrices: {}, unitCosts: {}
                                   };

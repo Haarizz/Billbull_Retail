@@ -66,12 +66,13 @@ import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
-import { getActiveVatRate } from '../../api/taxApi';
+import { getBranchTaxSummary } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
 import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
 import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
 import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
 import { applyTaxAwareDisplayOptions } from './POS/posPrintUtils';
+import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import InvoicePreviewModal from './components/InvoicePreviewModal';
@@ -349,11 +350,27 @@ const SalesInvoice = () => {
     // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
     const [vatMode, setVatMode] = useState('EXCLUSIVE');
 
-    // Fallback VAT % from Tax Compliance for products without a per-item rate.
-    const [activeVatRate, setActiveVatRate] = useState(null);
+    // Branch Tax Configuration — Branch Default VAT Rate (used only when a product has no
+    // Sales Tax configured) and Tax Enabled (a full kill switch: when off, resolveLineTaxRate
+    // returns 0 regardless of product tax or branch default — see vatMath.js). One fetch feeds
+    // both, plus the initial Tax Mode below.
+    const [branchDefaultVatRate, setBranchDefaultVatRate] = useState(null);
+    const [branchTaxEnabled, setBranchTaxEnabled] = useState(true);
     useEffect(() => {
-        getActiveVatRate().then(setActiveVatRate);
-    }, []);
+        getBranchTaxSummary(activeBranch?.id).then(cfg => {
+            if (!cfg) return;
+            setBranchDefaultVatRate(cfg.branchDefaultVatRate ?? null);
+            setBranchTaxEnabled(cfg.taxEnabled !== false);
+            // Seed the initial Tax Mode for a brand-new invoice from the Branch Tax
+            // Configuration (not hardcoded EXCLUSIVE) — but only when this mount isn't about
+            // to load a specific existing invoice (pendingOpenIdRef, captured synchronously
+            // from location.state at mount), so this can never race past and overwrite the
+            // invoice's own loaded vatMode.
+            if (!pendingOpenIdRef.current) {
+                setVatMode(cfg.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
+            }
+        });
+    }, [activeBranch?.id]);
 
     // Payment Details
     const [paymentMode, setPaymentMode] = useState('');
@@ -370,7 +387,7 @@ const SalesInvoice = () => {
         qty: 0,
         price: 0,
         disc: 0,
-        tax: 5,
+        tax: 0,
         taxAmt: 0,
         gross: 0,
         net: 0,
@@ -406,10 +423,10 @@ const SalesInvoice = () => {
         price: i.price || 0,
         disc: i.discount || i.disc || 0,
         // Nullish-coalesce, not ||: a genuinely tax-free line (taxRate 0, e.g. no
-        // active tax config) must stay 0 on reload, not collapse to the 5 fallback
-        // just because 0 is falsy. That fallback should only fire when the server
-        // sent no tax field at all (new/legacy rows).
-        tax: i.taxRate ?? i.tax ?? 5,
+        // Sales Tax/Branch Default configured) must stay 0 on reload, not collapse
+        // to a fallback just because 0 is falsy. The final 0 only fires when the
+        // server sent no tax field at all (new/legacy rows).
+        tax: i.taxRate ?? i.tax ?? 0,
         taxAmt: i.taxAmount || i.taxAmt || 0,
         gross: i.grossAmount || i.gross || 0,
         net: i.netAmount || i.net || 0,
@@ -436,7 +453,7 @@ const SalesInvoice = () => {
 
     // Items
     const [items, setItems] = useState([
-        { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
+        { id: 1, code: '', image: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0, gp: 0 }
     ]);
     const [billDiscount, setBillDiscount] = useState(0);
     const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
@@ -841,7 +858,7 @@ const SalesInvoice = () => {
             setShippingAddress(_resolvedAddr);
         }
 
-        setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         const fromQtnDiscType = fromQtn.billDiscountType === 'amount' ? 'amount' : 'percent';
         setBillDiscountType(fromQtnDiscType);
         setBillDiscount(fromQtnDiscType === 'amount'
@@ -936,7 +953,7 @@ const SalesInvoice = () => {
             setShippingAddress(_resolvedAddr);
         }
 
-        setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setInvoiceTypeUI('Against Sales Order');
         setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
@@ -1235,7 +1252,7 @@ const SalesInvoice = () => {
         setPaymentTerms('Immediate');
         setSalesperson('');
         setBranch(activeBranch?.name || defaultBranch?.name || '');
-        setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 5, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
+        setItems([{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
         setBillDiscount(0);
         setDeliveryCharge(0);
         setRoundOff(0);
@@ -1837,7 +1854,7 @@ const SalesInvoice = () => {
                 fallbackAmount: masterPrice
             });
         const disc = parseFloat(product.maxDiscount) || 0;
-        const tax = resolveLineTaxRate(product, activeVatRate);
+        const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
         // Only carry through cost if the master explicitly has a non-null value
         const rawCost = product.cost != null ? parseFloat(product.cost) : NaN;
         const cost = !isNaN(rawCost) ? rawCost : 0;
@@ -1913,7 +1930,7 @@ const SalesInvoice = () => {
     const handleFastEntryAdd = (product, qty, price, disc) => {
         if (isReadOnlyInvoice) return;
         const defaultUnit = getDefaultProductUnit(product);
-        const tax = resolveLineTaxRate(product, activeVatRate);
+        const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
         const cost = product.cost != null ? parseFloat(product.cost) : 0;
         const rawItem = {
             id: Date.now() + Math.random(),
@@ -2739,7 +2756,7 @@ const SalesInvoice = () => {
         }, vatMode);
 
         return {
-            title: Number(resolvedSummary.tax) > 0 ? 'TAX INVOICE' : 'SALES INVOICE',
+            title: getInvoiceDocumentTitle(resolvedSummary),
             docNo: invoiceNo,
             date: invoiceDate,
             vatMode,
@@ -2889,12 +2906,9 @@ const SalesInvoice = () => {
                 const invoiceBranchId = dataToPrint.branchId ?? activeBranch?.id;
                 const printBranch = availableBranches?.find(b => b.id === invoiceBranchId) || activeBranch || {};
 
-                // Tax-aware document title: a taxed invoice is a TAX INVOICE, a
-                // zero-rated/exempt one is a plain SALES INVOICE (matches the POS
-                // rule and the checkout preview). Explicit titleOverride still wins.
-                const invoiceHasTax = Number(resolvedSummary.tax) > 0;
+                const invoiceHasTax = isTaxInvoiceDocument(resolvedSummary);
                 const printData = {
-                    title: titleOverride || (invoiceHasTax ? 'TAX INVOICE' : 'SALES INVOICE'),
+                    title: getInvoiceDocumentTitle(resolvedSummary, { titleOverride }),
                     docNo: dataToPrint.invoiceNumber,
                     date: dataToPrint.invoiceDate,
                     vatMode: resolvedVatMode,
@@ -3038,10 +3052,7 @@ const SalesInvoice = () => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
         if (!dataToPrint.items || dataToPrint.items.length === 0) return;
-        // Tax-aware title: a no-tax invoice downloads as SALES INVOICE, a taxed
-        // one as TAX INVOICE — matches the POS rule. List-row invoices carry
-        // `taxTotal` (backend field); the current-form source carries `totalTax`.
-        const titleOverride = Number(dataToPrint.taxTotal ?? dataToPrint.totalTax ?? 0) > 0 ? 'TAX INVOICE' : 'SALES INVOICE';
+        const titleOverride = getInvoiceDocumentTitle(dataToPrint);
         setIsPrinting(true);
         try {
             // forPdf:false -> use the PRINT renderer (real @page / page-break CSS);
@@ -3062,10 +3073,7 @@ const SalesInvoice = () => {
             return;
         }
 
-        // Tax-aware title: a no-tax invoice prints as SALES INVOICE, a taxed one
-        // as TAX INVOICE — matches the POS rule. List-row invoices carry
-        // `taxTotal` (backend field); the current-form source carries `totalTax`.
-        const titleOverride = Number(dataToPrint.taxTotal ?? dataToPrint.totalTax ?? 0) > 0 ? 'TAX INVOICE' : 'SALES INVOICE';
+        const titleOverride = getInvoiceDocumentTitle(dataToPrint);
 
         setIsPrinting(true);
         try {
@@ -4957,6 +4965,7 @@ const SalesInvoice = () => {
                 <InvoicePreviewModal
                     mode={previewMode}
                     invoiceNo={invoiceNo}
+                    documentTitle={getInvoiceDocumentTitle(invoiceSummary)}
                     getHtml={getPreviewHtml}
                     onClose={() => setPreviewMode(null)}
                     onConfirm={handlePreviewConfirm}

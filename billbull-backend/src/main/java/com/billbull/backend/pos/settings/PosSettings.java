@@ -109,15 +109,10 @@ public class PosSettings extends BaseEntity {
     @Column(name = "auto_print_receipt")
     private Boolean autoPrintReceipt = false;
 
-    // Tax inclusive pricing
-    @JsonProperty("taxInclusive")
-    @Column(name = "tax_inclusive")
-    private Boolean taxInclusive = false;
-
-    // Default tax rate
-    @JsonProperty("defaultTaxRate")
-    @Column(name = "default_tax_rate")
-    private Double defaultTaxRate = 5.0;
+    // NOTE: Tax Enabled / Tax Mode (taxInclusive) / Branch Default VAT Rate moved to
+    // settings.branch.BranchTaxConfiguration (V45 migration) — tax is a branch-wide ERP
+    // configuration, not a POS-specific setting. Resolve tax through
+    // common.tax.BranchTaxResolutionService, never through PosSettings.
 
     /** Maximum allowed absolute cash variance on session close before supervisor approval is required.
      *  0 (default) = disabled (no gate). Uses branch currency. */
@@ -250,12 +245,6 @@ public class PosSettings extends BaseEntity {
 
     public Boolean getAutoPrintReceipt() { return autoPrintReceipt; }
     public void setAutoPrintReceipt(Boolean autoPrintReceipt) { this.autoPrintReceipt = autoPrintReceipt; }
-
-    public Boolean getTaxInclusive() { return taxInclusive; }
-    public void setTaxInclusive(Boolean taxInclusive) { this.taxInclusive = taxInclusive; }
-
-    public Double getDefaultTaxRate() { return defaultTaxRate; }
-    public void setDefaultTaxRate(Double defaultTaxRate) { this.defaultTaxRate = defaultTaxRate; }
 
     public java.math.BigDecimal getCashVarianceThreshold() { return cashVarianceThreshold; }
     public void setCashVarianceThreshold(java.math.BigDecimal cashVarianceThreshold) {

@@ -29,7 +29,7 @@ public class ProductExportService {
                 "Image", "ID", "Product Code", "Product Name", "Local Name", "SKU", 
                 "Type", "Category", "Brand", "Department", "Sub-Department", 
                 "Short Description", "Detailed Description", "Status",
-                "Cost Price", "Landing Cost", "Net Landed Cost", "Cost Method", "Cost Inclusive?",
+                "Cost Price", "Landing Cost", "Net Landed Cost", "Cost Method",
                 "Retail Price", "Wholesale Price", "Min Price", "Max Price", "Online Price", "Markup (%)", "GP (%)",
                 "Purchase Tax (%)", "Sales Tax (%)", "Tax Category", "HSN Code",
                 "Default Unit", "Reorder Unit", "Reorder Level", "Reorder Qty", 
@@ -166,52 +166,51 @@ public class ProductExportService {
                     row.createCell(17).setCellValue(
                         p.getPricing().getCostMethod() != null ? p.getPricing().getCostMethod().toString() : ""
                     );
-                    row.createCell(18).setCellValue(p.getPricing().isCostInclusive() ? "Yes" : "No");
-                    if (p.getPricing().getRetailPrice() != null) row.createCell(19).setCellValue(p.getPricing().getRetailPrice().doubleValue());
-                    if (p.getPricing().getWholesalePrice() != null) row.createCell(20).setCellValue(p.getPricing().getWholesalePrice().doubleValue());
-                    if (p.getPricing().getMinPrice() != null) row.createCell(21).setCellValue(p.getPricing().getMinPrice().doubleValue());
-                    if (p.getPricing().getMaxPrice() != null) row.createCell(22).setCellValue(p.getPricing().getMaxPrice().doubleValue());
-                    if (p.getPricing().getOnlinePrice() != null) row.createCell(23).setCellValue(p.getPricing().getOnlinePrice().doubleValue());
-                    if (p.getPricing().getMarkup() != null) row.createCell(24).setCellValue(p.getPricing().getMarkup() + "%");
-                    if (p.getPricing().getGp() != null) row.createCell(25).setCellValue(p.getPricing().getGp() + "%");
+                    if (p.getPricing().getRetailPrice() != null) row.createCell(18).setCellValue(p.getPricing().getRetailPrice().doubleValue());
+                    if (p.getPricing().getWholesalePrice() != null) row.createCell(19).setCellValue(p.getPricing().getWholesalePrice().doubleValue());
+                    if (p.getPricing().getMinPrice() != null) row.createCell(20).setCellValue(p.getPricing().getMinPrice().doubleValue());
+                    if (p.getPricing().getMaxPrice() != null) row.createCell(21).setCellValue(p.getPricing().getMaxPrice().doubleValue());
+                    if (p.getPricing().getOnlinePrice() != null) row.createCell(22).setCellValue(p.getPricing().getOnlinePrice().doubleValue());
+                    if (p.getPricing().getMarkup() != null) row.createCell(23).setCellValue(p.getPricing().getMarkup() + "%");
+                    if (p.getPricing().getGp() != null) row.createCell(24).setCellValue(p.getPricing().getGp() + "%");
                 }
 
                 // --- TAX ---
                 if (p.getTax() != null) {
-                    if (p.getTax().getPurchaseTax() != null) row.createCell(26).setCellValue(p.getTax().getPurchaseTax().doubleValue());
-                    if (p.getTax().getSalesTax() != null) row.createCell(27).setCellValue(p.getTax().getSalesTax().doubleValue());
-                    row.createCell(28).setCellValue(p.getTax().getTaxCategory());
-                    row.createCell(29).setCellValue(p.getTax().getHsnCode());
+                    if (p.getTax().getPurchaseTax() != null) row.createCell(25).setCellValue(p.getTax().getPurchaseTax().doubleValue());
+                    if (p.getTax().getSalesTax() != null) row.createCell(26).setCellValue(p.getTax().getSalesTax().doubleValue());
+                    row.createCell(27).setCellValue(p.getTax().getTaxCategory());
+                    row.createCell(28).setCellValue(p.getTax().getHsnCode());
                 }
 
                 // --- INVENTORY ---
                 if (p.getInventory() != null) {
-                    if (p.getInventory().getDefaultUnit() != null) row.createCell(30).setCellValue(p.getInventory().getDefaultUnit().getName());
-                    if (p.getInventory().getReorderUnit() != null) row.createCell(31).setCellValue(p.getInventory().getReorderUnit().getName());
-                    row.createCell(32).setCellValue(p.getInventory().getReorderLevel());
-                    row.createCell(33).setCellValue(p.getInventory().getReorderQty());
-                    row.createCell(34).setCellValue(p.getInventory().getSafetyStock());
-                    row.createCell(35).setCellValue(p.getInventory().getMinStock());
-                    row.createCell(36).setCellValue(p.getInventory().getMaxStock());
-                    row.createCell(37).setCellValue(p.getInventory().isAllowNegative() ? "Yes" : "No");
-                    row.createCell(38).setCellValue(p.getInventory().getProcurementType());
-                    if (p.getInventory().getDefaultVendor() != null) row.createCell(39).setCellValue(p.getInventory().getDefaultVendor().getName());
-                    if (p.getInventory().getWarehouse() != null) row.createCell(40).setCellValue(p.getInventory().getWarehouse().getName());
-                    if (p.getInventory().getZone() != null) row.createCell(41).setCellValue(p.getInventory().getZone().getName());
-                    if (p.getInventory().getLocator() != null) row.createCell(42).setCellValue(p.getInventory().getLocator().getName());
-                    if (p.getInventory().getBin() != null) row.createCell(43).setCellValue(p.getInventory().getBin().getName());
+                    if (p.getInventory().getDefaultUnit() != null) row.createCell(29).setCellValue(p.getInventory().getDefaultUnit().getName());
+                    if (p.getInventory().getReorderUnit() != null) row.createCell(30).setCellValue(p.getInventory().getReorderUnit().getName());
+                    row.createCell(31).setCellValue(p.getInventory().getReorderLevel());
+                    row.createCell(32).setCellValue(p.getInventory().getReorderQty());
+                    row.createCell(33).setCellValue(p.getInventory().getSafetyStock());
+                    row.createCell(34).setCellValue(p.getInventory().getMinStock());
+                    row.createCell(35).setCellValue(p.getInventory().getMaxStock());
+                    row.createCell(36).setCellValue(p.getInventory().isAllowNegative() ? "Yes" : "No");
+                    row.createCell(37).setCellValue(p.getInventory().getProcurementType());
+                    if (p.getInventory().getDefaultVendor() != null) row.createCell(38).setCellValue(p.getInventory().getDefaultVendor().getName());
+                    if (p.getInventory().getWarehouse() != null) row.createCell(39).setCellValue(p.getInventory().getWarehouse().getName());
+                    if (p.getInventory().getZone() != null) row.createCell(40).setCellValue(p.getInventory().getZone().getName());
+                    if (p.getInventory().getLocator() != null) row.createCell(41).setCellValue(p.getInventory().getLocator().getName());
+                    if (p.getInventory().getBin() != null) row.createCell(42).setCellValue(p.getInventory().getBin().getName());
                 }
 
                 // --- FLAGS ---
-                row.createCell(44).setCellValue(p.getProduct().isSerial() ? "Yes" : "No");
-                row.createCell(45).setCellValue(p.getProduct().isBatch() ? "Yes" : "No");
-                row.createCell(46).setCellValue(p.getProduct().isWeighing() ? "Yes" : "No");
+                row.createCell(43).setCellValue(p.getProduct().isSerial() ? "Yes" : "No");
+                row.createCell(44).setCellValue(p.getProduct().isBatch() ? "Yes" : "No");
+                row.createCell(45).setCellValue(p.getProduct().isWeighing() ? "Yes" : "No");
 
                 // --- TAGS ---
                 // Tags are not available in Product entity
                 // List<String> tags = p.getProduct().getTags();
                 // if (tags != null) {
-                //     row.createCell(47).setCellValue(String.join(", ", tags));
+                //     row.createCell(46).setCellValue(String.join(", ", tags));
                 // }
 
                 // --- PACKINGS ---
@@ -225,10 +224,10 @@ public class ProductExportService {
                         if (pkg.getBarcode() != null && !pkg.getBarcode().isBlank()) {
                             packingsStr.append(" [BC: ").append(pkg.getBarcode()).append("]");
                         }
-                        
+
                         packingsStr.append(" | ");
                     }
-                    row.createCell(48).setCellValue(packingsStr.toString());
+                    row.createCell(47).setCellValue(packingsStr.toString());
                 }
             }
 

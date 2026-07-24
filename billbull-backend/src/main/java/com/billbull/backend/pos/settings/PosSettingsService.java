@@ -124,8 +124,6 @@ public class PosSettingsService {
                     existing.setPrintTemplateConfig(settings.getPrintTemplateConfig());
                     existing.setWalkInCustomerCode(settings.getWalkInCustomerCode());
                     existing.setAutoPrintReceipt(settings.getAutoPrintReceipt());
-                    existing.setTaxInclusive(settings.getTaxInclusive());
-                    existing.setDefaultTaxRate(settings.getDefaultTaxRate());
                     existing.setTerminalAutoArchiveEnabled(settings.getTerminalAutoArchiveEnabled());
                     existing.setTerminalArchiveAfterDays(settings.getTerminalArchiveAfterDays());
                     existing.setTerminalArchiveNotifyBefore(settings.getTerminalArchiveNotifyBefore());

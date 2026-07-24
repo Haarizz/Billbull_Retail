@@ -48,9 +48,12 @@ public class LpoItemResponse {
         this.focUnit = item.getFocUnit();
         this.remarks = item.getRemarks();
         this.image = null;
+        // Mirrors PurchaseTaxResolutionService (product tax, else 0% — no hardcoded default).
+        // This is a plain response DTO built outside Spring's context, so the logic is
+        // duplicated inline rather than injected; keep both in sync if either changes.
         this.purchaseTax = (item.getProduct().getTax() != null && item.getProduct().getTax().getPurchaseTax() != null)
                 ? item.getProduct().getTax().getPurchaseTax()
-                : java.math.BigDecimal.valueOf(5);
+                : java.math.BigDecimal.ZERO;
         this.detailedDesc = item.getProduct().getDetailedDesc();
         this.isSerial = item.getProduct().isSerial();
         this.isBatchTracked = item.getProduct().isBatch();

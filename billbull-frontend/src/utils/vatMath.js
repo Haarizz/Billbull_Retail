@@ -47,25 +47,42 @@ export const computeLineTaxTotals = ({
 };
 
 /**
- * Resolve the tax % to apply on a freshly-added sales line.
+ * Resolve the tax % to apply on a freshly-added sales line. This is the single
+ * shared resolver used by every sales/pricing flow (POS, Sales Invoice,
+ * Quotation, Sales Order, Price Check, Layaway, Proforma, Delivery Note) so
+ * tax resolution behaves identically everywhere — and must mirror
+ * BranchTaxResolutionService (backend) exactly.
  *
  * Precedence:
+ *   0. taxEnabled === false — full kill switch. Always returns 0, regardless
+ *      of product tax or branch default. Checked FIRST, before anything else.
  *   1. product.salesTax / product.tax (per-item rate from the product master)
  *      — only when explicitly set (null/undefined/empty are treated as
- *      "not set"; a deliberate 0 is honoured for zero-rated items).
- *   2. activeVatRate — the rate of the Active VAT row registered in the
- *      Tax Compliance module.
- *   3. Legacy default of 5%.
+ *      "not set"; a deliberate 0 is honoured for zero-rated items). Always
+ *      overrides the branch default.
+ *   2. branchDefaultVatRate — the branch's configured Default VAT Rate, used
+ *      only when the product has no Sales Tax set.
+ *   3. 0% — internal system fallback only, when neither is configured.
+ *
+ * @param {object} product
+ * @param {number|string|null} branchDefaultVatRate
+ * @param {boolean} [taxEnabled=true] — the branch's Tax Enabled switch. Defaults to
+ *   true so existing 2-arg call sites that haven't been updated yet keep their prior
+ *   behavior rather than silently going tax-free; every real caller should now pass
+ *   this explicitly from the branch's Tax Configuration.
+ * @param {number} [fallback=0]
  */
-export const resolveLineTaxRate = (product, activeVatRate, fallback = 5) => {
+export const resolveLineTaxRate = (product, branchDefaultVatRate, taxEnabled = true, fallback = 0) => {
+    if (taxEnabled === false) return 0;
+
     const raw = product?.salesTax ?? product?.tax;
     if (raw !== null && raw !== undefined && raw !== '') {
         const parsed = parseFloat(raw);
         if (Number.isFinite(parsed)) return parsed;
     }
-    if (activeVatRate !== null && activeVatRate !== undefined) {
-        const parsedActive = parseFloat(activeVatRate);
-        if (Number.isFinite(parsedActive)) return parsedActive;
+    if (branchDefaultVatRate !== null && branchDefaultVatRate !== undefined) {
+        const parsedDefault = parseFloat(branchDefaultVatRate);
+        if (Number.isFinite(parsedDefault)) return parsedDefault;
     }
     return fallback;
 };

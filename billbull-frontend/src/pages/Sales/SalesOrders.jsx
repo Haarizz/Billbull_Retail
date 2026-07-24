@@ -52,7 +52,7 @@ import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
-import { getActiveVatRate } from '../../api/taxApi';
+import { getBranchTaxSummary } from '../../api/taxApi';
 import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
@@ -291,7 +291,7 @@ const SalesOrders = () => {
     focUnit: 'PCS',
     availableUnits: ['PCS'],
     disc: 0,
-    tax: 5,
+    tax: 0,
     taxAmt: 0,
     total: 0
   });
@@ -325,11 +325,23 @@ const SalesOrders = () => {
   // VAT mode for line-price interpretation (EXCLUSIVE | INCLUSIVE).
   const [vatMode, setVatMode] = useState('EXCLUSIVE');
 
-  // Fallback VAT % from Tax Compliance for products without a per-item rate.
-  const [activeVatRate, setActiveVatRate] = useState(null);
+  // Branch Tax Configuration — Branch Default VAT Rate (used only when a product has no Sales
+  // Tax configured) and Tax Enabled (a full kill switch: when off, resolveLineTaxRate returns
+  // 0 regardless of product tax or branch default — see vatMath.js).
+  const [branchDefaultVatRate, setBranchDefaultVatRate] = useState(null);
+  const [branchTaxEnabled, setBranchTaxEnabled] = useState(true);
   useEffect(() => {
-    getActiveVatRate().then(setActiveVatRate);
-  }, []);
+    getBranchTaxSummary(activeBranch?.id).then(cfg => {
+      if (!cfg) return;
+      setBranchDefaultVatRate(cfg.branchDefaultVatRate ?? null);
+      setBranchTaxEnabled(cfg.taxEnabled !== false);
+      // Seed the initial Tax Mode for a brand-new sales order from the Branch Tax
+      // Configuration (not hardcoded EXCLUSIVE). Opening an existing order for edit always
+      // overwrites this afterwards via its own load path, which only ever runs from an
+      // explicit later user action here — never a mount-time race.
+      setVatMode(cfg.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
+    });
+  }, [activeBranch?.id]);
 
   // ✅ GLOBAL SHORTCUTS
   useShortcuts({
@@ -725,7 +737,7 @@ const SalesOrders = () => {
       unitConversions: item.unitConversions || {},
       unitPrices: item.unitPrices || {},
       disc: Number(item.disc ?? item.discount) || 0,
-      tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 5,
+      tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 0,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
       total: Number(item.total ?? item.lineTotal) || 0,
       binId: item.binId ?? null,
@@ -764,7 +776,7 @@ const SalesOrders = () => {
       });
     const cost = parseFloat(product.cost) || 0;
     const disc = parseFloat(product.maxDiscount) || 0;
-    const tax = resolveLineTaxRate(product, activeVatRate);
+    const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
 
     const rawItem = {
       id: Date.now() + Math.random(),
@@ -828,7 +840,7 @@ const SalesOrders = () => {
     if (isLocked) return;
     const defaultUnit = getDefaultProductUnit(product);
     const cost = parseFloat(product.cost) || 0;
-    const tax = resolveLineTaxRate(product, activeVatRate);
+    const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
     const rawItem = {
       id: Date.now() + Math.random(),
       code: product.code,
@@ -1642,7 +1654,7 @@ const SalesOrders = () => {
 
   const handleAddItem = () => {
     if (isLocked) return;
-    setItems([...items, { id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0 }]);
+    setItems([...items, { id: Date.now(), code: '', barcode: '', image: '', desc: '', remarks: '', unit: 'PCS', qty: 0, price: 0, cost: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 0, taxAmt: 0, total: 0 }]);
   };
 
   const handleDeleteItem = (id) => {

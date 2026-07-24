@@ -64,6 +64,7 @@ public class GrnService {
     private final SerialMasterRepository serialMasterRepository;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
+    private final com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -85,7 +86,8 @@ public class GrnService {
             PurchaseSerialService purchaseSerialService,
             SerialMasterRepository serialMasterRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
-            com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService) {
+            com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService,
+            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -107,6 +109,7 @@ public class GrnService {
         this.serialMasterRepository = serialMasterRepository;
         this.notifPublisher = notifPublisher;
         this.documentNumberingService = documentNumberingService;
+        this.purchaseTaxResolutionService = purchaseTaxResolutionService;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -309,11 +312,7 @@ public class GrnService {
                     }
                     BigDecimal taxPercent = item.getPurchaseTax() != null
                             ? item.getPurchaseTax()
-                            : (item.getProduct() != null
-                            && item.getProduct().getTax() != null
-                            && item.getProduct().getTax().getPurchaseTax() != null)
-                            ? item.getProduct().getTax().getPurchaseTax()
-                            : BigDecimal.valueOf(5);
+                            : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(item.getProduct());
                     return lineTotal.multiply(taxPercent).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
                 })
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
@@ -667,9 +666,7 @@ public class GrnService {
                         i.getRemarks(),
                         i.getPurchaseTax() != null
                                 ? i.getPurchaseTax()
-                                : (i.getProduct().getTax() != null && i.getProduct().getTax().getPurchaseTax() != null)
-                                ? i.getProduct().getTax().getPurchaseTax()
-                                : java.math.BigDecimal.valueOf(5),
+                                : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct()),
                         i.getProduct().getDetailedDesc())).toList(),
                 g.getBranchId(),
                 g.getBranchName(),

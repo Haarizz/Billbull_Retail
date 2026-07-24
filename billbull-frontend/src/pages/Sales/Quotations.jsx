@@ -63,7 +63,7 @@ import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
-import { getActiveVatRate } from '../../api/taxApi';
+import { getBranchTaxSummary } from '../../api/taxApi';
 import { getSalesSettings } from '../../api/salesSettingsApi';
 
 // Ensure you have an axios instance or use fetch
@@ -520,12 +520,29 @@ const Quotations = () => {
     // INCLUSIVE, line prices already contain tax; calculateRow extracts it.
     const [vatMode, setVatMode] = useState('EXCLUSIVE');
 
-    // Fallback VAT % from the Tax Compliance module's Active VAT row. Used
-    // when a product has no per-item Sales Tax % set.
-    const [activeVatRate, setActiveVatRate] = useState(null);
+    // Capture at mount (mirrors SalesInvoice.jsx) so a slow branch-config fetch can never race
+    // past and overwrite an existing quotation's own loaded vatMode when opened directly via
+    // navigation state.
+    const pendingQuotationIdRef = useRef(useLocation().state?.quotationId ?? null);
+
+    // Branch Tax Configuration — Branch Default VAT Rate (used only when a product has no
+    // Sales Tax configured) and Tax Enabled (a full kill switch: when off, resolveLineTaxRate
+    // returns 0 regardless of product tax or branch default — see vatMath.js).
+    const [branchDefaultVatRate, setBranchDefaultVatRate] = useState(null);
+    const [branchTaxEnabled, setBranchTaxEnabled] = useState(true);
     useEffect(() => {
-        getActiveVatRate().then(setActiveVatRate);
-    }, []);
+        getBranchTaxSummary(activeBranch?.id).then(cfg => {
+            if (!cfg) return;
+            setBranchDefaultVatRate(cfg.branchDefaultVatRate ?? null);
+            setBranchTaxEnabled(cfg.taxEnabled !== false);
+            // Seed the initial Tax Mode for a brand-new quotation from the Branch Tax
+            // Configuration (not hardcoded EXCLUSIVE), unless this mount is about to load a
+            // specific existing quotation.
+            if (!pendingQuotationIdRef.current) {
+                setVatMode(cfg.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
+            }
+        });
+    }, [activeBranch?.id]);
 
     const [deliveryType, setDeliveryType] = useState('Delivery');
     const [isDeliveryTypeOpen, setIsDeliveryTypeOpen] = useState(false);
@@ -642,7 +659,7 @@ const Quotations = () => {
     };
 
     const [items, setItems] = useState([
-        { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }
+        { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 0, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }
     ]);
     const createBlankQuotationItem = () => ({
         id: Date.now() + Math.random(),
@@ -656,7 +673,7 @@ const Quotations = () => {
         focUnit: 'PCS',
         availableUnits: ['PCS'],
         disc: 0,
-        tax: 5,
+        tax: 0,
         taxAmt: 0.00,
         total: 0.00,
         remarks: '',
@@ -1259,7 +1276,7 @@ const Quotations = () => {
             });
         const cost = parseFloat(product.cost) || 0;
         const disc = parseFloat(product.maxDiscount) || 0;
-        const tax = resolveLineTaxRate(product, activeVatRate);
+        const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
@@ -1354,7 +1371,7 @@ const Quotations = () => {
     const handleFastEntryAdd = (product, qty, price, disc) => {
         const defaultUnit = getDefaultProductUnit(product);
         const cost = parseFloat(product.cost) || 0;
-        const tax = resolveLineTaxRate(product, activeVatRate);
+        const tax = resolveLineTaxRate(product, branchDefaultVatRate, branchTaxEnabled);
         const rawItem = {
             id: Date.now() + Math.random(),
             code: product.code,
@@ -1468,7 +1485,7 @@ const Quotations = () => {
 
     const handleAddItem = () => {
         if (isViewMode) return;
-        setItems([...items, { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0, total: 0, remarks: '', isProductSelected: false }]);
+        setItems([...items, { id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 0, taxAmt: 0, total: 0, remarks: '', isProductSelected: false }]);
     };
 
     const handleDeleteItem = (id) => {
@@ -1961,7 +1978,7 @@ const Quotations = () => {
                 focUnit: i.focUnit || 'PCS',
                 availableUnits: i.availableUnits || ['PCS', 'Dozen', 'Box', 'Carton'],
                 disc: Number(i.disc || i.discount) || 0,
-                tax: Number(i.tax || i.taxRate) || 5,
+                tax: Number(i.tax || i.taxRate) || 0,
                 taxAmt: Number(i.taxAmt || i.taxAmount) || 0,
                 total: Number(i.total || i.lineTotal) || 0,
                 remarks: i.remarks || '',
@@ -2031,7 +2048,7 @@ const Quotations = () => {
             code: qtn.branchCode || defaultBranch?.code || '',
             location: qtn.branchLocation || defaultBranch?.defaultWarehouseName || defaultBranch?.address || ''
         });
-        setItems(qtn.items.length > 0 ? qtn.items : [{ id: 1, code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }]);
+        setItems(qtn.items.length > 0 ? qtn.items : [{ id: 1, code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 0, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }]);
         setCurrency(qtn.currency || 'AED');
         setStatus(qtn.status);
         setPaymentTerm(qtn.paymentTerm || '30 Days');
@@ -2504,7 +2521,7 @@ const Quotations = () => {
         } else {
             setCustomer('Walk-in Customer');
         }
-        setItems([{ id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 5, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }]);
+        setItems([{ id: Date.now(), code: '', image: '', desc: '', unit: 'PCS', qty: 0, price: 0, foc: 0, focUnit: 'PCS', availableUnits: ['PCS'], disc: 0, tax: 0, taxAmt: 0.00, total: 0.00, remarks: '', isProductSelected: false }]);
         setStatus('Draft');
         setQtnDate(new Date().toISOString().split('T')[0]);
         setValidTill(new Date().toISOString().split('T')[0]);

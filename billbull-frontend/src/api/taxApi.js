@@ -1,4 +1,5 @@
 import api from "./axiosConfig";
+import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from "./branchTaxApi";
 
 // ================= CONFIGURATIONS =================
 
@@ -22,19 +23,27 @@ export const deleteTaxConfig = async (id) => {
 };
 
 /**
- * Returns the active VAT rate (number, e.g. 5) registered in Tax Compliance,
- * or null when no Active VAT configuration exists. Used by sales screens
- * as the fall-back rate when a product has no per-item Sales Tax % set.
+ * Returns a branch's Tax Configuration — Tax Enabled, Tax Mode (taxInclusive),
+ * and Branch Default VAT Rate — as configured in Branch Settings > Tax
+ * Configuration (owned by BranchTaxConfiguration, NOT POS Settings; see
+ * api/branchTaxApi.js). This is the single shared source used by every
+ * sales/pricing flow (POS, Sales Invoice, Quotation, Sales Order, Price
+ * Check, Layaway, Proforma, Delivery Note). Returns null only if the setting
+ * cannot be fetched at all (e.g. network error).
+ *
+ * Pass the currently active/selected branch id explicitly whenever the
+ * caller has one (e.g. useBranch()'s activeBranch.id) — omitting it falls
+ * back to the backend's "current branch" resolution, which is now
+ * BranchContextHolder-aware (see BranchAccessService.getActiveBranchId) but
+ * an explicit branchId is the more direct, unambiguous path.
  */
-export const getActiveVatRate = async () => {
+export const getBranchTaxSummary = async (branchId) => {
     try {
-        const res = await api.get("/api/financials/tax/active-vat-rate");
-        const raw = res.data?.rate;
-        if (raw == null) return null;
-        const parsed = parseFloat(raw);
-        return Number.isFinite(parsed) ? parsed : null;
+        return branchId != null
+            ? await getBranchTaxConfigurationForBranch(branchId)
+            : await getBranchTaxConfiguration();
     } catch (err) {
-        console.warn("Failed to fetch active VAT rate", err);
+        console.warn("Failed to fetch branch tax configuration", err);
         return null;
     }
 };

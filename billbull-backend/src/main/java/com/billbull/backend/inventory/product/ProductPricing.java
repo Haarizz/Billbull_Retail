@@ -25,8 +25,6 @@ public class ProductPricing extends BaseEntity {
     @Enumerated(EnumType.STRING)
     private CostMethod costMethod;
 
-    private boolean isCostInclusive;
-
     private BigDecimal retailPrice;
     private BigDecimal wholesalePrice;
     private BigDecimal minPrice;
@@ -75,12 +73,6 @@ public class ProductPricing extends BaseEntity {
 	}
 	public void setCostMethod(CostMethod costMethod) {
 		this.costMethod = costMethod;
-	}
-	public boolean isCostInclusive() {
-		return isCostInclusive;
-	}
-	public void setCostInclusive(boolean isCostInclusive) {
-		this.isCostInclusive = isCostInclusive;
 	}
 	public BigDecimal getRetailPrice() {
 		return retailPrice;

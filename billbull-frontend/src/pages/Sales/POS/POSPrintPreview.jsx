@@ -8,6 +8,7 @@
  */
 /* eslint-disable react-hooks/static-components */
 import React, { useMemo } from 'react';
+import { DOCUMENT_TITLES } from '../../../utils/documentTaxType';
 import { Upload } from 'lucide-react';
 import { buildDocumentPreviewHtml, buildServiceJobA4Html, stripForPreview } from './posPrintUtils';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
@@ -156,10 +157,11 @@ export const ThermalMock = ({
 
       {/* ── Document title (receipt/return only) — headerText overrides the default so
           the designer preview matches whichever title the Print Templates tab is
-          actually configured with, instead of always showing "TAX INVOICE". ── */}
+          actually configured with. Fallback is keyed off templateType (receipt sub-tab
+          = no-tax document) rather than always defaulting to Tax Invoice. ── */}
       {!isJobCard && (
         <div style={{ textAlign: 'center', fontSize: fs, fontWeight: '700', color: '#111827', marginBottom: 4 }}>
-          {headerText || (isReturn ? 'CREDIT NOTE' : 'TAX INVOICE')}
+          {headerText || (isReturn ? DOCUMENT_TITLES.CREDIT_NOTE : (templateType === 'receipt' ? DOCUMENT_TITLES.SALES_INVOICE : DOCUMENT_TITLES.TAX_INVOICE))}
         </div>
       )}
 

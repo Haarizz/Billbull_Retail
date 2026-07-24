@@ -10,8 +10,10 @@ import { Eye, X, Download, Printer, Mail, MessageCircle, Save, CheckCircle2 } fr
 // button; the document title (DRAFT INVOICE / TAX INVOICE) is stamped by the
 // parent into the template data.
 //
-//   • 'Draft'     → badge "Draft"       / primary "Save as Draft"
-//   • 'Confirmed' → badge "Tax Invoice" / primary "Confirm & Finalize"
+//   • 'Draft'     → badge "Draft"                          / primary "Save as Draft"
+//   • 'Confirmed' → badge `documentTitle` (Tax Invoice or   / primary "Confirm & Finalize"
+//                   Sales Invoice, from the same tax-aware
+//                   resolution as the printed document)
 
 // Strip any embedded auto-print / scripts so the template doesn't trigger the
 // browser print dialog when rendered inside the preview iframe.
@@ -113,6 +115,7 @@ html, body { min-height: 0 !important; height: auto !important; background: #fff
 const InvoicePreviewModal = ({
     mode = 'Draft',
     invoiceNo = '',
+    documentTitle = '',
     getHtml,
     onClose,
     onConfirm,
@@ -177,7 +180,7 @@ const InvoicePreviewModal = ({
                     </div>
                     <div className="flex items-center gap-3">
                         <span className="px-3 py-1 rounded-md border border-slate-200 text-[11px] font-bold text-slate-600 bg-white">
-                            {isDraft ? 'Draft' : 'Tax Invoice'}
+                            {isDraft ? 'Draft' : (documentTitle || 'Tax Invoice')}
                         </span>
                         <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
                             <X size={20} />
