@@ -1742,6 +1742,7 @@ const SalesOrders = () => {
       <ItemAddOnsModal
         item={selectedAddonItem}
         onClose={() => setSelectedAddonItem(null)}
+        vatMode={vatMode}
         onSave={(updated) => {
           setItems(items.map(i => i.id === updated.id ? updated : i));
           setSelectedAddonItem(null);

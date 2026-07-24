@@ -4,7 +4,7 @@ import {
   Package, Truck, DollarSign, UserCog, Headphones, Bell,
   Eye, PlusCircle, Pencil, Trash2, CheckCircle, Download,
   ChevronRight, AlertTriangle, RefreshCw, Check, X,
-  Info, Settings2, Lock, KeyRound, RotateCcw, Copy
+  Info, Settings2, Lock, KeyRound, RotateCcw, Copy, Monitor
 } from 'lucide-react';
 import { rolePermissionsApi } from '../../api/rolePermissionsApi';
 import { usersApi } from '../../api/usersApi';
@@ -139,6 +139,23 @@ const MODULES = [
       { key: 'userManagement.setup', label: 'Company Profile' },
     ]
   },
+  {
+    key: 'pos',
+    label: 'POS Administration',
+    description: 'Terminals, sessions, counters, devices & hardware (day-to-day checkout is under Sales > POS Sales)',
+    icon: Monitor,
+    color: 'text-amber-600',
+    resources: [
+      { key: 'pos.terminals',        label: 'POS Terminal Management' },
+      { key: 'pos.sessions',         label: 'POS Sessions' },
+      { key: 'pos.counters',         label: 'POS Counters' },
+      { key: 'pos.devices',          label: 'POS Devices' },
+      { key: 'pos.printers',         label: 'POS Printers' },
+      { key: 'pos.scanners',         label: 'POS Scanners' },
+      { key: 'pos.hardwareprofiles', label: 'Hardware Profiles' },
+      { key: 'pos.settings',         label: 'POS Settings' },
+    ]
+  },
 ];
 
 // Workflow override permissions (financial flow §21A maker-checker controls).
@@ -152,6 +169,25 @@ const SPECIAL_PERMISSIONS = [
   { key: 'permissions.sales.override-credit-limit', label: 'Override Credit Limit',             description: 'Complete sales that exceed a customer credit limit' },
   { key: 'permissions.vendor.advance',              label: 'Manage Vendor Advances',            description: 'Record and apply vendor advance payments' },
   { key: 'permissions.customer.advance.refund',     label: 'Refund Customer Advances',          description: 'Refund unapplied customer advance balances' },
+];
+
+// POS Terminal lifecycle actions — same single-switch mechanism as SPECIAL_PERMISSIONS above,
+// grouped separately so the Terminal Management checklist reads as its own section (matches the
+// User & Role Configuration mock in the RBAC-for-POS design doc).
+const POS_TERMINAL_PERMISSIONS = [
+  { key: 'permissions.pos.terminal.register',       label: 'Register Terminal',    description: 'Manually register a new terminal on behalf of a device' },
+  { key: 'permissions.pos.terminal.rename',         label: 'Rename Terminal',      description: 'Change a terminal or counter display name' },
+  { key: 'permissions.pos.terminal.assigncounter',  label: 'Assign Counter',       description: 'Change which counter a terminal is linked to' },
+  { key: 'permissions.pos.terminal.setmain',        label: 'Set Main POS',         description: 'Designate a terminal as the branch\'s main POS' },
+  { key: 'permissions.pos.terminal.approve',        label: 'Approve Terminal',     description: 'Approve a pending terminal registration' },
+  { key: 'permissions.pos.terminal.reject',         label: 'Reject Terminal',      description: 'Reject a pending terminal registration' },
+  { key: 'permissions.pos.terminal.archive',        label: 'Archive Terminal',     description: 'Temporarily deactivate a terminal (reversible, frees its slot)' },
+  { key: 'permissions.pos.terminal.restore',        label: 'Restore Terminal',     description: 'Bring an archived terminal back into service' },
+  { key: 'permissions.pos.terminal.block',          label: 'Block Terminal',       description: 'Prevent a terminal from starting sessions or reconnecting' },
+  { key: 'permissions.pos.terminal.unblock',        label: 'Unblock Terminal',     description: 'Lift a block on a terminal' },
+  { key: 'permissions.pos.terminal.decommission',   label: 'Decommission Terminal', description: 'Permanently retire a terminal — cannot be undone' },
+  { key: 'permissions.pos.terminal.keepactive',     label: 'Keep Active',          description: 'Dismiss a stale-inactivity warning and keep a terminal in service' },
+  { key: 'permissions.pos.terminal.setautoarchiveexempt', label: 'Toggle Auto-Archive Exemption', description: 'Exempt (or re-include) a terminal from the auto-archive sweep' },
 ];
 
 // Vertical action columns (order matters — mirrors the matrix header)
@@ -938,6 +974,41 @@ const UserRoleConfig = () => {
                             checked={granted}
                             onChange={() => handleSpecialToggle(sp.key)}
                             saving={sSaving}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* ── POS Terminal Management actions ── */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2">
+                  <Monitor size={15} className="text-[#F5C742]" />
+                  <span className="text-sm font-semibold text-slate-700">POS Terminal Management</span>
+                  <span className="text-[10px] text-slate-400">
+                    Terminal lifecycle actions gated individually (register, rename, archive, restore, block, decommission, etc.)
+                  </span>
+                </div>
+                <div className="divide-y divide-slate-50">
+                  {POS_TERMINAL_PERMISSIONS.map(tp => {
+                    const granted = !!permMap[tp.key]?.canView;
+                    const tSaving = !!saving[tp.key];
+                    const tStatus = saveStatus[tp.key];
+                    return (
+                      <div key={tp.key} className="px-5 py-3 flex items-center gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className={`text-xs font-semibold ${granted ? 'text-slate-700' : 'text-slate-400'}`}>{tp.label}</div>
+                          <div className="text-[10px] text-slate-400 truncate">{tp.description}</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {tStatus === 'ok'  && <Check size={12} className="text-emerald-500" />}
+                          {tStatus === 'err' && <X    size={12} className="text-red-500" />}
+                          <Toggle
+                            checked={granted}
+                            onChange={() => handleSpecialToggle(tp.key)}
+                            saving={tSaving}
                           />
                         </div>
                       </div>

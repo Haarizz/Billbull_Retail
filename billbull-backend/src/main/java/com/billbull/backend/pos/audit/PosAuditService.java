@@ -165,6 +165,13 @@ public class PosAuditService {
                 null, null);
     }
 
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logTerminalDecommissioned(String terminalId, Long branchId, String adminUser, String reason) {
+        save(null, terminalId, branchId, PosAuditAction.TERMINAL_DECOMMISSIONED, "TERMINAL", terminalId,
+                reason + " (by " + adminUser + ")", null, null);
+    }
+
     // ── core save ────────────────────────────────────────────────────────────
 
     private void save(Long sessionId, String terminalId, Long branchId,

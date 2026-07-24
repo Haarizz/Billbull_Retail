@@ -36,7 +36,18 @@ class ModuleCatalogTest {
                 // customer
                 "customer.inquiry", "customer.followup", "customer.message",
                 // user management
-                "userManagement.user", "userManagement.role", "userManagement.setup");
+                "userManagement.user", "userManagement.role", "userManagement.setup",
+                // pos administration
+                "pos", "pos.terminals", "pos.sessions", "pos.counters", "pos.devices",
+                "pos.printers", "pos.scanners", "pos.hardwareprofiles", "pos.settings",
+                // pos terminal lifecycle actions
+                "permissions.pos.terminal.register", "permissions.pos.terminal.rename",
+                "permissions.pos.terminal.assigncounter", "permissions.pos.terminal.setmain",
+                "permissions.pos.terminal.approve", "permissions.pos.terminal.reject",
+                "permissions.pos.terminal.archive", "permissions.pos.terminal.restore",
+                "permissions.pos.terminal.block", "permissions.pos.terminal.unblock",
+                "permissions.pos.terminal.decommission",
+                "permissions.pos.terminal.keepactive", "permissions.pos.terminal.setautoarchiveexempt");
 
         for (String key : enforcedKeys) {
             assertTrue(ModuleCatalog.isValid(key), "Missing from ModuleCatalog: " + key);

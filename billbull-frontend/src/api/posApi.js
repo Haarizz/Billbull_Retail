@@ -40,6 +40,12 @@ export const restorePosTerminal = async (id) => {
   return res.data;
 };
 
+// Permanent retirement — no restore endpoint exists for this status, by design.
+export const decommissionPosTerminal = async (id, reason) => {
+  const res = await api.post(`${BASE}/terminals/${id}/decommission`, { reason });
+  return res.data;
+};
+
 // Terminal Auto-Archive lifecycle
 export const keepTerminalActive = async (id) => {
   const res = await api.post(`${BASE}/terminals/${id}/keep-active`);

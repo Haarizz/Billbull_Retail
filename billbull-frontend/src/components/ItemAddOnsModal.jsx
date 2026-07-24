@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { X, SlidersHorizontal } from 'lucide-react';
 import CurrencyAmount from './CurrencyAmount';
+import { computeLineTaxTotals, VAT_MODES } from '../utils/vatMath';
 
-const calculateRow = (item) => {
+const calculateRow = (item, vatMode = VAT_MODES.EXCLUSIVE) => {
     const qty = parseFloat(item.qty ?? item.currentQty ?? item.orderedQty) || 0;
     const price = parseFloat(item.price) || 0;
     const discPercent = parseFloat(item.disc) || 0;
@@ -28,9 +29,13 @@ const calculateRow = (item) => {
 
     const preDiscountAmount = Math.max(0, grossAmount - focDeduction);
     const discountAmount = preDiscountAmount * (discPercent / 100);
-    const taxableAmount = preDiscountAmount - discountAmount;
-    const taxAmount = taxableAmount * (taxPercent / 100);
-    const total = taxableAmount + taxAmount;
+    const netAfterDiscount = preDiscountAmount - discountAmount;
+
+    const { taxableAmount, taxAmount, total } = computeLineTaxTotals({
+        netAfterDiscount,
+        taxPercent,
+        vatMode,
+    });
 
     return {
         ...item,
@@ -43,12 +48,13 @@ const calculateRow = (item) => {
     };
 };
 
-const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
-    const [current, setCurrent] = useState(item ? calculateRow({ ...item }) : null);
+const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false, vatMode = VAT_MODES.EXCLUSIVE }) => {
+    const resolvedVatMode = vatMode === VAT_MODES.INCLUSIVE ? VAT_MODES.INCLUSIVE : VAT_MODES.EXCLUSIVE;
+    const [current, setCurrent] = useState(item ? calculateRow({ ...item }, resolvedVatMode) : null);
 
     useEffect(() => {
-        setCurrent(item ? calculateRow({ ...item }) : null);
-    }, [item]);
+        setCurrent(item ? calculateRow({ ...item }, resolvedVatMode) : null);
+    }, [item, resolvedVatMode]);
 
     if (!item || !current) return null;
 
@@ -60,7 +66,7 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
         if (isReadOnly) return;
         const stringFields = new Set(['focUnit', 'remarks', 'desc', 'code', 'barcode', 'unit']);
         const val = stringFields.has(field) ? value : Number(value);
-        const updated = calculateRow({ ...current, [field]: val });
+        const updated = calculateRow({ ...current, [field]: val }, resolvedVatMode);
         setCurrent(updated);
     };
 
@@ -68,7 +74,7 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
 
     const grossProfit = (() => {
         const qty = current.qty ?? current.currentQty ?? current.orderedQty ?? 0;
-        const net = qty * (current.price || 0) * (1 - (current.disc || 0) / 100);
+        const net = current.taxableAmount ?? (qty * (current.price || 0) * (1 - (current.disc || 0) / 100));
         const cost = (current.cost || 0) * qty;
         return net > 0 ? (((net - cost) / net) * 100).toFixed(1) : 0;
     })();
@@ -185,16 +191,18 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
                         </div>
 
                         <div className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm mt-4">
-                            <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Calculation Breakdown</h4>
+                            <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">
+                                Calculation Breakdown {resolvedVatMode === VAT_MODES.INCLUSIVE ? '(Tax Inclusive)' : '(Tax Exclusive)'}
+                            </h4>
                             <div className="space-y-1.5 text-xs">
                                 <div className="flex justify-between text-slate-600">
-                                    <span>Base Amount (Qty × Price)</span>
+                                    <span>{resolvedVatMode === VAT_MODES.INCLUSIVE ? 'Gross Amount (Qty × Price)' : 'Base Amount (Qty × Price)'}</span>
                                     <CurrencyAmount value={current.grossAmount ?? displayQty * (current.price || 0)} />
                                 </div>
                                 {(current.foc > 0) && (
                                     <div className="flex justify-between text-emerald-600">
                                         <span>FOC Deduction ({current.foc} {current.focUnit || current.unit})</span>
-                                        <span>- <CurrencyAmount value={(current.grossAmount ?? 0) - (current.taxableAmount ?? 0) - (current.discountAmount ?? 0)} /></span>
+                                        <span>- <CurrencyAmount value={(current.grossAmount ?? 0) - (current.taxableAmount ?? 0) - (current.discountAmount ?? 0) - (current.taxAmt ?? current.taxAmount ?? 0)} /></span>
                                     </div>
                                 )}
                                 {(current.disc > 0) && (
@@ -204,16 +212,16 @@ const ItemAddOnsModal = ({ item, onClose, onSave, isReadOnly = false }) => {
                                     </div>
                                 )}
                                 <div className="flex justify-between text-slate-600">
-                                    <span>Taxable Amount</span>
+                                    <span>Taxable Amount{resolvedVatMode === VAT_MODES.INCLUSIVE ? ' (VAT Excluded)' : ''}</span>
                                     <CurrencyAmount value={current.taxableAmount ?? 0} />
                                 </div>
                                 <div className="flex justify-between text-emerald-600">
-                                    <span>Tax ({current.tax || 0}%)</span>
-                                    <span>+ <CurrencyAmount value={current.taxAmt || current.taxAmount || 0} /></span>
+                                    <span>{resolvedVatMode === VAT_MODES.INCLUSIVE ? `Included VAT (${current.tax || 0}%)` : `Tax (${current.tax || 0}%)`}</span>
+                                    <span>{resolvedVatMode === VAT_MODES.INCLUSIVE ? '' : '+ '}<CurrencyAmount value={current.taxAmt || current.taxAmount || 0} /></span>
                                 </div>
                                 <div className="h-px bg-slate-200 my-2 w-full" />
                                 <div className="flex justify-between font-bold text-yellow-600 text-sm">
-                                    <span>Net Amount</span>
+                                    <span>{resolvedVatMode === VAT_MODES.INCLUSIVE ? 'Grand Total (Customer Pays)' : 'Net Amount'}</span>
                                     <CurrencyAmount value={current.total ?? current.net ?? 0} />
                                 </div>
                                 <div className="h-px bg-slate-100 my-2 w-full" />

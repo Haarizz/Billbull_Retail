@@ -3273,6 +3273,7 @@ const SalesInvoice = () => {
                 item={selectedAddonItem}
                 onClose={() => setSelectedAddonItem(null)}
                 isReadOnly={isReadOnlyInvoice}
+                vatMode={vatMode}
                 onSave={(updated) => {
                     setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
                     setSelectedAddonItem(null);

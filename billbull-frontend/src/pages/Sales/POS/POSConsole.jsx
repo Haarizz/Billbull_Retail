@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers } from 'lucide-react';
 import { UAParser } from 'ua-parser-js';
+import { usePermissions } from '../../../context/PermissionContext';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '../../../components/ui/tooltip';
 import POSCounters from '../POSCounters';
@@ -20,7 +21,7 @@ import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '
 import { createPosPrinter, updatePosPrinter, updatePosPrinterRuntime, decommissionPosPrinter } from '../../../api/posPrinterApi';
 import { getPosScanners, createPosScanner, decommissionPosScanner } from '../../../api/posScannerApi';
 import { getPosCashDrawers, createPosCashDrawer, decommissionPosCashDrawer } from '../../../api/posCashDrawerApi';
-import { assignTerminalCounter, archivePosTerminal, restorePosTerminal, keepTerminalActive, archiveTerminalNow, setTerminalAutoArchiveExempt } from '../../../api/posApi';
+import { assignTerminalCounter, archivePosTerminal, restorePosTerminal, decommissionPosTerminal, keepTerminalActive, archiveTerminalNow, setTerminalAutoArchiveExempt } from '../../../api/posApi';
 import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
@@ -107,6 +108,12 @@ const POSConsole = React.memo((props) => {
     setTplJobCardFooter, setTplJobCardPaper,
   } = props;
 
+    // Frontend gating mirrors backend permissions.pos.terminal.<action> exactly — this hides
+    // actions the user can't perform, but the backend (ModulePermissionService) is the actual
+    // enforcement (see PosTerminalController.requireTerminalAction).
+    const { canAction } = usePermissions();
+    const canTerminalAction = (action) => canAction(`permissions.pos.terminal.${action}`, 'view');
+
     // Phase 3 cutover (reworked): POS now resolves the real Back Office "Sales
     const allBtnList = [
       { id:'add-qty',label:'Add Qty' },{ id:'remove',label:'Remove Item' },{ id:'discount',label:'Discount' },
@@ -153,6 +160,18 @@ const POSConsole = React.memo((props) => {
 
     const [counterList, setCounterList] = useState([]);
     const [viewHistoryTerminalId, setViewHistoryTerminalId] = useState(null);
+    // Archive-terminal confirmation dialog (replaces window.prompt/window.confirm)
+    const [archiveModalTerminal, setArchiveModalTerminal] = useState(null);
+    const [archiveModalReason, setArchiveModalReason] = useState('');
+    const [archiveModalBusy, setArchiveModalBusy] = useState(false);
+    const [archiveModalError, setArchiveModalError] = useState('');
+    const [archiveNowModalTerminal, setArchiveNowModalTerminal] = useState(null);
+    const [archiveNowModalBusy, setArchiveNowModalBusy] = useState(false);
+    // Decommission-terminal confirmation dialog (replaces window.prompt/window.confirm)
+    const [decommissionModalTerminal, setDecommissionModalTerminal] = useState(null);
+    const [decommissionModalReason, setDecommissionModalReason] = useState('');
+    const [decommissionModalBusy, setDecommissionModalBusy] = useState(false);
+    const [decommissionModalError, setDecommissionModalError] = useState('');
     const [printerDialogOpen, setPrinterDialogOpen] = useState(false);
     const [editingPrinter, setEditingPrinter] = useState(null);
     const [printerForm, setPrinterForm] = useState(createInitialPrinterForm());
@@ -2200,8 +2219,10 @@ const POSConsole = React.memo((props) => {
             const offlineCount = terminalList.filter(t => t.status === 'OFFLINE').length;
             const staleCount = terminalList.filter(t => t.status === 'STALE').length;
             const archivedCount = terminalList.filter(t => t.status === 'ARCHIVED').length;
-            // Archived terminals free their slot — match the backend's countActiveLimitByBranchId semantics.
-            const slotUsed = terminalList.filter(t => t.status !== 'ARCHIVED').length;
+            const decommissionedCount = terminalList.filter(t => t.status === 'DECOMMISSIONED').length;
+            // Archived (reversible) and Decommissioned (permanent) terminals both free their slot —
+            // match the backend's countActiveLimitByBranchId semantics exactly.
+            const slotUsed = terminalList.filter(t => t.status !== 'ARCHIVED' && t.status !== 'DECOMMISSIONED').length;
             const slotPct = Math.min(100, Math.round((slotUsed / maxSlots) * 100));
             const slotNearFull = slotUsed >= maxSlots - 1;
 
@@ -2269,6 +2290,8 @@ const POSConsole = React.memo((props) => {
               BLOCKED:  { label: 'Blocked',  dot: 'bg-red-500',   badge: 'bg-red-50 text-red-600',      icon: <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> },
               STALE:    { label: 'Stale',    dot: 'bg-orange-500', badge: 'bg-orange-50 text-orange-700', icon: <span className="w-1.5 h-1.5 rounded-full bg-orange-500" /> },
               ARCHIVED: { label: 'Archived', dot: 'bg-gray-400',  badge: 'bg-gray-100 text-gray-500',    icon: <span className="w-1.5 h-1.5 rounded-full bg-gray-400" /> },
+              DECOMMISSIONED: { label: 'Decommissioned', dot: 'bg-red-800', badge: 'bg-red-50 text-red-800', icon: <span className="w-1.5 h-1.5 rounded-full bg-red-800" /> },
+              MAINTENANCE: { label: 'Maintenance', dot: 'bg-orange-400', badge: 'bg-orange-50 text-orange-700', icon: <span className="w-1.5 h-1.5 rounded-full bg-orange-400" /> },
             };
 
             const daysSince = (ts) => {
@@ -2276,14 +2299,24 @@ const POSConsole = React.memo((props) => {
               return Math.floor((new Date() - new Date(ts)) / (1000 * 60 * 60 * 24));
             };
 
-            const handleArchiveTerminal = async (terminal) => {
-              const reason = window.prompt('Archive reason (optional):');
-              if (reason === null) return;
+            const handleArchiveTerminal = (terminal) => {
+              setArchiveModalReason('');
+              setArchiveModalError('');
+              setArchiveModalTerminal(terminal);
+            };
+
+            const submitArchiveTerminal = async () => {
+              if (!archiveModalTerminal) return;
+              setArchiveModalBusy(true);
+              setArchiveModalError('');
               try {
-                const updated = await archivePosTerminal(terminal.id, reason || undefined);
-                setTerminalList(prev => prev.map(x => x.terminalId === terminal.terminalId ? { ...x, ...updated } : x));
+                const updated = await archivePosTerminal(archiveModalTerminal.id, archiveModalReason.trim() || undefined);
+                setTerminalList(prev => prev.map(x => x.terminalId === archiveModalTerminal.terminalId ? { ...x, ...updated } : x));
+                setArchiveModalTerminal(null);
               } catch (e) {
-                window.alert(e?.response?.data?.message || 'Archive failed.');
+                setArchiveModalError(e?.response?.data?.message || 'Archive failed.');
+              } finally {
+                setArchiveModalBusy(false);
               }
             };
 
@@ -2296,6 +2329,28 @@ const POSConsole = React.memo((props) => {
               }
             };
 
+            // Permanent retirement — no restore path exists for this status, by design.
+            const handleDecommissionTerminal = (terminal) => {
+              setDecommissionModalReason('');
+              setDecommissionModalError('');
+              setDecommissionModalTerminal(terminal);
+            };
+
+            const submitDecommissionTerminal = async () => {
+              if (!decommissionModalTerminal) return;
+              setDecommissionModalBusy(true);
+              setDecommissionModalError('');
+              try {
+                const updated = await decommissionPosTerminal(decommissionModalTerminal.id, decommissionModalReason.trim() || undefined);
+                setTerminalList(prev => prev.map(x => x.terminalId === decommissionModalTerminal.terminalId ? { ...x, ...updated } : x));
+                setDecommissionModalTerminal(null);
+              } catch (e) {
+                setDecommissionModalError(e?.response?.data?.message || 'Decommission failed.');
+              } finally {
+                setDecommissionModalBusy(false);
+              }
+            };
+
             const handleKeepActive = async (terminal) => {
               try {
                 const updated = await keepTerminalActive(terminal.id);
@@ -2305,13 +2360,21 @@ const POSConsole = React.memo((props) => {
               }
             };
 
-            const handleArchiveNow = async (terminal) => {
-              if (!window.confirm(`Archive terminal "${terminal.terminalName || terminal.terminalId}" now?`)) return;
+            const handleArchiveNow = (terminal) => {
+              setArchiveNowModalTerminal(terminal);
+            };
+
+            const submitArchiveNow = async () => {
+              if (!archiveNowModalTerminal) return;
+              setArchiveNowModalBusy(true);
               try {
-                const updated = await archiveTerminalNow(terminal.id);
-                setTerminalList(prev => prev.map(x => x.terminalId === terminal.terminalId ? { ...x, ...updated } : x));
+                const updated = await archiveTerminalNow(archiveNowModalTerminal.id);
+                setTerminalList(prev => prev.map(x => x.terminalId === archiveNowModalTerminal.terminalId ? { ...x, ...updated } : x));
+                setArchiveNowModalTerminal(null);
               } catch (e) {
                 window.alert(e?.response?.data?.message || 'Archive Now failed.');
+              } finally {
+                setArchiveNowModalBusy(false);
               }
             };
 
@@ -2352,6 +2415,7 @@ const POSConsole = React.memo((props) => {
             };
 
             return (
+            <>
             <div className="space-y-5">
 
               {/* ── Header row ── */}
@@ -2394,6 +2458,7 @@ const POSConsole = React.memo((props) => {
                   <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-400" /> <strong>{offlineCount}</strong> Offline</span>
                   <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-500" /> <strong>{staleCount}</strong> Stale</span>
                   <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-gray-300" /> <strong>{archivedCount}</strong> Archived</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-800" /> <strong>{decommissionedCount}</strong> Decommissioned</span>
                 </div>
               </div>
 
@@ -2618,7 +2683,7 @@ const POSConsole = React.memo((props) => {
                                 <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                                   <span className="flex items-center gap-1 text-xs text-gray-500">
                                     <Hash className="h-3 w-3 text-gray-300" />
-                                    {counterList.length > 0 ? (
+                                    {counterList.length > 0 && canTerminalAction('assigncounter') ? (
                                       <select
                                         value={t.counterId ?? ''}
                                         onChange={async (e) => {
@@ -2672,15 +2737,19 @@ const POSConsole = React.memo((props) => {
 
                                 {/* Action buttons */}
                                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                                  <button
-                                    onClick={() => startEdit(t)}
-                                    className="flex items-center gap-1.5 text-xs font-semibold text-[#327F74] border border-[#327F74]/30 hover:bg-[#327F74]/5 px-3 py-1.5 rounded-lg transition-colors"
-                                  >
-                                    <Wrench className="h-3.5 w-3.5" /> Rename
-                                  </button>
+                                  {canTerminalAction('rename') && (
+                                    <button
+                                      onClick={() => startEdit(t)}
+                                      className="flex items-center gap-1.5 text-xs font-semibold text-[#327F74] border border-[#327F74]/30 hover:bg-[#327F74]/5 px-3 py-1.5 rounded-lg transition-colors"
+                                    >
+                                      <Wrench className="h-3.5 w-3.5" /> Rename
+                                    </button>
+                                  )}
 
-                                  {/* Cycle status button */}
-                                  {t.status === 'ACTIVE' && (
+                                  {/* Cycle status button — plain Deactivate isn't one of the named
+                                      lifecycle actions, so it stays gated on the base pos.terminals
+                                      edit permission rather than a dedicated permissions.pos.terminal.* key. */}
+                                  {t.status === 'ACTIVE' && canAction('pos.terminals', 'edit') && (
                                     <button
                                       onClick={() => cycleStatus(t)}
                                       className="flex items-center gap-1.5 text-xs font-semibold text-amber-600 border border-amber-200 hover:bg-amber-50 px-3 py-1.5 rounded-lg transition-colors"
@@ -2690,21 +2759,25 @@ const POSConsole = React.memo((props) => {
                                   )}
                                   {t.status === 'INACTIVE' && (
                                     <>
-                                      <button
-                                        onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
-                                        className="flex items-center gap-1.5 text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
-                                      >
-                                        <Unlock className="h-3.5 w-3.5" /> Activate
-                                      </button>
-                                      <button
-                                        onClick={() => setTerminalStatus(t.terminalId, 'BLOCKED').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
-                                        className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
-                                      >
-                                        <AlertTriangle className="h-3.5 w-3.5" /> Block
-                                      </button>
+                                      {canAction('pos.terminals', 'edit') && (
+                                        <button
+                                          onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
+                                          className="flex items-center gap-1.5 text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
+                                        >
+                                          <Unlock className="h-3.5 w-3.5" /> Activate
+                                        </button>
+                                      )}
+                                      {canTerminalAction('block') && (
+                                        <button
+                                          onClick={() => setTerminalStatus(t.terminalId, 'BLOCKED').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
+                                          className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                                        >
+                                          <AlertTriangle className="h-3.5 w-3.5" /> Block
+                                        </button>
+                                      )}
                                     </>
                                   )}
-                                  {t.status === 'BLOCKED' && (
+                                  {t.status === 'BLOCKED' && canTerminalAction('unblock') && (
                                     <button
                                       onClick={() => setTerminalStatus(t.terminalId, 'ACTIVE').then(u => setTerminalList(prev => prev.map(x => x.terminalId === t.terminalId ? u : x)))}
                                       className="flex items-center gap-1.5 text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors"
@@ -2714,7 +2787,7 @@ const POSConsole = React.memo((props) => {
                                   )}
 
                                   {/* Set as Main POS */}
-                                  {!t.isMainPos && t.status === 'ACTIVE' && (
+                                  {!t.isMainPos && t.status === 'ACTIVE' && canTerminalAction('setmain') && (
                                     <button
                                       onClick={() => promoteMainPos(t.terminalId)}
                                       className="flex items-center gap-1.5 text-xs font-semibold text-[#b8920e] border border-[#F5C742]/50 hover:bg-[#F5C742]/10 px-3 py-1.5 rounded-lg transition-colors"
@@ -2723,15 +2796,19 @@ const POSConsole = React.memo((props) => {
                                     </button>
                                   )}
 
-                                  {/* Archive / Restore */}
-                                  {t.status === 'ARCHIVED' ? (
+                                  {/* Archive / Restore / Decommission */}
+                                  {t.status === 'DECOMMISSIONED' ? (
+                                    <span className="text-xs text-gray-400 italic px-1">Permanently retired — cannot be restored</span>
+                                  ) : t.status === 'ARCHIVED' ? (
                                     <>
-                                      <button
-                                        onClick={() => handleRestoreTerminal(t)}
-                                        className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors"
-                                      >
-                                        <Unlock className="h-3.5 w-3.5" /> Restore
-                                      </button>
+                                      {canTerminalAction('restore') && (
+                                        <button
+                                          onClick={() => handleRestoreTerminal(t)}
+                                          className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 border border-gray-200 hover:bg-gray-50 px-3 py-1.5 rounded-lg transition-colors"
+                                        >
+                                          <Unlock className="h-3.5 w-3.5" /> Restore
+                                        </button>
+                                      )}
                                       {t.archiveContextJson && (
                                         <button
                                           onClick={() => setViewHistoryTerminalId(prev => prev === t.terminalId ? null : t.terminalId)}
@@ -2740,21 +2817,41 @@ const POSConsole = React.memo((props) => {
                                           <Info className="h-3.5 w-3.5" /> View History
                                         </button>
                                       )}
+                                      {canTerminalAction('decommission') && (
+                                        <button
+                                          onClick={() => handleDecommissionTerminal(t)}
+                                          className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                                        >
+                                          <XCircle className="h-3.5 w-3.5" /> Decommission
+                                        </button>
+                                      )}
                                     </>
                                   ) : (
                                     !t.currentOpenSessionId && !isThisDevice && (
-                                      <button
-                                        onClick={() => handleArchiveTerminal(t)}
-                                        className="flex items-center gap-1.5 text-xs font-semibold text-orange-600 border border-orange-200 hover:bg-orange-50 px-3 py-1.5 rounded-lg transition-colors"
-                                      >
-                                        <AlertTriangle className="h-3.5 w-3.5" /> Archive
-                                      </button>
+                                      <>
+                                        {canTerminalAction('archive') && (
+                                          <button
+                                            onClick={() => handleArchiveTerminal(t)}
+                                            className="flex items-center gap-1.5 text-xs font-semibold text-orange-600 border border-orange-200 hover:bg-orange-50 px-3 py-1.5 rounded-lg transition-colors"
+                                          >
+                                            <AlertTriangle className="h-3.5 w-3.5" /> Archive
+                                          </button>
+                                        )}
+                                        {canTerminalAction('decommission') && (
+                                          <button
+                                            onClick={() => handleDecommissionTerminal(t)}
+                                            className="flex items-center gap-1.5 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-50 px-3 py-1.5 rounded-lg transition-colors"
+                                          >
+                                            <XCircle className="h-3.5 w-3.5" /> Decommission
+                                          </button>
+                                        )}
+                                      </>
                                     )
                                   )}
                                 </div>
 
                                 {/* Exempt from Auto Archive */}
-                                {t.status !== 'ARCHIVED' && (
+                                {t.status !== 'ARCHIVED' && canTerminalAction('setautoarchiveexempt') && (
                                   <label className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 cursor-pointer mt-0.5">
                                     <input
                                       type="checkbox"
@@ -2780,18 +2877,22 @@ const POSConsole = React.memo((props) => {
                                     Inactive for {inactiveDays} day{inactiveDays === 1 ? '' : 's'} · Archive in {daysRemaining} day{daysRemaining === 1 ? '' : 's'}
                                   </span>
                                   <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                      onClick={() => handleKeepActive(t)}
-                                      className="text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1 rounded-lg transition-colors"
-                                    >
-                                      Keep Active
-                                    </button>
-                                    <button
-                                      onClick={() => handleArchiveNow(t)}
-                                      className="text-xs font-semibold text-orange-700 border border-orange-300 hover:bg-orange-100 px-3 py-1 rounded-lg transition-colors"
-                                    >
-                                      Archive Now
-                                    </button>
+                                    {canTerminalAction('keepactive') && (
+                                      <button
+                                        onClick={() => handleKeepActive(t)}
+                                        className="text-xs font-semibold text-green-700 border border-green-200 hover:bg-green-50 px-3 py-1 rounded-lg transition-colors"
+                                      >
+                                        Keep Active
+                                      </button>
+                                    )}
+                                    {canTerminalAction('archive') && (
+                                      <button
+                                        onClick={() => handleArchiveNow(t)}
+                                        className="text-xs font-semibold text-orange-700 border border-orange-300 hover:bg-orange-100 px-3 py-1 rounded-lg transition-colors"
+                                      >
+                                        Archive Now
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               );
@@ -2902,6 +3003,169 @@ const POSConsole = React.memo((props) => {
               </div>
 
             </div>
+
+            {/* ── Archive terminal (with reason) modal ── */}
+            {archiveModalTerminal && (
+              <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-gray-100">
+                  <div className="p-5 border-b border-gray-100 flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="h-5 w-5 text-orange-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-[#1E293B]">Archive Terminal</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        <span className="font-semibold">{archiveModalTerminal.terminalName || archiveModalTerminal.terminalId}</span>
+                        {' '}({archiveModalTerminal.terminalId}) will stop counting toward this branch's terminal slot limit.
+                        It can be restored later — nothing is deleted.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="p-5 space-y-3">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Archive reason <span className="normal-case font-normal text-gray-400">(optional)</span>
+                    </label>
+                    <textarea
+                      autoFocus
+                      rows={3}
+                      value={archiveModalReason}
+                      onChange={(e) => { setArchiveModalReason(e.target.value); setArchiveModalError(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitArchiveTerminal(); }}
+                      placeholder="e.g. Till replaced, device retired…"
+                      className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent"
+                    />
+                    {archiveModalError && (
+                      <p className="text-xs font-semibold text-red-600 flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {archiveModalError}
+                      </p>
+                    )}
+                  </div>
+                  <div className="p-5 pt-0 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setArchiveModalTerminal(null)}
+                      disabled={archiveModalBusy}
+                      className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitArchiveTerminal}
+                      disabled={archiveModalBusy}
+                      className="flex-1 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold text-sm transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      <AlertTriangle className="h-4 w-4" />
+                      {archiveModalBusy ? 'Archiving…' : 'Archive Terminal'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Archive Now (STALE warning) confirmation modal ── */}
+            {archiveNowModalTerminal && (
+              <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm border border-gray-100">
+                  <div className="p-5 border-b border-gray-100 flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="h-5 w-5 text-orange-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-[#1E293B]">Archive Terminal Now?</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        <span className="font-semibold">
+                          {archiveNowModalTerminal.terminalName || archiveNowModalTerminal.terminalId}
+                        </span>{' '}
+                        is stale and will free its slot immediately instead of waiting out the grace period.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="p-5 pt-4 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setArchiveNowModalTerminal(null)}
+                      disabled={archiveNowModalBusy}
+                      className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitArchiveNow}
+                      disabled={archiveNowModalBusy}
+                      className="flex-1 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-semibold text-sm transition-colors disabled:opacity-60"
+                    >
+                      {archiveNowModalBusy ? 'Archiving…' : 'Archive Now'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Decommission terminal (permanent, with reason) modal ── */}
+            {decommissionModalTerminal && (
+              <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-gray-100">
+                  <div className="p-5 border-b border-gray-100 flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
+                      <XCircle className="h-5 w-5 text-red-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-[#1E293B]">Decommission Terminal</h3>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        <span className="font-semibold">
+                          {decommissionModalTerminal.terminalName || decommissionModalTerminal.terminalId}
+                        </span>
+                        {' '}({decommissionModalTerminal.terminalId}) will be permanently retired.{' '}
+                        <span className="font-semibold text-red-600">This cannot be undone.</span>{' '}
+                        The device will need to register as a brand-new terminal, consuming a new
+                        terminal slot, to use this branch again.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="p-5 space-y-3">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Decommission reason <span className="normal-case font-normal text-gray-400">(optional)</span>
+                    </label>
+                    <textarea
+                      autoFocus
+                      rows={3}
+                      value={decommissionModalReason}
+                      onChange={(e) => { setDecommissionModalReason(e.target.value); setDecommissionModalError(''); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitDecommissionTerminal(); }}
+                      placeholder="e.g. Hardware retired, branch closed…"
+                      className="w-full border border-gray-200 rounded-xl px-3.5 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-400 focus:border-transparent"
+                    />
+                    {decommissionModalError && (
+                      <p className="text-xs font-semibold text-red-600 flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> {decommissionModalError}
+                      </p>
+                    )}
+                  </div>
+                  <div className="p-5 pt-0 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDecommissionModalTerminal(null)}
+                      disabled={decommissionModalBusy}
+                      className="flex-1 py-2.5 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitDecommissionTerminal}
+                      disabled={decommissionModalBusy}
+                      className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-semibold text-sm transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                    >
+                      <XCircle className="h-4 w-4" />
+                      {decommissionModalBusy ? 'Decommissioning…' : 'Decommission Terminal'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            </>
             );
           })()}
 

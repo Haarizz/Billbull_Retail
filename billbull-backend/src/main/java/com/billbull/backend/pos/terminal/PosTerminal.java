@@ -80,12 +80,19 @@ public class PosTerminal extends BaseEntity {
     @Column(name = "current_open_session_id")
     private Long currentOpenSessionId;
 
-    // Soft-archive fields (ARCHIVED status)
+    // Soft-archive fields (ARCHIVED status) — temporary, reversible via restore().
     @Column(name = "archived_at")
     private LocalDateTime archivedAt;
 
     @Column(name = "archive_reason", length = 255)
     private String archiveReason;
+
+    // Decommission fields (DECOMMISSIONED status) — permanent, no restore path exists for this.
+    @Column(name = "decommissioned_at")
+    private LocalDateTime decommissionedAt;
+
+    @Column(name = "decommission_reason", length = 255)
+    private String decommissionReason;
 
     /** Phase D — optional Hardware Profile assignment. */
     @Column(name = "hardware_profile_id")
@@ -178,6 +185,12 @@ public class PosTerminal extends BaseEntity {
 
     public String getArchiveReason() { return archiveReason; }
     public void setArchiveReason(String archiveReason) { this.archiveReason = archiveReason; }
+
+    public LocalDateTime getDecommissionedAt() { return decommissionedAt; }
+    public void setDecommissionedAt(LocalDateTime decommissionedAt) { this.decommissionedAt = decommissionedAt; }
+
+    public String getDecommissionReason() { return decommissionReason; }
+    public void setDecommissionReason(String decommissionReason) { this.decommissionReason = decommissionReason; }
 
     public Long getHardwareProfileId() { return hardwareProfileId; }
     public void setHardwareProfileId(Long hardwareProfileId) { this.hardwareProfileId = hardwareProfileId; }

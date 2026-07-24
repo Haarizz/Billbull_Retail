@@ -321,6 +321,51 @@ const parseUTCDate = (ts) => {
   return isNaN(d.getTime()) ? null : d;
 };
 
+// Backend 403 reason strings for terminal-unavailable are always exactly "Terminal is {STATUS}"
+// (PosTerminalService.terminalUnavailable) — parsed here so the dialog can branch per-status
+// instead of showing one undifferentiated message for every cause. See
+// BillBull-POS-Terminal-Archive-Lifecycle-Review.html Part 08/10.
+const TERMINAL_UNAVAILABLE_STATUS_CONFIG = {
+  ARCHIVED: {
+    title: 'Terminal Archived',
+    message: 'This terminal has been archived by an administrator. It can be restored — your sales history and settings will be preserved — or you can register this device as a new terminal.',
+    allowRegisterNew: true,
+    registerLabel: 'Register as New Terminal',
+    hint: 'Ask an admin to restore it from Console > Terminals & Counters if you\'d rather keep this device\'s history than register fresh.',
+  },
+  BLOCKED: {
+    title: 'Terminal Blocked',
+    message: 'This terminal has been blocked by an administrator. Registering a new terminal is not available while a block is in effect.',
+    allowRegisterNew: false,
+    hint: 'Contact an administrator to resolve this before using this device.',
+  },
+  MAINTENANCE: {
+    title: 'Terminal Under Maintenance',
+    message: 'This terminal is temporarily unavailable for maintenance. Registering a new terminal is not available until maintenance ends.',
+    allowRegisterNew: false,
+    hint: 'Try again shortly, or contact an administrator.',
+  },
+  DECOMMISSIONED: {
+    title: 'Terminal Permanently Retired',
+    message: 'This terminal has been permanently retired and cannot be restored. Register this device as a new terminal to continue.',
+    allowRegisterNew: true,
+    registerLabel: 'Register as New Terminal',
+    hint: null,
+  },
+};
+const TERMINAL_UNAVAILABLE_FALLBACK = {
+  title: 'Terminal Not Available',
+  message: 'This device\'s previously-registered terminal was archived, blocked, decommissioned, or is in maintenance.',
+  allowRegisterNew: true,
+  registerLabel: 'Register as New Terminal',
+  hint: 'Ask an admin to restore it from Console > Terminals & Counters, or register this device as a brand-new terminal below (consumes a new terminal slot).',
+};
+function resolveTerminalUnavailableConfig(rawMessage) {
+  const match = typeof rawMessage === 'string' ? rawMessage.match(/^Terminal is (\w+)$/) : null;
+  const status = match ? match[1] : null;
+  return { status, ...(TERMINAL_UNAVAILABLE_STATUS_CONFIG[status] || TERMINAL_UNAVAILABLE_FALLBACK) };
+}
+
 export default function POSSales() {
   const { company } = useCompany();
   // Active currency CODE from the company profile (falls back to AED). Report
@@ -354,6 +399,12 @@ export default function POSSales() {
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
+  // Set when this device's cached terminal_id was rejected (403 — terminal is ARCHIVED,
+  // BLOCKED, DECOMMISSIONED, or in MAINTENANCE). Surfaces the reason instead of silently
+  // leaving currentTerminal null, which previously let handleStartSession fabricate a
+  // fake, unregistered terminalId and open an orphaned "phantom" session (see
+  // docs/pos-terminal-branch-switch-investigation-2026-07-24.html follow-up).
+  const [terminalRegistrationError, setTerminalRegistrationError] = useState(null);
   // Guards state updates in registerTerminalAndResumeSession, which can be invoked from either
   // the mount-time init effect or the branch-changed listener below, both of which may outlive
   // an unmount. Must set current = true on (re-)mount, not just clear it on cleanup — StrictMode
@@ -1693,8 +1744,20 @@ export default function POSSales() {
     const cachedTerminalId = localStorage.getItem(terminalIdKey) || null;
     const deviceInfo = `${nav.userAgent.split('(')[1]?.split(')')[0] || 'Unknown'} – ${screen.width}×${screen.height}`;
 
-    const regResult = await registerPosTerminal({ terminalId: cachedTerminalId, deviceFingerprint: fp, deviceInfo }).catch(() => null);
+    let regResult = null;
+    try {
+      regResult = await registerPosTerminal({ terminalId: cachedTerminalId, deviceFingerprint: fp, deviceInfo });
+    } catch (err) {
+      if (posTerminalMountedRef.current && err?.response?.status === 403) {
+        setTerminalRegistrationError(
+          err.response?.data?.message || err.response?.data
+            || 'This device\'s registered terminal is no longer active.'
+        );
+      }
+      return;
+    }
     if (!posTerminalMountedRef.current || !regResult?.terminal) return;
+    setTerminalRegistrationError(null);
     setCurrentTerminal(regResult.terminal);
     localStorage.setItem(terminalIdKey, regResult.terminal.terminalId);
 
@@ -2209,9 +2272,19 @@ export default function POSSales() {
   }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);
 
   const handleStartSession = async () => {
+    // Never fabricate a terminalId here. A made-up ID like `T001-<timestamp>` doesn't exist
+    // in pos_terminals, so openSession() would still create a real, persisted session against
+    // it (PosSession.terminalId isn't a real FK) — but that session becomes an orphaned
+    // "phantom": invisible to the terminal console, unrecoverable on refresh, and later
+    // blocks the next day's session-open via the "previous day session still open" guard.
+    if (!currentTerminal?.terminalId) {
+      alert(terminalRegistrationError
+        || 'This device is not registered as a POS terminal yet. Please wait a moment or refresh the page before starting a session.');
+      return;
+    }
     const total = calculateDenominationTotal(denominations);
     try {
-      const terminalId = currentTerminal?.terminalId || `T001-${Date.now()}`;
+      const terminalId = currentTerminal.terminalId;
       const counterName = currentTerminal?.counterName || 'Main Counter';
       const session = await openPosSession({ terminalId, counterName, openingCash: total });
       setCurrentSession(session);
@@ -7874,6 +7947,53 @@ export default function POSSales() {
 
   return (
     <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
+      {/* ─── TERMINAL REGISTRATION REJECTED (archived / blocked / decommissioned / maintenance) ─── */}
+      {terminalRegistrationError && (() => {
+        const cfg = resolveTerminalUnavailableConfig(terminalRegistrationError);
+        return (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-amber-600 to-orange-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
+                <AlertCircle className="h-7 w-7 sm:h-10 sm:w-10 text-white" />
+              </div>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">{cfg.title}</h2>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">This device cannot register a session until this is resolved</p>
+            </div>
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-6">
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 text-sm text-slate-700">
+                {cfg.message}
+              </div>
+              {cfg.hint && (
+                <p className="text-xs text-slate-500 leading-relaxed">{cfg.hint}</p>
+              )}
+              {cfg.allowRegisterNew ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
+                      localStorage.removeItem('billbull:pos:device_fingerprint');
+                      Object.keys(localStorage)
+                        .filter(k => k.startsWith('billbull:pos:terminal_id'))
+                        .forEach(k => localStorage.removeItem(k));
+                      window.location.reload();
+                    }
+                  }}
+                  className="w-full py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-sm transition-all shadow-md"
+                >
+                  {cfg.registerLabel}
+                </button>
+              ) : (
+                <div className="w-full py-3 sm:py-3.5 rounded-2xl bg-slate-100 text-slate-500 font-semibold text-sm text-center border border-slate-200">
+                  Contact Administrator
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
       {/* ─── IDLE LOCK OVERLAY ─── */}
       {isIdleLocked && (
         <div className="fixed inset-0 z-[600] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4">

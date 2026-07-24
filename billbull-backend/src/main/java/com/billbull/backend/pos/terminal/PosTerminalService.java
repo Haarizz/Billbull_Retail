@@ -43,6 +43,16 @@ public class PosTerminalService {
     }
 
     /**
+     * A 403 whose reason string is always exactly "Terminal is {STATUS}" — the frontend parses this
+     * trailing status word to branch the "Terminal Not Available" dialog per-status (see
+     * BillBull-POS-Terminal-Archive-Lifecycle-Review.html Part 08/10). Keeping the message format
+     * stable here is the entire contract; no separate error-code field is introduced.
+     */
+    private ResponseStatusException terminalUnavailable(PosTerminalStatus status) {
+        return new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + status);
+    }
+
+    /**
      * Register or refresh a terminal. If the device fingerprint already exists and is active,
      * returns the existing terminal (idempotent). Otherwise creates a new one.
      * When PosSettings.requireTerminalApproval is true, new terminals start as PENDING_REGISTRATION.
@@ -68,7 +78,7 @@ public class PosTerminalService {
                                 || t.getStatus() == PosTerminalStatus.MAINTENANCE
                                 || t.getStatus() == PosTerminalStatus.DECOMMISSIONED
                                 || t.getStatus() == PosTerminalStatus.ARCHIVED) {
-                            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
+                            throw terminalUnavailable(t.getStatus());
                         }
                         t.setLastSeenAt(LocalDateTime.now());
                         t.setLastHeartbeatAt(LocalDateTime.now());
@@ -95,7 +105,7 @@ public class PosTerminalService {
                     || t.getStatus() == PosTerminalStatus.MAINTENANCE
                     || t.getStatus() == PosTerminalStatus.DECOMMISSIONED
                     || t.getStatus() == PosTerminalStatus.ARCHIVED) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + t.getStatus());
+                throw terminalUnavailable(t.getStatus());
             }
             t.setLastSeenAt(LocalDateTime.now());
             t.setLastHeartbeatAt(LocalDateTime.now());
@@ -108,7 +118,8 @@ public class PosTerminalService {
             return Map.of("terminal", t, "isNew", false, "pending", pending);
         }
 
-        // 3. New terminal — check limit (non-archived)
+        // 3. New terminal — check limit (excludes archived + decommissioned terminals, which have
+        // both freed their slot permanently or temporarily — see countActiveLimitByBranchId)
         PosSettings settings = settingsRepo.findByBranchId(branchId).orElse(new PosSettings());
         int max = settings.getMaxTerminalsPerBranch() != null ? settings.getMaxTerminalsPerBranch() : 5;
         long current = repo.countActiveLimitByBranchId(branchId);
@@ -169,7 +180,10 @@ public class PosTerminalService {
         if (terminal.getStatus() == PosTerminalStatus.ARCHIVED
                 || terminal.getStatus() == PosTerminalStatus.DECOMMISSIONED
                 || terminal.getStatus() == PosTerminalStatus.BLOCKED) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Terminal is " + terminal.getStatus());
+            // MAINTENANCE is deliberately NOT included here: a terminal put into maintenance mid-shift
+            // keeps heartbeating and its open session runs to completion rather than being cut off
+            // immediately. See BillBull-POS-Terminal-Archive-Lifecycle-Review.html Part 09/10.
+            throw terminalUnavailable(terminal.getStatus());
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -249,10 +263,44 @@ public class PosTerminalService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Cannot restore: terminal limit (" + max + ") would be exceeded.");
         }
-        terminal.setStatus(PosTerminalStatus.INACTIVE);
         terminal.setArchivedAt(null);
         terminal.setArchiveReason(null);
         terminal.setActive(true);
+        // Land directly in ACTIVE/IDLE using the same recent-heartbeat check keepActive() already
+        // uses, rather than INACTIVE — the device's next heartbeat would have promoted it there
+        // anyway, so this just skips the one throwaway cycle (BillBull-POS-Terminal-Archive-Lifecycle-Review.html Part 09/10).
+        boolean recentHeartbeat = terminal.getLastHeartbeatAt() != null
+                && terminal.getLastHeartbeatAt().isAfter(LocalDateTime.now().minusMinutes(15));
+        terminal.setStatus(recentHeartbeat
+                ? (terminal.getCurrentOpenSessionId() != null ? PosTerminalStatus.ACTIVE : PosTerminalStatus.IDLE)
+                : PosTerminalStatus.OFFLINE);
+        return repo.save(terminal);
+    }
+
+    /**
+     * Permanently retires a terminal. Unlike {@link #archive}, this has no restore path anywhere in
+     * the service layer — the device must register as a brand-new terminal (consuming a new slot)
+     * to use this branch again. Admin-only; never triggered automatically by any scheduled job.
+     */
+    @Transactional
+    public PosTerminal decommission(Long terminalPk, String reason) {
+        PosTerminal terminal = repo.findById(terminalPk)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
+        if (terminal.getStatus() == PosTerminalStatus.DECOMMISSIONED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Terminal is already decommissioned.");
+        }
+        if (terminal.getCurrentOpenSessionId() != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Terminal has an open session. Close the session before decommissioning.");
+        }
+        terminal.setStatus(PosTerminalStatus.DECOMMISSIONED);
+        terminal.setDecommissionedAt(LocalDateTime.now());
+        terminal.setDecommissionReason(reason);
+        // Decommissioning also clears any lingering archive bookkeeping — the terminal is retired
+        // outright, not "archived and also decommissioned".
+        terminal.setArchivedAt(null);
+        terminal.setArchiveReason(null);
+        terminal.setActive(false);
         return repo.save(terminal);
     }
 
@@ -309,6 +357,13 @@ public class PosTerminalService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
         terminal.setStatus(status);
         return repo.save(terminal);
+    }
+
+    /** Read-only lookup used by the controller to decide which permission a status change needs. */
+    @Transactional(readOnly = true)
+    public PosTerminal findByTerminalIdOrThrow(String terminalId) {
+        return repo.findByTerminalId(terminalId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalId));
     }
 
     @Transactional

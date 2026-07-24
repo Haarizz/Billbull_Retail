@@ -56,9 +56,12 @@ public interface PosTerminalRepository extends JpaRepository<PosTerminal, Long> 
     // Pending-registration terminals for a branch (awaiting supervisor approval)
     List<PosTerminal> findByBranchIdAndRegistrationStatus(Long branchId, String registrationStatus);
 
-    // Count non-archived terminals per branch (for limit enforcement)
+    // Count terminals that occupy a branch's terminal-license slot: excludes ARCHIVED (temporary,
+    // reversible — see restore()) and DECOMMISSIONED (permanent retirement — see decommission()).
+    // Both statuses represent capacity the branch is no longer using, so neither should count
+    // against maxTerminalsPerBranch; only BLOCKED and every operational status still hold a slot.
     @Query("SELECT COUNT(t) FROM PosTerminal t WHERE t.branchId = :branchId " +
-           "AND t.status != 'ARCHIVED'")
+           "AND t.status NOT IN ('ARCHIVED', 'DECOMMISSIONED')")
     long countActiveLimitByBranchId(@Param("branchId") Long branchId);
 
     // Terminal Auto-Archive lifecycle: sweep candidates for a branch — everything except
