@@ -41,6 +41,9 @@ public final class ModuleCatalog {
             "customer.inquiry", "customer.followup", "customer.message",
             // User Management resources
             "userManagement.user", "userManagement.role", "userManagement.setup",
+            // POS module (administration — day-to-day cashiering stays under sales.pos)
+            "pos", "pos.terminals", "pos.sessions", "pos.counters", "pos.devices",
+            "pos.printers", "pos.scanners", "pos.hardwareprofiles", "pos.settings",
             // Workflow override permissions (financial flow §21A maker-checker controls)
             "permissions.journal.create",
             "permissions.journal.approve",
@@ -48,7 +51,22 @@ public final class ModuleCatalog {
             "permissions.posting.backdate-into-locked",
             "permissions.sales.override-credit-limit",
             "permissions.vendor.advance",
-            "permissions.customer.advance.refund");
+            "permissions.customer.advance.refund",
+            // POS Terminal lifecycle actions (single-switch grants — the 6 CRUD flags don't
+            // express "can Block but not Decommission"; see BillBull RBAC-for-POS extension)
+            "permissions.pos.terminal.register",
+            "permissions.pos.terminal.rename",
+            "permissions.pos.terminal.assigncounter",
+            "permissions.pos.terminal.setmain",
+            "permissions.pos.terminal.approve",
+            "permissions.pos.terminal.reject",
+            "permissions.pos.terminal.archive",
+            "permissions.pos.terminal.restore",
+            "permissions.pos.terminal.block",
+            "permissions.pos.terminal.unblock",
+            "permissions.pos.terminal.decommission",
+            "permissions.pos.terminal.keepactive",
+            "permissions.pos.terminal.setautoarchiveexempt");
 
     /** lowercase key → canonical key */
     private static final Map<String, String> CANONICAL_BY_LOWERCASE = CANONICAL_MODULES.stream()

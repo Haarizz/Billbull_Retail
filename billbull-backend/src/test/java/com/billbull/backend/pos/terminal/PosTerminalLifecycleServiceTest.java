@@ -224,4 +224,29 @@ class PosTerminalLifecycleServiceTest {
         assertEquals(Boolean.TRUE, t.getAutoArchiveExempt());
         verify(auditService).logTerminalExemptChanged(eq("T001-AAAA"), eq(1L), anyString(), eq(true));
     }
+
+    // ── decommission ───────────────────────────────────────────────────────
+
+    @Test
+    void decommissionDelegatesToTerminalServiceAndAudits() {
+        PosTerminal t = terminal(1L, PosTerminalStatus.ARCHIVED);
+        t.setStaleAt(LocalDateTime.now());
+        when(terminalService.decommission(eq(1L), anyString())).thenReturn(t);
+
+        service.decommission(1L, "Hardware retired");
+
+        verify(terminalService).decommission(eq(1L), eq("Hardware retired"));
+        verify(auditService).logTerminalDecommissioned(eq("T001-AAAA"), eq(1L), anyString(), eq("Hardware retired"));
+        assertNull(t.getStaleAt());
+    }
+
+    @Test
+    void decommissionDefaultsReasonWhenBlank() {
+        PosTerminal t = terminal(1L, PosTerminalStatus.ACTIVE);
+        when(terminalService.decommission(eq(1L), anyString())).thenReturn(t);
+
+        service.decommission(1L, null);
+
+        verify(terminalService).decommission(eq(1L), eq("Decommissioned by admin"));
+    }
 }

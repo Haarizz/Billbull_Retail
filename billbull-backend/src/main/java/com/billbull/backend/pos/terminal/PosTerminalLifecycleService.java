@@ -185,6 +185,22 @@ public class PosTerminalLifecycleService {
         return restored;
     }
 
+    /**
+     * Permanently retires a terminal. Admin-only, never triggered automatically — unlike archive,
+     * there is deliberately no {@code autoDecommission} sibling to {@link #autoArchive}.
+     */
+    @Transactional
+    public PosTerminal decommission(Long terminalPk, String reason) {
+        String adminUser = currentUser();
+        String effectiveReason = (reason == null || reason.isBlank()) ? "Decommissioned by admin" : reason;
+        PosTerminal decommissioned = terminalService.decommission(terminalPk, effectiveReason);
+        decommissioned.setStaleAt(null);
+        decommissioned.setStaleWarningSentAt(null);
+        repo.save(decommissioned);
+        auditService.logTerminalDecommissioned(decommissioned.getTerminalId(), decommissioned.getBranchId(), adminUser, effectiveReason);
+        return decommissioned;
+    }
+
     @Transactional
     public PosTerminal keepActive(Long terminalPk) {
         PosTerminal terminal = repo.findById(terminalPk)
