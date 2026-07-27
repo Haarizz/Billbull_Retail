@@ -262,6 +262,26 @@ export const checkPosZReportPrintable = async (branchId, date) => {
   });
 };
 
+/**
+ * Composed Business Date / operating-hours / open-session view for POS mount —
+ * backs the blocking "previous day session still open" popup.
+ */
+export const getPosDayStatus = async (terminalId = "") => {
+  const res = await api.get(`${BASE}/sessions/day-status`, { params: { terminalId } });
+  return res.data;
+};
+
+/**
+ * Date-range session history for the X-Report history picker (browse/reprint a
+ * past closed session). branchId defaults to the caller's current branch if omitted.
+ */
+export const getPosSessionHistory = async ({ branchId, dateFrom, dateTo, terminalId, status, page = 0, size = 20 }) => {
+  const res = await api.get(`${BASE}/sessions/history`, {
+    params: { branchId, dateFrom, dateTo, terminalId, status, page, size },
+  });
+  return res.data;
+};
+
 
 // ── Unified search / scan resolver ─────────────────────────────────────────
 

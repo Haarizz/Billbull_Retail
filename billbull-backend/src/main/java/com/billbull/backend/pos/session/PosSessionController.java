@@ -1,5 +1,10 @@
 package com.billbull.backend.pos.session;
 
+import com.billbull.backend.pos.businessdate.DayStatusResponse;
+import com.billbull.backend.pos.businessdate.PosBusinessDateService;
+import com.billbull.backend.pos.businessdate.PosDayStatusService;
+import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.util.PageResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.ResponseEntity;
@@ -18,10 +23,19 @@ public class PosSessionController {
 
     private final PosSessionService service;
     private final ObjectMapper objectMapper;
+    private final PosDayStatusService dayStatusService;
+    private final PosBusinessDateService businessDateService;
+    private final BranchAccessService branchAccessService;
 
-    public PosSessionController(PosSessionService service, ObjectMapper objectMapper) {
+    public PosSessionController(PosSessionService service, ObjectMapper objectMapper,
+                                 PosDayStatusService dayStatusService,
+                                 PosBusinessDateService businessDateService,
+                                 BranchAccessService branchAccessService) {
         this.service = service;
         this.objectMapper = objectMapper;
+        this.dayStatusService = dayStatusService;
+        this.businessDateService = businessDateService;
+        this.branchAccessService = branchAccessService;
     }
 
     @PostMapping("/open")
@@ -107,7 +121,7 @@ public class PosSessionController {
     public ResponseEntity<Map<String, Object>> getZReport(
             @RequestParam Long branchId,
             @RequestParam(required = false) String date) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
         return ResponseEntity.ok(service.getZReport(branchId, reportDate));
     }
 
@@ -128,7 +142,7 @@ public class PosSessionController {
     public ResponseEntity<Void> checkZReportPrintable(
             @RequestParam Long branchId,
             @RequestParam(required = false) String date) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
         service.assertZReportPrintable(branchId, reportDate);
         return ResponseEntity.noContent().build();
     }
@@ -138,8 +152,34 @@ public class PosSessionController {
     public ResponseEntity<Map<String, Object>> closeDay(
             @RequestParam Long branchId,
             @RequestParam(required = false) String date) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
         return ResponseEntity.ok(service.closeDay(branchId, reportDate));
+    }
+
+    /** Composed business-date / operating-hours / open-session view for POS mount —
+     *  backs the blocking "previous day session still open" popup on late/new logins. */
+    @GetMapping("/day-status")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<DayStatusResponse> getDayStatus(
+            @RequestParam(required = false, defaultValue = "") String terminalId) {
+        return ResponseEntity.ok(dayStatusService.getDayStatus(terminalId));
+    }
+
+    /** Date-range session history for the X-Report history picker (browse/reprint a past
+     *  closed session). branchId defaults to the caller's current branch if omitted. */
+    @GetMapping("/history")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PageResponse<PosSessionHistoryItem>> getSessionHistory(
+            @RequestParam(required = false) Long branchId,
+            @RequestParam String dateFrom,
+            @RequestParam String dateTo,
+            @RequestParam(required = false) String terminalId,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Long resolvedBranchId = branchId != null ? branchId : branchAccessService.getRequiredCurrentUserBranch().getId();
+        return ResponseEntity.ok(service.getSessionHistory(
+                resolvedBranchId, LocalDate.parse(dateFrom), LocalDate.parse(dateTo), terminalId, status, page, size));
     }
 
     // -------------------------------------------------------------------------

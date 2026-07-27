@@ -34,6 +34,7 @@ import {
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
   reprintPosReceipt,
+  getPosDayStatus, getPosSessionHistory,
 } from '../../api/posApi';
 import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from '../../api/branchTaxApi';
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
@@ -399,6 +400,10 @@ export default function POSSales() {
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
+  // Set when the previous business date is still open past configured operating hours
+  // and the caller owns none of those open sessions — blocks POS entry with an
+  // informational popup listing the unclosed session(s) until Day Close runs.
+  const [openSessionsBlock, setOpenSessionsBlock] = useState(null); // { currentBusinessDate, openSessions } | null
   // Set when this device's cached terminal_id was rejected (403 — terminal is ARCHIVED,
   // BLOCKED, DECOMMISSIONED, or in MAINTENANCE). Surfaces the reason instead of silently
   // leaving currentTerminal null, which previously let handleStartSession fabricate a
@@ -446,6 +451,14 @@ export default function POSSales() {
   // X-Report / Z-Report live data
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
+  // X-Report history picker: browse/reprint a past CLOSED session's X-Report without
+  // disturbing the live currentSession view.
+  const [showXReportHistory, setShowXReportHistory] = useState(false);
+  const [xHistoryDateFrom, setXHistoryDateFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [xHistoryDateTo, setXHistoryDateTo] = useState(new Date().toISOString().slice(0, 10));
+  const [xHistoryResults, setXHistoryResults] = useState([]);
+  const [xHistoryLoading, setXHistoryLoading] = useState(false);
+  const [viewingHistoricalXReport, setViewingHistoricalXReport] = useState(false);
   const [zReportData, setZReportData] = useState(null);
   // Auto-print bookkeeping for X/Z reports: printedReportKeysRef dedupes so a
   // report is auto-printed at most once per session/day close; the pending refs
@@ -1773,6 +1786,19 @@ export default function POSSales() {
         setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
       }
     }
+
+    // Business-date / operating-hours check: if the previous business date is still
+    // open past configured operating hours and this cashier owns none of the unclosed
+    // sessions, block POS entry with an informational popup naming them.
+    try {
+      const dayStatus = await getPosDayStatus(termId);
+      if (posTerminalMountedRef.current) {
+        setOpenSessionsBlock(dayStatus?.blocked ? dayStatus : null);
+      }
+    } catch {
+      // Non-blocking — day-status is a UX convenience layered on top of the
+      // authoritative server-side guards already enforced in openSession/closeDay.
+    }
   }, []);
 
   // Re-run terminal/session resolution whenever the active branch changes while POS stays
@@ -1783,6 +1809,7 @@ export default function POSSales() {
       setCurrentTerminal(null);
       setCurrentSession(null);
       setTerminalLockedBy(null);
+      setOpenSessionsBlock(null);
       registerTerminalAndResumeSession();
     };
     window.addEventListener('billbull:branch-changed', handleBranchChanged);
@@ -2749,6 +2776,44 @@ export default function POSSales() {
     } finally {
       setXReportLoading(false);
     }
+  };
+
+  // Search past CLOSED sessions in a date range for the X-Report history picker.
+  const searchXReportHistory = async () => {
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    setXHistoryLoading(true);
+    try {
+      const page = await getPosSessionHistory({
+        branchId, dateFrom: xHistoryDateFrom, dateTo: xHistoryDateTo, status: 'CLOSED', size: 30,
+      });
+      setXHistoryResults(page?.content || []);
+    } catch (err) {
+      console.warn('X-Report history search failed', err);
+      setXHistoryResults([]);
+    } finally {
+      setXHistoryLoading(false);
+    }
+  };
+
+  // View a past session's X-Report read-only — never calls generatePosXReport (which
+  // would only stamp OPEN sessions anyway), so this never mutates historical state.
+  const loadHistoricalXReport = async (sessionId) => {
+    setXReportLoading(true);
+    try {
+      const data = await getPosXReport(sessionId);
+      setXReportData(data);
+      setViewingHistoricalXReport(true);
+      setShowXReportHistory(false);
+    } catch (err) {
+      console.warn('Historical X-Report load failed', err);
+    } finally {
+      setXReportLoading(false);
+    }
+  };
+
+  const returnToCurrentSessionXReport = () => {
+    setViewingHistoricalXReport(false);
+    loadXReport();
   };
 
   const loadZReport = async (date) => {
@@ -7056,6 +7121,7 @@ export default function POSSales() {
               <button onClick={handleXReportExportPDF} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
               <button onClick={handleXReportExportExcel} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
               <button onClick={handleXReportPrint} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to print the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={() => { setShowXReportHistory(true); searchXReportHistory(); }} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Calendar className="h-3 w-3" />History</button>
               <button onClick={loadXReport} disabled={xReportLoading} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
                 {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
               </button>
@@ -7083,6 +7149,13 @@ export default function POSSales() {
             );
           })()}
         </div>
+
+        {viewingHistoricalXReport && (
+          <div className="mx-6 mt-3 flex items-center justify-between gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+            <span className="text-xs text-amber-700 flex items-center gap-1"><Calendar className="h-3 w-3" />Viewing a historical session's X-Report (read-only)</span>
+            <button onClick={returnToCurrentSessionXReport} className="text-xs text-amber-800 font-semibold hover:underline">Back to Current Session</button>
+          </div>
+        )}
 
         <div className="p-6 flex-1">
           {/* Filter / Session Info Bar */}
@@ -7635,6 +7708,64 @@ export default function POSSales() {
             </button>
           </div>
         </div>
+
+        {/* ─── X-REPORT HISTORY PICKER ─── */}
+        {showXReportHistory && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-2 sm:p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-100 max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                <h3 className="text-base font-bold text-[#1E293B] flex items-center gap-2"><Calendar className="h-4 w-4 text-[#327F74]" />X-Report History</h3>
+                <button onClick={() => setShowXReportHistory(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="p-5 space-y-3 overflow-y-auto">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">From</label>
+                    <input type="date" value={xHistoryDateFrom} onChange={e => setXHistoryDateFrom(e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1.5 text-xs" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">To</label>
+                    <input type="date" value={xHistoryDateTo} onChange={e => setXHistoryDateTo(e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1.5 text-xs" />
+                  </div>
+                  <button onClick={searchXReportHistory} disabled={xHistoryLoading}
+                    className="bg-[#327F74] hover:bg-[#286660] text-white text-xs px-4 py-2 rounded flex items-center gap-1 disabled:opacity-50">
+                    <Search className="h-3 w-3" />{xHistoryLoading ? 'Searching…' : 'Search'}
+                  </button>
+                </div>
+                <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+                  {xHistoryResults.length === 0 && !xHistoryLoading && (
+                    <p className="text-xs text-slate-400 text-center py-6">No closed sessions found in this date range.</p>
+                  )}
+                  {xHistoryResults.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => loadHistoricalXReport(s.id)}
+                      className="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center gap-3 transition-all"
+                    >
+                      <div className="w-9 h-9 bg-[#327F74]/10 text-[#327F74] rounded-lg flex items-center justify-center shrink-0">
+                        <FileBarChart className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-800 truncate">
+                          {s.counterName || 'Counter'} · {s.terminalName || s.terminalId}
+                        </p>
+                        <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                          <Users className="h-3 w-3" />{s.openedBy}
+                          <span className="text-slate-300">•</span>
+                          <Clock className="h-3 w-3" />{s.closedAt ? new Date(s.closedAt).toLocaleString() : (s.openedAt ? new Date(s.openedAt).toLocaleDateString() : '—')}
+                        </p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -8143,6 +8274,68 @@ export default function POSSales() {
                   Register as New Terminal (Different Device)
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── PREVIOUS BUSINESS DATE STILL OPEN (BLOCKS POS ENTRY) ─── */}
+      {openSessionsBlock && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-amber-500 to-orange-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
+                <AlertTriangle className="h-7 w-7 sm:h-10 sm:w-10 text-white" />
+              </div>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">Previous Business Day Not Closed</h2>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">
+                Business date {openSessionsBlock.currentBusinessDate} still has open session(s) past operating hours.
+              </p>
+            </div>
+            <div className="p-4 sm:p-8 space-y-3 sm:space-y-4">
+              <p className="text-xs sm:text-sm text-slate-600">
+                POS entry is blocked until a supervisor runs Day Close for the session(s) below.
+              </p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {(openSessionsBlock.openSessions || []).map((s) => (
+                  <button
+                    key={s.sessionId}
+                    type="button"
+                    onClick={() => {
+                      // Deep-link a supervisor to the terminal that owns this session.
+                      localStorage.setItem(
+                        `billbull:pos:terminal_id:${openSessionsBlock.branchId || sessionStorage.getItem('activeBranchId') || 'default'}`,
+                        s.terminalId
+                      );
+                      window.location.reload();
+                    }}
+                    className="w-full text-left bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-2xl p-3 sm:p-4 flex items-center gap-3 shadow-sm transition-all"
+                  >
+                    <div className="w-10 h-10 bg-amber-100 border border-amber-200 text-amber-800 rounded-xl flex items-center justify-center shrink-0">
+                      <MapPin className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-slate-800 truncate">
+                        {s.counterName || 'Counter'} · {s.terminalName || s.terminalId}
+                      </p>
+                      <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                        <Users className="h-3 w-3 shrink-0" />{s.openedBy}
+                        <span className="text-slate-300">•</span>
+                        <Clock className="h-3 w-3 shrink-0" />
+                        {s.openedAt ? new Date(s.openedAt).toLocaleString() : '—'}
+                      </p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenSessionsBlock(null)}
+                className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-500 font-semibold text-xs hover:bg-slate-50 hover:text-slate-700 transition-all"
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         </div>

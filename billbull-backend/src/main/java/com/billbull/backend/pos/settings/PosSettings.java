@@ -126,6 +126,17 @@ public class PosSettings extends BaseEntity {
     @Column(name = "orphan_archive_days")
     private Integer orphanArchiveDays = 90;
 
+    // Operating hours — OFF by default on every install until an admin opts in.
+    // Branch-level, matching the per-branch scope of everything else on this entity.
+    @Column(name = "operating_hours_enabled")
+    private Boolean operatingHoursEnabled = false;
+
+    @Column(name = "operating_start_time")
+    private java.time.LocalTime operatingStartTime;
+
+    @Column(name = "operating_end_time")
+    private java.time.LocalTime operatingEndTime;
+
     // Session lifecycle
     @Column(name = "session_idle_timeout_minutes")
     private Integer sessionIdleTimeoutMinutes = 0; // 0 = disabled
@@ -256,6 +267,15 @@ public class PosSettings extends BaseEntity {
 
     public Integer getOrphanArchiveDays() { return orphanArchiveDays; }
     public void setOrphanArchiveDays(Integer orphanArchiveDays) { this.orphanArchiveDays = orphanArchiveDays; }
+
+    public Boolean getOperatingHoursEnabled() { return operatingHoursEnabled; }
+    public void setOperatingHoursEnabled(Boolean operatingHoursEnabled) { this.operatingHoursEnabled = operatingHoursEnabled; }
+
+    public java.time.LocalTime getOperatingStartTime() { return operatingStartTime; }
+    public void setOperatingStartTime(java.time.LocalTime operatingStartTime) { this.operatingStartTime = operatingStartTime; }
+
+    public java.time.LocalTime getOperatingEndTime() { return operatingEndTime; }
+    public void setOperatingEndTime(java.time.LocalTime operatingEndTime) { this.operatingEndTime = operatingEndTime; }
 
     public Integer getSessionIdleTimeoutMinutes() { return sessionIdleTimeoutMinutes; }
     public void setSessionIdleTimeoutMinutes(Integer sessionIdleTimeoutMinutes) { this.sessionIdleTimeoutMinutes = sessionIdleTimeoutMinutes; }

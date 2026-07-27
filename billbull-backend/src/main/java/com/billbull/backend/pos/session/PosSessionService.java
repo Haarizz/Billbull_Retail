@@ -1,6 +1,7 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.audit.PosAuditAction;
 import com.billbull.backend.pos.audit.PosAuditLog;
 import com.billbull.backend.pos.audit.PosAuditLogRepository;
@@ -59,6 +60,7 @@ public class PosSessionService {
     private final PosDayCloseRepository dayCloseRepository;
     private final ObjectMapper objectMapper;
     private final PosTerminalActivityService terminalActivityService;
+    private final PosBusinessDateService businessDateService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -81,7 +83,8 @@ public class PosSessionService {
                              SalesReturnRepository returnRepository,
                              PosDayCloseRepository dayCloseRepository,
                              ObjectMapper objectMapper,
-                             PosTerminalActivityService terminalActivityService) {
+                             PosTerminalActivityService terminalActivityService,
+                             PosBusinessDateService businessDateService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -96,6 +99,7 @@ public class PosSessionService {
         this.dayCloseRepository = dayCloseRepository;
         this.objectMapper = objectMapper;
         this.terminalActivityService = terminalActivityService;
+        this.businessDateService = businessDateService;
     }
 
     private String currentUser() {
@@ -121,16 +125,17 @@ public class PosSessionService {
     public PosSession openSession(String terminalId, String counterName, BigDecimal openingCash) {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         Long branchId = branch.getId();
+        LocalDate businessDate = businessDateService.getCurrentBusinessDate(branchId);
 
         // 0. Verify day is not already closed
-        if (dayCloseRepository.existsByBranchIdAndCloseDate(branchId, LocalDate.now())) {
+        if (businessDateService.isDateClosed(branchId, businessDate)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
         }
 
         // 0b. Guard against silently rolling into a new day while a prior day's session is
         // still open/suspended (BBQA-5.3-013): surface it as a distinct, machine-readable
         // status so the frontend can prompt the user to close it instead of just failing.
-        List<PosSession> stale = repo.findUnclosedSessionsBeforeDate(branchId, LocalDate.now());
+        List<PosSession> stale = repo.findUnclosedSessionsBeforeDate(branchId, businessDate);
         if (!stale.isEmpty()) {
             PosSession oldest = stale.get(0);
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -161,7 +166,7 @@ public class PosSessionService {
         session.setTerminalId(terminalId);
         session.setCounterName(counterName);
         session.setOpenedBy(currentUser());
-        session.setSessionDate(LocalDate.now());
+        session.setSessionDate(businessDate);
         session.setOpenedAt(now);
         session.setLastActivityAt(now);
         session.setDurationSeconds(null);
@@ -432,6 +437,39 @@ public class PosSessionService {
 
         auditService.logSessionOpened(updated.getId(), updated.getTerminalId(), updated.getBranchId());
         return updated;
+    }
+
+    /** Date-range session history for the X-Report history picker (reprint/browse a past
+     *  closed session). Filters implemented now: date range (required) + optional
+     *  terminalId/status. Counter/cashier filtering deliberately deferred — not indexed
+     *  today and not needed by the confirmed use case. Reuses the existing
+     *  {@code util.PaginationUtil}/{@code PageResponse} pattern rather than a bespoke list. */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.util.PageResponse<PosSessionHistoryItem> getSessionHistory(
+            Long branchId, LocalDate dateFrom, LocalDate dateTo, String terminalId, String status,
+            int page, int size) {
+        List<PosSession> sessions = repo.findByBranchIdAndSessionDateBetweenOrderByOpenedAtDesc(branchId, dateFrom, dateTo);
+        List<PosSessionHistoryItem> items = sessions.stream()
+                .filter(s -> terminalId == null || terminalId.isBlank() || terminalId.equals(s.getTerminalId()))
+                .map(s -> new PosSessionHistoryItem(
+                        s.getId(),
+                        s.getTerminalId(),
+                        resolveTerminalName(s.getTerminalId()),
+                        s.getCounterName(),
+                        s.getOpenedBy(),
+                        s.getOpenedAt(),
+                        s.getClosedAt(),
+                        s.getStatus() != null ? s.getStatus().name() : null,
+                        s.getTotalSales(),
+                        s.getInvoiceCount()))
+                .toList();
+        return com.billbull.backend.util.PaginationUtil.paginate(items, page, size, null, status);
+    }
+
+    private String resolveTerminalName(String terminalId) {
+        if (terminalId == null || terminalId.isBlank()) return null;
+        return terminalRepository.findByTerminalId(terminalId)
+                .map(com.billbull.backend.pos.terminal.PosTerminal::getTerminalName).orElse(null);
     }
 
     /** Touch lastActivityAt — called by the sales/payment path to reset the idle clock. */
@@ -902,7 +940,11 @@ public class PosSessionService {
         }
         
         dayCloseRepository.save(dayClose);
-        
+
+        // Advance the business date by exactly one day — never to LocalDate.now() (see
+        // PosBusinessDateService for why: a late catch-up close must not skip a date).
+        businessDateService.advanceBusinessDate(branchId, currentUser());
+
         return report;
     }
 

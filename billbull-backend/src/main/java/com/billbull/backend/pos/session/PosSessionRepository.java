@@ -26,6 +26,9 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     List<PosSession> findByBranchIdAndSessionDateOrderByOpenedAtDesc(Long branchId, LocalDate sessionDate);
 
+    // Date-range browsing for the Session/X-Report history picker.
+    List<PosSession> findByBranchIdAndSessionDateBetweenOrderByOpenedAtDesc(Long branchId, LocalDate from, LocalDate to);
+
     @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND s.sessionDate = :date AND s.status = 'OPEN'")
     List<PosSession> findOpenSessionsByBranchAndDate(@Param("branchId") Long branchId, @Param("date") LocalDate date);
 
