@@ -38,9 +38,14 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -691,8 +696,159 @@ public class PosSessionService {
         }
     }
 
+    // ── Day Close session-range resolution (ARCHFIX: single source of truth) ──────
+    //
+    // Resolved once per operation (Z-Report preview, Day Close summary, or the
+    // actual closeDay transaction) and reused throughout — closeDay, the dynamic
+    // Z-Report, its validations, and its reconciliation all operate on the exact
+    // same session list, eliminating the prior divergence between the open-session
+    // check (queried allSessions) and the report aggregation (queried CLOSED-only,
+    // separately). "First"/"last" session is by openedAt ascending order (falling
+    // back to id for a stable tiebreak when timestamps are equal or null).
+
+    /** Immutable snapshot of a business date's session range resolution. */
+    private static final class ResolvedSessionRange {
+        final Long branchId;
+        final LocalDate date;
+        /** Every session for branchId+date, any status, ascending by openedAt/id. */
+        final List<PosSession> allSessionsForDate;
+        /** The subset between (and including) startSession and endSession. */
+        final List<PosSession> resolvedSessions;
+        final PosSession startSession;
+        final PosSession endSession;
+        /** Sessions for the date that fall outside the resolved range. */
+        final List<PosSession> excludedSessions;
+
+        ResolvedSessionRange(Long branchId, LocalDate date, List<PosSession> allSessionsForDate,
+                              List<PosSession> resolvedSessions, PosSession startSession, PosSession endSession,
+                              List<PosSession> excludedSessions) {
+            this.branchId = branchId;
+            this.date = date;
+            this.allSessionsForDate = allSessionsForDate;
+            this.resolvedSessions = resolvedSessions;
+            this.startSession = startSession;
+            this.endSession = endSession;
+            this.excludedSessions = excludedSessions;
+        }
+    }
+
+    /**
+     * Resolves the session range for a business date. With no override, the range is
+     * the entire date (first session -> last session by openedAt), matching the
+     * pre-existing "every session is included automatically" behavior. With an
+     * explicit startSessionId/endSessionId (supervisor override), the range narrows
+     * to the sessions between those two boundaries (inclusive), and everything else
+     * for the date is reported as excluded rather than silently dropped.
+     */
+    private ResolvedSessionRange resolveSessionRange(Long branchId, LocalDate date, Long startSessionId, Long endSessionId) {
+        List<PosSession> ascending = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date).stream()
+                .sorted(Comparator
+                        .comparing(PosSession::getOpenedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PosSession::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+
+        if (ascending.isEmpty()) {
+            return new ResolvedSessionRange(branchId, date, ascending, List.of(), null, null, List.of());
+        }
+
+        PosSession startSession = startSessionId != null
+                ? resolveBoundarySession(startSessionId, branchId, date, "Start")
+                : ascending.get(0);
+        PosSession endSession = endSessionId != null
+                ? resolveBoundarySession(endSessionId, branchId, date, "End")
+                : ascending.get(ascending.size() - 1);
+
+        int startIdx = indexOfSession(ascending, startSession.getId());
+        int endIdx = indexOfSession(ascending, endSession.getId());
+        if (startIdx < 0 || endIdx < 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Session range could not be resolved for business date " + date + " — please refresh and retry.");
+        }
+        if (startIdx > endIdx) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Start session must occur before End session.");
+        }
+
+        List<PosSession> resolved = new ArrayList<>(ascending.subList(startIdx, endIdx + 1));
+        List<PosSession> excluded = new ArrayList<>();
+        excluded.addAll(ascending.subList(0, startIdx));
+        excluded.addAll(ascending.subList(endIdx + 1, ascending.size()));
+
+        return new ResolvedSessionRange(branchId, date, ascending, resolved, startSession, endSession, excluded);
+    }
+
+    private PosSession resolveBoundarySession(Long sessionId, Long branchId, LocalDate date, String label) {
+        PosSession session = getById(sessionId);
+        if (!Objects.equals(session.getBranchId(), branchId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    label + " session " + sessionId + " does not belong to branch " + branchId + ".");
+        }
+        if (!Objects.equals(session.getSessionDate(), date)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    label + " session " + sessionId + " does not belong to business date " + date + ".");
+        }
+        return session;
+    }
+
+    private static int indexOfSession(List<PosSession> sessions, Long id) {
+        for (int i = 0; i < sessions.size(); i++) {
+            if (id.equals(sessions.get(i).getId())) return i;
+        }
+        return -1;
+    }
+
+    /** Read-only preview of the resolved Day Close session range — backs the Day
+     *  Close screen's summary panel (business date, first/last session, cashiers,
+     *  counters, terminals, trading time span, session status, exclusion warnings)
+     *  shown before the supervisor confirms. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getDayCloseSummary(Long branchId, LocalDate date, Long startSessionId, Long endSessionId) {
+        ResolvedSessionRange range = resolveSessionRange(branchId, date, startSessionId, endSessionId);
+        return buildDayCloseSummary(range);
+    }
+
+    private Map<String, Object> buildDayCloseSummary(ResolvedSessionRange range) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("branchId", range.branchId);
+        result.put("businessDate", range.date.toString());
+        result.put("startSessionId", range.startSession != null ? range.startSession.getId() : null);
+        result.put("endSessionId", range.endSession != null ? range.endSession.getId() : null);
+        result.put("startSession", range.startSession != null ? buildSessionInfo(range.startSession) : null);
+        result.put("endSession", range.endSession != null ? buildSessionInfo(range.endSession) : null);
+        result.put("totalSessions", range.resolvedSessions.size());
+        result.put("cashiers", range.resolvedSessions.stream().map(PosSession::getOpenedBy)
+                .filter(Objects::nonNull).distinct().toList());
+        result.put("counters", range.resolvedSessions.stream().map(PosSession::getCounterName)
+                .filter(Objects::nonNull).distinct().toList());
+        result.put("terminals", range.resolvedSessions.stream().map(PosSession::getTerminalId)
+                .filter(Objects::nonNull).distinct().toList());
+        result.put("tradingStart", range.resolvedSessions.stream().map(PosSession::getOpenedAt)
+                .filter(Objects::nonNull).min(Comparator.naturalOrder())
+                .map(t -> t.atZone(ZoneId.systemDefault())).orElse(null));
+        result.put("tradingEnd", range.resolvedSessions.stream()
+                .map(s -> s.getClosedAt() != null ? s.getClosedAt() : s.getOpenedAt())
+                .filter(Objects::nonNull).max(Comparator.naturalOrder())
+                .map(t -> t.atZone(ZoneId.systemDefault())).orElse(null));
+        result.put("sessions", range.resolvedSessions.stream().map(this::buildSessionInfo).toList());
+
+        long openCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
+        long suspendedCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.SUSPENDED).count();
+        result.put("openSessionCount", openCount);
+        result.put("suspendedSessionCount", suspendedCount);
+        result.put("readyToClose", openCount == 0 && suspendedCount == 0 && !range.resolvedSessions.isEmpty());
+
+        result.put("excludedSessionCount", range.excludedSessions.size());
+        result.put("excludedSessions", range.excludedSessions.stream().map(this::buildSessionInfo).toList());
+        return result;
+    }
+
+    /** Backward-compatible overload — resolves the full-date range automatically. */
     @Transactional(readOnly = true)
     public Map<String, Object> getZReport(Long branchId, LocalDate date) {
+        return getZReport(branchId, date, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getZReport(Long branchId, LocalDate date, Long startSessionId, Long endSessionId) {
         // 1. Check if day is already closed
         Optional<PosDayClose> dayClose = dayCloseRepository.findByBranchIdAndCloseDate(branchId, date);
         if (dayClose.isPresent()) {
@@ -705,15 +861,22 @@ public class PosSessionService {
                 throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to parse Z-Report snapshot", e);
             }
         }
-        
-        return generateDynamicZReport(branchId, date);
+
+        ResolvedSessionRange range = resolveSessionRange(branchId, date, startSessionId, endSessionId);
+        return generateDynamicZReport(range);
     }
-    
-    private Map<String, Object> generateDynamicZReport(Long branchId, LocalDate date) {
+
+    private Map<String, Object> generateDynamicZReport(ResolvedSessionRange range) {
+        Long branchId = range.branchId;
+        LocalDate date = range.date;
         // End-of-day gate: every terminal that is still OPEN for this branch+date must
         // have generated its X-Report before the consolidated Z-Report can be produced.
         // Any open session without an X-Report stamp is reported as a pending terminal.
-        List<PosSession> openSessions = repo.findOpenSessionsByBranchAndDate(branchId, date);
+        // Scoped to the whole business date (not just the resolved range) — a pending
+        // terminal outside a supervisor-narrowed range still owes its X-Report.
+        List<PosSession> openSessions = range.allSessionsForDate.stream()
+                .filter(s -> s.getStatus() == PosSessionStatus.OPEN)
+                .toList();
         List<Map<String, Object>> pendingTerminals = new java.util.ArrayList<>();
         for (PosSession s : openSessions) {
             if (s.getXReportGeneratedAt() != null) continue;
@@ -732,7 +895,7 @@ public class PosSessionService {
         }
         boolean eligible = pendingTerminals.isEmpty();
 
-        List<PosSession> sessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date).stream()
+        List<PosSession> sessions = range.resolvedSessions.stream()
                 .filter(s -> s.getStatus() == PosSessionStatus.CLOSED)
                 .toList();
         List<Long> sessionIds = sessions.stream().map(PosSession::getId).toList();
@@ -791,6 +954,9 @@ public class PosSessionService {
         result.put("sessions", sessions);
         result.put("invoices", invoices);
         result.put("date", date.toString());
+        result.put("startSessionId", range.startSession != null ? range.startSession.getId() : null);
+        result.put("endSessionId", range.endSession != null ? range.endSession.getId() : null);
+        result.put("excludedSessionCount", range.excludedSessions.size());
         result.put("summary", summary);
         result.put("tender", tender.byBucket);
         result.put("tenderLines", tender.lines);
@@ -809,32 +975,73 @@ public class PosSessionService {
         return result;
     }
     
+    /** Backward-compatible overload — resolves the full-date range automatically and
+     *  fails closed on any exclusion (there can be none without an override). */
     @Transactional
     public Map<String, Object> closeDay(Long branchId, LocalDate date) {
+        return closeDay(branchId, date, null, null, false);
+    }
+
+    @Transactional
+    public Map<String, Object> closeDay(Long branchId, LocalDate date, Long startSessionId, Long endSessionId,
+                                        boolean acknowledgeExclusions) {
         // 1. Check lock/duplicate
         if (dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Business day has already been closed.");
         }
-        
+
         // 2. Lock branch to prevent concurrent closes for the same branch
         Branch branch = branchRepository.findById(branchId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Branch not found"));
-            
-        // 3. Validations
-        List<PosSession> allSessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date);
-        long openCount = allSessions.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
+
+        // 3. Resolve the session range ONCE (server-side, never trusting a
+        // client-cached range) and reuse it for every validation, the report
+        // aggregation, and the reconciliation below — see ResolvedSessionRange.
+        ResolvedSessionRange range = resolveSessionRange(branchId, date, startSessionId, endSessionId);
+
+        // Global blockers scoped to the WHOLE business date, not just the resolved
+        // range: an OPEN or SUSPENDED session left outside a narrowed range would
+        // still block the next business date from opening (findUnclosedSessionsBeforeDate),
+        // so it must block Day Close here regardless of range selection.
+        long openCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
         if (openCount > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: " + openCount + " POS sessions are still open.");
         }
-        
-        // Check for pending/failed payments for the date's invoices
-        List<Long> sessionIds = allSessions.stream().map(PosSession::getId).toList();
+        long suspendedCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.SUSPENDED).count();
+        if (suspendedCount > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot close day: " + suspendedCount + " POS session(s) are suspended. Resume and close them before proceeding.");
+        }
+        if (range.resolvedSessions.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: no sessions found for this business date.");
+        }
+        // Every session inside the resolved range is guaranteed CLOSED at this point —
+        // the two checks above already forbid OPEN/SUSPENDED anywhere on the date, and
+        // those are the only other statuses.
+
+        // Narrowed range excludes otherwise-eligible sessions for the date: block
+        // unless the caller has explicitly confirmed (never silently drop sales/cash
+        // from the audit trail).
+        if (!range.excludedSessions.isEmpty() && !acknowledgeExclusions) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("excludedSessionCount", range.excludedSessions.size());
+            details.put("excludedSessions", range.excludedSessions.stream().map(this::buildSessionInfo).toList());
+            throw new com.billbull.backend.exception.SessionRangeExclusionException(
+                    "The selected session range excludes " + range.excludedSessions.size()
+                            + " session(s) for business date " + date + ". Confirm to proceed.",
+                    details);
+        }
+
+        List<PosSession> sessionsInRange = range.resolvedSessions;
+
+        // Check for pending/failed payments for the resolved range's invoices
+        List<Long> sessionIds = sessionsInRange.stream().map(PosSession::getId).toList();
         List<SalesInvoice> invoices = sessionIds.isEmpty() ? List.of() : invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(branchId, sessionIds);
         long draftInvoices = invoices.stream().filter(i -> i.getStatus() == SalesInvoiceStatus.DRAFT).count();
         if (draftInvoices > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: " + draftInvoices + " Draft invoices exist.");
         }
-        
+
         List<String> invoiceNumbers = invoices.stream().map(SalesInvoice::getInvoiceNumber).toList();
         if (!invoiceNumbers.isEmpty()) {
             List<Payment> payments = paymentRepository.findTenderForInvoices(invoiceNumbers);
@@ -843,10 +1050,10 @@ public class PosSessionService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: Pending or failed payment transactions found.");
             }
         }
-        
-        // 4. Generate dynamic report
-        Map<String, Object> report = generateDynamicZReport(branchId, date);
-        
+
+        // 4. Generate dynamic report from the same resolved range
+        Map<String, Object> report = generateDynamicZReport(range);
+
         // 5. Cash Reconciliation Validation
         @SuppressWarnings("unchecked")
         Map<String, Object> summary = (Map<String, Object>) report.get("summary");
@@ -887,12 +1094,12 @@ public class PosSessionService {
 
         BigDecimal openingCash = (BigDecimal) summary.getOrDefault("openingCash", BigDecimal.ZERO);
         // Cash paid in/out is recorded in sessions.
-        BigDecimal cashPaidIn = allSessions.stream().map(s -> sumCashMovements(s, "PAY_IN")).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal cashPaidOut = allSessions.stream().map(s -> sumCashMovements(s, "PAY_OUT")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal cashPaidIn = sessionsInRange.stream().map(s -> sumCashMovements(s, "PAY_IN")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal cashPaidOut = sessionsInRange.stream().map(s -> sumCashMovements(s, "PAY_OUT")).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal expectedCashComputed = openingCash.add(cashSales).add(cashPaidIn).subtract(cashPaidOut);
 
         // Let's compute actual expected cash from sessions directly
-        BigDecimal expectedCashSessions = allSessions.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal expectedCashSessions = sessionsInRange.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal cashVariance = expectedCashComputed.subtract(expectedCashSessions);
         if (cashVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
             Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
@@ -932,14 +1139,24 @@ public class PosSessionService {
         dayClose.setExpectedCash(expectedCashSessions);
         dayClose.setTotalInvoices((Integer) summary.getOrDefault("invoiceCount", 0));
         dayClose.setTotalSessions((Integer) summary.getOrDefault("sessionCount", 0));
-        
+        dayClose.setStartSessionId(range.startSession != null ? range.startSession.getId() : null);
+        dayClose.setEndSessionId(range.endSession != null ? range.endSession.getId() : null);
+
         try {
             dayClose.setzReportJson(objectMapper.writeValueAsString(report));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to serialize Z-Report");
         }
-        
-        dayCloseRepository.save(dayClose);
+
+        PosDayClose savedDayClose = dayCloseRepository.save(dayClose);
+
+        // Stamp membership on every included session so it's directly queryable
+        // (PosSession.dayCloseId) instead of only reconstructable by parsing the
+        // day close's zReportJson snapshot.
+        for (PosSession s : sessionsInRange) {
+            s.setDayCloseId(savedDayClose.getId());
+        }
+        repo.saveAll(sessionsInRange);
 
         // Advance the business date by exactly one day — never to LocalDate.now() (see
         // PosBusinessDateService for why: a late catch-up close must not skip a date).
@@ -1091,6 +1308,8 @@ public class PosSessionService {
             }
         }
         info.put("sessionNo", s.getId() != null ? "SESS-" + String.format("%06d", s.getId()) : null);
+        info.put("sessionId", s.getId());
+        info.put("status", s.getStatus() != null ? s.getStatus().name() : null);
         info.put("terminalId", s.getTerminalId());
         info.put("terminalName", terminalName);
         info.put("counter", s.getCounterName());

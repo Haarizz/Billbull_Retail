@@ -26,7 +26,7 @@ import { getBankAccounts } from '../../api/ledgerApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
   getPosSessionById,
-  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
+  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
@@ -473,6 +473,18 @@ export default function POSSales() {
   const [zReportPending, setZReportPending] = useState(null);
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
+  // Day Close session-range resolution: the backend auto-resolves first/last session
+  // by default (rangeOverride stays null); a supervisor may narrow the range via the
+  // collapsed Advanced section, which re-triggers loadDaySummary with the override.
+  const [daySummary, setDaySummary] = useState(null);
+  const [daySummaryLoading, setDaySummaryLoading] = useState(false);
+  const [rangeOverride, setRangeOverride] = useState({ startSessionId: '', endSessionId: '' });
+  const [showAdvancedRange, setShowAdvancedRange] = useState(false);
+  const [advancedRangeUnlocked, setAdvancedRangeUnlocked] = useState(false);
+  const [pendingUnlockAdvancedRange, setPendingUnlockAdvancedRange] = useState(false);
+  // Populated when close-day is rejected with SESSION_RANGE_EXCLUSION_UNCONFIRMED —
+  // holds the excluded-session list so the supervisor can review before confirming.
+  const [rangeExclusionConfirm, setRangeExclusionConfirm] = useState(null);
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
   const [prevDaySessionOpenMsg, setPrevDaySessionOpenMsg] = useState(null);
   const [prevDaySessionOpenId, setPrevDaySessionOpenId] = useState(null);
@@ -2656,6 +2668,11 @@ export default function POSSales() {
     }
     if (valid) {
       setShowSupervisorPin(false);
+      if (pendingUnlockAdvancedRange) {
+        setAdvancedRangeUnlocked(true);
+        setShowAdvancedRange(true);
+        setPendingUnlockAdvancedRange(false);
+      }
       if (pendingVoidItemId) {
         applyVoid(pendingVoidItemId);
         setPendingVoidItemId(null);
@@ -2821,7 +2838,10 @@ export default function POSSales() {
     if (!branchId) return;
     setZReportLoading(true);
     try {
-      const data = await getPosZReport(branchId, date || zReportDate);
+      const data = await getPosZReport(
+        branchId, date || zReportDate,
+        rangeOverride.startSessionId || undefined, rangeOverride.endSessionId || undefined
+      );
       // Backend blocks the day's report until every still-open terminal has run
       // its X-Report; surface the pending list instead of the report numbers.
       if (data && data.eligible === false) {
@@ -2836,15 +2856,71 @@ export default function POSSales() {
     } finally {
       setZReportLoading(false);
     }
+    loadDaySummary(date || zReportDate);
   };
 
-  const handleCloseDay = async () => {
+  /**
+   * Day Close review-screen summary — auto-resolved first/last session by default,
+   * or the supervisor-adjusted range when rangeOverride is set. Recalculates
+   * included sessions/count/time span immediately on every range change.
+   */
+  const loadDaySummary = async (date, override) => {
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    if (!branchId) return;
+    const eff = override !== undefined ? override : rangeOverride;
+    setDaySummaryLoading(true);
+    try {
+      const data = await getPosDayCloseSummary(
+        branchId, date || zReportDate,
+        eff.startSessionId || undefined, eff.endSessionId || undefined
+      );
+      setDaySummary(data);
+    } catch (err) {
+      console.warn('Day Close summary load failed', err);
+      setDaySummary(null);
+    } finally {
+      setDaySummaryLoading(false);
+    }
+  };
+
+  const applyRangeOverride = (nextOverride) => {
+    setRangeOverride(nextOverride);
+    loadDaySummary(zReportDate, nextOverride);
+  };
+
+  const resetRangeOverride = () => {
+    applyRangeOverride({ startSessionId: '', endSessionId: '' });
+  };
+
+  // Advanced session-range override is collapsed and supervisor-gated by default,
+  // reusing the existing supervisor-PIN pattern (see handleSupervisorPinSubmit).
+  const toggleAdvancedRange = () => {
+    if (showAdvancedRange) {
+      setShowAdvancedRange(false);
+      return;
+    }
+    if (advancedRangeUnlocked) {
+      setShowAdvancedRange(true);
+      return;
+    }
+    setPendingUnlockAdvancedRange(true);
+    setSupervisorPinValue('');
+    setSupervisorPinError('');
+    setShowSupervisorPin(true);
+  };
+
+  const handleCloseDay = async (acknowledgeExclusions = false) => {
     const branchId = currentTerminal?.branchId || currentSession?.branchId;
     if (!branchId) return;
     try {
       setZReportLoading(true);
-      const data = await closePosDay(branchId, zReportDate);
+      const data = await closePosDay(
+        branchId, zReportDate,
+        rangeOverride.startSessionId || undefined, rangeOverride.endSessionId || undefined,
+        acknowledgeExclusions || undefined
+      );
       setZReportData(data);
+      setRangeExclusionConfirm(null);
       // Day closed successfully → arm the Z-Report auto-print. The effect watching
       // zReportData fires the 80mm print once, keyed on the closed date so a repeat
       // Close Day can't double-print. Only reached on success (a failure throws to
@@ -2855,6 +2931,10 @@ export default function POSSales() {
       const body = err?.response?.data;
       if (body?.code === 'RECONCILIATION_FAILED' && body?.breakdown) {
         setCloseDayVariance({ stage: body.stage, message: body.message, breakdown: body.breakdown });
+      } else if (body?.code === 'SESSION_RANGE_EXCLUSION_UNCONFIRMED') {
+        // Narrowed range leaves otherwise-eligible sessions out of this close —
+        // surface them for explicit supervisor confirmation instead of retrying blind.
+        setRangeExclusionConfirm({ message: body.message, ...body.details });
       } else {
         alert(body?.message || 'Failed to close business day.');
       }
@@ -6541,7 +6621,7 @@ export default function POSSales() {
           />
         </div>
         <button
-          onClick={() => loadZReport(zReportDate)}
+          onClick={() => { setRangeOverride({ startSessionId: '', endSessionId: '' }); setShowAdvancedRange(false); loadZReport(zReportDate); }}
           disabled={zReportLoading}
           className="mt-auto bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"
         >
@@ -6550,6 +6630,118 @@ export default function POSSales() {
             : <><Search className="h-3 w-3" />Generate</>
           }
         </button>
+      </div>
+    );
+
+    // Day Close review-screen summary: business date, auto-resolved (or supervisor-
+    // adjusted) first/last session, total sessions, cashiers/counters/terminals,
+    // trading time span, and session statuses — reviewed before Close Day is enabled.
+    const allRangeSessions = [
+      ...((daySummary?.sessions) || []),
+      ...((daySummary?.excludedSessions) || []),
+    ].sort((a, b) => new Date(a.openedAt || 0) - new Date(b.openedAt || 0));
+
+    const sessionOptionLabel = (s) => {
+      const time = s.openedAt ? new Date(s.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      return `${s.sessionNo || ('SESS-' + s.sessionId)} · ${s.cashier || '—'} · ${time} · ${s.status || ''}`;
+    };
+
+    const zrDaySummaryPanel = (
+      <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-[#1E293B] flex items-center gap-2"><Lock className="h-4 w-4 text-[#327F74]" />Day Close Summary</h3>
+          {daySummaryLoading && <span className="text-xs text-gray-400">Recalculating…</span>}
+        </div>
+        {!daySummary ? (
+          <p className="text-xs text-gray-400">Generate the report to resolve the session range for this business date.</p>
+        ) : daySummary.totalSessions === 0 ? (
+          <p className="text-xs text-gray-500">No sessions found for this business date.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs mb-3">
+              {[
+                ['Business Date', daySummary.businessDate],
+                ['First Session', daySummary.startSession ? sessionOptionLabel(daySummary.startSession) : '—'],
+                ['Last Session', daySummary.endSession ? sessionOptionLabel(daySummary.endSession) : '—'],
+                ['Total Sessions', String(daySummary.totalSessions)],
+                ['Cashiers', (daySummary.cashiers || []).join(', ') || '—'],
+                ['Terminals', (daySummary.terminals || []).join(', ') || '—'],
+              ].map(([k, v]) => (
+                <div key={k} className="flex flex-col gap-0.5">
+                  <span className="text-gray-400">{k}</span>
+                  <span className="text-[#1E293B] font-medium truncate" title={String(v)}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-4 text-xs text-gray-500 mb-2">
+              <span>Counters: <span className="text-[#1E293B]">{(daySummary.counters || []).join(', ') || '—'}</span></span>
+              <span>Trading Span: <span className="text-[#1E293B]">
+                {daySummary.tradingStart ? new Date(daySummary.tradingStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                {' – '}
+                {daySummary.tradingEnd ? new Date(daySummary.tradingEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+              </span></span>
+              {daySummary.openSessionCount > 0 && (
+                <span className="text-red-600 font-medium">{daySummary.openSessionCount} session(s) still OPEN</span>
+              )}
+              {daySummary.suspendedSessionCount > 0 && (
+                <span className="text-red-600 font-medium">{daySummary.suspendedSessionCount} session(s) SUSPENDED — resume and close first</span>
+              )}
+            </div>
+            {daySummary.excludedSessionCount > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded p-2 text-xs text-amber-800 flex items-start gap-2 mb-2">
+                <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>{daySummary.excludedSessionCount} eligible session(s) fall outside the selected range and will be excluded from this Day Close.</span>
+              </div>
+            )}
+
+            {/* Advanced: supervisor-only session-range override, collapsed by default */}
+            <div className="border-t border-[#327F74]/10 pt-2 mt-2">
+              <button
+                type="button"
+                onClick={toggleAdvancedRange}
+                className="text-xs text-[#327F74] flex items-center gap-1 hover:underline"
+              >
+                <ChevronRight className={`h-3 w-3 transition-transform ${showAdvancedRange ? 'rotate-90' : ''}`} />
+                Advanced: Adjust Session Range {advancedRangeUnlocked ? '' : '(supervisor PIN required)'}
+              </button>
+              {showAdvancedRange && advancedRangeUnlocked && (
+                <div className="flex flex-wrap items-end gap-3 mt-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-gray-500">First Session</label>
+                    <select
+                      value={rangeOverride.startSessionId || ''}
+                      onChange={e => applyRangeOverride({ ...rangeOverride, startSessionId: e.target.value })}
+                      className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-white focus:outline-none"
+                    >
+                      <option value="">Auto (earliest)</option>
+                      {allRangeSessions.map(s => (
+                        <option key={s.sessionId} value={s.sessionId}>{sessionOptionLabel(s)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-gray-500">Last Session</label>
+                    <select
+                      value={rangeOverride.endSessionId || ''}
+                      onChange={e => applyRangeOverride({ ...rangeOverride, endSessionId: e.target.value })}
+                      className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-white focus:outline-none"
+                    >
+                      <option value="">Auto (latest)</option>
+                      {allRangeSessions.map(s => (
+                        <option key={s.sessionId} value={s.sessionId}>{sessionOptionLabel(s)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {(rangeOverride.startSessionId || rangeOverride.endSessionId) && (
+                    <button type="button" onClick={resetRangeOverride} className="text-xs text-gray-500 hover:text-[#327F74] underline mb-1">
+                      Reset to automatic
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     );
 
@@ -6704,6 +6896,7 @@ export default function POSSales() {
         </div>
 
         {zrFilterBar}
+        {!zReportData?.isDayClosed && zrDaySummaryPanel}
 
         {zReportData?.isDayClosed && (
           <div className="bg-yellow-50 text-yellow-800 p-3 mb-4 rounded border border-yellow-200 flex items-center gap-2 text-sm font-semibold">
@@ -10034,6 +10227,47 @@ export default function POSSales() {
               className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
             >
               Close
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Session Range Exclusion Confirmation — the selected/auto-resolved range
+          leaves eligible sessions out of this Day Close; require explicit
+          acknowledgement before resubmitting with acknowledgeExclusions=true. */}
+      <Dialog open={!!rangeExclusionConfirm} onOpenChange={(open) => { if (!open) setRangeExclusionConfirm(null); }}>
+        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
+          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-50">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#1E293B]">Sessions Outside Selected Range</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{rangeExclusionConfirm?.message}</p>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 py-5 space-y-2 max-h-[50vh] overflow-y-auto">
+            {(rangeExclusionConfirm?.excludedSessions || []).map((s) => (
+              <div key={s.sessionId} className="flex items-center justify-between px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs">
+                <span className="text-[#1E293B] font-medium">{s.sessionNo || `SESS-${s.sessionId}`} · {s.cashier || '—'}</span>
+                <span className="text-gray-500">{s.status}</span>
+              </div>
+            ))}
+          </div>
+          <div className="px-6 pb-6 flex items-center justify-end gap-3">
+            <button
+              onClick={() => setRangeExclusionConfirm(null)}
+              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => handleCloseDay(true)}
+              className="h-10 px-5 text-sm font-medium text-[#1E293B] bg-[#F5C742] hover:bg-[#e6b838] rounded-xl transition-colors"
+            >
+              Close Day Anyway
             </button>
           </div>
         </DialogContent>

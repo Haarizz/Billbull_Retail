@@ -120,9 +120,26 @@ public class PosSessionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getZReport(
             @RequestParam Long branchId,
-            @RequestParam(required = false) String date) {
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) Long startSessionId,
+            @RequestParam(required = false) Long endSessionId) {
         LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
-        return ResponseEntity.ok(service.getZReport(branchId, reportDate));
+        return ResponseEntity.ok(service.getZReport(branchId, reportDate, startSessionId, endSessionId));
+    }
+
+    /** Day Close review-screen summary: auto-resolved (or supervisor-adjusted) first/
+     *  last session, total sessions, cashiers/counters/terminals, trading time span,
+     *  session statuses, and any sessions excluded by a narrowed range. Read-only —
+     *  does not create or modify anything. */
+    @GetMapping("/day-close/summary")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getDayCloseSummary(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) Long startSessionId,
+            @RequestParam(required = false) Long endSessionId) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        return ResponseEntity.ok(service.getDayCloseSummary(branchId, reportDate, startSessionId, endSessionId));
     }
 
     /** Hard gate checked before the frontend commits the X-Report to print/PDF/Excel.
@@ -151,9 +168,12 @@ public class PosSessionController {
     @PreAuthorize("hasAnyAuthority('SUPERVISOR', 'MANAGER', 'ADMIN', 'ROLE_SUPERVISOR', 'ROLE_MANAGER', 'ROLE_ADMIN')")
     public ResponseEntity<Map<String, Object>> closeDay(
             @RequestParam Long branchId,
-            @RequestParam(required = false) String date) {
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) Long startSessionId,
+            @RequestParam(required = false) Long endSessionId,
+            @RequestParam(required = false, defaultValue = "false") boolean acknowledgeExclusions) {
         LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
-        return ResponseEntity.ok(service.closeDay(branchId, reportDate));
+        return ResponseEntity.ok(service.closeDay(branchId, reportDate, startSessionId, endSessionId, acknowledgeExclusions));
     }
 
     /** Composed business-date / operating-hours / open-session view for POS mount —

@@ -229,16 +229,44 @@ export const setMainPosTerminal = async (terminalId) => {
   return res.data;
 };
 
-export const getPosZReport = async (branchId, date) => {
+export const getPosZReport = async (branchId, date, startSessionId, endSessionId) => {
   const res = await api.get(`${BASE}/sessions/z-report`, {
-    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+    params: {
+      branchId,
+      date: date || new Date().toISOString().slice(0, 10),
+      startSessionId: startSessionId || undefined,
+      endSessionId: endSessionId || undefined,
+    },
   });
   return res.data;
 };
 
-export const closePosDay = async (branchId, date) => {
+/**
+ * Day Close review-screen summary: auto-resolved (or supervisor-adjusted) first/last
+ * session, total sessions, cashiers/counters/terminals, trading time span, session
+ * statuses, and any sessions excluded by a narrowed range. Read-only.
+ */
+export const getPosDayCloseSummary = async (branchId, date, startSessionId, endSessionId) => {
+  const res = await api.get(`${BASE}/sessions/day-close/summary`, {
+    params: {
+      branchId,
+      date: date || new Date().toISOString().slice(0, 10),
+      startSessionId: startSessionId || undefined,
+      endSessionId: endSessionId || undefined,
+    },
+  });
+  return res.data;
+};
+
+export const closePosDay = async (branchId, date, startSessionId, endSessionId, acknowledgeExclusions) => {
   const res = await api.post(`${BASE}/sessions/close-day`, null, {
-    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+    params: {
+      branchId,
+      date: date || new Date().toISOString().slice(0, 10),
+      startSessionId: startSessionId || undefined,
+      endSessionId: endSessionId || undefined,
+      acknowledgeExclusions: acknowledgeExclusions || undefined,
+    },
   });
   return res.data;
 };

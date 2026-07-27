@@ -69,6 +69,12 @@ public class PosSession extends BaseEntity {
     @Column(name = "session_timeout_at")
     private LocalDateTime sessionTimeoutAt;
 
+    /** FK to pos_day_closes.id — set once this session is stamped into a Day Close's
+     *  resolved session range. Null while the session's business date is still open,
+     *  or if the session was explicitly excluded from a supervisor-adjusted range. */
+    @Column(name = "day_close_id")
+    private Long dayCloseId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PosSessionStatus status = PosSessionStatus.OPEN;
@@ -312,4 +318,7 @@ public class PosSession extends BaseEntity {
 
     public LocalDateTime getSessionTimeoutAt() { return sessionTimeoutAt; }
     public void setSessionTimeoutAt(LocalDateTime sessionTimeoutAt) { this.sessionTimeoutAt = sessionTimeoutAt; }
+
+    public Long getDayCloseId() { return dayCloseId; }
+    public void setDayCloseId(Long dayCloseId) { this.dayCloseId = dayCloseId; }
 }

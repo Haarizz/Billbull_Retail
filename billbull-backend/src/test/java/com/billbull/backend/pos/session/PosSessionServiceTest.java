@@ -1,6 +1,8 @@
 package com.billbull.backend.pos.session;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -12,15 +14,19 @@ import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.web.server.ResponseStatusException;
 
+import com.billbull.backend.exception.SessionRangeExclusionException;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.pos.audit.PosAuditLogRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
@@ -32,6 +38,7 @@ import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.sales.returns.SalesReturn;
 import com.billbull.backend.sales.returns.SalesReturnRepository;
 import com.billbull.backend.sales.returns.SalesReturnStatus;
+import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 
@@ -417,10 +424,181 @@ class PosSessionServiceTest {
     }
 
     // ---------------------------------------------------------------------
+    // Day Close session-range resolution (ARCHFIX: unified resolution + SUSPENDED gap)
+    // ---------------------------------------------------------------------
+
+    @Test
+    void closeDayBlocksOnSuspendedSession() {
+        // Previously SUSPENDED sessions neither blocked close nor appeared in the
+        // report — they were silently dropped. Must now behave like OPEN: block.
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession closed = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(9));
+        PosSession suspended = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.SUSPENDED, date.atStartOfDay().plusHours(10));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(suspended, closed));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.closeDay(branchId, date));
+
+        assertTrue(ex.getReason().contains("suspended"), () -> "expected suspended-session message, got: " + ex.getReason());
+    }
+
+    @Test
+    void closeDayBlocksOnOpenSession() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession open = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.OPEN, date.atStartOfDay().plusHours(9));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(open));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.closeDay(branchId, date));
+
+        assertTrue(ex.getReason().contains("open"), () -> "expected open-session message, got: " + ex.getReason());
+    }
+
+    @Test
+    void closeDayNarrowedRangeExcludingEligibleSessionRequiresAcknowledgement() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(8));
+        PosSession s2 = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(10));
+        PosSession s3 = sessionAt(3L, branchId, date, "cashierC", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(12));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s3, s2, s1));
+        when(repo.findById(1L)).thenReturn(Optional.of(s1));
+        when(repo.findById(2L)).thenReturn(Optional.of(s2));
+
+        // Narrow the range to [s1, s2] — s3 falls outside and must be flagged, not
+        // silently dropped from the day's audit trail.
+        SessionRangeExclusionException ex = assertThrows(SessionRangeExclusionException.class,
+                () -> service.closeDay(branchId, date, 1L, 2L, false));
+
+        assertEquals(1, ex.getDetails().get("excludedSessionCount"));
+    }
+
+    @Test
+    void closeDayStartAfterEndIsRejected() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(8));
+        PosSession s2 = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(10));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s2, s1));
+        when(repo.findById(1L)).thenReturn(Optional.of(s1));
+        when(repo.findById(2L)).thenReturn(Optional.of(s2));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.closeDay(branchId, date, 2L, 1L, false));
+
+        assertTrue(ex.getReason().contains("Start session must occur before End session"));
+    }
+
+    @Test
+    void closeDayBoundarySessionFromDifferentBranchIsRejected() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(8));
+        PosSession otherBranch = sessionAt(9L, 99L, date, "cashierZ", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(9));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
+        when(repo.findById(9L)).thenReturn(Optional.of(otherBranch));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.closeDay(branchId, date, 9L, 1L, false));
+
+        assertTrue(ex.getReason().contains("does not belong to branch"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void dayCloseSummaryAutoResolvesFirstAndLastAndAggregatesFields() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.OPEN, date.atStartOfDay().plusHours(8));
+        s1.setCounterName("Counter-1");
+        s1.setTerminalId("T-1");
+        PosSession s2 = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(11));
+        s2.setCounterName("Counter-2");
+        s2.setTerminalId("T-2");
+
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s2, s1));
+
+        Map<String, Object> summary = service.getDayCloseSummary(branchId, date, null, null);
+
+        assertEquals(1L, summary.get("startSessionId"));
+        assertEquals(2L, summary.get("endSessionId"));
+        assertEquals(2, summary.get("totalSessions"));
+        assertEquals(List.of("cashierA", "cashierB"), summary.get("cashiers"));
+        assertEquals(List.of("Counter-1", "Counter-2"), summary.get("counters"));
+        assertEquals(List.of("T-1", "T-2"), summary.get("terminals"));
+        assertEquals(1L, summary.get("openSessionCount"));
+        assertEquals(0L, summary.get("suspendedSessionCount"));
+        assertFalse((Boolean) summary.get("readyToClose"));
+        assertEquals(0, summary.get("excludedSessionCount"));
+    }
+
+    @Test
+    void dayCloseSummaryReportsExclusionsWhenRangeIsNarrowed() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(8));
+        PosSession s2 = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(10));
+        PosSession s3 = sessionAt(3L, branchId, date, "cashierC", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(12));
+
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s3, s2, s1));
+        when(repo.findById(1L)).thenReturn(Optional.of(s1));
+        when(repo.findById(2L)).thenReturn(Optional.of(s2));
+
+        Map<String, Object> summary = service.getDayCloseSummary(branchId, date, 1L, 2L);
+
+        assertEquals(2, summary.get("totalSessions"));
+        assertEquals(1, summary.get("excludedSessionCount"));
+        assertTrue((Boolean) summary.get("readyToClose"));
+    }
+
+    // ---------------------------------------------------------------------
     // helpers
     // ---------------------------------------------------------------------
 
     private static BigDecimal bd(String v) { return new BigDecimal(v); }
+
+    private static Branch branch(Long id) {
+        Branch b = new Branch();
+        b.setId(id);
+        b.setName("Main Branch");
+        b.setCode("MB");
+        return b;
+    }
+
+    private static PosSession sessionAt(Long id, Long branchId, LocalDate date, String openedBy,
+                                        PosSessionStatus status, LocalDateTime openedAt) {
+        PosSession s = new PosSession();
+        s.setId(id);
+        s.setBranchId(branchId);
+        s.setSessionDate(date);
+        s.setOpenedBy(openedBy);
+        s.setStatus(status);
+        s.setOpenedAt(openedAt);
+        s.setInvoiceCount(0);
+        s.setTotalSales(BigDecimal.ZERO);
+        s.setTotalCashSales(BigDecimal.ZERO);
+        s.setTotalCardSales(BigDecimal.ZERO);
+        s.setTotalCreditSales(BigDecimal.ZERO);
+        s.setTotalMixedSales(BigDecimal.ZERO);
+        return s;
+    }
 
     /** Assert numeric equality independent of scale (380 == 380.00). */
     private static void assertMoney(String expected, BigDecimal actual) {

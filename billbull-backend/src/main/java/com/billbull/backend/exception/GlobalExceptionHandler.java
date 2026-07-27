@@ -56,6 +56,22 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Day Close session range excludes otherwise-eligible sessions and the caller
+     * hasn't confirmed — 409 with the excluded-session breakdown so the frontend can
+     * show the warning and resubmit with acknowledgeExclusions=true.
+     */
+    @ExceptionHandler(SessionRangeExclusionException.class)
+    public ResponseEntity<Map<String, Object>> handleSessionRangeExclusion(SessionRangeExclusionException ex) {
+        log.warn("SessionRangeExclusionException requestId={}: {}", requestId(), ex.getMessage());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("code", "SESSION_RANGE_EXCLUSION_UNCONFIRMED");
+        body.put("message", ex.getMessage());
+        body.put("details", ex.getDetails());
+        body.put("requestId", requestId());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /**
      * Explicit HTTP status rejections (e.g. 401 from AuthController) — return the
      * declared status and log at WARN without a stack trace.
      */

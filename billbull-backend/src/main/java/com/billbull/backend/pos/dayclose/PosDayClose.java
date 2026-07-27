@@ -78,6 +78,16 @@ public class PosDayClose {
     @Column(name = "total_sessions")
     private Integer totalSessions = 0;
 
+    /** FK to pos_sessions.id — the first/last session (by openedAt order) of the
+     *  resolved range this Day Close was generated from. Populated for every close
+     *  going forward; null on rows written before this field existed. Auditability
+     *  only — the authoritative membership set is PosSession.dayCloseId. */
+    @Column(name = "start_session_id")
+    private Long startSessionId;
+
+    @Column(name = "end_session_id")
+    private Long endSessionId;
+
     public PosDayClose() {
     }
 
@@ -257,5 +267,21 @@ public class PosDayClose {
 
     public void setTotalSessions(Integer totalSessions) {
         this.totalSessions = totalSessions;
+    }
+
+    public Long getStartSessionId() {
+        return startSessionId;
+    }
+
+    public void setStartSessionId(Long startSessionId) {
+        this.startSessionId = startSessionId;
+    }
+
+    public Long getEndSessionId() {
+        return endSessionId;
+    }
+
+    public void setEndSessionId(Long endSessionId) {
+        this.endSessionId = endSessionId;
     }
 }
