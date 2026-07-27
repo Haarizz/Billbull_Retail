@@ -598,6 +598,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
   mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
+  // Dynamic payment-leg list (e.g. multi-card split: Visa/Mastercard/Amex each
+  // printed on its own line). When provided and non-empty, this takes precedence
+  // over the legacy two-slot mixedCashGiven/mixedCardGiven rendering below —
+  // callers that still pass only the legacy fields keep working unchanged.
+  paymentLines = null,
   showCreditBalance = false,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
@@ -824,11 +829,21 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
 
   if (showPaymentDetails) {
     if (invoice.paymentMode) w.gline(gutter, buildFixedWidthLine('Payment Mode:', invoice.paymentMode, width));
+    // Dynamic payment-leg list (multi-card split, or any other N-way split) — one
+    // line per leg (e.g. "Visa ... AED 300", "Mastercard ... AED 450") instead of
+    // the fixed Cash/Card two-slot layout below.
+    const validPaymentLines = Array.isArray(paymentLines)
+      ? paymentLines.filter(l => l && parseFloat(l.amount) > 0)
+      : [];
     // Mixed (cash + card) split — each tender's portion so the receipt reconciles
     // with the drawer + card batch. Otherwise fall back to Cash Received.
     const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
       (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
-    if (hasMixedSplit) {
+    if (validPaymentLines.length > 0) {
+      for (const line of validPaymentLines) {
+        w.gline(gutter, buildFixedWidthLine(`${line.label}:`, fmt(line.amount), width));
+      }
+    } else if (hasMixedSplit) {
       if (parseFloat(mixedCashGiven) > 0) w.gline(gutter, buildFixedWidthLine('Cash Paid:', fmt(mixedCashGiven), width));
       if (parseFloat(mixedCardGiven) > 0) w.gline(gutter, buildFixedWidthLine(`Card Paid${mixedCardType ? ` (${mixedCardType})` : ''}:`, fmt(mixedCardGiven), width));
     } else if (cashGiven != null && parseFloat(cashGiven) > 0) {

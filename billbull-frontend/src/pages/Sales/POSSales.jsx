@@ -595,6 +595,21 @@ export default function POSSales() {
   const [checkoutKeypadVisible, setCheckoutKeypadVisible] = useState(false);
   const [checkoutCardType, setCheckoutCardType] = useState('');
   const [checkoutCardRef, setCheckoutCardRef] = useState('');
+  // Multi-card split (Card payment mode only): [] = single-card mode, driven by
+  // checkoutCardType/checkoutCardRef above (unchanged legacy behavior). A non-empty
+  // array is the source of truth instead — one row per card, sent to the backend
+  // as PosCheckoutRequest.cardLegs (generalized Mixed-payment-style split).
+  const [checkoutCardLegs, setCheckoutCardLegs] = useState([]);
+  // Display label for the Card payment mode — "Visa" for a single card, or
+  // "Visa + Mastercard + Amex" once split across multiple. Used everywhere a
+  // preview/payload needs a human-readable payment-mode string before checkout
+  // actually posts (the backend independently derives its own combined label
+  // from the real Payment rows once the sale is recorded).
+  const checkoutCardModeLabel = useMemo(() => {
+    if (checkoutCardLegs.length === 0) return checkoutCardType || 'Card';
+    const types = checkoutCardLegs.map(l => l.cardType).filter(Boolean);
+    return types.length > 0 ? types.join(' + ') : 'Card';
+  }, [checkoutCardType, checkoutCardLegs]);
   // Online payment mode — bank account linking for reconciliation/reporting
   const [checkoutOnlineBankAccounts, setCheckoutOnlineBankAccounts] = useState([]);
   const [checkoutOnlineBankAccountsLoading, setCheckoutOnlineBankAccountsLoading] = useState(false);
@@ -1195,7 +1210,7 @@ export default function POSSales() {
         shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
         posCounterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
+        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? checkoutCardModeLabel : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
         taxInclusive: !!currentInvoice.taxInclusive,
@@ -1266,6 +1281,12 @@ export default function POSSales() {
       const previewMixedCash = checkoutPayMode === 'mixed' ? (parseFloat(mixedCashAmount) || 0) : 0;
       const previewMixedCard = checkoutPayMode === 'mixed' ? (parseFloat(mixedCardAmount) || 0) : 0;
       const previewHasMixed = checkoutPayMode === 'mixed' && (previewMixedCash > 0 || previewMixedCard > 0);
+      // Multi-card split preview — mirrors the real print path's paymentLines.
+      const previewPaymentLines = checkoutPayMode === 'card' && checkoutCardLegs.length > 0
+        ? checkoutCardLegs
+            .filter(leg => leg.cardType && (parseFloat(leg.amount) || 0) > 0)
+            .map(leg => ({ label: leg.cardType, amount: parseFloat(leg.amount) || 0 }))
+        : null;
 
       // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
       // preview must show whichever template is saved in Print Templates, same
@@ -1298,6 +1319,7 @@ export default function POSSales() {
           mixedCashGiven: previewHasMixed ? previewMixedCash : null,
           mixedCardGiven: previewHasMixed ? previewMixedCard : null,
           mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
+          paymentLines: previewPaymentLines,
         });
         const outlet = {
           name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
@@ -1335,6 +1357,7 @@ export default function POSSales() {
         mixedCashGiven: previewHasMixed ? previewMixedCash : null,
         mixedCardGiven: previewHasMixed ? previewMixedCard : null,
         mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
+        paymentLines: previewPaymentLines,
       });
 
       checkoutPreviewFreezeRef.current = html;
@@ -1344,7 +1367,7 @@ export default function POSSales() {
       return '';
     }
   }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
-    checkoutPayMode, checkoutCardType, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
+    checkoutPayMode, checkoutCardType, checkoutCardLegs, checkoutCardModeLabel, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
@@ -1386,7 +1409,7 @@ export default function POSSales() {
         saleType: currentInvoice.saleType || '',
         terminalId: currentTerminal?.terminalId || '',
         counterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
+        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? checkoutCardModeLabel : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
         taxInclusive: !!currentInvoice.taxInclusive,
@@ -1422,7 +1445,7 @@ export default function POSSales() {
       return '';
     }
   }, [showA4CheckoutPreview, checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, shippingCharge,
-    checkoutPayMode, checkoutCardType, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
+    checkoutPayMode, checkoutCardType, checkoutCardModeLabel, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
     tplInvoiceFooter, tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, tplInvoiceShowStamp,
     tplInvoiceShowSignature, tplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode, tplInvoiceColItemImage,
@@ -3775,6 +3798,10 @@ export default function POSSales() {
     mixedCashGiven = null,
     mixedCardGiven = null,
     mixedCardType = null,
+    // Dynamic payment-leg list (multi-card split) — [{label, amount}], one row per
+    // card. Takes precedence over mixedCashGiven/mixedCardGiven in every renderer
+    // when present and non-empty; null/absent falls back to the legacy fields.
+    paymentLines = null,
     customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
@@ -3916,6 +3943,7 @@ export default function POSSales() {
       mixedCashGiven,
       mixedCardGiven,
       mixedCardType,
+      paymentLines,
       depositApplied,
       balanceDue,
       shippingCharge,
@@ -4040,6 +4068,7 @@ export default function POSSales() {
       mixedCashGiven,
       mixedCardGiven,
       mixedCardType,
+      paymentLines,
       depositApplied,
       balanceDue,
       shippingCharge,
@@ -4155,6 +4184,17 @@ export default function POSSales() {
       const tenderedNum = parseFloat(tenderedAmount) || 0;
       const mixedCashNum = parseFloat(mixedCashAmount) || 0;
       const mixedCardNum = parseFloat(mixedCardAmount) || 0;
+      // Multi-card split (Card payment mode only) — when the cashier used
+      // "+ Split across multiple cards", this array is the source of truth for
+      // the card portion; checkoutCardType/checkoutCardRef drive it otherwise.
+      const activeCardLegs = checkoutPayMode === 'card' ? checkoutCardLegs : [];
+      const cardLegsPayload = activeCardLegs
+        .filter(leg => leg.cardType && (parseFloat(leg.amount) || 0) > 0)
+        .map(leg => ({
+          cardType: leg.cardType,
+          amount: parseFloat(leg.amount) || 0,
+          referenceNumber: leg.reference || null,
+        }));
       const depositSnapshot = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const effectiveDueAmt = Math.max(0, grandTotal - depositSnapshot);
       // Partial receipt against a Credit sale — the amount collected now (if any);
@@ -4165,7 +4205,7 @@ export default function POSSales() {
 
       // Build payment mode string
       let paymentMode = checkoutPayMode === 'cash' ? 'Cash'
-        : checkoutPayMode === 'card' ? (checkoutCardType || 'Card')
+        : checkoutPayMode === 'card' ? checkoutCardModeLabel
           : checkoutPayMode === 'credit' ? 'Credit'
             : checkoutPayMode === 'online' ? 'Online'
               : 'Cash + Card';
@@ -4249,6 +4289,10 @@ export default function POSSales() {
           : checkoutPayMode === 'online' ? (checkoutOnlineReference || null)
             : (checkoutCardRef || null),
         cardType: checkoutPayMode === 'credit' ? (checkoutCreditReceivedCardType || null) : (checkoutCardType || mixedCardType || null),
+        // Additive multi-card split — when present, the backend treats this as the
+        // source of truth for the card portion instead of cardAmount/cardType/
+        // cardReference above (kept populated for older-client compatibility).
+        cardLegs: cardLegsPayload.length > 0 ? cardLegsPayload : undefined,
         bankAccountName,
         sessionId: currentSession?.id || null,
         terminalId: currentTerminal?.terminalId || null,
@@ -4344,6 +4388,7 @@ export default function POSSales() {
       setCheckoutKeypadValue('');
       setCheckoutCardType('');
       setCheckoutCardRef('');
+      setCheckoutCardLegs([]);
       setCheckoutOnlineBankAccountId('');
       setCheckoutOnlineReference('');
       setCheckoutRemarks('');
@@ -4395,6 +4440,12 @@ export default function POSSales() {
               // other three fields stay on the pre-sale snapshot made the printed math
               // contradict itself (Previous showed the post-sale balance, Updated the
               // pre-sale one).
+              // Dynamic payment-leg list — only populated for an actual multi-card
+              // split, so a plain single Cash/Card/Online/Credit sale still falls
+              // back to the legacy cashGiven/mixedCashGiven/mixedCardGiven fields.
+              const paymentLinesForReceipt = cardLegsPayload.length > 0
+                ? cardLegsPayload.map(leg => ({ label: leg.cardType, amount: leg.amount }))
+                : null;
               const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                 full: savedInvoice,
                 cashGiven: paid.paidAmount,
@@ -4404,6 +4455,7 @@ export default function POSSales() {
                 mixedCashGiven: checkoutPayMode === 'mixed' && mixedCashNum > 0 ? mixedCashNum : null,
                 mixedCardGiven: checkoutPayMode === 'mixed' && mixedCardNum > 0 ? mixedCardNum : null,
                 mixedCardType: checkoutPayMode === 'mixed' ? (mixedCardType || 'Card') : null,
+                paymentLines: paymentLinesForReceipt,
                 // Print the actual selected customer's name (client item 3) — the same
                 // `customer` object the checkout preview rendered. Walk-in stays null so
                 // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
@@ -9398,6 +9450,63 @@ export default function POSSales() {
           else { setMixedCardAmount(next); setMixedCashAmount(remaining); }
         };
 
+        // ── Multi-card split (Card payment mode) ──────────────────────────────
+        // Splitting a Card payment across N cards reuses the same "sum of legs
+        // must equal the amount due" idea as the Cash/Card Mixed split above,
+        // generalized to N rows instead of a fixed 2-way complement.
+        const cardLegsTotal = checkoutCardLegs.reduce((sum, leg) => sum + (parseFloat(leg.amount) || 0), 0);
+        const cardLegsRemaining = Math.max(0, effectiveDue - cardLegsTotal);
+        const cardLegsValid = checkoutCardLegs.length > 0
+          && checkoutCardLegs.every(leg => !!leg.cardType && (parseFloat(leg.amount) || 0) > 0)
+          && Math.abs(cardLegsTotal - effectiveDue) < 0.01;
+        const cardLegDuplicateRefs = (() => {
+          const seen = new Set();
+          const dupes = new Set();
+          checkoutCardLegs.forEach(leg => {
+            const ref = (leg.reference || '').trim().toLowerCase();
+            if (!ref) return;
+            if (seen.has(ref)) dupes.add(ref); else seen.add(ref);
+          });
+          return dupes;
+        })();
+
+        const startCardSplit = () => {
+          setCheckoutCardLegs([
+            { id: 1, cardType: checkoutCardType || '', amount: effectiveDue > 0 ? effectiveDue.toFixed(2) : '', reference: checkoutCardRef || '' },
+            { id: 2, cardType: '', amount: '', reference: '' },
+          ]);
+        };
+        const addCardLeg = () => {
+          setCheckoutCardLegs(prev => {
+            const nextId = (prev.reduce((max, l) => Math.max(max, l.id), 0) || 0) + 1;
+            const remaining = Math.max(0, effectiveDue - prev.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0));
+            return [...prev, { id: nextId, cardType: '', amount: remaining > 0 ? remaining.toFixed(2) : '', reference: '' }];
+          });
+        };
+        const removeCardLeg = (id) => {
+          setCheckoutCardLegs(prev => {
+            const next = prev.filter(l => l.id !== id);
+            // Dropping back to a single row collapses back to plain single-card mode
+            // (legacy checkoutCardType/checkoutCardRef fields) rather than a 1-row split.
+            if (next.length <= 1) return [];
+            return next;
+          });
+        };
+        const updateCardLeg = (id, field, rawValue) => {
+          setCheckoutCardLegs(prev => prev.map(l => {
+            if (l.id !== id) return l;
+            if (field === 'amount') return { ...l, amount: sanitizeAmountInput(rawValue) };
+            return { ...l, [field]: rawValue };
+          }));
+        };
+        const fillRemainingOnLeg = (id) => {
+          setCheckoutCardLegs(prev => {
+            const others = prev.filter(l => l.id !== id).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            const remaining = Math.max(0, effectiveDue - others);
+            return prev.map(l => l.id === id ? { ...l, amount: remaining.toFixed(2) } : l);
+          });
+        };
+
         // On-screen keypad handler (touch terminals). Physical-keyboard typing is
         // wired directly on each <input>'s onChange via sanitizeAmountInput /
         // applyMixedAmount so both input methods work on the same POS screen.
@@ -9442,7 +9551,7 @@ export default function POSSales() {
 
         const canSettle =
           (checkoutPayMode === 'cash' && tenderedNum >= effectiveDue) ||
-          (checkoutPayMode === 'card' && !!checkoutCardType) ||
+          (checkoutPayMode === 'card' && (checkoutCardLegs.length === 0 ? !!checkoutCardType : (cardLegsValid && cardLegDuplicateRefs.size === 0))) ||
           (checkoutPayMode === 'credit' && !!checkoutCreditCustomer && creditReceivedModeReady) ||
           (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && !!mixedCardType) ||
           (checkoutPayMode === 'online' && !!checkoutOnlineBankAccountId);
@@ -9627,7 +9736,7 @@ export default function POSSales() {
                   )}
 
                   {/* ── Card section ── */}
-                  {checkoutPayMode === 'card' && (
+                  {checkoutPayMode === 'card' && checkoutCardLegs.length === 0 && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment</p>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
@@ -9655,6 +9764,75 @@ export default function POSSales() {
                         />
                       </div>
                       {!checkoutCardType && <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a card type to proceed</span></div>}
+                      <button type="button" onClick={startCardSplit}
+                        className="w-full py-2 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:border-[#F5C742] hover:text-[#1E293B] transition-all">
+                        + Split across multiple cards
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ── Card section: multi-card split ── */}
+                  {checkoutPayMode === 'card' && checkoutCardLegs.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment — Split</p>
+                        <button type="button" onClick={() => setCheckoutCardLegs([])}
+                          className="text-[10px] font-bold text-gray-400 hover:text-gray-600 underline">Use single card</button>
+                      </div>
+                      {checkoutCardLegs.map((leg, idx) => (
+                        <div key={leg.id} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-gray-500 uppercase">Card {idx + 1}</span>
+                            <button type="button" onClick={() => removeCardLeg(leg.id)}
+                              className="text-gray-400 hover:text-red-500 transition-colors" aria-label={`Remove card ${idx + 1}`}>
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <select value={leg.cardType} onChange={e => updateCardLeg(leg.id, 'cardType', e.target.value)}
+                              className="rounded-lg border border-gray-200 bg-white px-2 py-2 text-xs font-bold text-gray-700 outline-none focus:border-[#F5C742]">
+                              <option value="">Card type…</option>
+                              {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => <option key={ct} value={ct}>{ct}</option>)}
+                            </select>
+                            <div className="flex items-center rounded-lg border border-gray-200 bg-white px-2 py-1">
+                              <span className="text-[10px] font-bold text-gray-400 mr-1"><DirhamSymbol /></span>
+                              <input type="text" inputMode="decimal" autoComplete="off" value={leg.amount}
+                                placeholder="0.00"
+                                onFocus={() => setCheckoutKeypadVisible(false)}
+                                onChange={e => updateCardLeg(leg.id, 'amount', e.target.value)}
+                                className="w-full text-sm font-bold text-gray-800 outline-none bg-transparent" />
+                              <button type="button" onClick={() => fillRemainingOnLeg(leg.id)}
+                                className="text-[9px] font-bold text-[#F5C742] uppercase shrink-0 ml-1">Fill</button>
+                            </div>
+                          </div>
+                          <input type="text" autoComplete="off" value={leg.reference}
+                            placeholder="Reference no. (optional)"
+                            onChange={e => updateCardLeg(leg.id, 'reference', e.target.value)}
+                            className={`w-full rounded-lg border px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-[#F5C742] ${
+                              leg.reference && cardLegDuplicateRefs.has(leg.reference.trim().toLowerCase()) ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'
+                            }`} />
+                        </div>
+                      ))}
+                      <button type="button" onClick={addCardLeg}
+                        className="w-full py-2 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:border-[#F5C742] hover:text-[#1E293B] transition-all">
+                        + Add Another Card
+                      </button>
+                      <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${cardLegsRemaining < 0.01 ? 'bg-green-50 border-2 border-green-200' : 'bg-[#F5C742]/10 border-2 border-[#F5C742]'}`}>
+                        <span className="text-xs font-bold text-gray-500 uppercase">Remaining Balance</span>
+                        <span className="text-xl font-black text-[#1E293B]"><CurrencyAmount amount={cardLegsRemaining} /></span>
+                      </div>
+                      {cardLegDuplicateRefs.size > 0 && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                          <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
+                          <span className="text-xs text-red-700">Duplicate reference number across cards.</span>
+                        </div>
+                      )}
+                      {!cardLegsValid && cardLegDuplicateRefs.size === 0 && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                          <span className="text-xs text-amber-700">Every card needs a type and amount, and the total must equal the amount due.</span>
+                        </div>
+                      )}
                     </div>
                   )}
 

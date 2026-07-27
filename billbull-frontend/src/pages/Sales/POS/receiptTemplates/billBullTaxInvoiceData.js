@@ -143,6 +143,7 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
           mixedCashGiven: txn.payment.mixedCashGiven != null ? Number(txn.payment.mixedCashGiven) : null,
           mixedCardGiven: txn.payment.mixedCardGiven != null ? Number(txn.payment.mixedCardGiven) : null,
           mixedCardType: txn.payment.mixedCardType || "",
+          paymentLines: Array.isArray(txn.payment.paymentLines) ? txn.payment.paymentLines : null,
         }
       : null,
     loyalty: on(toggles.showLoyalty) ? txn.loyalty || null : null,
@@ -353,6 +354,9 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
       mixedCashGiven: opts.mixedCashGiven != null ? Number(opts.mixedCashGiven) : null,
       mixedCardGiven: opts.mixedCardGiven != null ? Number(opts.mixedCardGiven) : null,
       mixedCardType: opts.mixedCardType || "",
+      // Dynamic payment-leg list (e.g. multi-card split) — takes precedence over
+      // mixedCashGiven/mixedCardGiven in the renderer when present and non-empty.
+      paymentLines: Array.isArray(opts.paymentLines) ? opts.paymentLines : null,
     },
     vatSummary: {
       standardRateAmount: vatStandard,

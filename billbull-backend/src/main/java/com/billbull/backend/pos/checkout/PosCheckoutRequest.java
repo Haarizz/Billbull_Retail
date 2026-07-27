@@ -39,6 +39,25 @@ public class PosCheckoutRequest {
     private Double shippingCharge;
     private Boolean taxInclusive;
     private List<PosCheckoutItem> items;
+    /** Additive multi-card split: when present and non-empty, this is the source of truth for
+     *  the card portion of the payment instead of the legacy scalar cardAmount/cardType/cardReference.
+     *  Each entry becomes its own Payment row / Receipt Voucher / GL posting, exactly like the
+     *  existing Cash+Card Mixed-payment split, just generalized to N card legs. */
+    private List<PosCardLeg> cardLegs;
+
+    /** One card leg of a (possibly multi-card) Card payment. */
+    public static class PosCardLeg {
+        private String cardType;
+        private Double amount;
+        private String referenceNumber;
+
+        public String getCardType() { return cardType; }
+        public void setCardType(String cardType) { this.cardType = cardType; }
+        public Double getAmount() { return amount; }
+        public void setAmount(Double amount) { this.amount = amount; }
+        public String getReferenceNumber() { return referenceNumber; }
+        public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
+    }
 
     public static class PosCheckoutItem {
         private String itemCode;
@@ -145,4 +164,6 @@ public class PosCheckoutRequest {
     public void setTaxInclusive(Boolean taxInclusive) { this.taxInclusive = taxInclusive; }
     public List<PosCheckoutItem> getItems() { return items; }
     public void setItems(List<PosCheckoutItem> items) { this.items = items; }
+    public List<PosCardLeg> getCardLegs() { return cardLegs; }
+    public void setCardLegs(List<PosCardLeg> cardLegs) { this.cardLegs = cardLegs; }
 }
