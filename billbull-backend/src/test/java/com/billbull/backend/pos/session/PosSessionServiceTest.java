@@ -28,6 +28,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.exception.SessionRangeExclusionException;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.pos.audit.PosAuditLogRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
@@ -77,6 +79,8 @@ class PosSessionServiceTest {
     @Mock private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     @Mock private com.billbull.backend.pos.businessdate.PosBusinessDateService businessDateService;
+    @Mock private PosCashMovementRepository cashMovementRepository;
+    @Mock private com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository;
 
     private PosSessionService service;
 
@@ -85,7 +89,7 @@ class PosSessionServiceTest {
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
                 terminalRepository, returnRepository, dayCloseRepository, objectMapper, terminalActivityService,
-                businessDateService);
+                businessDateService, cashMovementRepository, receiptVoucherRepository);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
         // Default: no tender / audit rows unless a test stubs them.
         lenient().when(paymentRepository.sumTenderByModeForInvoices(any())).thenReturn(List.of());
@@ -93,6 +97,9 @@ class PosSessionServiceTest {
         lenient().when(auditLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
         lenient().when(terminalRepository.findByTerminalId(any())).thenReturn(java.util.Optional.empty());
         lenient().when(returnRepository.findByReturnDateAndBranchWithItems(any(), any())).thenReturn(List.of());
+        lenient().when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(any())).thenReturn(List.of());
+        lenient().when(cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(any())).thenReturn(List.of());
+        lenient().when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(any(), any(), any())).thenReturn(List.of());
     }
 
     // ---------------------------------------------------------------------
@@ -569,6 +576,140 @@ class PosSessionServiceTest {
     }
 
     // ---------------------------------------------------------------------
+    // Consolidated Cash Position — additive section, must not disturb Expected Cash
+    // ---------------------------------------------------------------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportConsolidatedCashPositionExcludesBackOfficeReceipts() {
+        PosSession session = openSession();
+        session.setBranchId(7L);
+        session.setSessionDate(LocalDate.now());
+        session.setOpeningCash(bd("100"));
+        session.getCashMovements().add(cashMovement("DROP_IN", bd("40")));
+        session.getCashMovements().add(cashMovement("DROP_OUT", bd("10")));
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(300.0, 0.0)));
+        when(paymentRepository.sumTenderByModeForInvoices(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("300"), 1L }));
+
+        PosCashMovement dropIn = cashMovement("DROP_IN", bd("40"));
+        PosCashMovement dropOut = cashMovement("DROP_OUT", bd("10"));
+        when(cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(List.of(1L)))
+                .thenReturn(List.of(dropIn, dropOut));
+
+        Map<String, Object> result = service.getXReport(1L);
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+        Map<String, Object> cashPosition = (Map<String, Object>) summary.get("cashPosition");
+
+        List<Map<String, Object>> cashDropRows = (List<Map<String, Object>>) cashPosition.get("cashDropRows");
+        assertEquals(2, cashDropRows.size());
+        assertMoney("30", (BigDecimal) cashPosition.get("cashDropTotal"));
+        assertMoney("0", (BigDecimal) cashPosition.get("customerReceiptsTotal"));
+        assertMoney("0", (BigDecimal) cashPosition.get("customerAdvancesTotal"));
+        assertEquals(false, cashPosition.get("cashRefundsSupported"));
+        // net = opening(100) + cashSales(300) + receipts(0) + advances(0) + dropIn(40) - dropOut(10)
+        assertMoney("430", (BigDecimal) cashPosition.get("netCashPosition"));
+
+        // X-Report must never query back-office receipts (no session linkage exists yet).
+        verify(receiptVoucherRepository, org.mockito.Mockito.never())
+                .findCompletedByBranchAndDateAndPurpose(any(), any(), any());
+
+        // Existing Expected Cash in Drawer must be untouched by the new section.
+        assertMoney("430", (BigDecimal) summary.get("expectedCash"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void zReportConsolidatedCashPositionIncludesCashOnlyReceiptsAndAdvances() {
+        PosSession s1 = openSession();
+        s1.setStatus(PosSessionStatus.CLOSED);
+        s1.setBranchId(7L);
+        s1.setOpeningCash(bd("100"));
+        s1.setInvoiceCount(1);
+
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
+                .thenReturn(List.of(s1));
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
+                .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
+        when(paymentRepository.sumTenderByModeForInvoices(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
+        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L)))
+                .thenReturn(List.<Object[]>of(
+                        new Object[]{ "DROP_IN", bd("30") },
+                        new Object[]{ "DROP_OUT", bd("5") }));
+
+        ReceiptVoucher cashReceipt = receiptVoucher("Alice", "Cash", bd("50"));
+        ReceiptVoucher cardReceipt = receiptVoucher("Bob", "Card", bd("999")); // must be excluded (not cash)
+        when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(eq(7L), any(LocalDate.class), eq(ReceiptPurpose.CASH_SALE)))
+                .thenReturn(List.of(cashReceipt, cardReceipt));
+        when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(eq(7L), any(LocalDate.class), eq(ReceiptPurpose.AGAINST_INVOICE)))
+                .thenReturn(List.of());
+        ReceiptVoucher cashAdvance = receiptVoucher("Dana", "Cash", bd("75"));
+        when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(eq(7L), any(LocalDate.class), eq(ReceiptPurpose.ADVANCE_RECEIVED)))
+                .thenReturn(List.of(cashAdvance));
+
+        Map<String, Object> result = service.getZReport(7L, LocalDate.now());
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+        Map<String, Object> cashPosition = (Map<String, Object>) summary.get("cashPosition");
+
+        assertMoney("50", (BigDecimal) cashPosition.get("customerReceiptsTotal")); // card receipt excluded
+        assertMoney("75", (BigDecimal) cashPosition.get("customerAdvancesTotal"));
+        List<Map<String, Object>> receiptRows = (List<Map<String, Object>>) cashPosition.get("customerReceiptRows");
+        assertEquals(1, receiptRows.size());
+        assertEquals("Alice", receiptRows.get(0).get("customerName"));
+        assertMoney("30", (BigDecimal) cashPosition.get("cashDropIn"));
+        assertMoney("5", (BigDecimal) cashPosition.get("cashDropOut"));
+
+        // net = opening(100) + cashSales(200) + receipts(50) + advances(75) + dropIn(30) - dropOut(5)
+        assertMoney("450", (BigDecimal) cashPosition.get("netCashPosition"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Day Close reconciliation bug fix — DROP_IN/DROP_OUT, not PAY_IN/PAY_OUT
+    // ---------------------------------------------------------------------
+
+    @Test
+    void closeDayCashReconciliationAccountsForActualDropInDropOutMovementTypes() {
+        // Regression test for the PAY_IN/PAY_OUT vs DROP_IN/DROP_OUT mismatch: before the
+        // fix, cashPaidIn/cashPaidOut were always zero (no code ever writes "PAY_IN"/
+        // "PAY_OUT"), so a business day with real cash drops recorded on its session(s)
+        // would fail this reconciliation with a false variance, purely from the string
+        // mismatch — not a genuine discrepancy.
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(9));
+        s1.setOpeningCash(bd("100"));
+        s1.setInvoiceCount(1);
+        // Persisted per-session Expected Cash already correctly includes the drop in/out
+        // (computeExpectedCash is untouched): 100 opening + 200 cash tender + 50 dropIn - 20 dropOut = 330.
+        s1.setExpectedCash(bd("330"));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(eq(branchId), any()))
+                .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
+        when(paymentRepository.sumTenderByModeForInvoices(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
+        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L)))
+                .thenReturn(List.<Object[]>of(
+                        new Object[]{ "DROP_IN", bd("50") },
+                        new Object[]{ "DROP_OUT", bd("20") }));
+        when(dayCloseRepository.save(any(com.billbull.backend.pos.dayclose.PosDayClose.class))).thenAnswer(inv -> {
+            com.billbull.backend.pos.dayclose.PosDayClose d = inv.getArgument(0);
+            d.setId(99L);
+            return d;
+        });
+
+        // Must NOT throw ReconciliationException("CASH", ...) now that DROP_IN/DROP_OUT
+        // are the movement types actually checked.
+        Map<String, Object> report = service.closeDay(branchId, date);
+
+        assertEquals(true, report.get("isDayClosed"));
+    }
+
+    // ---------------------------------------------------------------------
     // helpers
     // ---------------------------------------------------------------------
 
@@ -647,6 +788,15 @@ class PosSessionServiceTest {
         inv.setBillDiscountAmount(BigDecimal.ZERO);
         inv.setPaymentMode("Cash");
         return inv;
+    }
+
+    private ReceiptVoucher receiptVoucher(String customerName, String paymentMode, BigDecimal amount) {
+        ReceiptVoucher rv = new ReceiptVoucher();
+        rv.setMemberName(customerName);
+        rv.setPaymentMode(paymentMode);
+        rv.setAmount(amount);
+        rv.setStatus("Completed");
+        return rv;
     }
 
     private SalesReturn salesReturn(String linkedInvoice, SalesReturnStatus status, String action, double amount) {

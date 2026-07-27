@@ -5756,6 +5756,20 @@ export default function POSSales() {
     const openingCash = zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0);
     const expectedCash = openingCash + cashSalesV;
     const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
+    // Consolidated Cash Position — additive, informational-only summary alongside the
+    // existing Cash Drawer Summary above. Never feeds `expectedCash`/cash variance.
+    const cashPosition = zSummary.cashPosition || {};
+    const cpOpeningCash = Number(cashPosition.openingCash ?? openingCash);
+    const cpCashSales = Number(cashPosition.cashSales ?? cashSalesV);
+    const cpReceiptsTotal = Number(cashPosition.customerReceiptsTotal ?? 0);
+    const cpAdvancesTotal = Number(cashPosition.customerAdvancesTotal ?? 0);
+    const cpDropIn = Number(cashPosition.cashDropIn ?? 0);
+    const cpDropOut = Number(cashPosition.cashDropOut ?? 0);
+    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
+    const cpNet = Number(cashPosition.netCashPosition ?? (cpOpeningCash + cpCashSales + cpReceiptsTotal + cpAdvancesTotal + cpDropIn - cpDropOut));
+    const cpReceiptRows = Array.isArray(cashPosition.customerReceiptRows) ? cashPosition.customerReceiptRows : [];
+    const cpAdvanceRows = Array.isArray(cashPosition.customerAdvanceRows) ? cashPosition.customerAdvanceRows : [];
+    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
     const zId = zSessions[0]?.id;
     const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
 
@@ -5880,6 +5894,44 @@ export default function POSSales() {
             ['Cash Sales', fmt(cashSalesV)],
             ['Expected Cash in Drawer', fmt(expectedCash)],
           ],
+        },
+        {
+          title: '4a. Consolidated Cash Position (Informational)', type: 'table',
+          cols: ['Description', 'Amount'],
+          rows: [
+            ['Opening Cash', fmt(cpOpeningCash)],
+            ['Cash Sales', fmt(cpCashSales)],
+            ['Customer Receipts (Cash)', fmt(cpReceiptsTotal)],
+            ['Customer Advances (Cash)', fmt(cpAdvancesTotal)],
+            ['Cash Drop In', fmt(cpDropIn)],
+            ['Cash Refunds (Cash)', cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not available — refund payment mode not tracked'],
+            ['Cash Drop Out', cpDropOut > 0 ? `(${fmt(cpDropOut)})` : fmt(0)],
+          ],
+          footer: ['Net Cash Position', fmt(cpNet)],
+        },
+        {
+          title: '4b. Customer Receipts', type: 'table',
+          cols: ['Sl No', 'Customer Name', 'Received By', 'Received Amount'],
+          rows: cpReceiptRows.length
+            ? cpReceiptRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.receivedBy || '—', fmt(Number(r.receivedAmount ?? 0))])
+            : [['—', 'No cash customer receipts', '—', fmt(0)]],
+          footer: ['', '', 'Total', fmt(cpReceiptsTotal)],
+        },
+        {
+          title: '4c. Customer Advances', type: 'table',
+          cols: ['Sl No', 'Customer Name', 'Paid By', 'Paid Amount'],
+          rows: cpAdvanceRows.length
+            ? cpAdvanceRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.paidBy || '—', fmt(Number(r.paidAmount ?? 0))])
+            : [['—', 'No cash customer advances', '—', fmt(0)]],
+          footer: ['', '', 'Total', fmt(cpAdvancesTotal)],
+        },
+        {
+          title: '4d. Cash Drop / Cash Out', type: 'table',
+          cols: ['Sl No', 'Type', 'Amount'],
+          rows: cpDropRows.length
+            ? cpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', fmt(Number(r.amount ?? 0))])
+            : [['—', 'No cash drops recorded', fmt(0)]],
+          footer: ['', 'Total', fmt(cpDropIn - cpDropOut)],
         },
         {
           title: '5. Card / Bank Settlement Summary', type: 'table',
@@ -6017,6 +6069,19 @@ export default function POSSales() {
     const invoiceCount = zSummary.invoiceCount ?? 0;
     const openingCash = fmt(zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0));
     const expectedCash = fmt(openingCash + cashSalesV);
+    // Consolidated Cash Position — additive, informational-only (see buildZReportViewModel).
+    const cashPosition = zSummary.cashPosition || {};
+    const cpOpeningCash = fmt(cashPosition.openingCash ?? openingCash);
+    const cpCashSales = fmt(cashPosition.cashSales ?? cashSalesV);
+    const cpReceiptsTotal = fmt(cashPosition.customerReceiptsTotal ?? 0);
+    const cpAdvancesTotal = fmt(cashPosition.customerAdvancesTotal ?? 0);
+    const cpDropIn = fmt(cashPosition.cashDropIn ?? 0);
+    const cpDropOut = fmt(cashPosition.cashDropOut ?? 0);
+    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
+    const cpNet = fmt(cashPosition.netCashPosition ?? (cpOpeningCash + cpCashSales + cpReceiptsTotal + cpAdvancesTotal + cpDropIn - cpDropOut));
+    const cpReceiptRows = Array.isArray(cashPosition.customerReceiptRows) ? cashPosition.customerReceiptRows : [];
+    const cpAdvanceRows = Array.isArray(cashPosition.customerAdvanceRows) ? cashPosition.customerAdvanceRows : [];
+    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
     const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
     const creditTotal = fmt(creditInvoices.reduce((s, inv) => s + Number(inv.invoiceTotal || 0), 0));
     const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
@@ -6035,6 +6100,18 @@ export default function POSSales() {
       { Section: 'Cash Drawer', Description: 'Opening Cash / Float', Count: '', Amount: openingCash },
       { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
       { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
+      // Consolidated Cash Position — additive, informational only (see buildZReportViewModel).
+      { Section: 'Consolidated Cash Position', Description: 'Opening Cash', Count: '', Amount: cpOpeningCash },
+      { Section: '', Description: 'Cash Sales', Count: '', Amount: cpCashSales },
+      { Section: '', Description: 'Customer Receipts (Cash)', Count: cpReceiptRows.length, Amount: cpReceiptsTotal },
+      { Section: '', Description: 'Customer Advances (Cash)', Count: cpAdvanceRows.length, Amount: cpAdvancesTotal },
+      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cpDropIn },
+      { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
+      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cpDropOut },
+      { Section: '', Description: 'Net Cash Position', Count: '', Amount: cpNet },
+      ...cpReceiptRows.map((r, i) => ({ Section: i === 0 ? 'Customer Receipts Detail' : '', Description: r.customerName || '—', Count: r.receivedBy || '—', Amount: fmt(r.receivedAmount ?? 0) })),
+      ...cpAdvanceRows.map((r, i) => ({ Section: i === 0 ? 'Customer Advances Detail' : '', Description: r.customerName || '—', Count: r.paidBy || '—', Amount: fmt(r.paidAmount ?? 0) })),
+      ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
       { Section: 'VAT / Tax', Description: 'VAT 5% — Taxable Amount', Count: '', Amount: salesExTaxV },
       { Section: '', Description: 'VAT 5% — Tax Amount', Count: '', Amount: totalTaxV },
       { Section: '', Description: 'Total Inc. VAT', Count: '', Amount: totalSalesV },
@@ -6083,6 +6160,12 @@ export default function POSSales() {
     const cashDropIn = Number(xSummary.cashDropIn ?? 0);
     const cashDropOut = Number(xSummary.cashDropOut ?? 0);
     const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
+    // Consolidated Cash Position — additive, informational-only. X-Report never includes
+    // Customer Receipts/Advances (back-office vouchers with no session linkage yet).
+    const cashPosition = xSummary.cashPosition || {};
+    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
+    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
+    const cpNet = Number(cashPosition.netCashPosition ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
     const expectedCashVal = Number(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
     const reportDenominations = getReportClosingDenominations();
     const actualCash = calculateDenominationTotal(reportDenominations);
@@ -6189,6 +6272,28 @@ export default function POSSales() {
             ['Actual Cash Counted', fmt(actualCash)],
           ],
           footer: ['Cash Variance (' + varStatus + ')', fmt(Math.abs(cashVariance))],
+        },
+        {
+          title: '2a. Consolidated Cash Position (Informational)', type: 'table',
+          cols: ['Description', 'Amount'],
+          rows: [
+            ['Opening Cash', fmt(openingCashVal)],
+            ['Cash Sales', fmt(cashSalesV)],
+            ['Customer Receipts (Cash)', 'Not available in X-Report (no session linkage yet)'],
+            ['Customer Advances (Cash)', 'Not available in X-Report (no session linkage yet)'],
+            ['Cash Drop In', fmt(cashDropIn)],
+            ['Cash Refunds (Cash)', cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not available — refund payment mode not tracked'],
+            ['Cash Drop Out', cashDropOut > 0 ? `(${fmt(cashDropOut)})` : fmt(0)],
+          ],
+          footer: ['Net Cash Position', fmt(cpNet)],
+        },
+        {
+          title: '2b. Cash Drop / Cash Out', type: 'table',
+          cols: ['Sl No', 'Type', 'Amount'],
+          rows: cpDropRows.length
+            ? cpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', fmt(Number(r.amount ?? 0))])
+            : [['—', 'No cash drops recorded', fmt(0)]],
+          footer: ['', 'Total', fmt(cashDropIn - cashDropOut)],
         },
         {
           title: '3. Payment / Tender Summary', type: 'table',
@@ -6331,6 +6436,11 @@ export default function POSSales() {
     const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
     const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
     const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
+    // Consolidated Cash Position — additive, informational-only (see buildXReportViewModel).
+    const cashPosition = xSummary.cashPosition || {};
+    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
+    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
+    const cpNet = fmt(cashPosition.netCashPosition ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
 
     return [
       ...denomKeys.map((k, i) => ({
@@ -6346,6 +6456,15 @@ export default function POSSales() {
       { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
       { Section: '', Description: 'Actual Cash Counted', Count: '', Amount: actualCash },
       { Section: '', Description: 'Cash Variance', Count: '', Amount: variance },
+      { Section: 'Consolidated Cash Position', Description: 'Opening Cash', Count: '', Amount: openingCashVal },
+      { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
+      { Section: '', Description: 'Customer Receipts (Cash)', Count: '', Amount: 'Not available in X-Report' },
+      { Section: '', Description: 'Customer Advances (Cash)', Count: '', Amount: 'Not available in X-Report' },
+      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cashDropIn },
+      { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
+      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cashDropOut },
+      { Section: '', Description: 'Net Cash Position', Count: '', Amount: cpNet },
+      ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
       { Section: 'Payment Tender', Description: 'Cash', Count: xSummary.cashInvoiceCount ?? 0, Amount: cashSalesV },
       { Section: '', Description: 'Card', Count: xSummary.cardInvoiceCount ?? 0, Amount: cardSalesV },
       { Section: '', Description: 'Credit', Count: xSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
@@ -6608,6 +6727,19 @@ export default function POSSales() {
     const zOpeningCash = zSessions.reduce((sum, s) => sum + (s.openingCash ?? 0), 0);
     const zExpectedCash = zOpeningCash + zCashSales;
     const zSessionCount = zSummary.sessionCount ?? zSessions.length;
+    // Consolidated Cash Position — additive, informational only (never feeds zExpectedCash above).
+    const zCashPosition = zSummary.cashPosition || {};
+    const zCpOpeningCash = Number(zCashPosition.openingCash ?? zOpeningCash);
+    const zCpCashSales = Number(zCashPosition.cashSales ?? zCashSales);
+    const zCpReceiptsTotal = Number(zCashPosition.customerReceiptsTotal ?? 0);
+    const zCpAdvancesTotal = Number(zCashPosition.customerAdvancesTotal ?? 0);
+    const zCpDropIn = Number(zCashPosition.cashDropIn ?? 0);
+    const zCpDropOut = Number(zCashPosition.cashDropOut ?? 0);
+    const zCpRefundsSupported = zCashPosition.cashRefundsSupported === true;
+    const zCpNet = Number(zCashPosition.netCashPosition ?? (zCpOpeningCash + zCpCashSales + zCpReceiptsTotal + zCpAdvancesTotal + zCpDropIn - zCpDropOut));
+    const zCpReceiptRows = Array.isArray(zCashPosition.customerReceiptRows) ? zCashPosition.customerReceiptRows : [];
+    const zCpAdvanceRows = Array.isArray(zCashPosition.customerAdvanceRows) ? zCashPosition.customerAdvanceRows : [];
+    const zCpDropRows = Array.isArray(zCashPosition.cashDropRows) ? zCashPosition.cashDropRows : [];
 
     const zrFilterBar = (
       <div className="flex flex-wrap gap-2 items-end bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 shadow-sm">
@@ -6979,6 +7111,56 @@ export default function POSSales() {
             </div>
           </div>
 
+          {/* Section 4a: Consolidated Cash Position — additive, informational only */}
+          <ZRTable
+            title="4a. Consolidated Cash Position (Informational)"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Description', 'Amount']}
+            rows={[
+              ['Opening Cash', <CurrencyAmount key="z4aoc" amount={zCpOpeningCash} />],
+              ['Cash Sales', <CurrencyAmount key="z4acs" amount={zCpCashSales} />],
+              ['Customer Receipts (Cash)', <CurrencyAmount key="z4acr" amount={zCpReceiptsTotal} />],
+              ['Customer Advances (Cash)', <CurrencyAmount key="z4aca" amount={zCpAdvancesTotal} />],
+              ['Cash Drop In', <CurrencyAmount key="z4adi" amount={zCpDropIn} />],
+              ['Cash Refunds (Cash)', zCpRefundsSupported ? <CurrencyAmount key="z4arf" amount={zCashPosition.cashRefundsTotal ?? 0} /> : <span key="z4arfn" className="text-gray-400 italic">Not available — refund payment mode not tracked</span>],
+              ['Cash Drop Out', zCpDropOut > 0 ? `(${formatCurrencyStr(zCpDropOut)})` : <CurrencyAmount key="z4ado" amount={0} />],
+            ]}
+            footerRow={['Net Cash Position', <span key="z4an" className="font-bold text-[#327F74]"><CurrencyAmount amount={zCpNet} /></span>]}
+          />
+
+          {/* Section 4b: Customer Receipts detail */}
+          <ZRTable
+            title="4b. Customer Receipts"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Sl No', 'Customer Name', 'Received By', 'Received Amount']}
+            rows={zCpReceiptRows.length
+              ? zCpReceiptRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.receivedBy || '—', <CurrencyAmount key={`z4brow-${r.slNo}`} amount={r.receivedAmount ?? 0} />])
+              : [['—', 'No cash customer receipts', '—', <CurrencyAmount key="z4bempty" amount={0} />]]}
+            footerRow={['', '', 'Total', <CurrencyAmount key="z4bt" amount={zCpReceiptsTotal} />]}
+          />
+
+          {/* Section 4c: Customer Advances detail */}
+          <ZRTable
+            title="4c. Customer Advances"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Sl No', 'Customer Name', 'Paid By', 'Paid Amount']}
+            rows={zCpAdvanceRows.length
+              ? zCpAdvanceRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.paidBy || '—', <CurrencyAmount key={`z4crow-${r.slNo}`} amount={r.paidAmount ?? 0} />])
+              : [['—', 'No cash customer advances', '—', <CurrencyAmount key="z4cempty" amount={0} />]]}
+            footerRow={['', '', 'Total', <CurrencyAmount key="z4ct" amount={zCpAdvancesTotal} />]}
+          />
+
+          {/* Section 4d: Cash Drop / Cash Out detail */}
+          <ZRTable
+            title="4d. Cash Drop / Cash Out"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Sl No', 'Type', 'Amount']}
+            rows={zCpDropRows.length
+              ? zCpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', <CurrencyAmount key={`z4drow-${r.slNo}`} amount={r.amount ?? 0} />])
+              : [['—', 'No cash drops recorded', <CurrencyAmount key="z4dempty" amount={0} />]]}
+            footerRow={['', 'Total', <CurrencyAmount key="z4dt" amount={zCpDropIn - zCpDropOut} />]}
+          />
+
           {/* Section 5: Card / Bank Settlement Summary */}
           <ZRTable
             title="5. Card / Bank Settlement Summary"
@@ -7254,6 +7436,12 @@ export default function POSSales() {
     const creditSales = xSummary.creditSales ?? 0;
     const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
     const expectedCashVal = xSummary.expectedCash ?? (openingCashVal + cashSales + cashDropIn - cashDropOut);
+    // Consolidated Cash Position — additive, informational only (never feeds expectedCashVal above).
+    // X-Report never includes Customer Receipts/Advances (back-office vouchers, no session linkage yet).
+    const xCashPosition = xSummary.cashPosition || {};
+    const xCpDropRows = Array.isArray(xCashPosition.cashDropRows) ? xCashPosition.cashDropRows : [];
+    const xCpRefundsSupported = xCashPosition.cashRefundsSupported === true;
+    const xCpNet = xCashPosition.netCashPosition ?? (openingCashVal + cashSales + cashDropIn - cashDropOut);
 
     const cashVariance = actualCash - expectedCashVal;
     const isBalanced = actualCash === 0 || Math.abs(cashVariance) < 0.01;
@@ -7497,6 +7685,35 @@ export default function POSSales() {
                   ['Expected Cash in Drawer', <span key="ec" className="font-bold text-[#327F74]"><CurrencyAmount amount={expectedCashVal} /></span>],
                 ]}
                 highlightLast
+              />
+
+              {/* Section 2a: Consolidated Cash Position — additive, informational only */}
+              <XRTable
+                title="2a. Consolidated Cash Position (Informational)"
+                icon={<Banknote className="h-4 w-4" />}
+                cols={['Description', 'Amount']}
+                rows={[
+                  ['Opening Cash', <CurrencyAmount key="xcpoc" amount={openingCashVal} />],
+                  ['Cash Sales', <CurrencyAmount key="xcpcs" amount={cashSales} />],
+                  ['Customer Receipts (Cash)', <span key="xcpcrn" className="text-gray-400 italic">Not available in X-Report</span>],
+                  ['Customer Advances (Cash)', <span key="xcpcan" className="text-gray-400 italic">Not available in X-Report</span>],
+                  ['Cash Drop In', <CurrencyAmount key="xcpdi" amount={cashDropIn} />],
+                  ['Cash Refunds (Cash)', xCpRefundsSupported ? <CurrencyAmount key="xcprf" amount={xCashPosition.cashRefundsTotal ?? 0} /> : <span key="xcprfn" className="text-gray-400 italic">Not available — refund payment mode not tracked</span>],
+                  ['Cash Drop Out', cashDropOut > 0 ? `(${formatCurrencyStr(cashDropOut)})` : <CurrencyAmount key="xcpdo" amount={0} />],
+                ]}
+                footerRow={['Net Cash Position', <span key="xcpn" className="font-bold text-[#327F74]"><CurrencyAmount amount={xCpNet} /></span>]}
+                highlightLast
+              />
+
+              {/* Section 2b: Cash Drop / Cash Out detail */}
+              <XRTable
+                title="2b. Cash Drop / Cash Out"
+                icon={<Banknote className="h-4 w-4" />}
+                cols={['Sl No', 'Type', 'Amount']}
+                rows={xCpDropRows.length
+                  ? xCpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', <CurrencyAmount key={`xcpdrow-${r.slNo}`} amount={r.amount ?? 0} />])
+                  : [['—', 'No cash drops recorded', <CurrencyAmount key="xcpdempty" amount={0} />]]}
+                footerRow={['', 'Total', <CurrencyAmount key="xcpdt" amount={cashDropIn - cashDropOut} />]}
               />
 
               {/* Section 3: Cash Variance Summary */}

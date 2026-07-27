@@ -1,6 +1,9 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
 import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.audit.PosAuditAction;
 import com.billbull.backend.pos.audit.PosAuditLog;
@@ -66,6 +69,8 @@ public class PosSessionService {
     private final ObjectMapper objectMapper;
     private final PosTerminalActivityService terminalActivityService;
     private final PosBusinessDateService businessDateService;
+    private final PosCashMovementRepository cashMovementRepository;
+    private final ReceiptVoucherRepository receiptVoucherRepository;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -89,7 +94,9 @@ public class PosSessionService {
                              PosDayCloseRepository dayCloseRepository,
                              ObjectMapper objectMapper,
                              PosTerminalActivityService terminalActivityService,
-                             PosBusinessDateService businessDateService) {
+                             PosBusinessDateService businessDateService,
+                             PosCashMovementRepository cashMovementRepository,
+                             ReceiptVoucherRepository receiptVoucherRepository) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -105,6 +112,8 @@ public class PosSessionService {
         this.objectMapper = objectMapper;
         this.terminalActivityService = terminalActivityService;
         this.businessDateService = businessDateService;
+        this.cashMovementRepository = cashMovementRepository;
+        this.receiptVoucherRepository = receiptVoucherRepository;
     }
 
     private String currentUser() {
@@ -124,6 +133,29 @@ public class PosSessionService {
     private static BigDecimal computeExpectedCash(PosSession session, BigDecimal tenderCash,
                                                     BigDecimal cashDropIn, BigDecimal cashDropOut) {
         return nz(session.getOpeningCash()).add(tenderCash).add(cashDropIn).subtract(cashDropOut);
+    }
+
+    /** SUM(amount) grouped by movementType (DROP_IN / DROP_OUT) across a set of sessions,
+     *  in one batch query — used by the Day Close cash reconciliation and by the
+     *  Consolidated Cash Position section, instead of looping per-session over each
+     *  PosSession's lazy {@code cashMovements} collection (which would fire one query
+     *  per session — see {@link PosCashMovementRepository}). */
+    private Map<String, BigDecimal> sumCashMovementsByType(List<Long> sessionIds) {
+        Map<String, BigDecimal> totals = new java.util.HashMap<>();
+        if (sessionIds == null || sessionIds.isEmpty()) return totals;
+        for (Object[] row : cashMovementRepository.sumAmountByMovementTypeForSessionIds(sessionIds)) {
+            String type = (String) row[0];
+            BigDecimal amount = row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO;
+            totals.put(type, amount);
+        }
+        return totals;
+    }
+
+    /** Free-text payment-mode check for "cash only" filtering on back-office vouchers
+     *  (ReceiptVoucher.paymentMode has no enum) — same "contains cash" convention as
+     *  {@link #tenderBucket} / {@code recordInvoiceOnSession}. */
+    private static boolean isCashMode(String paymentMode) {
+        return paymentMode != null && paymentMode.toLowerCase(java.util.Locale.ROOT).contains("cash");
     }
 
     @Transactional
@@ -622,6 +654,12 @@ public class PosSessionService {
         // Same formula as closeSession() — single source of truth for Expected Cash.
         summary.put("expectedCash", computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut));
 
+        // Consolidated Cash Position — additive, informational only, never feeds the
+        // Expected Cash figure above. Customer Receipts/Advances are back-office vouchers
+        // with no session linkage yet, so they're omitted here (Z-Report only).
+        summary.put("cashPosition", buildCashPosition(session.getBranchId(), session.getSessionDate(),
+                List.of(sessionId), session.getOpeningCash(), tender.cash, cashDropIn, cashDropOut, false));
+
         // Card refund attribution — sourced from actual refund Payment rows for this
         // session's invoices, not the generic (and unrelated) item-void counter.
         summary.put("cardRefundSales", refunds.byBucket.getOrDefault("card", BigDecimal.ZERO));
@@ -948,6 +986,16 @@ public class PosSessionService {
         int totalItemsSold = (Integer) summary.getOrDefault("totalItemsSold", 0);
         summary.put("netQuantitySold", Math.max(0, totalItemsSold - returns.totalQtyReturned));
 
+        // Consolidated Cash Position — additive, informational only; never feeds the
+        // per-session Expected Cash figure or the Day Close reconciliation above. Cash
+        // Drop/Out totals sourced via one grouped query across the resolved session set
+        // (no cashDropIn/cashDropOut existed in the Z-Report summary before this).
+        Map<String, BigDecimal> cashMovementTotals = sumCashMovementsByType(sessionIds);
+        BigDecimal cashDropIn = cashMovementTotals.getOrDefault("DROP_IN", BigDecimal.ZERO);
+        BigDecimal cashDropOut = cashMovementTotals.getOrDefault("DROP_OUT", BigDecimal.ZERO);
+        summary.put("cashPosition", buildCashPosition(branchId, date, sessionIds,
+                openingCash, tender.cash, cashDropIn, cashDropOut, true));
+
         Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("eligible", eligible);
         result.put("pendingTerminals", pendingTerminals);
@@ -1093,9 +1141,16 @@ public class PosSessionService {
         }
 
         BigDecimal openingCash = (BigDecimal) summary.getOrDefault("openingCash", BigDecimal.ZERO);
-        // Cash paid in/out is recorded in sessions.
-        BigDecimal cashPaidIn = sessionsInRange.stream().map(s -> sumCashMovements(s, "PAY_IN")).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal cashPaidOut = sessionsInRange.stream().map(s -> sumCashMovements(s, "PAY_OUT")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        // BUGFIX: this used to filter on movement types "PAY_IN"/"PAY_OUT", which no code
+        // path ever writes (the only types ever recorded are DROP_IN/DROP_OUT — see
+        // PosCashMovement/addCashMovement) — so cashPaidIn/cashPaidOut were always zero,
+        // silently omitting every cash drop from this check and risking a false "CASH
+        // reconciliation failed" on any day that had drawer drops. Also replaces the prior
+        // per-session stream (each triggering a lazy load of PosSession.cashMovements, i.e.
+        // one query per session) with a single grouped aggregate query.
+        Map<String, BigDecimal> cashMovementTotals = sumCashMovementsByType(sessionIds);
+        BigDecimal cashPaidIn = cashMovementTotals.getOrDefault("DROP_IN", BigDecimal.ZERO);
+        BigDecimal cashPaidOut = cashMovementTotals.getOrDefault("DROP_OUT", BigDecimal.ZERO);
         BigDecimal expectedCashComputed = openingCash.add(cashSales).add(cashPaidIn).subtract(cashPaidOut);
 
         // Let's compute actual expected cash from sessions directly
@@ -1223,6 +1278,134 @@ public class PosSessionService {
             }
         }
         return rs;
+    }
+
+    // ── Consolidated Cash Position (additive — never feeds Expected Cash in Drawer) ───
+    //
+    // A second, purely informational cash summary alongside the existing till-count
+    // reconciliation (computeExpectedCash/PosSession.expectedCash), which must stay
+    // untouched — see the architecture review. This section widens the picture to
+    // include back-office cash movements that never sit in the physical drawer
+    // (Customer Receipts, Customer Advances) and, where the data actually supports it,
+    // cash-only Cash Drop/Cash Out detail sourced via a single batch query.
+    //
+    // Cash Refunds/Returns are deliberately NOT included: SalesReturn has no
+    // payment-mode field today, so a "cash refund" total cannot be computed without
+    // misclassifying every refund (cash+card+other) as cash. cashRefundsSupported=false
+    // flags this to the caller/frontend rather than silently reporting a wrong number.
+
+    private static final class ReceiptsAndAdvances {
+        BigDecimal receiptsTotal = BigDecimal.ZERO;
+        BigDecimal advancesTotal = BigDecimal.ZERO;
+        final List<Map<String, Object>> receiptRows = new java.util.ArrayList<>();
+        final List<Map<String, Object>> advanceRows = new java.util.ArrayList<>();
+    }
+
+    /** Customer Receipts (ReceiptPurpose CASH_SALE/AGAINST_INVOICE) and Customer Advances
+     *  (ReceiptPurpose ADVANCE_RECEIVED), cash-only, for a branch + business date. These
+     *  are general back-office accounting vouchers with no PosSession/terminal/cashier
+     *  link today, so — per the architecture review — they are only ever branch+date
+     *  scoped (Z-Report), never session-scoped (X-Report). */
+    private ReceiptsAndAdvances buildReceiptsAndAdvances(Long branchId, LocalDate date) {
+        ReceiptsAndAdvances result = new ReceiptsAndAdvances();
+        if (branchId == null || date == null) return result;
+        int slReceipt = 1;
+        int slAdvance = 1;
+
+        List<ReceiptVoucher> receipts = new java.util.ArrayList<>();
+        receipts.addAll(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(branchId, date, ReceiptPurpose.CASH_SALE));
+        receipts.addAll(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(branchId, date, ReceiptPurpose.AGAINST_INVOICE));
+        for (ReceiptVoucher rv : receipts) {
+            if (!isCashMode(rv.getPaymentMode())) continue;
+            BigDecimal amount = nz(rv.getAmount());
+            result.receiptsTotal = result.receiptsTotal.add(amount);
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("slNo", slReceipt++);
+            row.put("customerName", rv.getMemberName());
+            row.put("receivedBy", rv.getCreatedBy());
+            row.put("receivedAmount", amount);
+            result.receiptRows.add(row);
+        }
+
+        List<ReceiptVoucher> advances = receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(
+                branchId, date, ReceiptPurpose.ADVANCE_RECEIVED);
+        for (ReceiptVoucher rv : advances) {
+            if (!isCashMode(rv.getPaymentMode())) continue;
+            BigDecimal amount = nz(rv.getAmount());
+            result.advancesTotal = result.advancesTotal.add(amount);
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("slNo", slAdvance++);
+            row.put("customerName", rv.getMemberName());
+            row.put("paidBy", rv.getCreatedBy());
+            row.put("paidAmount", amount);
+            result.advanceRows.add(row);
+        }
+        return result;
+    }
+
+    /** Builds the "Consolidated Cash Position" additive summary block. {@code
+     *  includeBackOfficeReceipts} gates Customer Receipts/Advances — true only for
+     *  Z-Report (branch + business date scoped); X-Report omits them until POS-session
+     *  linkage exists for ReceiptVoucher (see architecture review §3). Cash Drop/Cash Out
+     *  detail is always included since PosCashMovement is already session-scoped. */
+    private Map<String, Object> buildCashPosition(Long branchId, LocalDate date, List<Long> sessionIds,
+                                                   BigDecimal openingCash, BigDecimal cashSales,
+                                                   BigDecimal cashDropIn, BigDecimal cashDropOut,
+                                                   boolean includeBackOfficeReceipts) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+
+        List<PosCashMovement> movements = (sessionIds == null || sessionIds.isEmpty())
+                ? List.of()
+                : cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds);
+        List<Map<String, Object>> cashDropRows = new java.util.ArrayList<>();
+        int sl = 1;
+        for (PosCashMovement m : movements) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("slNo", sl++);
+            row.put("type", m.getMovementType());
+            row.put("amount", nz(m.getAmount()));
+            row.put("description", m.getDescription());
+            row.put("performedBy", m.getPerformedBy());
+            row.put("performedAt", m.getPerformedAt());
+            cashDropRows.add(row);
+        }
+        result.put("cashDropRows", cashDropRows);
+        result.put("cashDropTotal", cashDropIn.subtract(cashDropOut));
+
+        BigDecimal customerReceiptsTotal = BigDecimal.ZERO;
+        BigDecimal customerAdvancesTotal = BigDecimal.ZERO;
+        List<Map<String, Object>> receiptRows = List.of();
+        List<Map<String, Object>> advanceRows = List.of();
+        if (includeBackOfficeReceipts) {
+            ReceiptsAndAdvances ra = buildReceiptsAndAdvances(branchId, date);
+            customerReceiptsTotal = ra.receiptsTotal;
+            customerAdvancesTotal = ra.advancesTotal;
+            receiptRows = ra.receiptRows;
+            advanceRows = ra.advanceRows;
+        }
+        result.put("customerReceiptRows", receiptRows);
+        result.put("customerReceiptsTotal", customerReceiptsTotal);
+        result.put("customerAdvanceRows", advanceRows);
+        result.put("customerAdvancesTotal", customerAdvancesTotal);
+
+        // Cash Refunds — not implemented: SalesReturn carries no payment-mode field, so a
+        // cash-only refund total cannot be computed correctly today (see architecture
+        // review §5). Flagged explicitly rather than misreporting the blended total.
+        result.put("cashRefundsSupported", false);
+        result.put("cashRefundsTotal", BigDecimal.ZERO);
+
+        BigDecimal netCashPosition = nz(openingCash)
+                .add(cashSales)
+                .add(customerReceiptsTotal)
+                .add(customerAdvancesTotal)
+                .add(cashDropIn)
+                .subtract(cashDropOut);
+        result.put("openingCash", nz(openingCash));
+        result.put("cashSales", cashSales);
+        result.put("cashDropIn", cashDropIn);
+        result.put("cashDropOut", cashDropOut);
+        result.put("netCashPosition", netCashPosition);
+        return result;
     }
 
     /** Top-selling items by quantity across the given invoices (non-voided lines only). */

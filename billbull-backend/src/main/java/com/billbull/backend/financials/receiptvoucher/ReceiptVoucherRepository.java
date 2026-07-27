@@ -105,4 +105,16 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
            "WHERE rv.purpose = com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED " +
            "AND LOWER(rv.status) = 'completed' AND rv.customerCode IS NOT NULL")
     List<String> findDistinctCustomerCodesWithAdvances();
+
+    /**
+     * Z-Report Consolidated Cash Position: a single business day's completed receipts for
+     * a branch, restricted to one purpose (CASH_SALE/AGAINST_INVOICE for Customer Receipts,
+     * ADVANCE_RECEIVED for Customer Advances). Cash-only (paymentMode) filtering happens in
+     * the service layer, since paymentMode is free text and not reliably queryable via LIKE.
+     */
+    @Query("SELECT rv FROM ReceiptVoucher rv WHERE rv.branchEntity.id = :branchId AND rv.date = :date " +
+           "AND LOWER(rv.status) = 'completed' AND rv.purpose = :purpose")
+    List<ReceiptVoucher> findCompletedByBranchAndDateAndPurpose(@Param("branchId") Long branchId,
+                                                                 @Param("date") LocalDate date,
+                                                                 @Param("purpose") ReceiptPurpose purpose);
 }
