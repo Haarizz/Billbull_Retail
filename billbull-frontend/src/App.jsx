@@ -28,6 +28,7 @@ import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerIn
 import AedSymbolRenderer from "./components/AedSymbolRenderer";
 import AppAlertBridge from "./components/AppAlertBridge";
 import { logClientError, logClientEvent } from "./utils/clientLogger";
+import { clientConfig } from "./config/clientConfig";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
 // import MessageModal from "./pages/Customer/MessageModal";
 // import CustomerLedger from "./pages/Sales/CustomerLedger";
@@ -197,7 +198,7 @@ function App() {
                     {/* Default redirect */}
                     <Route
                       path="/"
-                      element={<Navigate to="/dashboard" replace />}
+                      element={<Navigate to={clientConfig.landing.defaultRoute || "/dashboard"} replace />}
                     />
 
                     {/* Dashboard */}

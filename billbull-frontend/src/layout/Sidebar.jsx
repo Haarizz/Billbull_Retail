@@ -22,11 +22,14 @@ import { usePermissions } from "../context/PermissionContext";
 import { useCompany } from "../context/CompanyContext";
 import { formatUserDisplayName } from "../utils/displayName";
 import BranchSelector from "../components/common/BranchSelector";
+import { clientConfig } from "../config/clientConfig";
 
 const Sidebar = ({ children }) => {
   // --- STATE ---
   const [collapsed, setCollapsed] = useState(() => {
-    return localStorage.getItem("sidebarCollapsed") === "true";
+    const stored = localStorage.getItem("sidebarCollapsed");
+    if (stored !== null) return stored === "true";
+    return clientConfig.sidebar.defaultCollapsed;
   });
   const rawUsername = getUsernameFromToken() || "";
   const username = formatUserDisplayName(rawUsername.includes('@') ? rawUsername.split('@')[0] : rawUsername) || "BillBull Admin";

@@ -4,6 +4,7 @@ import { login } from "../api/auth";
 import { useCompany } from "../context/CompanyContext";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import billBullLogo from "../assets/billBullLogo.png";
+import { clientConfig } from "../config/clientConfig";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -60,7 +61,7 @@ const Login = () => {
         ADMIN:             "/dashboard",
       };
       const primaryRole = data.primaryRole || data.role;
-      navigate(roleRedirects[primaryRole] || "/");
+      navigate(clientConfig.landing.defaultRoute || roleRedirects[primaryRole] || "/");
     } catch (err) {
       console.error(err);
       if (err.response?.status === 429) {
