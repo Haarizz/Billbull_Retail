@@ -121,9 +121,12 @@ public class PosSessionService {
         return auth != null ? auth.getName() : "system";
     }
 
-    private static BigDecimal sumCashMovements(PosSession session, String movementType) {
+    /** ACTIVE-only sum — voided movements never contribute to Expected Cash or any other
+     *  reconciliation/report total (see Cash Drop / Outs Management §8). */
+    private static BigDecimal sumCashMovements(PosSession session, PosCashMovementType movementType) {
         return session.getCashMovements().stream()
                 .filter(m -> movementType.equals(m.getMovementType()))
+                .filter(m -> m.getStatus() == null || m.getStatus() == PosCashMovementStatus.ACTIVE)
                 .map(m -> nz(m.getAmount()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
@@ -143,8 +146,9 @@ public class PosSessionService {
     private Map<String, BigDecimal> sumCashMovementsByType(List<Long> sessionIds) {
         Map<String, BigDecimal> totals = new java.util.HashMap<>();
         if (sessionIds == null || sessionIds.isEmpty()) return totals;
-        for (Object[] row : cashMovementRepository.sumAmountByMovementTypeForSessionIds(sessionIds)) {
-            String type = (String) row[0];
+        // ACTIVE only — voided drops/outs are excluded from every reconciliation/report total.
+        for (Object[] row : cashMovementRepository.sumAmountByMovementTypeForSessionIds(sessionIds, PosCashMovementStatus.ACTIVE)) {
+            String type = ((PosCashMovementType) row[0]).name();
             BigDecimal amount = row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO;
             totals.put(type, amount);
         }
@@ -326,8 +330,8 @@ public class PosSessionService {
         // Close Session modal and the X-Report page never diverge (both compute it here).
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
         TenderTotals tender = aggregateTender(invoices);
-        BigDecimal cashDropIn = sumCashMovements(session, "DROP_IN");
-        BigDecimal cashDropOut = sumCashMovements(session, "DROP_OUT");
+        BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
+        BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
         BigDecimal expectedCash = computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
         BigDecimal actualClosing = closingCash != null ? closingCash : BigDecimal.ZERO;
         BigDecimal variance = actualClosing.subtract(expectedCash).abs();
@@ -539,18 +543,37 @@ public class PosSessionService {
 
     @Transactional
     public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount, String description) {
+        return addCashMovement(sessionId, movementType, amount, description, null);
+    }
+
+    /** {@code reference} is optional free-text (e.g. a supervisor-assigned drop slip
+     *  number) — kept separate from description per the Cash Drop / Outs data model. */
+    @Transactional
+    public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount,
+                                            String description, String reference) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add cash movement to a closed session.");
         }
 
+        PosCashMovementType type;
+        try {
+            type = PosCashMovementType.valueOf(movementType);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid movement type: " + movementType);
+        }
+
         PosCashMovement movement = new PosCashMovement();
         movement.setPosSession(session);
-        movement.setMovementType(movementType);
+        movement.setMovementType(type);
         movement.setAmount(amount);
         movement.setDescription(description);
+        movement.setReference(reference);
         movement.setPerformedBy(currentUser());
         movement.setPerformedAt(LocalDateTime.now());
+        movement.setStatus(PosCashMovementStatus.ACTIVE);
+        movement.setBusinessDate(session.getSessionDate());
+        movement.setBranchId(session.getBranchId());
         session.getCashMovements().add(movement);
         repo.save(session);
 
@@ -567,6 +590,7 @@ public class PosSessionService {
                 branch);
 
         terminalActivityService.recordActivity(session.getTerminalId(), movementType);
+        auditService.logCashMovement(sessionId, session.getTerminalId(), session.getBranchId(), movementType, amount.toPlainString());
 
         return movement;
     }
@@ -637,8 +661,8 @@ public class PosSessionService {
         // and per-line void detail, so a plain fetch would trigger N+1 lazy loads.
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
 
-        BigDecimal cashDropIn = sumCashMovements(session, "DROP_IN");
-        BigDecimal cashDropOut = sumCashMovements(session, "DROP_OUT");
+        BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
+        BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
 
         // Actual tender collected (not invoice value) for this single session.
         TenderTotals tender = aggregateTender(invoices);
@@ -1367,6 +1391,10 @@ public class PosSessionService {
             row.put("description", m.getDescription());
             row.put("performedBy", m.getPerformedBy());
             row.put("performedAt", m.getPerformedAt());
+            // Detail view always shows voided rows (with reason) for auditability — only the
+            // summed cashDropIn/cashDropOut totals passed into this method exclude them.
+            row.put("status", m.getStatus());
+            row.put("voidReason", m.getVoidReason());
             cashDropRows.add(row);
         }
         result.put("cashDropRows", cashDropRows);

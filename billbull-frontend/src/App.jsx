@@ -78,6 +78,7 @@ import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEma
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
 import POSSales from "./pages/Sales/POSSales";
+import CashMovements from "./pages/Sales/CashMovements";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
 import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
@@ -461,6 +462,15 @@ function App() {
                       element={
                         <ResourceGuard module="sales.invoice">
                           <POSSales />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/sales/cash-movements"
+                      element={
+                        <ResourceGuard module="permissions.pos.cashmovement.view">
+                          <CashMovements />
                         </ResourceGuard>
                       }
                     />

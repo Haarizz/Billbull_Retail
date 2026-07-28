@@ -177,6 +177,7 @@ const Sidebar = ({ children }) => {
         { path: "/sales/deliverynote",  label: "Delivery Note",         module: "sales.delivery", icon: <Truck size={14} /> },
         { path: "/sales/return",        label: "Sales Return",          module: "sales.return",   icon: <Undo2 size={14} /> },
         { path: "/sales/pos",           label: "POS Sales",             module: "sales.pos",      icon: <Receipt size={14} /> },
+        { path: "/sales/cash-movements",label: "Cash Drop / Outs",      module: "permissions.pos.cashmovement.view", icon: <Banknote size={14} /> },
         { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
         { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.templates",icon: <Printer size={14} /> },
         { path: "/sales/reports",        label: "Reports",              module: "sales.reports",  icon: <PieChart size={14} /> },

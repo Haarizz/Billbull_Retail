@@ -218,6 +218,31 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "pos",           true, false, false, false, false);
             seedIfAbsent(role, "pos.terminals", true, false, false, false, false);
         });
+
+        // ── Cash Drop / Outs Management RBAC ──────────────────────────────────────────────────
+        // Single-switch permissions.pos.cashmovement.<action> rows, same mechanism as
+        // permissions.pos.terminal.<action> above — canView expresses "granted" for these rows.
+        // Cashier: create + view own session's movements only (PosCashMovementController
+        // requires an explicit sessionId filter for holders of view-without-viewall).
+        // Supervisor/Manager/Admin/Branch Admin: full create/view/viewall/edit/void.
+        String[] allCashMovementActions = {
+                "permissions.pos.cashmovement.create", "permissions.pos.cashmovement.view",
+                "permissions.pos.cashmovement.viewall", "permissions.pos.cashmovement.edit",
+                "permissions.pos.cashmovement.void",
+        };
+        for (String fullAccessRole : new String[]{"ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR"}) {
+            roleRepository.findByName(fullAccessRole).ifPresent(role -> {
+                for (String action : allCashMovementActions) {
+                    seedIfAbsent(role, action, true, true, true, true, true);
+                }
+            });
+        }
+        roleRepository.findByName("SALES").ifPresent(role -> {
+            for (String action : new String[]{
+                    "permissions.pos.cashmovement.create", "permissions.pos.cashmovement.view"}) {
+                seedIfAbsent(role, action, true, true, true, true, true);
+            }
+        });
     }
 
     private void seedIfAbsent(

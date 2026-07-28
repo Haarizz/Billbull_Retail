@@ -71,6 +71,24 @@ public class PosAuditService {
 
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logCashMovementEdited(Long sessionId, String terminalId, Long branchId,
+                                       Long movementId, String oldJson, String newJson) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.CASH_MOVEMENT_EDITED, "CASH_MOVEMENT", String.valueOf(movementId),
+                "Cash movement description/reference edited", oldJson, newJson);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logCashMovementVoided(Long sessionId, String terminalId, Long branchId,
+                                       Long movementId, String voidReason, String oldJson, String newJson) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.CASH_MOVEMENT_VOIDED, "CASH_MOVEMENT", String.valueOf(movementId),
+                "Cash movement voided: " + voidReason, oldJson, newJson);
+    }
+
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logLayawayCreated(Long sessionId, String terminalId, Long branchId,
                                    Long layawayId, String layawayNumber) {
         save(sessionId, terminalId, branchId,

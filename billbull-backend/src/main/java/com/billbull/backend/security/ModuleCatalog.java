@@ -66,7 +66,14 @@ public final class ModuleCatalog {
             "permissions.pos.terminal.unblock",
             "permissions.pos.terminal.decommission",
             "permissions.pos.terminal.keepactive",
-            "permissions.pos.terminal.setautoarchiveexempt");
+            "permissions.pos.terminal.setautoarchiveexempt",
+            // Cash Drop / Outs Management actions (single-switch grants, same mechanism as
+            // permissions.pos.terminal.* above)
+            "permissions.pos.cashmovement.create",
+            "permissions.pos.cashmovement.view",
+            "permissions.pos.cashmovement.viewall",
+            "permissions.pos.cashmovement.edit",
+            "permissions.pos.cashmovement.void");
 
     /** lowercase key → canonical key */
     private static final Map<String, String> CANONICAL_BY_LOWERCASE = CANONICAL_MODULES.stream()

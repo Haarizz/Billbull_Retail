@@ -2613,6 +2613,59 @@ public class PostingEngineService {
                 return post(entry);
         }
 
+        /**
+         * Reverses the GL journal for a voided POS cash movement (Cash Drop / Outs Management
+         * §5). Never deletes or mutates the original {@code CMD-{movementId}} entry — posts a
+         * new journal with debit/credit swapped, mirroring {@code JournalEntryService.
+         * voidJournalVoucher}'s reversal pattern. Idempotent per movement (reference
+         * "VOID-CMD-{movementId}"); no-ops if the original was never posted (e.g. amount was
+         * zero/negative and createJournalFromCashMovement returned null).
+         *
+         * @param movementId   PK of the voided PosCashMovement row
+         * @param movementType "DROP_IN" or "DROP_OUT" (of the original movement)
+         * @param amount       original positive amount
+         * @param description  original free-text narration
+         * @param date         effective date for the reversal (today, not the original date)
+         * @param branch       branch dimension
+         */
+        @Transactional
+        public JournalEntry reverseJournalFromCashMovementVoid(
+                        Long movementId,
+                        String movementType,
+                        BigDecimal amount,
+                        String description,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String originalRef = TX_CASH_MOVEMENT + "-" + movementId;
+                if (findDuplicate(originalRef) == null) return null; // nothing was ever posted
+
+                String ref = "VOID-" + originalRef;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String baseNarration = description != null && !description.isBlank()
+                        ? description
+                        : ("DROP_IN".equals(movementType) ? "Cash Drop In" : "Cash Out");
+                String narration = "Void reversal of " + originalRef + ": " + baseNarration;
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(),
+                        ref, narration, TX_CASH_MOVEMENT, branch);
+
+                if ("DROP_IN".equals(movementType)) {
+                        // Swap the original DROP_IN lines: Cr Cash in Hand / Dr Petty Cash
+                        addLine(entry, "Petty Cash",   ACC_PETTY_CASH, narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "Cash in Hand", ACC_CASH,       narration, BigDecimal.ZERO, amount);
+                } else {
+                        // Swap the original DROP_OUT lines: Cr General Expense / Dr Cash in Hand
+                        addLine(entry, "Cash in Hand",    ACC_CASH,            narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "General Expense", ACC_EXPENSE_GENERAL, narration, BigDecimal.ZERO, amount);
+                }
+
+                return post(entry);
+        }
+
         private static final String TX_LAYAWAY_DEPOSIT = "LAY-DEP";
 
         /**

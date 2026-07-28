@@ -97,7 +97,7 @@ class PosSessionServiceTest {
         lenient().when(auditLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
         lenient().when(terminalRepository.findByTerminalId(any())).thenReturn(java.util.Optional.empty());
         lenient().when(returnRepository.findByReturnDateAndBranchWithItems(any(), any())).thenReturn(List.of());
-        lenient().when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(any())).thenReturn(List.of());
+        lenient().when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(any(), any())).thenReturn(List.of());
         lenient().when(cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(any())).thenReturn(List.of());
         lenient().when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(any(), any(), any())).thenReturn(List.of());
     }
@@ -110,8 +110,8 @@ class PosSessionServiceTest {
     void closeSessionComputesExpectedCashAndDifference() {
         PosSession session = openSession();
         session.setOpeningCash(bd("100"));
-        session.getCashMovements().add(cashMovement("DROP_IN", bd("50")));
-        session.getCashMovements().add(cashMovement("DROP_OUT", bd("20")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("50")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("20")));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
         // closeSession() now derives expected cash from actual cash tender collected
         // (same formula as getXReport()), not the session.totalCashSales counter.
@@ -139,8 +139,8 @@ class PosSessionServiceTest {
         // (one via the session.totalCashSales counter, the other via a live query).
         PosSession session = openSession();
         session.setOpeningCash(bd("100"));
-        session.getCashMovements().add(cashMovement("DROP_IN", bd("50")));
-        session.getCashMovements().add(cashMovement("DROP_OUT", bd("20")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("50")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("20")));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
         when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(250.0, 0.0)));
         when(paymentRepository.sumTenderByModeForInvoices(any()))
@@ -293,8 +293,8 @@ class PosSessionServiceTest {
         session.setOpeningCash(bd("100"));
         session.setTotalSales(bd("500"));
         session.setTotalCashSales(bd("300"));
-        session.getCashMovements().add(cashMovement("DROP_IN", bd("40")));
-        session.getCashMovements().add(cashMovement("DROP_OUT", bd("10")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("40")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("10")));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
         when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(500.0, 25.0)));
         // Expected cash now derives from ACTUAL cash tender collected, not the session
@@ -586,15 +586,15 @@ class PosSessionServiceTest {
         session.setBranchId(7L);
         session.setSessionDate(LocalDate.now());
         session.setOpeningCash(bd("100"));
-        session.getCashMovements().add(cashMovement("DROP_IN", bd("40")));
-        session.getCashMovements().add(cashMovement("DROP_OUT", bd("10")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("40")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("10")));
         when(repo.findById(1L)).thenReturn(Optional.of(session));
         when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(300.0, 0.0)));
         when(paymentRepository.sumTenderByModeForInvoices(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("300"), 1L }));
 
-        PosCashMovement dropIn = cashMovement("DROP_IN", bd("40"));
-        PosCashMovement dropOut = cashMovement("DROP_OUT", bd("10"));
+        PosCashMovement dropIn = cashMovement(PosCashMovementType.DROP_IN, bd("40"));
+        PosCashMovement dropOut = cashMovement(PosCashMovementType.DROP_OUT, bd("10"));
         when(cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(List.of(1L)))
                 .thenReturn(List.of(dropIn, dropOut));
 
@@ -634,10 +634,10 @@ class PosSessionServiceTest {
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
         when(paymentRepository.sumTenderByModeForInvoices(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
-        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L)))
+        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L), PosCashMovementStatus.ACTIVE))
                 .thenReturn(List.<Object[]>of(
-                        new Object[]{ "DROP_IN", bd("30") },
-                        new Object[]{ "DROP_OUT", bd("5") }));
+                        new Object[]{ PosCashMovementType.DROP_IN, bd("30") },
+                        new Object[]{ PosCashMovementType.DROP_OUT, bd("5") }));
 
         ReceiptVoucher cashReceipt = receiptVoucher("Alice", "Cash", bd("50"));
         ReceiptVoucher cardReceipt = receiptVoucher("Bob", "Card", bd("999")); // must be excluded (not cash)
@@ -692,10 +692,10 @@ class PosSessionServiceTest {
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
         when(paymentRepository.sumTenderByModeForInvoices(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
-        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L)))
+        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L), PosCashMovementStatus.ACTIVE))
                 .thenReturn(List.<Object[]>of(
-                        new Object[]{ "DROP_IN", bd("50") },
-                        new Object[]{ "DROP_OUT", bd("20") }));
+                        new Object[]{ PosCashMovementType.DROP_IN, bd("50") },
+                        new Object[]{ PosCashMovementType.DROP_OUT, bd("20") }));
         when(dayCloseRepository.save(any(com.billbull.backend.pos.dayclose.PosDayClose.class))).thenAnswer(inv -> {
             com.billbull.backend.pos.dayclose.PosDayClose d = inv.getArgument(0);
             d.setId(99L);
@@ -760,10 +760,11 @@ class PosSessionServiceTest {
         return s;
     }
 
-    private PosCashMovement cashMovement(String type, BigDecimal amount) {
+    private PosCashMovement cashMovement(PosCashMovementType type, BigDecimal amount) {
         PosCashMovement m = new PosCashMovement();
         m.setMovementType(type);
         m.setAmount(amount);
+        m.setStatus(PosCashMovementStatus.ACTIVE);
         return m;
     }
 
