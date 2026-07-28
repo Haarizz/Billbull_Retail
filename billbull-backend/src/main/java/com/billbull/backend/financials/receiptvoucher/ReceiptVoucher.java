@@ -79,6 +79,16 @@ public class ReceiptVoucher extends BaseEntity {
     @Column(name = "customer_code")
     private String customerCode;
 
+    // POS integration: Link advances received at the POS terminal to the cashier's active session.
+    @Column(name = "pos_session_id")
+    private Long posSessionId;
+
+    @Column(name = "pos_terminal_id")
+    private String posTerminalId;
+
+    @Column(name = "pos_counter_name")
+    private String posCounterName;
+
     /**
      * Settlement discount granted to the customer on early payment (PDF §7 / Phase 4.3).
      * When > 0, posting engine adds a third line: Dr Discount Allowed (6050) / Cr AR (for the discount).
@@ -273,4 +283,13 @@ public class ReceiptVoucher extends BaseEntity {
 
     public BigDecimal getDiscountAmount() { return discountAmount; }
     public void setDiscountAmount(BigDecimal discountAmount) { this.discountAmount = discountAmount; }
+
+    public Long getPosSessionId() { return posSessionId; }
+    public void setPosSessionId(Long posSessionId) { this.posSessionId = posSessionId; }
+
+    public String getPosTerminalId() { return posTerminalId; }
+    public void setPosTerminalId(String posTerminalId) { this.posTerminalId = posTerminalId; }
+
+    public String getPosCounterName() { return posCounterName; }
+    public void setPosCounterName(String posCounterName) { this.posCounterName = posCounterName; }
 }

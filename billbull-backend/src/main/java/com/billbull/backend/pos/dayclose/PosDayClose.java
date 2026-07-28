@@ -88,6 +88,11 @@ public class PosDayClose {
     @Column(name = "end_session_id")
     private Long endSessionId;
 
+    /** Immutable Z-Report number (format ZR-yyyyMMdd-NNNNNN), assigned once at close time.
+     *  Null on rows written before this field existed. */
+    @Column(name = "report_number", unique = true, length = 50)
+    private String reportNumber;
+
     public PosDayClose() {
     }
 
@@ -283,5 +288,13 @@ public class PosDayClose {
 
     public void setEndSessionId(Long endSessionId) {
         this.endSessionId = endSessionId;
+    }
+
+    public String getReportNumber() {
+        return reportNumber;
+    }
+
+    public void setReportNumber(String reportNumber) {
+        this.reportNumber = reportNumber;
     }
 }

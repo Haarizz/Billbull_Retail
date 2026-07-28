@@ -28,6 +28,9 @@ import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import com.billbull.backend.pos.dayclose.PosDayClose;
 import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
+import com.billbull.backend.pos.reports.PosReportNumberService;
+import com.billbull.backend.pos.reports.PosXReportSnapshot;
+import com.billbull.backend.pos.reports.PosXReportSnapshotRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.payment.PaymentStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -71,6 +74,8 @@ public class PosSessionService {
     private final PosBusinessDateService businessDateService;
     private final PosCashMovementRepository cashMovementRepository;
     private final ReceiptVoucherRepository receiptVoucherRepository;
+    private final PosXReportSnapshotRepository xReportSnapshotRepository;
+    private final PosReportNumberService reportNumberService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -96,7 +101,9 @@ public class PosSessionService {
                              PosTerminalActivityService terminalActivityService,
                              PosBusinessDateService businessDateService,
                              PosCashMovementRepository cashMovementRepository,
-                             ReceiptVoucherRepository receiptVoucherRepository) {
+                             ReceiptVoucherRepository receiptVoucherRepository,
+                             PosXReportSnapshotRepository xReportSnapshotRepository,
+                             PosReportNumberService reportNumberService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -114,6 +121,8 @@ public class PosSessionService {
         this.businessDateService = businessDateService;
         this.cashMovementRepository = cashMovementRepository;
         this.receiptVoucherRepository = receiptVoucherRepository;
+        this.xReportSnapshotRepository = xReportSnapshotRepository;
+        this.reportNumberService = reportNumberService;
     }
 
     private String currentUser() {
@@ -329,7 +338,8 @@ public class PosSessionService {
         // Expected cash uses the same actual-tender-collected formula as getXReport(), so the
         // Close Session modal and the X-Report page never diverge (both compute it here).
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
-        TenderTotals tender = aggregateTender(invoices);
+        List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(sessionId);
+        TenderTotals tender = aggregateTender(invoices, advances);
         BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
         BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
         BigDecimal expectedCash = computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
@@ -641,17 +651,54 @@ public class PosSessionService {
      *  the first time it is called on an OPEN session (idempotent), then returns the same
      *  payload as {@link #getXReport}. This stamp is what the end-of-day Z-Report gate
      *  checks — the read-only {@link #getXReport} preview (used on the dashboard) never
-     *  marks completion. */
+     *  marks completion.
+     *
+     *  The same first-time-only gate also persists an immutable {@link PosXReportSnapshot}
+     *  (POS Reports module — back-office historical X-Report browser), so exactly one
+     *  snapshot exists per session, taken at the moment the shift's X-Report was actually
+     *  generated. A session that closes without ever having its X-Report explicitly run
+     *  (see {@link #closeSession}, which only stamps the timestamp) has no snapshot row —
+     *  there is no "report" to have persisted, matching prior behavior for that case. */
     @Transactional
     public Map<String, Object> generateXReport(Long sessionId) {
         PosSession session = getById(sessionId);
         if (session.getStatus() == PosSessionStatus.OPEN && session.getXReportGeneratedAt() == null) {
-            session.setXReportGeneratedAt(LocalDateTime.now());
-            session.setXReportGeneratedBy(currentUser());
+            LocalDateTime generatedAt = LocalDateTime.now();
+            String generatedBy = currentUser();
+            session.setXReportGeneratedAt(generatedAt);
+            session.setXReportGeneratedBy(generatedBy);
             session.setXReportPrinted(true);
             repo.save(session);
+
+            Map<String, Object> report = getXReport(sessionId);
+            String reportNumber = reportNumberService.nextReportNumber("XR", session.getBranchId(), session.getSessionDate());
+            report.put("reportNumber", reportNumber);
+            persistXReportSnapshot(session, report, reportNumber, generatedAt, generatedBy);
+            return report;
         }
         return getXReport(sessionId);
+    }
+
+    private void persistXReportSnapshot(PosSession session, Map<String, Object> report, String reportNumber,
+                                         LocalDateTime generatedAt, String generatedBy) {
+        try {
+            PosXReportSnapshot snapshot = new PosXReportSnapshot();
+            snapshot.setReportNumber(reportNumber);
+            snapshot.setSessionId(session.getId());
+            snapshot.setBranchId(session.getBranchId());
+            snapshot.setBranchName(session.getBranchName());
+            snapshot.setTerminalId(session.getTerminalId());
+            snapshot.setCounterId(session.getCounterId());
+            snapshot.setCounterName(session.getCounterName());
+            snapshot.setCashierName(session.getOpenedBy());
+            snapshot.setBusinessDate(session.getSessionDate());
+            snapshot.setGeneratedBy(generatedBy);
+            snapshot.setGeneratedAt(generatedAt);
+            snapshot.setReportJson(objectMapper.writeValueAsString(report));
+            xReportSnapshotRepository.save(snapshot);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to persist X-Report snapshot");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -660,12 +707,13 @@ public class PosSessionService {
         // Fetch invoices WITH items in one query — the report streams items for sums
         // and per-line void detail, so a plain fetch would trigger N+1 lazy loads.
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
+        List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(sessionId);
 
         BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
         BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
 
         // Actual tender collected (not invoice value) for this single session.
-        TenderTotals tender = aggregateTender(invoices);
+        TenderTotals tender = aggregateTender(invoices, advances);
         // Actual tender refunded (paymentType = MADE) for this session, bucketed the same way.
         TenderTotals refunds = aggregateRefunds(invoices);
 
@@ -967,7 +1015,9 @@ public class PosSessionService {
                     .filter(inv -> inv.getStatus() != SalesInvoiceStatus.CANCELLED && inv.getStatus() != SalesInvoiceStatus.DRAFT)
                     .toList();
 
-        TenderTotals tender = aggregateTender(invoices);
+        List<ReceiptVoucher> advances = sessionIds.isEmpty() ? List.of() : receiptVoucherRepository.findByPosSessionIdIn(sessionIds);
+
+        TenderTotals tender = aggregateTender(invoices, advances);
         // Actual tender refunded (paymentType = MADE) across the day's invoices — same
         // source and shape as the X-Report's "Returns" KPI, so the two reports agree.
         TenderTotals refunds = aggregateRefunds(invoices);
@@ -1042,7 +1092,7 @@ public class PosSessionService {
         // (mixed Cash+Card) payments to both buckets instead of the session's running
         // totalCashSales/totalCardSales counters, which never see "mixed" sales at all
         // (recordInvoiceOnSession buckets mixed payments into totalMixedSales only).
-        result.put("cashierWiseSummary", buildCashierWiseSummary(invoices, sessions));
+        result.put("cashierWiseSummary", buildCashierWiseSummary(invoices, advances, sessions));
         result.put("isDayClosed", false);
         return result;
     }
@@ -1206,7 +1256,10 @@ public class PosSessionService {
         dayClose.setBranchName(branch.getName());
         dayClose.setBranchCode(branch.getCode());
         dayClose.setReportVersion("1.0");
-        
+        String zReportNumber = reportNumberService.nextReportNumber("ZR", branchId, date);
+        dayClose.setReportNumber(zReportNumber);
+        report.put("reportNumber", zReportNumber);
+
         dayClose.setGrossSales((BigDecimal) summary.getOrDefault("grossSales", BigDecimal.ZERO));
         dayClose.setNetSales((BigDecimal) summary.getOrDefault("netSalesExTax", BigDecimal.ZERO));
         dayClose.setTotalDiscount((BigDecimal) summary.getOrDefault("totalDiscount", BigDecimal.ZERO));
@@ -1470,7 +1523,7 @@ public class PosSessionService {
     }
 // ... existing code ...
 
-    private List<Map<String, Object>> buildCashierWiseSummary(List<SalesInvoice> invoices, List<PosSession> sessions) {
+    private List<Map<String, Object>> buildCashierWiseSummary(List<SalesInvoice> invoices, List<ReceiptVoucher> advances, List<PosSession> sessions) {
         Map<Long, String> cashierBySessionId = new java.util.HashMap<>();
         for (PosSession s : sessions) {
             cashierBySessionId.put(s.getId(), s.getOpenedBy() != null ? s.getOpenedBy() : "—");
@@ -1483,14 +1536,26 @@ public class PosSessionService {
                     : "—";
             byCashier.computeIfAbsent(cashier, k -> new java.util.ArrayList<>()).add(inv);
         }
+        Map<String, List<ReceiptVoucher>> advByCashier = new java.util.LinkedHashMap<>();
+        for (ReceiptVoucher adv : advances) {
+            String cashier = adv.getPosSessionId() != null
+                    ? cashierBySessionId.getOrDefault(adv.getPosSessionId(), "—")
+                    : "—";
+            advByCashier.computeIfAbsent(cashier, k -> new java.util.ArrayList<>()).add(adv);
+        }
+        
+        java.util.Set<String> allCashiers = new java.util.HashSet<>(byCashier.keySet());
+        allCashiers.addAll(advByCashier.keySet());
+        
         List<Map<String, Object>> rows = new java.util.ArrayList<>();
-        for (Map.Entry<String, List<SalesInvoice>> e : byCashier.entrySet()) {
-            List<SalesInvoice> cashierInvoices = e.getValue();
-            TenderTotals t = aggregateTender(cashierInvoices);
+        for (String cashier : allCashiers) {
+            List<SalesInvoice> cashierInvoices = byCashier.getOrDefault(cashier, new java.util.ArrayList<>());
+            List<ReceiptVoucher> cashierAdvances = advByCashier.getOrDefault(cashier, new java.util.ArrayList<>());
+            TenderTotals t = aggregateTender(cashierInvoices, cashierAdvances);
             BigDecimal netSales = cashierInvoices.stream()
                     .map(i -> nz(i.getInvoiceTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
             Map<String, Object> row = new java.util.LinkedHashMap<>();
-            row.put("cashier", e.getKey());
+            row.put("cashier", cashier);
             row.put("invoiceCount", cashierInvoices.size());
             row.put("netSales", netSales);
             row.put("cash", t.byBucket.getOrDefault("cash", BigDecimal.ZERO));
@@ -1604,14 +1669,16 @@ public class PosSessionService {
     }
 
     /** Aggregates actual RECEIVED tender for the given invoices from sales_payments.
-     *  This is the authoritative "Total Paid" — per-leg payment rows, not invoice value. */
-    private TenderTotals aggregateTender(List<SalesInvoice> invoices) {
+     *  This is the authoritative "Total Paid" — per-leg payment rows, not invoice value.
+     *  Also includes Customer Advances received during the session. */
+    private TenderTotals aggregateTender(List<SalesInvoice> invoices, List<ReceiptVoucher> advances) {
         TenderTotals t = new TenderTotals();
         List<String> numbers = invoices.stream()
                 .map(SalesInvoice::getInvoiceNumber)
                 .filter(n -> n != null && !n.isBlank())
                 .toList();
-        if (numbers.isEmpty()) return t;
+        
+        if (!numbers.isEmpty()) {
 
         for (Object[] row : paymentRepository.sumTenderByModeForInvoices(numbers)) {
             String rawMode = (String) row[0];
@@ -1642,6 +1709,40 @@ public class PosSessionService {
             line.put("date", p.getPaymentDate());
             t.lines.add(line);
         }
+        }
+        
+        if (advances != null) {
+            for (ReceiptVoucher p : advances) {
+                if (!ReceiptPurpose.ADVANCE_RECEIVED.equals(p.getPurpose())) continue;
+                String rawMode = p.getPaymentMode();
+                BigDecimal amount = p.getAmount() != null ? p.getAmount() : BigDecimal.ZERO;
+                String bucket = tenderBucket(rawMode);
+                t.byBucket.merge(bucket, amount, BigDecimal::add);
+                t.countByBucket.merge(bucket, 1L, Long::sum);
+                t.total = t.total.add(amount);
+                
+                if ("cash".equals(bucket)) t.cash = t.cash.add(amount);
+                else if ("card".equals(bucket)) {
+                    t.card = t.card.add(amount);
+                    String cardType = cardTypeLabel(rawMode);
+                    t.cardByType.merge(cardType, amount, BigDecimal::add);
+                    t.cardCountByType.merge(cardType, 1L, Long::sum);
+                }
+                else if ("credit".equals(bucket)) t.credit = t.credit.add(amount);
+                
+                Map<String, Object> line = new java.util.LinkedHashMap<>();
+                line.put("paymentNumber", p.getVoucherId());
+                line.put("invoiceNumber", "ADVANCE");
+                line.put("mode", p.getPaymentMode());
+                line.put("bucket", bucket);
+                line.put("amount", amount);
+                line.put("reference", p.getReference());
+                line.put("cashier", p.getPreparedBy());
+                line.put("date", p.getDate() != null ? p.getDate().atStartOfDay() : null);
+                t.lines.add(line);
+            }
+        }
+        
         return t;
     }
 

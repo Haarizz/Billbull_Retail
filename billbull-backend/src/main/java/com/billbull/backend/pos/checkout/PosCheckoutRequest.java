@@ -14,6 +14,8 @@ public class PosCheckoutRequest {
     private Double cardAmount;
     /** Third settlement leg — Online/Bank Transfer amount (e.g. partial receipt against a Credit sale). */
     private Double onlineAmount;
+    /** Fourth settlement leg — Customer Advance amount to apply against this invoice. */
+    private Double advanceAmount;
     private String cardReference;
     private String cardType;
     /** Selected bank account for Online-mode payments, formatted "{code} - {name}"
@@ -120,6 +122,8 @@ public class PosCheckoutRequest {
     public void setCardAmount(Double cardAmount) { this.cardAmount = cardAmount; }
     public Double getOnlineAmount() { return onlineAmount; }
     public void setOnlineAmount(Double onlineAmount) { this.onlineAmount = onlineAmount; }
+    public Double getAdvanceAmount() { return advanceAmount; }
+    public void setAdvanceAmount(Double advanceAmount) { this.advanceAmount = advanceAmount; }
     public String getCardReference() { return cardReference; }
     public void setCardReference(String cardReference) { this.cardReference = cardReference; }
     public String getCardType() { return cardType; }

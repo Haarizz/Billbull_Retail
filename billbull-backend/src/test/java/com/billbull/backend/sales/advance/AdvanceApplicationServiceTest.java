@@ -38,12 +38,13 @@ class AdvanceApplicationServiceTest {
     @Mock private SalesInvoiceRepository salesInvoiceRepo;
     @Mock private PostingEngineService postingEngine;
     @Mock private com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService;
+    @Mock private com.billbull.backend.pos.session.PosSessionService posSessionService;
 
     private AdvanceApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService);
+        service = new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService);
     }
 
     private ReceiptVoucher advance(Long id, String customerCode, BigDecimal amount) {
@@ -259,4 +260,33 @@ class AdvanceApplicationServiceTest {
         org.mockito.Mockito.verify(receiptRepo, org.mockito.Mockito.never())
                 .findByCustomerCodeAndPurpose(any(), any());
     }
+    // ---- applyAvailableAdvancesToInvoice ----
+
+    @Test
+    void applyAvailableAdvancesToInvoice_Success() {
+        ReceiptVoucher rv1 = advance(1L, "CUST-1", new BigDecimal("500.00"));
+        ReceiptVoucher rv2 = advance(2L, "CUST-1", new BigDecimal("300.00"));
+
+        when(receiptRepo.findByCustomerCodeAndPurposeOrderByDateAsc(
+                eq("CUST-1"), eq(com.billbull.backend.financials.receiptvoucher.ReceiptPurpose.ADVANCE_RECEIVED)))
+                .thenReturn(List.of(rv1, rv2));
+        
+        when(applicationRepo.sumAppliedByReceiptId(1L)).thenReturn(BigDecimal.ZERO);
+        when(applicationRepo.sumAppliedByReceiptId(2L)).thenReturn(BigDecimal.ZERO);
+
+        SalesInvoice invoice = invoice("INV-1", "CUST-1", new BigDecimal("600.00"));
+        
+        // Mock apply() internals for rv1
+        when(receiptRepo.findByIdForUpdate(1L)).thenReturn(Optional.of(rv1));
+        when(receiptRepo.findByIdForUpdate(2L)).thenReturn(Optional.of(rv2));
+        when(salesInvoiceRepo.findByInvoiceNumber("INV-1")).thenReturn(Optional.of(invoice));
+        when(applicationRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        BigDecimal totalApplied = service.applyAvailableAdvancesToInvoice("CUST-1", "INV-1", new BigDecimal("600.00"), LocalDate.now());
+
+        assertEquals(0, new BigDecimal("600.00").compareTo(totalApplied));
+        
+        org.mockito.Mockito.verify(applicationRepo, org.mockito.Mockito.times(2)).save(any());
+    }
+
 }

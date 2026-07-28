@@ -26,6 +26,7 @@ import {
   Clock,
   Target,
   Activity,
+  Receipt,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -35,16 +36,21 @@ import { Separator } from "./ui/separator";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from "recharts";
 import { getSalesReportData, getSalesReportSalespersons } from "../../../api/salesReportsApi";
+import { getPosXReports, getPosZReports, getPosReportXDetail, getPosReportZDetail, checkPosReportPrintable, checkPosReportExportable } from "../../../api/posReportsApi";
+import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from "../../../utils/posReportViewModel";
 import { exportToExcel } from "../../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
+import PaginationFooter from "../../../components/common/PaginationFooter";
 import { useBranch } from "../../../context/BranchContext";
+import { usePermissions } from "../../../context/PermissionContext";
 import { CurrencySymbol } from "../../../components/CurrencyAmount";
 
 type ReportGroupId =
   | "summary"
   | "pos"
+  | "posReports"
   | "van"
   | "backoffice"
   | "customer"
@@ -64,6 +70,9 @@ type ReportId =
   | "pos_payment_mode"
   | "pos_cashier_performance"
   | "pos_void_cancellation"
+  // POS Reports (historical X/Z-Report browser)
+  | "pos_x_reports"
+  | "pos_z_reports"
   // VAN
   | "van_sales_summary"
   | "van_item_sales"
@@ -175,6 +184,24 @@ const REPORTS: ReportDef[] = [
     kind: "table",
     group: "pos",
     tags: ["POS", "Audit"],
+  },
+
+  // 2b) POS Reports — historical X/Z-Report browser (stored snapshots, immutable)
+  {
+    id: "pos_x_reports",
+    label: "X Reports",
+    description: "Session-wise POS report generated during cashier operations.",
+    kind: "table",
+    group: "posReports",
+    tags: ["POS", "Audit"],
+  },
+  {
+    id: "pos_z_reports",
+    label: "Z Reports",
+    description: "Business Day closing report containing consolidated POS totals.",
+    kind: "table",
+    group: "posReports",
+    tags: ["POS", "Finance"],
   },
 
   // 3) VAN / Route Sales
@@ -1564,6 +1591,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const [groupOpen, setGroupOpen] = useState<Record<ReportGroupId, boolean>>({
     summary: true,
     pos: true,
+    posReports: false,
     van: false,
     backoffice: false,
     customer: false,
@@ -1627,6 +1655,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   > = {
     summary: { label: "Sales Summary & Financial", icon: <BarChart3 className="h-4 w-4" /> },
     pos: { label: "POS Sales Reports", icon: <Store className="h-4 w-4" /> },
+    posReports: { label: "POS Reports", icon: <Receipt className="h-4 w-4" /> },
     van: { label: "VAN / Route Sales", icon: <Truck className="h-4 w-4" /> },
     backoffice: { label: "Back-Office Sales", icon: <Package className="h-4 w-4" /> },
     customer: { label: "Customer-Centric Reports", icon: <Users className="h-4 w-4" /> },
@@ -1649,6 +1678,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     const byGroup: Record<ReportGroupId, ReportDef[]> = {
       summary: [],
       pos: [],
+      posReports: [],
       van: [],
       backoffice: [],
       customer: [],
@@ -1663,6 +1693,15 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
 
   async function loadReport(signal?: AbortSignal, clearFirst = false, overrides: { cashier?: string; channel?: string; searchText?: string } = {}) {
     if (branchLoading) return;
+    // POS Reports (X/Z historical browser) is a self-contained module with its own
+    // paginated backend calls and its own filter set — it never goes through the
+    // generic mock-data `/api/sales/reports/data/{reportId}` endpoint used by every
+    // other report, so skip that fetch entirely rather than surfacing a 404 error banner.
+    if (activeReport === "pos_x_reports" || activeReport === "pos_z_reports") {
+      setIsLoading(false);
+      setLoadError(null);
+      return;
+    }
     const effectiveCashier = overrides.cashier !== undefined ? overrides.cashier : cashier;
     const effectiveChannel = overrides.channel !== undefined ? overrides.channel : channel;
     const effectiveSearch = overrides.searchText !== undefined ? overrides.searchText : searchText;
@@ -1815,6 +1854,8 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       case "pos_item_sales": return <POSItemSalesReport />;
       case "pos_payment_mode": return <POSPaymentModeReport />;
       case "pos_void_cancellation": return <POSVoidReport />;
+      case "pos_x_reports": return <POSReportsBrowser reportType="X" />;
+      case "pos_z_reports": return <POSReportsBrowser reportType="Z" />;
       case "van_sales_summary": return <VANSalesSummaryReport />;
       case "van_item_sales": return <VANItemSalesReport />;
       case "van_route_performance": return <VANRoutePerformanceReport />;
@@ -2004,7 +2045,12 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
           transition={{ duration: 0.15 }}
           className="space-y-3"
         >
-          {/* Filters */}
+          {/* Filters — POS Reports (X/Z historical browser) renders its own self-contained
+              filter card inside POSReportsBrowser, since its filter set (Terminal/Counter/
+              Cashier/Session, Report Number, etc.) doesn't match the generic sales-report
+              filter bar below. */}
+          {activeDef.group !== "posReports" && (
+          <>
           <Card className="border border-slate-200 bg-white">
             <CardHeader className="py-3 px-3 flex flex-row items-center justify-between">
               <div className="flex flex-col gap-0.5">
@@ -2212,6 +2258,8 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
               </span>
             )}
           </div>
+          </>
+          )}
 
           {/* Results — wrapped in DataRevisionContext so child report components
               re-render whenever the parent fetches fresh data */}
@@ -3796,6 +3844,374 @@ function POSVoidReport() {
           </div>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// ── POS Reports (X/Z historical browser) ────────────────────────────────────
+// Read-only viewer over already-generated, immutable X-Report/Z-Report snapshots
+// (see backend PosReportsController). Deliberately does NOT go through the
+// mock-data/useReportView pipeline the other reports on this page use — it talks
+// directly to its own paginated backend endpoints and renders the stored snapshot
+// via the same buildXReportViewModel/buildZReportViewModel used by the live POS
+// screen (utils/posReportViewModel.js), so print/PDF output is identical to what
+// was originally generated. Never recomputes a report from live transactional data.
+function POSReportsBrowser({ reportType }: { reportType: "X" | "Z" }) {
+  const { canView } = usePermissions();
+  const { activeBranchId, isAllBranches, availableBranches, defaultBranch, activeBranch } = useBranch();
+  const canViewAll = canView("permissions.pos.reports.viewall");
+  const canPrint = canView("permissions.pos.reports.print");
+  const canExport = canView("permissions.pos.reports.export");
+
+  const today = new Date().toISOString().slice(0, 10);
+  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+
+  const [dateFrom, setDateFrom] = useState(firstOfMonth);
+  const [dateTo, setDateTo] = useState(today);
+  const [reportNumber, setReportNumber] = useState("");
+  const [generatedBy, setGeneratedBy] = useState("");
+  const [terminalId, setTerminalId] = useState("");
+  const [counterId, setCounterId] = useState("");
+  const [cashier, setCashier] = useState("");
+
+  const [appliedFilters, setAppliedFilters] = useState<any>(null);
+  const [rows, setRows] = useState<any[]>([]);
+  const [page, setPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalElements, setTotalElements] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [companyProfile, setCompanyProfile] = useState<any>(null);
+  const [viewerDetail, setViewerDetail] = useState<any>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getCompanyProfile().then((res: any) => setCompanyProfile(res.data)).catch(() => {});
+  }, []);
+
+  const branchId = isAllBranches || !activeBranchId || activeBranchId === "ALL" ? undefined : activeBranchId;
+  const branchLabel = (() => {
+    if (!branchId) return "All Branches";
+    const match = activeBranch || availableBranches.find((b: any) => String(b.id) === String(branchId)) || defaultBranch;
+    return match?.name || "Selected Branch";
+  })();
+
+  async function fetchPage(pageToLoad: number, filters: any) {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = { branchId, dateFrom: filters.dateFrom, dateTo: filters.dateTo,
+        reportNumber: filters.reportNumber, generatedBy: filters.generatedBy,
+        terminalId: filters.terminalId, counterId: filters.counterId || undefined, cashier: filters.cashier };
+      const data = reportType === "X"
+        ? await getPosXReports(params, pageToLoad, 20)
+        : await getPosZReports(params, pageToLoad, 20);
+      setRows(data.content || []);
+      setPage(data.page || 0);
+      setTotalPages(data.totalPages || 0);
+      setTotalElements(data.totalElements || 0);
+    } catch (err) {
+      console.error(`Failed to load ${reportType}-Reports`, err);
+      setError("Failed to load reports. Please check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const filters = { dateFrom, dateTo, reportNumber, generatedBy, terminalId, counterId, cashier };
+    setAppliedFilters(filters);
+    fetchPage(0, filters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportType, branchId]);
+
+  function handleSearch() {
+    const filters = { dateFrom, dateTo, reportNumber, generatedBy, terminalId, counterId, cashier };
+    setAppliedFilters(filters);
+    fetchPage(0, filters);
+  }
+
+  function handleClearFilters() {
+    setDateFrom(firstOfMonth);
+    setDateTo(today);
+    setReportNumber("");
+    setGeneratedBy("");
+    setTerminalId("");
+    setCounterId("");
+    setCashier("");
+    const filters = { dateFrom: firstOfMonth, dateTo: today, reportNumber: "", generatedBy: "", terminalId: "", counterId: "", cashier: "" };
+    setAppliedFilters(filters);
+    fetchPage(0, filters);
+  }
+
+  function handlePageChange(nextPage: number) {
+    fetchPage(nextPage, appliedFilters || {});
+  }
+
+  async function openViewer(row: any) {
+    setViewerError(null);
+    setViewerLoading(true);
+    setViewerDetail(null);
+    try {
+      const detail = reportType === "X" ? await getPosReportXDetail(row.id) : await getPosReportZDetail(row.id);
+      setViewerDetail(detail);
+    } catch (err) {
+      console.error("Failed to load report detail", err);
+      setViewerError("Failed to load the stored report. Please try again.");
+    } finally {
+      setViewerLoading(false);
+    }
+  }
+
+  function buildViewModel(detail: any) {
+    const currency = companyProfile?.currency || "AED";
+    if (reportType === "X") {
+      return buildXReportViewModelShared(detail.report, { currency });
+    }
+    return buildZReportViewModelShared(detail.report, { currency, businessDate: detail.businessDate });
+  }
+
+  async function handlePrint(detail: any) {
+    if (!canPrint) return;
+    try {
+      await checkPosReportPrintable();
+    } catch (err: any) {
+      alert(err?.response?.data?.message || "You do not have permission to print this report.");
+      return;
+    }
+    const vm = buildViewModel(detail);
+    const html = generateReportA4Html(vm, companyProfile || {}, { reportTitle: vm.reportTitle });
+    printHtml(html);
+  }
+
+  async function handleExportPdf(detail: any) {
+    if (!canExport) return;
+    try {
+      await checkPosReportExportable();
+    } catch (err: any) {
+      alert(err?.response?.data?.message || "You do not have permission to export this report.");
+      return;
+    }
+    const vm = buildViewModel(detail);
+    const html = generateReportA4Html(vm, companyProfile || {}, { reportTitle: vm.reportTitle });
+    await downloadPdf(html, `${detail.reportNumber || (reportType + "-Report")}`);
+  }
+
+  const isX = reportType === "X";
+
+  return (
+    <div className="space-y-3">
+      {/* Self-contained filter card — same card/input/button styling as the generic
+          filters bar above, but with the POS Reports-specific filter set. */}
+      <Card className="border border-slate-200 bg-white">
+        <CardHeader className="py-3 px-3">
+          <CardTitle className="text-xs font-semibold text-slate-800">
+            {isX ? "X Reports" : "Z Reports"} — Search &amp; Filter
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-3 pb-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />Business Date From</label>
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />Business Date To</label>
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-600 flex items-center gap-1"><Store className="h-3.5 w-3.5" />Branch</label>
+              <Input value={branchLabel} readOnly disabled className="h-8 text-[11px] bg-slate-100 border-slate-200 text-slate-500" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-600">Report Number</label>
+              <Input value={reportNumber} onChange={(e) => setReportNumber(e.target.value)} placeholder={isX ? "XR-..." : "ZR-..."} className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-600">Generated By</label>
+              <Input value={generatedBy} onChange={(e) => setGeneratedBy(e.target.value)} placeholder="User" className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+            </div>
+            {isX && (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-600">Terminal</label>
+                  <Input value={terminalId} onChange={(e) => setTerminalId(e.target.value)} placeholder="Terminal ID" className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[11px] text-slate-600">Cashier</label>
+                  <Input value={cashier} onChange={(e) => setCashier(e.target.value)} placeholder="Cashier name" className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+                </div>
+              </>
+            )}
+            <div className="flex items-end gap-2">
+              <Button onClick={handleSearch} className="flex-1 h-8 text-[11px] text-slate-900 bg-[#F5C742] hover:bg-[#e4b82e]">
+                <Search className="h-3.5 w-3.5 mr-1" />Search
+              </Button>
+              <Button variant="outline" onClick={handleClearFilters} className="h-8 text-[11px]">Clear Filters</Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {error && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg border border-red-200 bg-red-50 text-[11px] text-red-700">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />
+          <span>{error}</span>
+          <button className="ml-auto text-[10px] underline hover:no-underline" onClick={() => fetchPage(page, appliedFilters || {})}>Retry</button>
+        </div>
+      )}
+
+      <Card className="border border-slate-200 bg-white relative">
+        <CardHeader className="py-3 px-3 flex flex-row items-center justify-between">
+          <CardTitle className="text-xs font-semibold text-slate-800">{isX ? "X Reports" : "Z Reports"}</CardTitle>
+          {canExport && (
+            <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1"
+              onClick={() => exportToExcel(rows.map((r) => ({
+                "Report Number": r.reportNumber, "Report Type": r.reportType, "Business Date": r.businessDate,
+                "Branch": r.branchName, "Terminal": r.terminalId || "", "Counter": r.counterName || "",
+                "Cashier": r.cashierName || "", "Generated By": r.generatedBy, "Generated At": r.generatedAt, "Status": r.status,
+              })), `${isX ? "X" : "Z"}_Reports`)}>
+              <Download className="h-3 w-3" />Export
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="px-3 pb-3">
+          {loading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 backdrop-blur-[1px] rounded-lg">
+              <div className="flex items-center gap-2 px-4 py-2 bg-white border border-[#FDE6A9] rounded-full shadow text-[11px] text-slate-600">
+                <svg className="animate-spin h-3.5 w-3.5 text-[#F5C742]" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+                Loading reports…
+              </div>
+            </div>
+          )}
+          <div className="border border-slate-100 rounded-lg overflow-hidden overflow-x-auto">
+            <table className="bb-nowrap-table w-full text-[11px]">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Report Number</th>
+                  <th className="px-3 py-2 text-left font-medium">Report Type</th>
+                  <th className="px-3 py-2 text-left font-medium">Business Date</th>
+                  <th className="px-3 py-2 text-left font-medium">Branch</th>
+                  {isX && <th className="px-3 py-2 text-left font-medium">Terminal</th>}
+                  {isX && <th className="px-3 py-2 text-left font-medium">Counter</th>}
+                  {isX && <th className="px-3 py-2 text-left font-medium">Cashier</th>}
+                  <th className="px-3 py-2 text-left font-medium">Generated By</th>
+                  <th className="px-3 py-2 text-left font-medium">Generated At</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                  <th className="px-3 py-2 text-left font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, idx) => (
+                  <tr key={row.id} className={idx % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
+                    <td className="px-3 py-2 font-mono text-[10px] text-blue-700">{row.reportNumber || "—"}</td>
+                    <td className="px-3 py-2 text-slate-800">{row.reportType}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.businessDate}</td>
+                    <td className="px-3 py-2 text-slate-700">{row.branchName || "—"}</td>
+                    {isX && <td className="px-3 py-2 text-slate-700">{row.terminalId || "—"}</td>}
+                    {isX && <td className="px-3 py-2 text-slate-700">{row.counterName || "—"}</td>}
+                    {isX && <td className="px-3 py-2 text-slate-700">{row.cashierName || "—"}</td>}
+                    <td className="px-3 py-2 text-slate-600">{row.generatedBy || "—"}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.generatedAt ? String(row.generatedAt).replace("T", " ").slice(0, 16) : "—"}</td>
+                    <td className="px-3 py-2">
+                      <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium text-emerald-700 bg-emerald-50 border-emerald-200">{row.status}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => openViewer(row)}>View</Button>
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={isX ? 10 : 7} className="px-3 py-8 text-center text-slate-400">
+                      No {isX ? "X" : "Z"} Reports found for the selected filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+        <PaginationFooter page={page} totalPages={totalPages} totalElements={totalElements} size={20} loading={loading} onPageChange={handlePageChange} />
+      </Card>
+
+      {/* Report Viewer — renders exactly the stored snapshot, never regenerated. */}
+      {(viewerLoading || viewerError || viewerDetail) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { setViewerDetail(null); setViewerError(null); }}>
+          <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 sticky top-0 bg-white z-10">
+              <div>
+                <div className="text-sm font-semibold text-slate-800">{viewerDetail?.reportNumber || `${isX ? "X" : "Z"}-Report`}</div>
+                <div className="text-[10px] text-slate-500">Stored snapshot — rendered exactly as generated</div>
+              </div>
+              <div className="flex items-center gap-2">
+                {viewerDetail && canPrint && (
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => handlePrint(viewerDetail)}>
+                    <Printer className="h-3.5 w-3.5 mr-1" />Print
+                  </Button>
+                )}
+                {viewerDetail && canExport && (
+                  <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => handleExportPdf(viewerDetail)}>
+                    <FileText className="h-3.5 w-3.5 mr-1" />Export PDF
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => { setViewerDetail(null); setViewerError(null); }}>Close</Button>
+              </div>
+            </div>
+            <div className="p-4">
+              {viewerLoading && <div className="text-center text-slate-400 text-[11px] py-8">Loading stored report…</div>}
+              {viewerError && (
+                <div className="flex items-center gap-2 px-4 py-3 rounded-lg border border-red-200 bg-red-50 text-[11px] text-red-700">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" /><span>{viewerError}</span>
+                </div>
+              )}
+              {viewerDetail && (() => {
+                const vm = buildViewModel(viewerDetail);
+                return (
+                  <div className="space-y-3">
+                    <div className="text-xs text-slate-500">{vm.note}</div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {vm.kpis.map((k: any) => (
+                        <div key={k.label} className="border border-slate-200 rounded-lg p-2">
+                          <div className="text-[9px] text-slate-500">{k.label}</div>
+                          <div className="text-[12px] font-semibold text-slate-800">{k.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {vm.sections.map((section: any) => (
+                      <div key={section.title} className="border border-slate-100 rounded-lg overflow-hidden">
+                        <div className="px-3 py-1.5 bg-slate-50 text-[11px] font-semibold text-slate-700">{section.title}</div>
+                        <table className="bb-nowrap-table w-full text-[10px]">
+                          <thead className="bg-slate-50/60 text-slate-500">
+                            <tr>{section.cols.map((c: string) => <th key={c} className="px-2 py-1 text-left font-medium">{c}</th>)}</tr>
+                          </thead>
+                          <tbody>
+                            {section.rows.map((r: any[], i: number) => (
+                              <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
+                                {r.map((cell, ci) => <td key={ci} className="px-2 py-1 text-slate-700">{cell}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                          {section.footer && (
+                            <tfoot className="bg-[#F5C742] text-slate-900 font-semibold">
+                              <tr>{section.footer.map((cell: string, ci: number) => <td key={ci} className="px-2 py-1">{cell}</td>)}</tr>
+                            </tfoot>
+                          )}
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

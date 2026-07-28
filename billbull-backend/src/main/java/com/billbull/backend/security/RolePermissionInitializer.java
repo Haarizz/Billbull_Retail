@@ -98,11 +98,17 @@ public class RolePermissionInitializer implements ApplicationRunner {
         //   permissions.posting.backdate-into-locked → ADMIN can post into closed period
         //   permissions.sales.override-credit-limit  → MANAGER/ADMIN can override credit check
         //   permissions.vendor.advance               → ACCOUNTANT can manage vendor advances
-        //   permissions.customer.advance.refund      → MANAGER/ADMIN can refund customer advances
+        //   permissions.customer.advance.*           → ACCOUNTANT/MANAGER/ADMIN can manage customer advances
         roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
             seedIfAbsent(role, "permissions.journal.create",         true, true, true, false, false);
             seedIfAbsent(role, "permissions.journal.approve",        true, true, true, true,  false);
             seedIfAbsent(role, "permissions.vendor.advance",         true, true, true, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.view",  true, true, true, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.receive",true, true, true, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.apply", true, true, true, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.refund",true, true, true, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.adjust",true, true, true, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.void",  true, true, true, false, false);
         });
         roleRepository.findByName("MANAGER").ifPresent(role -> {
             // Base module access so MANAGER can see the modules their approvals pertain to
@@ -116,13 +122,23 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "permissions.journal.approve",              true, true, true, true,  false);
             seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
             seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.view",        true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.receive",     true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.apply",       true, true, true, true,  false);
             seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.adjust",      true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.void",        true, true, true, true,  false);
         });
         roleRepository.findByName("ADMIN").ifPresent(role -> {
             seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
             seedIfAbsent(role, "permissions.posting.backdate-into-locked", true, true, true, true,  false);
             seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.view",        true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.receive",     true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.apply",       true, true, true, true,  false);
             seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.adjust",      true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.void",        true, true, true, true,  false);
         });
 
         // SUPERVISOR: POS floor oversight — authorizes cashier shift handovers/takeovers,
@@ -137,7 +153,12 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "permissions.journal.approve-high-value",   true, true, true, true,  false);
             seedIfAbsent(role, "permissions.posting.backdate-into-locked", true, true, true, true,  false);
             seedIfAbsent(role, "permissions.sales.override-credit-limit",  true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.view",        true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.receive",     true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.apply",       true, true, true, true,  false);
             seedIfAbsent(role, "permissions.customer.advance.refund",      true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.adjust",      true, true, true, true,  false);
+            seedIfAbsent(role, "permissions.customer.advance.void",        true, true, true, true,  false);
         });
 
         // ── User-Based Data Visibility / Ownership Filtering (Topic 2) ────────────────────────────
@@ -217,6 +238,9 @@ public class RolePermissionInitializer implements ApplicationRunner {
         roleRepository.findByName("SALES").ifPresent(role -> {
             seedIfAbsent(role, "pos",           true, false, false, false, false);
             seedIfAbsent(role, "pos.terminals", true, false, false, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.view", true, false, false, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.receive", true, true, false, false, false);
+            seedIfAbsent(role, "permissions.customer.advance.apply", true, true, false, false, false);
         });
 
         // ── Cash Drop / Outs Management RBAC ──────────────────────────────────────────────────
@@ -242,6 +266,25 @@ public class RolePermissionInitializer implements ApplicationRunner {
                     "permissions.pos.cashmovement.create", "permissions.pos.cashmovement.view"}) {
                 seedIfAbsent(role, action, true, true, true, true, true);
             }
+        });
+
+        // ── POS Reports RBAC (Customers & Sales > Reports > POS Reports) ────────────────────────
+        // Read-only historical X/Z-Report browser. Admin/Branch Admin/Manager/Supervisor: full
+        // view/viewall/print/export. Sales (cashier-level): view only, own branch (viewall stays
+        // off, matching the branch-pinned fallback in PosReportsController#resolveBranchFilter).
+        String[] allPosReportsActions = {
+                "permissions.pos.reports.view", "permissions.pos.reports.viewall",
+                "permissions.pos.reports.print", "permissions.pos.reports.export",
+        };
+        for (String fullAccessRole : new String[]{"ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR"}) {
+            roleRepository.findByName(fullAccessRole).ifPresent(role -> {
+                for (String action : allPosReportsActions) {
+                    seedIfAbsent(role, action, true, true, true, true, true);
+                }
+            });
+        }
+        roleRepository.findByName("SALES").ifPresent(role -> {
+            seedIfAbsent(role, "permissions.pos.reports.view", true, true, true, true, true);
         });
     }
 

@@ -22,6 +22,7 @@ import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
 import com.billbull.backend.sales.payment.Payment;
 import com.billbull.backend.sales.payment.PaymentRepository;
+import com.billbull.backend.sales.advance.AdvanceApplicationService;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.HttpStatus;
@@ -64,6 +65,7 @@ public class PosCheckoutController {
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
     private final PaymentRepository paymentRepository;
+    private final AdvanceApplicationService advanceApplicationService;
     private final com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
 
@@ -77,6 +79,7 @@ public class PosCheckoutController {
                                   ProductService productService,
                                   EmployeeRepository employeeRepository,
                                   PaymentRepository paymentRepository,
+                                  AdvanceApplicationService advanceApplicationService,
                                   com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService,
                                   com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService) {
         this.invoiceService = invoiceService;
@@ -92,6 +95,7 @@ public class PosCheckoutController {
         this.productService = productService;
         this.employeeRepository = employeeRepository;
         this.paymentRepository = paymentRepository;
+        this.advanceApplicationService = advanceApplicationService;
         this.terminalActivityService = terminalActivityService;
         this.branchTaxResolutionService = branchTaxResolutionService;
     }
@@ -132,12 +136,13 @@ public class PosCheckoutController {
                 ? cardLegs.stream().mapToDouble(PosCheckoutRequest.PosCardLeg::getAmount).sum()
                 : (request.getCardAmount() != null ? request.getCardAmount() : 0.0);
         double onlineAmt = request.getOnlineAmount() != null ? request.getOnlineAmount() : 0.0;
-        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001 || onlineAmt > 0.001;
+        double advanceAmt = request.getAdvanceAmount() != null ? request.getAdvanceAmount() : 0.0;
+        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001 || onlineAmt > 0.001 || advanceAmt > 0.001;
         double paymentAmount = hasSplitAmounts
-                ? Math.min(cashAmt + cardAmt + onlineAmt, invoiceTotal)
+                ? Math.min(cashAmt + cardAmt + onlineAmt + advanceAmt, invoiceTotal)
                 : Math.min(request.getAmountTendered() != null ? request.getAmountTendered() : 0.0, invoiceTotal);
-        // A Credit checkout with a partial receipt (cashAmt/cardAmt/onlineAmt < invoiceTotal) must
-        // keep the invoice's paymentMode stamped "Credit" — the leg mode (Cash/Card/Online) belongs
+        // A Credit checkout with a partial receipt (cashAmt/cardAmt/onlineAmt/advanceAmt < invoiceTotal) must
+        // keep the invoice's paymentMode stamped "Credit" — the leg mode (Cash/Card/Online/Advance) belongs
         // on the Payment/Receipt row, not on the invoice, so the remaining balance still reads as
         // outstanding credit rather than looking like a plain Cash/Card sale.
         boolean isCreditCheckout = "credit".equalsIgnoreCase(request.getPaymentMode());
@@ -148,7 +153,7 @@ public class PosCheckoutController {
         // so unlike the legacy cash/card scalars (which silently cap at invoiceTotal), a
         // mismatched card-leg total is rejected rather than silently truncated.
         if (useCardLegs && !isCreditCheckout && invoiceTotal > 0
-                && Math.abs((cashAmt + cardAmt + onlineAmt) - invoiceTotal) > ROUNDING_TOLERANCE) {
+                && Math.abs((cashAmt + cardAmt + onlineAmt + advanceAmt) - invoiceTotal) > ROUNDING_TOLERANCE) {
             try {
                 invoiceService.delete(saved.getId());
             } catch (RuntimeException cleanupEx) {
@@ -156,7 +161,7 @@ public class PosCheckoutController {
             }
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, String.format(
                     "Total of all payment legs (%.2f) must equal the invoice total (%.2f).",
-                    cashAmt + cardAmt + onlineAmt, invoiceTotal));
+                    cashAmt + cardAmt + onlineAmt + advanceAmt, invoiceTotal));
         }
 
         // Step 2: transition status while the invoice is still DRAFT so that
@@ -191,12 +196,13 @@ public class PosCheckoutController {
         if (paymentAmount > 0) {
             int legCount = (cashAmt > 0.001 ? 1 : 0)
                     + (useCardLegs ? cardLegs.size() : (cardAmt > 0.001 ? 1 : 0))
-                    + (onlineAmt > 0.001 ? 1 : 0);
+                    + (onlineAmt > 0.001 ? 1 : 0)
+                    + (advanceAmt > 0.001 ? 1 : 0);
             String splitGroupId = legCount > 1 ? java.util.UUID.randomUUID().toString() : null;
             // Each recordPayment call re-stamps invoice.paymentMode, so every leg must carry
             // the same combined label (e.g. "Cash + Visa + Mastercard") — otherwise the last
             // call silently overwrites the invoice's displayed mode with just its own leg.
-            String combinedMode = buildCombinedPaymentMode(request, cashAmt, cardLegs, useCardLegs, cardAmt, onlineAmt, creditStamp);
+            String combinedMode = buildCombinedPaymentMode(request, cashAmt, cardLegs, useCardLegs, cardAmt, onlineAmt, advanceAmt, creditStamp);
 
             if (cashAmt > 0.001) {
                 invoiceService.recordPayment(saved.getId(), cashAmt, "Cash",
@@ -214,6 +220,18 @@ public class PosCheckoutController {
             if (onlineAmt > 0.001) {
                 invoiceService.recordPayment(saved.getId(), onlineAmt, "Online",
                         null, LocalDate.now(), request.getBankAccountName(), null, splitGroupId, combinedMode);
+            }
+            if (advanceAmt > 0.001) {
+                // Apply the advance against the invoice
+                advanceApplicationService.applyAvailableAdvancesToInvoice(
+                        saved.getCustomerCode(), saved.getInvoiceNumber(), BigDecimal.valueOf(advanceAmt), LocalDate.now());
+                
+                // If it was just an advance (no other legs), we need to ensure the payment mode reflects it
+                if (legCount == 1) {
+                    saved.setPaymentMode(combinedMode != null ? combinedMode : "Customer Advance");
+                } else if (combinedMode != null) {
+                    saved.setPaymentMode(combinedMode);
+                }
             }
             if (legCount == 0) {
                 // Legacy path: no cash/card/online scalars or legs at all — a plain single-leg
@@ -839,23 +857,27 @@ public class PosCheckoutController {
     /** Builds the invoice-level combined payment-mode label (e.g. "Cash + Visa + Mastercard")
      *  from whichever legs are actually present, unless the caller already supplied one. */
     private String buildCombinedPaymentMode(PosCheckoutRequest request, double cashAmt,
-            List<PosCheckoutRequest.PosCardLeg> cardLegs, boolean useCardLegs, double cardAmt, double onlineAmt,
-            String creditStamp) {
+                                            List<PosCheckoutRequest.PosCardLeg> cardLegs, boolean useCardLegs,
+                                            double cardAmt, double onlineAmt, double advanceAmt, String creditStamp) {
+        if (creditStamp != null) return creditStamp;
         if (request.getCombinedPaymentMode() != null && !request.getCombinedPaymentMode().isBlank()) {
-            return request.getCombinedPaymentMode();
+            return request.getCombinedPaymentMode(); // Front-end provided override
         }
-        List<String> labels = new java.util.ArrayList<>();
-        if (cashAmt > 0.001) labels.add("Cash");
+        java.util.List<String> modes = new java.util.ArrayList<>();
+        if (cashAmt > 0.001) modes.add("Cash");
         if (useCardLegs) {
             for (PosCheckoutRequest.PosCardLeg leg : cardLegs) {
-                labels.add(leg.getCardType() != null && !leg.getCardType().isBlank() ? leg.getCardType() : "Card");
+                String label = leg.getCardType() != null && !leg.getCardType().isBlank() ? leg.getCardType() : "Card";
+                if (!modes.contains(label)) modes.add(label);
             }
         } else if (cardAmt > 0.001) {
-            labels.add(resolveCardMode(request));
+            String label = resolveCardMode(request);
+            if (!modes.contains(label)) modes.add(label);
         }
-        if (onlineAmt > 0.001) labels.add("Online");
-        if (labels.size() > 1) return String.join(" + ", labels);
-        return creditStamp;
+        if (onlineAmt > 0.001) modes.add("Online");
+        if (advanceAmt > 0.001) modes.add("Customer Advance");
+        if (modes.isEmpty()) return resolvePaymentMode(request);
+        return String.join(" + ", modes);
     }
 
     /** Returns true when a BigDecimal value is non-null and strictly positive (> 0). */

@@ -81,6 +81,8 @@ class PosSessionServiceTest {
     @Mock private com.billbull.backend.pos.businessdate.PosBusinessDateService businessDateService;
     @Mock private PosCashMovementRepository cashMovementRepository;
     @Mock private com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository;
+    @Mock private com.billbull.backend.pos.reports.PosXReportSnapshotRepository xReportSnapshotRepository;
+    @Mock private com.billbull.backend.pos.reports.PosReportNumberService reportNumberService;
 
     private PosSessionService service;
 
@@ -89,7 +91,8 @@ class PosSessionServiceTest {
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
                 terminalRepository, returnRepository, dayCloseRepository, objectMapper, terminalActivityService,
-                businessDateService, cashMovementRepository, receiptVoucherRepository);
+                businessDateService, cashMovementRepository, receiptVoucherRepository,
+                xReportSnapshotRepository, reportNumberService);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
         // Default: no tender / audit rows unless a test stubs them.
         lenient().when(paymentRepository.sumTenderByModeForInvoices(any())).thenReturn(List.of());
@@ -707,6 +710,88 @@ class PosSessionServiceTest {
         Map<String, Object> report = service.closeDay(branchId, date);
 
         assertEquals(true, report.get("isDayClosed"));
+    }
+
+    // ---------------------------------------------------------------------
+    // POS Reports module — X-Report snapshot persistence, Z-Report numbering
+    // ---------------------------------------------------------------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void generateXReportPersistsSnapshotOnceAndStampsSessionOnFirstCall() throws com.fasterxml.jackson.core.JsonProcessingException {
+        PosSession session = openSession();
+        session.setBranchId(7L);
+        session.setTerminalId("T1");
+        session.setCounterName("Main Counter");
+        session.setOpenedBy("cashierA");
+        session.setSessionDate(LocalDate.now());
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+        when(reportNumberService.nextReportNumber("XR", 7L, session.getSessionDate())).thenReturn("XR-20260101-000001");
+        when(objectMapper.writeValueAsString(any())).thenReturn("{\"summary\":{}}");
+
+        Map<String, Object> report = service.generateXReport(1L);
+
+        // Stamp is set exactly once, on the first (idempotent) generation.
+        assertTrue(session.getXReportGeneratedAt() != null);
+        assertEquals(Boolean.TRUE, session.getXReportPrinted());
+        assertEquals("XR-20260101-000001", report.get("reportNumber"));
+
+        var captor = org.mockito.ArgumentCaptor.forClass(com.billbull.backend.pos.reports.PosXReportSnapshot.class);
+        verify(xReportSnapshotRepository).save(captor.capture());
+        com.billbull.backend.pos.reports.PosXReportSnapshot saved = captor.getValue();
+        assertEquals("XR-20260101-000001", saved.getReportNumber());
+        assertEquals(1L, saved.getSessionId());
+        assertEquals(7L, saved.getBranchId());
+        assertEquals("T1", saved.getTerminalId());
+        assertEquals("Main Counter", saved.getCounterName());
+        assertEquals("cashierA", saved.getCashierName());
+        assertTrue(saved.getReportJson() != null);
+    }
+
+    @Test
+    void generateXReportDoesNotPersistASecondSnapshotOnRepeatCalls() {
+        // Idempotent: once xReportGeneratedAt is set, subsequent calls only replay the
+        // live preview — matching the pre-existing stamp semantics — and must not mint
+        // a second immutable snapshot for the same session.
+        PosSession session = openSession();
+        session.setBranchId(7L);
+        session.setSessionDate(LocalDate.now());
+        session.setXReportGeneratedAt(LocalDateTime.now().minusMinutes(5));
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+
+        service.generateXReport(1L);
+
+        verify(xReportSnapshotRepository, org.mockito.Mockito.never()).save(any());
+        verify(reportNumberService, org.mockito.Mockito.never()).nextReportNumber(any(), any(), any());
+    }
+
+    @Test
+    void closeDayAssignsAnImmutableZReportNumberAndEmbedsItInTheSnapshot() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(9));
+        s1.setOpeningCash(bd("100"));
+        s1.setInvoiceCount(0);
+        s1.setExpectedCash(bd("100"));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(eq(branchId), any())).thenReturn(List.of());
+        when(reportNumberService.nextReportNumber("ZR", branchId, date)).thenReturn("ZR-20260101-000001");
+        var captor = org.mockito.ArgumentCaptor.forClass(com.billbull.backend.pos.dayclose.PosDayClose.class);
+        when(dayCloseRepository.save(captor.capture())).thenAnswer(inv -> {
+            com.billbull.backend.pos.dayclose.PosDayClose d = inv.getArgument(0);
+            d.setId(99L);
+            return d;
+        });
+
+        Map<String, Object> report = service.closeDay(branchId, date);
+
+        assertEquals("ZR-20260101-000001", captor.getValue().getReportNumber());
+        assertEquals("ZR-20260101-000001", report.get("reportNumber"));
     }
 
     // ---------------------------------------------------------------------

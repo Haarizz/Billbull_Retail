@@ -43,6 +43,7 @@ import { resolvePrintTemplate } from '../../api/printTemplateApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
+import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -123,6 +124,7 @@ import {
   Phone,
   Upload,
   Heart,
+  Coins,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -490,6 +492,8 @@ export default function POSSales() {
   const [prevDaySessionOpenId, setPrevDaySessionOpenId] = useState(null);
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [customerAdvanceSummary, setCustomerAdvanceSummary] = useState(null);
+  const [mixedAdvanceAmount, setMixedAdvanceAmount] = useState('');
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
   // Live Session quick-view — dashboard tile that pops the current session's
@@ -4184,6 +4188,7 @@ export default function POSSales() {
       const tenderedNum = parseFloat(tenderedAmount) || 0;
       const mixedCashNum = parseFloat(mixedCashAmount) || 0;
       const mixedCardNum = parseFloat(mixedCardAmount) || 0;
+      const mixedAdvanceNum = parseFloat(mixedAdvanceAmount) || 0;
       // Multi-card split (Card payment mode only) — when the cashier used
       // "+ Split across multiple cards", this array is the source of truth for
       // the card portion; checkoutCardType/checkoutCardRef drive it otherwise.
@@ -4208,13 +4213,21 @@ export default function POSSales() {
         : checkoutPayMode === 'card' ? checkoutCardModeLabel
           : checkoutPayMode === 'credit' ? 'Credit'
             : checkoutPayMode === 'online' ? 'Online'
-              : 'Cash + Card';
-      let combinedPaymentMode = checkoutPayMode === 'mixed' ? `Cash + ${mixedCardType || 'Card'}` : null;
+              : checkoutPayMode === 'advance' ? 'Advance'
+                : 'Mixed';
+      
+      let combinedModes = [];
+      if (mixedCashNum > 0) combinedModes.push('Cash');
+      if (mixedCardNum > 0) combinedModes.push(mixedCardType || 'Card');
+      if (mixedAdvanceNum > 0) combinedModes.push('Advance');
+      let combinedPaymentMode = checkoutPayMode === 'mixed' ? combinedModes.join(' + ') : null;
+
       let amountTendered = checkoutPayMode === 'cash' ? tenderedNum
         : checkoutPayMode === 'card' ? grandTotal
           : checkoutPayMode === 'credit' ? creditReceivedNum
             : checkoutPayMode === 'online' ? grandTotal
-              : mixedCashNum + mixedCardNum;
+              : checkoutPayMode === 'advance' ? grandTotal
+                : mixedCashNum + mixedCardNum + mixedAdvanceNum;
 
       // Selected bank account — for Online mode, or a Credit sale's partial receipt
       // when it was collected Online/Bank — formatted "{code} - {name}" so the
@@ -4285,6 +4298,7 @@ export default function POSSales() {
               : 0,
         onlineAmount: (checkoutPayMode === 'credit' && (checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank'))
           ? creditReceivedNum : 0,
+        advanceAmount: checkoutPayMode === 'advance' ? grandTotal : (checkoutPayMode === 'mixed' ? mixedAdvanceNum : 0),
         cardReference: checkoutPayMode === 'credit' ? (checkoutCreditReceivedRef || null)
           : checkoutPayMode === 'online' ? (checkoutOnlineReference || null)
             : (checkoutCardRef || null),
@@ -4344,7 +4358,7 @@ export default function POSSales() {
         paymentMode,
         depositAmount: depositSnapshot,
         paidAmount: checkoutPayMode === 'cash' ? tenderedNum
-          : checkoutPayMode === 'mixed' ? mixedCashNum + mixedCardNum
+          : checkoutPayMode === 'mixed' ? mixedCashNum + mixedCardNum + mixedAdvanceNum
             : checkoutPayMode === 'credit' ? creditReceivedNum
               : effectiveDueAmt,
         creditBalance: checkoutPayMode === 'credit' ? Math.max(0, effectiveDueAmt - creditReceivedNum) : 0,
@@ -5787,322 +5801,14 @@ export default function POSSales() {
   });
 
   // ── Z-Report: build A4 view-model for print/PDF ───────────────────────────
-  const buildZReportViewModel = () => {
-    const zSummary = zReportData?.summary || {};
-    const zSessions = zReportData?.sessions || [];
-    const zInvoices = zReportData?.invoices || [];
-    const totalSalesV = Number(zSummary.totalSales ?? 0);
-    const cashSalesV = Number(zSummary.cashSales ?? 0);
-    const cardSalesV = Number(zSummary.cardSales ?? 0);
-    const creditSalesV = Number(zSummary.creditSales ?? 0);
-    // Online payments are tendered against a bank account, so they land in the
-    // same reconciliation bucket as generic bank transfers (see POS backend
-    // tenderBucket()).
-    const bankTransferSalesV = Number(zSummary.bankTransferSales ?? 0);
-    const totalTaxV = Number(zSummary.totalTax ?? 0);
-    const salesExTaxV = Number(zSummary.salesAmountExTax ?? 0);
-    const discountV = Number(zSummary.totalDiscount ?? 0);
-    const itemsSoldV = zSummary.totalItemsSold ?? 0;
-    const invoiceCount = zSummary.invoiceCount ?? 0;
-    const sessionCount = zSummary.sessionCount ?? zSessions.length;
-    const openingCash = zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0);
-    const expectedCash = openingCash + cashSalesV;
-    const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
-    // Consolidated Cash Position — additive, informational-only summary alongside the
-    // existing Cash Drawer Summary above. Never feeds `expectedCash`/cash variance.
-    const cashPosition = zSummary.cashPosition || {};
-    const cpOpeningCash = Number(cashPosition.openingCash ?? openingCash);
-    const cpCashSales = Number(cashPosition.cashSales ?? cashSalesV);
-    const cpReceiptsTotal = Number(cashPosition.customerReceiptsTotal ?? 0);
-    const cpAdvancesTotal = Number(cashPosition.customerAdvancesTotal ?? 0);
-    const cpDropIn = Number(cashPosition.cashDropIn ?? 0);
-    const cpDropOut = Number(cashPosition.cashDropOut ?? 0);
-    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-    const cpNet = Number(cashPosition.netCashPosition ?? (cpOpeningCash + cpCashSales + cpReceiptsTotal + cpAdvancesTotal + cpDropIn - cpDropOut));
-    const cpReceiptRows = Array.isArray(cashPosition.customerReceiptRows) ? cashPosition.customerReceiptRows : [];
-    const cpAdvanceRows = Array.isArray(cashPosition.customerAdvanceRows) ? cashPosition.customerAdvanceRows : [];
-    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
-    const zId = zSessions[0]?.id;
-    const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
-
-    const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
-    const creditTotal = creditInvoices.reduce((s, inv) => s + (Number(inv.invoiceTotal) || 0), 0);
-    const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
-    // Detailed void/removal + per-cashier collection from the backend.
-    const postedVoids = Array.isArray(zReportData?.voids) ? zReportData.voids : [];
-    const cartRemovals = Array.isArray(zReportData?.cartRemovals) ? zReportData.cartRemovals : [];
-    const cashierRows = Array.isArray(zReportData?.cashiers) ? zReportData.cashiers : [];
-    const totalPaidV = Number(zSummary.totalPaid ?? totalSalesV);
-    const voidAmountV = Number(zSummary.voidAmount ?? 0);
-    const refundTotal = Number(zSummary.totalRefunds ?? 0);
-    const actualCash = zSessions.reduce((s, ss) => s + Number(ss.closingCash ?? 0), 0);
-    const cashVariance = actualCash - expectedCash;
-    const zCashierLabel = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
-    const zSessionInfoRows = Array.isArray(zReportData?.sessionInfo) ? zReportData.sessionInfo : [];
-    const fmtTs = (t) => {
-      const d = parseUTCDate(t);
-      if (!d) return '—';
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
-    const cardTypeBreakdown = Array.isArray(zSummary.cardTypeBreakdown) ? zSummary.cardTypeBreakdown : [];
-    const zDenominationTotals = denomKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
-    zSessionInfoRows.forEach((row) => {
-      const raw = row?.closingDenominationsJson;
-      if (!raw) return;
-      try {
-        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        denomKeys.forEach((key) => { zDenominationTotals[key] += Number(parsed?.[key] || 0); });
-      } catch (err) {
-        console.warn('Unable to parse Z-report closing denominations', err);
-      }
-    });
-
-    return {
-      reportTitle: 'Z-Report / End-of-Day Closing Report',
-      note: `Report No: ${reportNo}  |  Business Date: ${zReportDate || new Date().toISOString().slice(0, 10)}  |  Sessions: ${sessionCount}`,
-      reportMeta: [
-        { label: 'Report No', value: reportNo },
-        { label: 'Session No', value: `${sessionCount} session${sessionCount === 1 ? '' : 's'}` },
-        { label: 'Cashier', value: zCashierLabel },
-        { label: 'Date & Time', value: new Date().toLocaleString() },
-        { label: 'Business Date', value: zReportDate || new Date().toISOString().slice(0, 10) },
-        { label: 'Terminal', value: currentTerminal?.terminalId || 'All Terminals' },
-      ],
-      kpis: [
-        { label: 'Opening Cash', value: fmt(openingCash), hint: `${sessionCount} session(s)`, icon: 'OC' },
-        { label: 'Total Sales', value: fmt(totalSalesV), hint: 'Inc. VAT', icon: 'TS' },
-        { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
-        { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
-        { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
-        { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
-        { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
-        { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
-        { label: 'Expected Cash', value: fmt(expectedCash), hint: 'Opening + cash sales', icon: 'EC' },
-        { label: 'Actual Cash', value: fmt(actualCash), hint: 'Closed session counts', icon: 'AC' },
-        { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: actualCash === 0 ? 'Pending close count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess', icon: 'CV' },
-      ],
-      sections: [
-        {
-          title: '0. Session Information', type: 'table',
-          cols: ['Session', 'Cashier', 'Opened At', 'Closed At', 'Expected Cash', 'Actual Cash'],
-          rows: zSessionInfoRows.length
-            ? zSessionInfoRows.map((row) => [
-              row.sessionNo || 'â€”',
-              row.cashier || 'â€”',
-              fmtTs(row.openedAt),
-              fmtTs(row.closedAt),
-              fmt(Number(row.expectedCash ?? 0)),
-              fmt(Number(row.closingCash ?? 0)),
-            ])
-            : zSessions.map((row) => [
-              row.id ? `SESS-${String(row.id).padStart(6, '0')}` : 'â€”',
-              row.openedBy || 'â€”',
-              fmtTs(row.openedAt),
-              fmtTs(row.closedAt),
-              fmt(Number(row.expectedCash ?? 0)),
-              fmt(Number(row.closingCash ?? 0)),
-            ]),
-        },
-        {
-          title: '1. Denomination Count', type: 'table',
-          cols: ['Denomination', 'Quantity', 'Total Amount'],
-          rows: denomKeys.map(k => [denomLabels[k], String(zDenominationTotals[k] || 0), fmt((zDenominationTotals[k] || 0) * parseFloat(k))]),
-          footer: ['Total Cash Counted', '', fmt(calculateDenominationTotal(zDenominationTotals))],
-        },
-        {
-          title: '2. Sales Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Gross Sales', fmt(totalSalesV)],
-            ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
-            ['Net Sales Before VAT', fmt(salesExTaxV)],
-            ['VAT Amount (5%)', fmt(totalTaxV)],
-            ['Net Sales Including VAT', fmt(totalSalesV)],
-          ],
-        },
-        {
-          title: '2. Invoice / Transaction Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [['Total Sales Invoices', String(invoiceCount), fmt(totalSalesV)]],
-        },
-        {
-          title: '3. Payment / Tender Summary', type: 'table',
-          cols: ['Payment Mode', 'Count', 'Amount'],
-          rows: [
-            ['Cash', String(zSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
-            ['Card', String(zSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
-            ['Credit', String(zSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
-          ],
-          footer: ['Total Collected', String(invoiceCount), fmt(totalSalesV)],
-        },
-        {
-          title: '4. Cash Drawer Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Opening Cash / Float', fmt(openingCash)],
-            ['Cash Sales', fmt(cashSalesV)],
-            ['Expected Cash in Drawer', fmt(expectedCash)],
-          ],
-        },
-        {
-          title: '4a. Consolidated Cash Position (Informational)', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Opening Cash', fmt(cpOpeningCash)],
-            ['Cash Sales', fmt(cpCashSales)],
-            ['Customer Receipts (Cash)', fmt(cpReceiptsTotal)],
-            ['Customer Advances (Cash)', fmt(cpAdvancesTotal)],
-            ['Cash Drop In', fmt(cpDropIn)],
-            ['Cash Refunds (Cash)', cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not available — refund payment mode not tracked'],
-            ['Cash Drop Out', cpDropOut > 0 ? `(${fmt(cpDropOut)})` : fmt(0)],
-          ],
-          footer: ['Net Cash Position', fmt(cpNet)],
-        },
-        {
-          title: '4b. Customer Receipts', type: 'table',
-          cols: ['Sl No', 'Customer Name', 'Received By', 'Received Amount'],
-          rows: cpReceiptRows.length
-            ? cpReceiptRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.receivedBy || '—', fmt(Number(r.receivedAmount ?? 0))])
-            : [['—', 'No cash customer receipts', '—', fmt(0)]],
-          footer: ['', '', 'Total', fmt(cpReceiptsTotal)],
-        },
-        {
-          title: '4c. Customer Advances', type: 'table',
-          cols: ['Sl No', 'Customer Name', 'Paid By', 'Paid Amount'],
-          rows: cpAdvanceRows.length
-            ? cpAdvanceRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.paidBy || '—', fmt(Number(r.paidAmount ?? 0))])
-            : [['—', 'No cash customer advances', '—', fmt(0)]],
-          footer: ['', '', 'Total', fmt(cpAdvancesTotal)],
-        },
-        {
-          title: '4d. Cash Drop / Cash Out', type: 'table',
-          cols: ['Sl No', 'Type', 'Amount'],
-          rows: cpDropRows.length
-            ? cpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', fmt(Number(r.amount ?? 0))])
-            : [['—', 'No cash drops recorded', fmt(0)]],
-          footer: ['', 'Total', fmt(cpDropIn - cpDropOut)],
-        },
-        {
-          title: '5. Card / Bank Settlement Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ...cardTypeBreakdown.map(row => [row.cardType, fmt(row.amount ?? 0)]),
-            ['Total Card Sales', fmt(cardSalesV)],
-            ['Net Card Settlement Expected', fmt(cardSalesV)],
-          ],
-        },
-        {
-          title: '6. VAT / Tax Summary', type: 'table',
-          cols: ['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount'],
-          rows: [['VAT 5%', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)]],
-          footer: ['Total', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)],
-        },
-        {
-          title: '7. Discount Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)]],
-        },
-        {
-          title: '8. Returns / Refund Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${fmt(zSummary.salesReturnTotal)})` : fmt(0)],
-            ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${fmt(zSummary.refundTotal)})` : fmt(0)],
-            ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${fmt(zSummary.creditNoteTotal)})` : fmt(0)],
-            ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), fmt(zSummary.exchangeTotal ?? 0)],
-            ['Total Refunds (Tender)', String(zSummary.totalRefundCount ?? 0), fmt(zSummary.totalRefunds ?? 0)],
-          ],
-        },
-        {
-          title: '9. Product / Item Movement Summary', type: 'table',
-          cols: ['Description', 'Quantity', 'Amount'],
-          rows: [
-            ['Total Items Sold', String(itemsSoldV), fmt(totalSalesV)],
-            ['Total Items Returned', String(zSummary.totalItemsReturned ?? 0), (zSummary.totalItemsReturned ?? 0) > 0 ? `(${fmt(zSummary.salesReturnTotal ?? 0)})` : fmt(0)],
-            ['Net Quantity Sold', String(zSummary.netQuantitySold ?? itemsSoldV), fmt(totalSalesV)],
-            ...((Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map(it =>
-              [`  Top Seller: ${it.itemCode || '—'} — ${it.itemName || '—'}`, String(it.quantity ?? 0), fmt(it.amount ?? 0)])),
-          ],
-        },
-        {
-          title: '10. Cashier Wise Summary', type: 'table',
-          cols: ['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit'],
-          rows: (Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).length > 0
-            ? zReportData.cashierWiseSummary.map(c => [c.cashier || '—', String(c.invoiceCount || 0), fmt(c.netSales ?? 0), fmt(c.cash ?? 0), fmt(c.card ?? 0), fmt(c.credit ?? 0)])
-            : [['—', '0', fmt(0), fmt(0), fmt(0), fmt(0)]],
-          footer: ['Total', String(invoiceCount), fmt(totalSalesV), fmt(cashSalesV), fmt(cardSalesV), fmt(creditSalesV)],
-        },
-        {
-          // Per-cashier collection attribution (by who took payment) — supports
-          // multi-cashier operation within a single session.
-          title: '10a. Cashier Collection Attribution', type: 'table',
-          cols: ['Cashier', 'Collected'],
-          rows: cashierRows.length
-            ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
-            : [['—', fmt(0)]],
-          footer: ['Total Collected', fmt(totalPaidV)],
-        },
-        {
-          title: '10b. Voided Items (Posted then Voided)', type: 'table',
-          cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
-          rows: postedVoids.length
-            ? postedVoids.map(v => [
-              v.invoiceNumber || '—',
-              `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
-              String(v.quantity ?? 0),
-              fmt(Number(v.unitPrice ?? 0)),
-              fmt(Number(v.lineTotal ?? 0)),
-              v.voidReason || '—',
-              v.voidedBy || '—',
-              v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No voided items', '', '', '', '', '', '']],
-          footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
-        },
-        {
-          title: '10c. Removed From Cart (Never Posted)', type: 'table',
-          cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
-          rows: cartRemovals.length
-            ? cartRemovals.map(r => [
-              r.itemCode || '—',
-              r.description || '—',
-              r.voidedBy || '—',
-              r.terminalId || '—',
-              r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No cart removals', '', '', '']],
-        },
-        {
-          title: '11. Customer Credit Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Credit Sales', String(creditInvoices.length), fmt(creditTotal)],
-            ['Outstanding Created Today', String(creditInvoices.length), fmt(creditTotal)],
-          ],
-        },
-        {
-          title: '12. Opening & Closing Invoice Numbers', type: 'table',
-          cols: ['Document Type', 'Starting No.', 'Ending No.'],
-          rows: [['Sales Invoice', invNums[0] || '—', invNums[invNums.length - 1] || '—']],
-        },
-        {
-          title: '13. Final Day Close Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Total Net Sales Inc. VAT', fmt(totalSalesV)],
-            ['Total Discount', fmt(discountV)],
-            ['Total Collection', fmt(totalPaidV)],
-            ['Opening Cash / Float', fmt(openingCash)],
-            ['Expected Cash in Drawer', fmt(expectedCash)],
-            ['Cash Sales', fmt(cashSalesV)],
-          ],
-        },
-      ],
-    };
-  };
+  // Delegates to the shared, pure builder in utils/posReportViewModel.js so the live
+  // POS screen and the back-office "POS Reports" historical viewer render identical
+  // output from identical input — single implementation, never duplicated.
+  const buildZReportViewModel = () => buildZReportViewModelShared(zReportData, {
+    currency: activeCurrency,
+    businessDate: zReportDate,
+    terminalLabel: currentTerminal?.terminalId || 'All Terminals',
+  });
 
   // ── Z-Report: Excel flat rows ─────────────────────────────────────────────
   const buildZReportExcelSections = () => {
@@ -6195,268 +5901,19 @@ export default function POSSales() {
   };
 
   // ── X-Report: build A4 view-model for print/PDF ───────────────────────────
-  const buildXReportViewModel = () => {
-    const xSummary = xReportData?.summary || {};
-    const xInvoices = xReportData?.invoices || [];
-    const sess = xReportData?.session || currentSession;
-    const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
-    const openingCashVal = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
-    const cashSalesV = Number(xSummary.cashSales ?? 0);
-    const cardSalesV = Number(xSummary.cardSales ?? 0);
-    const creditSalesV = Number(xSummary.creditSales ?? 0);
-    const bankTransferSalesV = Number(xSummary.bankTransferSales ?? 0);
-    const totalSalesV = Number(xSummary.totalSales ?? 0);
-    const totalTaxV = Number(xSummary.totalTax ?? 0);
-    const salesExTaxV = Number(xSummary.salesAmountExTax ?? 0);
-    const discountV = Number(xSummary.totalDiscount ?? 0);
-    const cashDropIn = Number(xSummary.cashDropIn ?? 0);
-    const cashDropOut = Number(xSummary.cashDropOut ?? 0);
-    const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
-    // Consolidated Cash Position — additive, informational-only. X-Report never includes
-    // Customer Receipts/Advances (back-office vouchers with no session linkage yet).
-    const cashPosition = xSummary.cashPosition || {};
-    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
-    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-    const cpNet = Number(cashPosition.netCashPosition ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
-    const expectedCashVal = Number(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
-    const reportDenominations = getReportClosingDenominations();
-    const actualCash = calculateDenominationTotal(reportDenominations);
-    const cashVariance = actualCash - expectedCashVal;
-    const varStatus = actualCash === 0 ? 'Pending Count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
-    const sessId = sess?.id || currentSession?.id;
-    const reportNo = sessId ? `XR-${String(sessId).padStart(9, '0')}` : '—';
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
-
-    const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
-    const refundTotal = Number(xSummary.totalRefunds ?? 0);
-    const totalRefundCount = Number(xSummary.totalRefundCount ?? 0);
-    const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
-    const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
-    const netCardSettle = cardSalesV - cardRefundTotal;
-    const netCardCount = Math.max(0, cardPayCount - cardRefundCount);
-    const cardTypeBreakdown = Array.isArray(xSummary.cardTypeBreakdown) ? xSummary.cardTypeBreakdown : [];
-    const itemsSoldCount = Number(xSummary.totalItemsSold ?? 0);
-    // Detailed void/removal data from the backend audit trail + persisted voided lines.
-    const postedVoids = Array.isArray(xReportData?.voids) ? xReportData.voids : [];
-    const cartRemovals = Array.isArray(xReportData?.cartRemovals) ? xReportData.cartRemovals : [];
-    const cashierRows = Array.isArray(xReportData?.cashiers) ? xReportData.cashiers : [];
-    const totalVoids = Number(xSummary.voidItemCount ?? sess?.totalVoids ?? 0);
-    const totalPaidV = Number(xSummary.totalPaid ?? totalSalesV);
-    const voidAmountV = Number(xSummary.voidAmount ?? 0);
-    const sessInfo = xReportData?.sessionInfo || {};
-    const fmtTs = (t) => {
-      const d = parseUTCDate(t);
-      if (!d) return '—';
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-
-    const fmtDuration = (seconds) => {
-      const total = Math.max(0, Math.floor(Number(seconds) || 0));
-      if (!total) return '0m';
-      const h = Math.floor(total / 3600);
-      const m = Math.floor((total % 3600) / 60);
-      return h > 0 ? `${h}h ${m}m` : `${m}m`;
-    };
-    const durationSeconds = sessInfo.durationSeconds ?? sess?.durationSeconds
-      ?? ((sess?.openedAt && sess?.closedAt)
-        ? Math.max(0, Math.floor((parseUTCDate(sess.closedAt).getTime() - parseUTCDate(sess.openedAt).getTime()) / 1000))
-        : null);
-
-    return {
-      reportTitle: 'X-Report / Session Close Report',
-      note: `Report No: ${reportNo}  |  Cashier: ${sess?.openedBy || '—'}  |  Session: SESS-${String(sessId || 0).padStart(6, '0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0, 10)}`,
-      reportMeta: [
-        { label: 'Report No', value: reportNo },
-        { label: 'Session No', value: sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}` },
-        { label: 'Cashier', value: sessInfo.cashier || sess?.openedBy || '-' },
-        { label: 'Date & Time', value: new Date().toLocaleString() },
-        { label: 'Business Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) },
-        { label: 'Terminal', value: sessInfo.terminalId || sess?.terminalId || '-' },
-      ],
-      kpis: [
-        { label: 'Opening Cash', value: fmt(openingCashVal), hint: 'Float', icon: 'OC' },
-        { label: 'Total Sales', value: fmt(totalSalesV), hint: 'Inc. VAT', icon: 'TS' },
-        { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
-        { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
-        { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
-        { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
-        { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
-        { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
-        { label: 'Expected Cash', value: fmt(expectedCashVal), hint: 'Opening + cash sales', icon: 'EC' },
-        { label: 'Actual Cash', value: fmt(actualCash), hint: 'Denomination count', icon: 'AC' },
-        { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: varStatus, icon: 'CV' },
-      ],
-      sections: [
-        {
-          title: '0. Session Information', type: 'table',
-          cols: ['Field', 'Value'],
-          rows: [
-            ['Session No.', sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}`],
-            ['Branch', sessInfo.branch || sess?.branchName || '—'],
-            ['Terminal', sessInfo.terminalId || sess?.terminalId || '—'],
-            ['Counter', sessInfo.counter || sess?.counterName || '—'],
-            ['Device', sessInfo.device || '—'],
-            ...(sessInfo.deviceInfo ? [['Device Info', sessInfo.deviceInfo.substring(0, 48)]] : []),
-            ['Shift', sessInfo.shift || '—'],
-            ['Cashier', sessInfo.cashier || sess?.openedBy || '—'],
-            ['Opened At', fmtTs(sessInfo.openedAt || sess?.openedAt)],
-            ['Closed At', fmtTs(sessInfo.closedAt || sess?.closedAt)],
-            ['Duration', fmtDuration(durationSeconds)],
-          ],
-        },
-        {
-          title: '1. Denomination Count', type: 'table',
-          cols: ['Denomination', 'Quantity', 'Total Amount'],
-          rows: denomKeys.map(k => [denomLabels[k], String(reportDenominations[k] || 0), fmt((reportDenominations[k] || 0) * parseFloat(k))]),
-          footer: ['Total Cash Counted', '', fmt(actualCash)],
-        },
-        {
-          title: '2. Cash Drawer Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Opening Cash / Float', fmt(openingCashVal)],
-            ['Cash Sales', fmt(cashSalesV)],
-            ['Cash Drop In', fmt(cashDropIn)],
-            ['Cash Drop Out', fmt(cashDropOut)],
-            ['Expected Cash in Drawer', fmt(expectedCashVal)],
-            ['Actual Cash Counted', fmt(actualCash)],
-          ],
-          footer: ['Cash Variance (' + varStatus + ')', fmt(Math.abs(cashVariance))],
-        },
-        {
-          title: '2a. Consolidated Cash Position (Informational)', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Opening Cash', fmt(openingCashVal)],
-            ['Cash Sales', fmt(cashSalesV)],
-            ['Customer Receipts (Cash)', 'Not available in X-Report (no session linkage yet)'],
-            ['Customer Advances (Cash)', 'Not available in X-Report (no session linkage yet)'],
-            ['Cash Drop In', fmt(cashDropIn)],
-            ['Cash Refunds (Cash)', cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not available — refund payment mode not tracked'],
-            ['Cash Drop Out', cashDropOut > 0 ? `(${fmt(cashDropOut)})` : fmt(0)],
-          ],
-          footer: ['Net Cash Position', fmt(cpNet)],
-        },
-        {
-          title: '2b. Cash Drop / Cash Out', type: 'table',
-          cols: ['Sl No', 'Type', 'Amount'],
-          rows: cpDropRows.length
-            ? cpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', fmt(Number(r.amount ?? 0))])
-            : [['—', 'No cash drops recorded', fmt(0)]],
-          footer: ['', 'Total', fmt(cashDropIn - cashDropOut)],
-        },
-        {
-          title: '3. Payment / Tender Summary', type: 'table',
-          cols: ['Payment Mode', 'Count', 'Amount'],
-          rows: [
-            ['Cash', String(xSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
-            ['Card', String(xSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
-            ['Credit', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
-            ...((xSummary.otherSales ?? 0) > 0
-              ? [['Online', String(xSummary.otherInvoiceCount ?? '—'), fmt(xSummary.otherSales)]]
-              : []),
-          ],
-          // Total Collected = actual tender taken across every mode, not invoice count/value.
-          footer: ['Total Collected', String(xSummary.totalTenderCount ?? invoiceCount), fmt(totalPaidV)],
-        },
-        {
-          title: '4. Card / Bank Settlement Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ...cardTypeBreakdown.map(row => [row.cardType, String(row.count ?? 0), fmt(row.amount ?? 0)]),
-            ['Card Sales', String(cardPayCount), fmt(cardSalesV)],
-            ['Card Refunds', String(cardRefundCount), cardRefundTotal > 0 ? `(${fmt(cardRefundTotal)})` : fmt(0)],
-            ['Net Card Settlement', String(netCardCount), fmt(netCardSettle)],
-            ['Card Machine Batch No.', sessInfo.cardBatchNo || xReportCardBatchNo || '—', ''],
-            ['Card Settlement Verified', (sessInfo.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No', ''],
-          ],
-        },
-        {
-          title: '5. Invoice / Transaction Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Total Invoices', String(invoiceCount), fmt(totalSalesV)],
-            ['Cash Invoices', String(xSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
-            ['Card Invoices', String(xSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
-            ['Credit Invoices', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
-          ],
-        },
-        {
-          title: '6. VAT / Tax Summary', type: 'table',
-          cols: ['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount'],
-          rows: [['VAT 5%', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)]],
-          footer: ['Total', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)],
-        },
-        {
-          title: '7. Discount Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Bill Level Discount', fmt(xSummary.billDiscount ?? 0)],
-            ['Line Item Discount', fmt(xSummary.lineDiscount ?? 0)],
-          ],
-          footer: ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
-        },
-        {
-          title: '8. Return / Refund Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Total Refunds', String(totalRefundCount), fmt(refundTotal)],
-            ['Card Refunds', String(cardRefundCount), fmt(cardRefundTotal)],
-          ],
-        },
-        {
-          title: '9. Item Movement Summary', type: 'table',
-          cols: ['Description', 'Quantity', 'Amount'],
-          rows: [['Total Items Sold', String(itemsSoldCount || xSummary.totalItemsSold || 0), fmt(totalSalesV)]],
-        },
-        {
-          // Posted-then-voided: lines rung up on a posted invoice, then voided.
-          // Full audit detail from sales_invoice_items (reason / by / when / serial).
-          title: '10. Voided Items (Posted then Voided)', type: 'table',
-          cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
-          rows: postedVoids.length
-            ? postedVoids.map(v => [
-              v.invoiceNumber || '—',
-              `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
-              String(v.quantity ?? 0),
-              fmt(Number(v.unitPrice ?? 0)),
-              fmt(Number(v.lineTotal ?? 0)),
-              v.voidReason || '—',
-              v.voidedBy || '—',
-              v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No voided items', '', '', '', '', '', '']],
-          footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
-        },
-        {
-          // Removed-from-cart: ITEM_VOIDED audit entries with no posted line —
-          // removed before the sale was ever posted. Never mixed with posted voids.
-          title: '11. Removed From Cart (Never Posted)', type: 'table',
-          cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
-          rows: cartRemovals.length
-            ? cartRemovals.map(r => [
-              r.itemCode || '—',
-              r.description || '—',
-              r.voidedBy || '—',
-              r.terminalId || '—',
-              r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No cart removals', '', '', '']],
-        },
-        {
-          // Per-cashier collection attribution — supports multi-cashier sessions.
-          title: '12. Cashier Attribution', type: 'table',
-          cols: ['Cashier', 'Collected'],
-          rows: cashierRows.length
-            ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
-            : [[sess?.openedBy || '—', fmt(totalPaidV)]],
-          footer: ['Total Collected', fmt(totalPaidV)],
-        },
-      ],
-    };
-  };
+  // Delegates to the shared, pure builder in utils/posReportViewModel.js so the live
+  // POS screen and the back-office "POS Reports" historical viewer render identical
+  // output from identical input — single implementation, never duplicated. Falls back
+  // to currentSession while xReportData hasn't loaded yet (pre-existing behavior).
+  const buildXReportViewModel = () => buildXReportViewModelShared(
+    { ...xReportData, session: xReportData?.session || currentSession },
+    {
+      currency: activeCurrency,
+      liveDenominations: getReportClosingDenominations(),
+      liveCardBatchNo: xReportCardBatchNo,
+      liveCardVerified: xReportCardVerified,
+    }
+  );
 
   // ── X-Report: Excel flat rows ─────────────────────────────────────────────
   const buildXReportExcelRows = () => {
@@ -9437,17 +8894,29 @@ export default function POSSales() {
           return next;
         };
 
-        // Mixed-payment fields (mixed-cash / mixed-card) auto-balance each other:
-        // whichever field the cashier edits — via keyboard or the on-screen keypad —
-        // is the "driving" amount, and the other field is recomputed as the
-        // remaining balance (bill total − driving amount) so the two always sum to
-        // the due amount without manual math.
-        const applyMixedAmount = (isCash, rawValue) => {
+        // Mixed-payment fields (mixed-cash / mixed-card / mixed-advance) auto-balance each other.
+        const applyMixedAmount = (field, rawValue) => {
           const next = sanitizeAmountInput(rawValue);
           const drivingNum = parseFloat(next) || 0;
-          const remaining = Math.max(0, effectiveDue - drivingNum).toFixed(2);
-          if (isCash) { setMixedCashAmount(next); setMixedCardAmount(remaining); }
-          else { setMixedCardAmount(next); setMixedCashAmount(remaining); }
+          if (field === 'cash') {
+            setMixedCashAmount(next);
+            const advNum = parseFloat(mixedAdvanceAmount) || 0;
+            const remaining = Math.max(0, effectiveDue - drivingNum - advNum).toFixed(2);
+            setMixedCardAmount(remaining);
+          } else if (field === 'card') {
+            setMixedCardAmount(next);
+            const advNum = parseFloat(mixedAdvanceAmount) || 0;
+            const remaining = Math.max(0, effectiveDue - drivingNum - advNum).toFixed(2);
+            setMixedCashAmount(remaining);
+          } else if (field === 'advance') {
+            const avail = customerAdvanceSummary?.availableAdvanceBalance || 0;
+            const finalNum = drivingNum > avail ? avail : drivingNum;
+            const validNext = drivingNum > avail ? String(avail.toFixed(2)) : next;
+            setMixedAdvanceAmount(validNext);
+            const cashNum = parseFloat(mixedCashAmount) || 0;
+            const remaining = Math.max(0, effectiveDue - finalNum - cashNum).toFixed(2);
+            setMixedCardAmount(remaining);
+          }
         };
 
         // ── Multi-card split (Card payment mode) ──────────────────────────────
@@ -9511,16 +8980,16 @@ export default function POSSales() {
         // wired directly on each <input>'s onChange via sanitizeAmountInput /
         // applyMixedAmount so both input methods work on the same POS screen.
         const handleKpad = (key) => {
-          if (checkoutKeypadTarget === 'mixed-cash' || checkoutKeypadTarget === 'mixed-card') {
-            const isCash = checkoutKeypadTarget === 'mixed-cash';
-            const cur = isCash ? mixedCashAmount : mixedCardAmount;
+          if (checkoutKeypadTarget === 'mixed-cash' || checkoutKeypadTarget === 'mixed-card' || checkoutKeypadTarget === 'mixed-advance') {
+            const field = checkoutKeypadTarget === 'mixed-cash' ? 'cash' : checkoutKeypadTarget === 'mixed-card' ? 'card' : 'advance';
+            const cur = field === 'cash' ? mixedCashAmount : field === 'card' ? mixedCardAmount : mixedAdvanceAmount;
             let next = cur;
             if (key === 'C') next = '';
             else if (key === '⌫') next = cur.slice(0, -1);
             else if (key === '.' && cur.includes('.')) { /* noop */ }
             else if (key === 'EXACT') next = effectiveDue > 0 ? String(effectiveDue.toFixed(2)) : '';
             else next = cur + key;
-            applyMixedAmount(isCash, next);
+            applyMixedAmount(field, next);
             return;
           }
 
@@ -9536,8 +9005,9 @@ export default function POSSales() {
         const tenderedNum = parseFloat(tenderedAmount) || 0;
         const mixedCashNum = parseFloat(mixedCashAmount) || 0;
         const mixedCardNum = parseFloat(mixedCardAmount) || 0;
+        const mixedAdvanceNum = parseFloat(mixedAdvanceAmount) || 0;
         const change = tenderedNum - effectiveDue;
-        const mixedDiff = Math.abs(mixedCashNum + mixedCardNum - effectiveDue);
+        const mixedDiff = Math.abs(mixedCashNum + mixedCardNum + mixedAdvanceNum - effectiveDue);
 
         // Partial receipt against a Credit sale — amount collected now is capped at
         // the bill total; whatever's left posts to the customer's credit balance.
@@ -9553,7 +9023,8 @@ export default function POSSales() {
           (checkoutPayMode === 'cash' && tenderedNum >= effectiveDue) ||
           (checkoutPayMode === 'card' && (checkoutCardLegs.length === 0 ? !!checkoutCardType : (cardLegsValid && cardLegDuplicateRefs.size === 0))) ||
           (checkoutPayMode === 'credit' && !!checkoutCreditCustomer && creditReceivedModeReady) ||
-          (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && !!mixedCardType) ||
+          (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && (mixedCardNum === 0 || !!mixedCardType)) ||
+          (checkoutPayMode === 'advance' && customerAdvanceSummary?.availableAdvanceBalance >= effectiveDue) ||
           (checkoutPayMode === 'online' && !!checkoutOnlineBankAccountId);
 
         const numKeys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '⌫'];
@@ -9658,6 +9129,7 @@ export default function POSSales() {
                         ['credit', 'Credit', Users, '#9333ea'],
                         ['mixed', 'Mixed', Wallet, '#ea580c'],
                         ['online', 'Online', Landmark, '#0891b2'],
+                        ['advance', 'Advance', Coins, '#F5C742'],
                       ]).map(([id, label, Icon, color]) => (
                         <button key={id} type="button" onClick={() => { setCheckoutPayMode(id); setCheckoutKeypadTarget(id === 'mixed' ? 'mixed-cash' : id === 'card' ? 'ref' : 'tender'); }}
                           className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all ${checkoutPayMode === id ? 'border-[#F5C742] bg-[#F5C742]/10' : 'border-gray-200 hover:border-[#F5C742]/50 bg-gray-50'}`}>
@@ -10009,11 +9481,11 @@ export default function POSSales() {
                   {/* ── Mixed section ── */}
                   {checkoutPayMode === 'mixed' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment — Cash + Card</p>
-                      <p className="text-[10px] text-gray-400 -mt-1">Enter one amount — the balance is applied to the other mode automatically.</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment</p>
+                      <p className="text-[10px] text-gray-400 -mt-1">Enter amounts — the balance is applied to the card mode automatically.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Cash Amount{checkoutKeypadTarget === 'mixed-card' && mixedCashAmount ? ' (balance)' : ''}</label>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Cash</label>
                           <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-cash' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
                             <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
                             <input
@@ -10023,13 +9495,30 @@ export default function POSSales() {
                               value={mixedCashAmount}
                               placeholder="0.00"
                               onFocus={() => { setCheckoutKeypadTarget('mixed-cash'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                              onChange={e => applyMixedAmount(true, e.target.value)}
+                              onChange={e => applyMixedAmount('cash', e.target.value)}
                               className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
                             />
                           </label>
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Card Amount{checkoutKeypadTarget === 'mixed-cash' && mixedCardAmount ? ' (balance)' : ''}</label>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase truncate">Advance {customerAdvanceSummary ? `(Max ${customerAdvanceSummary.availableAdvanceBalance.toFixed(2)})` : ''}</label>
+                          <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-advance' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
+                            <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              value={mixedAdvanceAmount}
+                              placeholder="0.00"
+                              onFocus={() => { setCheckoutKeypadTarget('mixed-advance'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
+                              onChange={e => applyMixedAmount('advance', e.target.value)}
+                              disabled={!customerAdvanceSummary || customerAdvanceSummary.availableAdvanceBalance <= 0}
+                              className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none disabled:opacity-50"
+                            />
+                          </label>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Card{mixedCardAmount ? ' (bal)' : ''}</label>
                           <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-card' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
                             <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
                             <input
@@ -10039,7 +9528,7 @@ export default function POSSales() {
                               value={mixedCardAmount}
                               placeholder="0.00"
                               onFocus={() => { setCheckoutKeypadTarget('mixed-card'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                              onChange={e => applyMixedAmount(false, e.target.value)}
+                              onChange={e => applyMixedAmount('card', e.target.value)}
                               className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
                             />
                           </label>
@@ -10053,7 +9542,7 @@ export default function POSSales() {
                           </button>
                         ))}
                       </div>
-                      {mixedCashAmount && mixedCardAmount && (
+                      {(mixedCashAmount || mixedCardAmount || mixedAdvanceAmount) && (
                         <div className={`flex justify-between items-center px-4 py-2.5 rounded-xl border-2 ${mixedDiff < 0.01 ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
                           <span className={`text-sm font-bold ${mixedDiff < 0.01 ? 'text-green-700' : 'text-red-600'}`}>{mixedDiff < 0.01 ? '✓ Amounts Balanced' : <>Difference: <DirhamSymbol /> {mixedDiff.toFixed(2)}</>}</span>
                           <span className="text-xs text-gray-500">Total: <DirhamSymbol /> {effectiveDue.toFixed(2)}</span>
@@ -10109,6 +9598,35 @@ export default function POSSales() {
                     </div>
                   )}
 
+                  {/* ── Advance section ── */}
+                  {checkoutPayMode === 'advance' && (
+                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Advance Payment</p>
+                      {!customerAdvanceSummary && selectedCustomerData?.id === 'walk-in' ? (
+                        <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-300 rounded-xl">
+                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-bold text-amber-800">Customer Required</p>
+                            <p className="text-[10px] text-amber-700">Advance payment requires a registered customer account.</p>
+                          </div>
+                        </div>
+                      ) : customerAdvanceSummary?.availableAdvanceBalance >= effectiveDue ? (
+                        <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between">
+                           <span className="text-xs font-bold text-gray-500 uppercase">Available Advance</span>
+                           <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={customerAdvanceSummary.availableAdvanceBalance} /></span>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-300 rounded-xl">
+                          <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-bold text-red-800">Insufficient Advance Balance</p>
+                            <p className="text-[10px] text-red-700">Available: {customerAdvanceSummary?.availableAdvanceBalance ? customerAdvanceSummary.availableAdvanceBalance.toFixed(2) : '0.00'}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* ── On-Demand Keypad ── */}
                   {checkoutKeypadVisible && (
                     <div className="bg-white rounded-2xl border-2 border-[#F5C742]/50 p-4 shadow-md">
@@ -10120,7 +9638,8 @@ export default function POSSales() {
                             {checkoutKeypadTarget === 'tender' ? 'Cash Tendered'
                               : checkoutKeypadTarget === 'mixed-cash' ? 'Cash Amount'
                                 : checkoutKeypadTarget === 'mixed-card' ? 'Card Amount'
-                                  : 'Reference / Text'}
+                                  : checkoutKeypadTarget === 'mixed-advance' ? 'Advance Amount'
+                                    : 'Reference / Text'}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -10260,7 +9779,7 @@ export default function POSSales() {
                     <p className="text-[9px] text-gray-500 uppercase font-bold">Paid</p>
                     <p className={`text-base font-black ${canSettle ? 'text-green-700' : 'text-gray-400'}`}>
                       <DirhamSymbol /> {checkoutPayMode === 'cash' ? (tenderedNum > 0 ? tenderedNum.toFixed(2) : '0.00')
-                        : checkoutPayMode === 'mixed' ? (mixedCashNum + mixedCardNum).toFixed(2)
+                        : checkoutPayMode === 'mixed' ? (mixedCashNum + mixedCardNum + mixedAdvanceNum).toFixed(2)
                           : canSettle ? effectiveDue.toFixed(2) : '0.00'}
                     </p>
                   </div>
@@ -10287,7 +9806,7 @@ export default function POSSales() {
                 )}
                 {/* Action buttons */}
                 <div className="flex gap-2 sm:gap-3">
-                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
+                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedAdvanceAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
                     className="flex-none px-3 sm:px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
