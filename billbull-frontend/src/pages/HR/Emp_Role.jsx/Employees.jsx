@@ -58,6 +58,7 @@ import { formatDisplayDate as formatDateForDisplay } from '../../../utils/dateUt
 import TableSkeleton from '../../../components/common/TableSkeleton';
 import { toast } from 'react-hot-toast';
 import { getWarehouses } from '../../../api/warehouseApi';
+import { validatePassword } from '../../../utils/passwordValidation';
 
 // ==========================================
 // 0. CONSTANTS & UTILS
@@ -473,6 +474,7 @@ const AddEmployeeModal = ({
       !formData.createLoginAccess || (
         hasFilledValue(formData.loginUsername) &&
         hasFilledValue(formData.temporaryPassword) &&
+        validatePassword(formData.temporaryPassword).isValid &&
         hasFilledValue(formData.systemRoleId)
       )
     );
@@ -769,6 +771,10 @@ const AddEmployeeModal = ({
     }
     if (!formData.temporaryPassword) {
       return 'Temporary password is required to create system access.';
+    }
+    const pwdValidation = validatePassword(formData.temporaryPassword);
+    if (!pwdValidation.isValid) {
+      return pwdValidation.errors.join(' ');
     }
     if (!formData.systemRoleId) {
       return 'System role is required to create system access.';
@@ -1311,6 +1317,29 @@ const AddEmployeeModal = ({
                           placeholder="Set temporary password"
                           className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
                         />
+                        {formData.temporaryPassword && (
+                          <div className="mt-2 text-xs space-y-1">
+                            {(() => {
+                              const v = validatePassword(formData.temporaryPassword).rules;
+                              return (
+                                <>
+                                  <div className={`flex items-center gap-1 ${v.length ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                    {v.length ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />} Min 8 characters
+                                  </div>
+                                  <div className={`flex items-center gap-1 ${v.uppercase ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                    {v.uppercase ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />} One uppercase letter
+                                  </div>
+                                  <div className={`flex items-center gap-1 ${v.digit ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                    {v.digit ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />} One number
+                                  </div>
+                                  <div className={`flex items-center gap-1 ${v.specialChar ? 'text-emerald-600' : 'text-slate-500'}`}>
+                                    {v.specialChar ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />} One special character
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        )}
                       </div>
                       <div className="md:col-span-2">
                         <label className="block text-xs font-medium text-slate-500 mb-1">System Role *</label>

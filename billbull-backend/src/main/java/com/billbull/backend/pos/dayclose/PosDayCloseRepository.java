@@ -17,14 +17,29 @@ public interface PosDayCloseRepository extends JpaRepository<PosDayClose, Long> 
 
     boolean existsByBranchIdAndCloseDate(Long branchId, LocalDate closeDate);
 
-    /** Back-office POS Reports browser (Z-Reports tab) — every filter optional. */
-    @Query("SELECT d FROM PosDayClose d WHERE "
-            + "(:branchId IS NULL OR d.branchId = :branchId) AND "
-            + "(:dateFrom IS NULL OR d.closeDate >= :dateFrom) AND "
-            + "(:dateTo IS NULL OR d.closeDate <= :dateTo) AND "
-            + "(:reportNumber IS NULL OR LOWER(d.reportNumber) LIKE LOWER(CONCAT('%', :reportNumber, '%'))) AND "
-            + "(:generatedBy IS NULL OR LOWER(d.closedBy) LIKE LOWER(CONCAT('%', :generatedBy, '%'))) "
-            + "ORDER BY d.closedAt DESC")
+    /**
+     * Back-office POS Reports browser (Z-Reports tab) — every filter optional.
+     *
+     * Native query so each optional param can be CAST at every occurrence — an untyped
+     * null bind in PostgreSQL resolves to bytea and breaks LOWER()/LIKE, and JPQL's CAST(...
+     * AS string) only shields the occurrence it wraps, leaving the plain "IS NULL" check on
+     * the same named parameter unresolved (see PosLayawayRepository.search for the same
+     * native-query pattern).
+     */
+    @Query(value = "SELECT * FROM pos_day_closes d "
+            + "WHERE (CAST(:branchId AS bigint) IS NULL OR d.branch_id = CAST(:branchId AS bigint)) "
+            + "AND (CAST(:dateFrom AS date) IS NULL OR d.close_date >= CAST(:dateFrom AS date)) "
+            + "AND (CAST(:dateTo AS date) IS NULL OR d.close_date <= CAST(:dateTo AS date)) "
+            + "AND (CAST(:reportNumber AS varchar) IS NULL OR LOWER(d.report_number) LIKE CONCAT('%', LOWER(CAST(:reportNumber AS varchar)), '%')) "
+            + "AND (CAST(:generatedBy AS varchar) IS NULL OR LOWER(d.closed_by) LIKE CONCAT('%', LOWER(CAST(:generatedBy AS varchar)), '%')) "
+            + "ORDER BY d.closed_at DESC",
+            countQuery = "SELECT count(*) FROM pos_day_closes d "
+            + "WHERE (CAST(:branchId AS bigint) IS NULL OR d.branch_id = CAST(:branchId AS bigint)) "
+            + "AND (CAST(:dateFrom AS date) IS NULL OR d.close_date >= CAST(:dateFrom AS date)) "
+            + "AND (CAST(:dateTo AS date) IS NULL OR d.close_date <= CAST(:dateTo AS date)) "
+            + "AND (CAST(:reportNumber AS varchar) IS NULL OR LOWER(d.report_number) LIKE CONCAT('%', LOWER(CAST(:reportNumber AS varchar)), '%')) "
+            + "AND (CAST(:generatedBy AS varchar) IS NULL OR LOWER(d.closed_by) LIKE CONCAT('%', LOWER(CAST(:generatedBy AS varchar)), '%'))",
+            nativeQuery = true)
     Page<PosDayClose> search(@Param("branchId") Long branchId,
                               @Param("dateFrom") LocalDate dateFrom,
                               @Param("dateTo") LocalDate dateTo,

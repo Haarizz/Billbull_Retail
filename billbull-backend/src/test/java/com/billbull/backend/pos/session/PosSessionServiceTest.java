@@ -83,6 +83,7 @@ class PosSessionServiceTest {
     @Mock private com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository;
     @Mock private com.billbull.backend.pos.reports.PosXReportSnapshotRepository xReportSnapshotRepository;
     @Mock private com.billbull.backend.pos.reports.PosReportNumberService reportNumberService;
+    @Mock private com.billbull.backend.user.UserRepository userRepository;
 
     private PosSessionService service;
 
@@ -92,8 +93,10 @@ class PosSessionServiceTest {
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
                 terminalRepository, returnRepository, dayCloseRepository, objectMapper, terminalActivityService,
                 businessDateService, cashMovementRepository, receiptVoucherRepository,
-                xReportSnapshotRepository, reportNumberService);
+                xReportSnapshotRepository, reportNumberService, userRepository);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        // Default: no linked User row — resolveDisplayName() falls back to the raw username.
+        lenient().when(userRepository.findByUsername(any())).thenReturn(java.util.Optional.empty());
         // Default: no tender / audit rows unless a test stubs them.
         lenient().when(paymentRepository.sumTenderByModeForInvoices(any())).thenReturn(List.of());
         lenient().when(paymentRepository.findTenderForInvoices(any())).thenReturn(List.of());

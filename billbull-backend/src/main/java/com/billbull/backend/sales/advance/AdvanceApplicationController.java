@@ -27,26 +27,26 @@ public class AdvanceApplicationController {
     }
 
     @GetMapping("/customer/{customerCode}/open-advances")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.view')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.view')")
     public ResponseEntity<List<AdvanceApplicationService.AdvanceBalance>> getOpenAdvances(
             @PathVariable String customerCode) {
         return ResponseEntity.ok(service.findOpenAdvances(customerCode));
     }
 
     @GetMapping("/customer/{customerCode}/has-history")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.view')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.view')")
     public ResponseEntity<Map<String, Boolean>> hasAdvanceHistory(@PathVariable String customerCode) {
         return ResponseEntity.ok(Map.of("hasHistory", service.hasAdvanceHistory(customerCode)));
     }
 
     @GetMapping("/customer/{customerCode}/summary")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.view')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.view')")
     public ResponseEntity<AdvanceApplicationService.CustomerAdvanceSummary> getSummary(@PathVariable String customerCode) {
         return ResponseEntity.ok(service.getCustomerAdvanceSummary(customerCode));
     }
 
     @GetMapping("/customer/{customerCode}/history")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.view')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.view')")
     public ResponseEntity<com.billbull.backend.util.PageResponse<AdvanceApplicationService.AdvanceHistoryItem>> getHistory(
             @PathVariable String customerCode,
             @RequestParam(defaultValue = "All") String filter,
@@ -56,7 +56,7 @@ public class AdvanceApplicationController {
     }
 
     @PostMapping("/apply")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.apply')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.apply')")
     public ResponseEntity<AdvanceApplication> apply(@RequestBody Map<String, Object> body) {
         Long advanceReceiptId = Long.valueOf(body.get("advanceReceiptId").toString());
         String invoiceNumber  = body.get("invoiceNumber").toString();
@@ -68,7 +68,7 @@ public class AdvanceApplicationController {
     }
 
     @PostMapping("/apply-against-outstanding")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.apply')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.apply')")
     public ResponseEntity<Map<String, BigDecimal>> applyAgainstOutstanding(@RequestBody Map<String, Object> body) {
         String customerCode  = body.get("customerCode").toString();
         Long advanceReceiptId = Long.valueOf(body.get("advanceReceiptId").toString());
@@ -77,7 +77,7 @@ public class AdvanceApplicationController {
     }
 
     @PostMapping("/refund")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.refund')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.refund')")
     public ResponseEntity<AdvanceApplication> refund(@RequestBody Map<String, Object> body) {
         Long advanceReceiptId = Long.valueOf(body.get("advanceReceiptId").toString());
         BigDecimal amount     = new BigDecimal(body.get("amount").toString());
@@ -86,7 +86,7 @@ public class AdvanceApplicationController {
     }
 
     @PostMapping("/receive")
-    @PreAuthorize("@modulePermissionService.hasPermission('permissions.customer.advance.receive')")
+    @PreAuthorize("@modulePermissionService.canView('permissions.customer.advance.receive')")
     public ResponseEntity<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> receiveAdvance(@RequestBody Map<String, Object> body) {
         String customerCode = body.get("customerCode").toString();
         BigDecimal amount = new BigDecimal(body.get("amount").toString());

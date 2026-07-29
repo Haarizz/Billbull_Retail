@@ -37,6 +37,16 @@ public class PosSession extends BaseEntity {
     @Column(name = "closed_by")
     private String closedBy;
 
+    /** Resolved employee full name (User.getResolvedDisplayName()) captured at the moment
+     *  openedBy/closedBy/xReportGeneratedBy were set — display-only, never used for
+     *  identity/ownership/locking/audit, which continue to rely solely on the username
+     *  columns above. Null on sessions written before this field existed. */
+    @Column(name = "opened_by_display_name")
+    private String openedByDisplayName;
+
+    @Column(name = "closed_by_display_name")
+    private String closedByDisplayName;
+
     @Column(name = "session_date")
     private LocalDate sessionDate;
 
@@ -131,6 +141,10 @@ public class PosSession extends BaseEntity {
     @Column(name = "x_report_generated_by")
     private String xReportGeneratedBy;
 
+    /** See {@link #openedByDisplayName} doc — display-only resolved name. */
+    @Column(name = "x_report_generated_by_display_name")
+    private String xReportGeneratedByDisplayName;
+
     @Column(name = "z_report_printed")
     private Boolean zReportPrinted = false;
 
@@ -192,6 +206,12 @@ public class PosSession extends BaseEntity {
 
     public String getClosedBy() { return closedBy; }
     public void setClosedBy(String closedBy) { this.closedBy = closedBy; }
+
+    public String getOpenedByDisplayName() { return openedByDisplayName; }
+    public void setOpenedByDisplayName(String openedByDisplayName) { this.openedByDisplayName = openedByDisplayName; }
+
+    public String getClosedByDisplayName() { return closedByDisplayName; }
+    public void setClosedByDisplayName(String closedByDisplayName) { this.closedByDisplayName = closedByDisplayName; }
 
     public LocalDate getSessionDate() { return sessionDate; }
     public void setSessionDate(LocalDate sessionDate) { this.sessionDate = sessionDate; }
@@ -267,6 +287,9 @@ public class PosSession extends BaseEntity {
 
     public String getXReportGeneratedBy() { return xReportGeneratedBy; }
     public void setXReportGeneratedBy(String xReportGeneratedBy) { this.xReportGeneratedBy = xReportGeneratedBy; }
+
+    public String getXReportGeneratedByDisplayName() { return xReportGeneratedByDisplayName; }
+    public void setXReportGeneratedByDisplayName(String xReportGeneratedByDisplayName) { this.xReportGeneratedByDisplayName = xReportGeneratedByDisplayName; }
 
     public Boolean getZReportPrinted() { return zReportPrinted; }
     public void setZReportPrinted(Boolean zReportPrinted) { this.zReportPrinted = zReportPrinted; }

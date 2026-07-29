@@ -139,13 +139,15 @@ export function buildXReportViewModel(xReportData, opts = {}) {
       ? Math.max(0, Math.floor((parseUTCDate(sess.closedAt).getTime() - parseUTCDate(sess.openedAt).getTime()) / 1000))
       : null);
 
+  const cashierDisplay = sessInfo.cashierDisplayName || sess?.openedByDisplayName || sessInfo.cashier || sess?.openedBy || '—';
+
   return {
     reportTitle: 'X-Report / Session Close Report',
-    note: `Report No: ${reportNo}  |  Cashier: ${sess?.openedBy || '—'}  |  Session: SESS-${String(sessId || 0).padStart(6, '0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0, 10)}`,
+    note: `Report No: ${reportNo}  |  Cashier: ${cashierDisplay}  |  Session: SESS-${String(sessId || 0).padStart(6, '0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0, 10)}`,
     reportMeta: [
       { label: 'Report No', value: reportNo },
       { label: 'Session No', value: sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}` },
-      { label: 'Cashier', value: sessInfo.cashier || sess?.openedBy || '-' },
+      { label: 'Cashier', value: cashierDisplay },
       { label: 'Date & Time', value: new Date().toLocaleString() },
       { label: 'Business Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) },
       { label: 'Terminal', value: sessInfo.terminalId || sess?.terminalId || '-' },
@@ -175,7 +177,7 @@ export function buildXReportViewModel(xReportData, opts = {}) {
           ['Device', sessInfo.device || '—'],
           ...(sessInfo.deviceInfo ? [['Device Info', sessInfo.deviceInfo.substring(0, 48)]] : []),
           ['Shift', sessInfo.shift || '—'],
-          ['Cashier', sessInfo.cashier || sess?.openedBy || '—'],
+          ['Cashier', cashierDisplay],
           ['Opened At', fmtTs(sessInfo.openedAt || sess?.openedAt)],
           ['Closed At', fmtTs(sessInfo.closedAt || sess?.closedAt)],
           ['Duration', fmtDuration(durationSeconds)],
@@ -319,8 +321,8 @@ export function buildXReportViewModel(xReportData, opts = {}) {
         title: '12. Cashier Attribution', type: 'table',
         cols: ['Cashier', 'Collected'],
         rows: cashierRows.length
-          ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
-          : [[sess?.openedBy || '—', fmt(totalPaidV)]],
+          ? cashierRows.map(c => [c.cashierDisplayName || c.cashier || '—', fmt(Number(c.collected ?? 0))])
+          : [[cashierDisplay, fmt(totalPaidV)]],
         footer: ['Total Collected', fmt(totalPaidV)],
       },
     ],
@@ -379,7 +381,9 @@ export function buildZReportViewModel(zReportData, opts = {}) {
   const refundTotal = Number(zSummary.totalRefunds ?? 0);
   const actualCash = zSessions.reduce((s, ss) => s + Number(ss.closingCash ?? 0), 0);
   const cashVariance = actualCash - expectedCash;
-  const zCashierLabel = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
+  const zCashierLabel = cashierRows.length
+    ? cashierRows.map(c => c.cashierDisplayName || c.cashier).filter(Boolean).join(', ')
+    : 'All cashiers';
   const zSessionInfoRows = Array.isArray(zReportData?.sessionInfo) ? zReportData.sessionInfo : [];
   const cardTypeBreakdown = Array.isArray(zSummary.cardTypeBreakdown) ? zSummary.cardTypeBreakdown : [];
   const zDenominationTotals = DENOM_KEYS.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
@@ -425,7 +429,7 @@ export function buildZReportViewModel(zReportData, opts = {}) {
         rows: zSessionInfoRows.length
           ? zSessionInfoRows.map((row) => [
             row.sessionNo || '—',
-            row.cashier || '—',
+            row.cashierDisplayName || row.cashier || '—',
             fmtTs(row.openedAt),
             fmtTs(row.closedAt),
             fmt(Number(row.expectedCash ?? 0)),
@@ -433,7 +437,7 @@ export function buildZReportViewModel(zReportData, opts = {}) {
           ])
           : zSessions.map((row) => [
             row.id ? `SESS-${String(row.id).padStart(6, '0')}` : '—',
-            row.openedBy || '—',
+            row.openedByDisplayName || row.openedBy || '—',
             fmtTs(row.openedAt),
             fmtTs(row.closedAt),
             fmt(Number(row.expectedCash ?? 0)),
@@ -565,7 +569,7 @@ export function buildZReportViewModel(zReportData, opts = {}) {
         title: '10. Cashier Wise Summary', type: 'table',
         cols: ['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit'],
         rows: (Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).length > 0
-          ? zReportData.cashierWiseSummary.map(c => [c.cashier || '—', String(c.invoiceCount || 0), fmt(c.netSales ?? 0), fmt(c.cash ?? 0), fmt(c.card ?? 0), fmt(c.credit ?? 0)])
+          ? zReportData.cashierWiseSummary.map(c => [c.cashierDisplayName || c.cashier || '—', String(c.invoiceCount || 0), fmt(c.netSales ?? 0), fmt(c.cash ?? 0), fmt(c.card ?? 0), fmt(c.credit ?? 0)])
           : [['—', '0', fmt(0), fmt(0), fmt(0), fmt(0)]],
         footer: ['Total', String(invoiceCount), fmt(totalSalesV), fmt(cashSalesV), fmt(cardSalesV), fmt(creditSalesV)],
       },
@@ -573,7 +577,7 @@ export function buildZReportViewModel(zReportData, opts = {}) {
         title: '10a. Cashier Collection Attribution', type: 'table',
         cols: ['Cashier', 'Collected'],
         rows: cashierRows.length
-          ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
+          ? cashierRows.map(c => [c.cashierDisplayName || c.cashier || '—', fmt(Number(c.collected ?? 0))])
           : [['—', fmt(0)]],
         footer: ['Total Collected', fmt(totalPaidV)],
       },

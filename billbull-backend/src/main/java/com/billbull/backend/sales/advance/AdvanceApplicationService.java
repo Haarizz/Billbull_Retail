@@ -410,6 +410,6 @@ public class AdvanceApplicationService {
             return b.date().compareTo(a.date());
         });
 
-        return com.billbull.backend.util.PaginationUtil.paginate(items, page, size, null, filter);
+        return com.billbull.backend.util.PaginationUtil.paginate(items, page, size, null, null);
     }
 }

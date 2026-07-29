@@ -46,11 +46,21 @@ public class PosXReportSnapshot {
     @Column(name = "cashier_name", length = 100)
     private String cashierName;
 
+    /** Resolved employee full name (User.getResolvedDisplayName()), captured once at
+     *  generation time — display-only, never re-resolved on later reads so the snapshot
+     *  stays immutable even if the employee is renamed afterward. */
+    @Column(name = "cashier_display_name", length = 150)
+    private String cashierDisplayName;
+
     @Column(name = "business_date", nullable = false)
     private LocalDate businessDate;
 
     @Column(name = "generated_by", length = 100)
     private String generatedBy;
+
+    /** See {@link #cashierDisplayName} doc. */
+    @Column(name = "generated_by_display_name", length = 150)
+    private String generatedByDisplayName;
 
     @Column(name = "generated_at", nullable = false)
     private LocalDateTime generatedAt;
@@ -88,11 +98,17 @@ public class PosXReportSnapshot {
     public String getCashierName() { return cashierName; }
     public void setCashierName(String cashierName) { this.cashierName = cashierName; }
 
+    public String getCashierDisplayName() { return cashierDisplayName; }
+    public void setCashierDisplayName(String cashierDisplayName) { this.cashierDisplayName = cashierDisplayName; }
+
     public LocalDate getBusinessDate() { return businessDate; }
     public void setBusinessDate(LocalDate businessDate) { this.businessDate = businessDate; }
 
     public String getGeneratedBy() { return generatedBy; }
     public void setGeneratedBy(String generatedBy) { this.generatedBy = generatedBy; }
+
+    public String getGeneratedByDisplayName() { return generatedByDisplayName; }
+    public void setGeneratedByDisplayName(String generatedByDisplayName) { this.generatedByDisplayName = generatedByDisplayName; }
 
     public LocalDateTime getGeneratedAt() { return generatedAt; }
     public void setGeneratedAt(LocalDateTime generatedAt) { this.generatedAt = generatedAt; }

@@ -33,6 +33,7 @@ import com.billbull.backend.pos.reports.PosXReportSnapshot;
 import com.billbull.backend.pos.reports.PosXReportSnapshotRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.payment.PaymentStatus;
+import com.billbull.backend.user.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -76,6 +77,7 @@ public class PosSessionService {
     private final ReceiptVoucherRepository receiptVoucherRepository;
     private final PosXReportSnapshotRepository xReportSnapshotRepository;
     private final PosReportNumberService reportNumberService;
+    private final UserRepository userRepository;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -103,7 +105,8 @@ public class PosSessionService {
                              PosCashMovementRepository cashMovementRepository,
                              ReceiptVoucherRepository receiptVoucherRepository,
                              PosXReportSnapshotRepository xReportSnapshotRepository,
-                             PosReportNumberService reportNumberService) {
+                             PosReportNumberService reportNumberService,
+                             UserRepository userRepository) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -123,11 +126,24 @@ public class PosSessionService {
         this.receiptVoucherRepository = receiptVoucherRepository;
         this.xReportSnapshotRepository = xReportSnapshotRepository;
         this.reportNumberService = reportNumberService;
+        this.userRepository = userRepository;
     }
 
     private String currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null ? auth.getName() : "system";
+    }
+
+    /** Display-only resolution of a username to the employee's full name, via
+     *  User.getResolvedDisplayName() (Employee first+last name -> User.fullName -> username).
+     *  Never used for identity/ownership/locking/audit — those keep using the raw username.
+     *  Called only at write-time (session open/close, X-Report generation, Day Close) so
+     *  reports never re-resolve names on later reads. */
+    private String resolveDisplayName(String username) {
+        if (username == null || username.isBlank()) return username;
+        return userRepository.findByUsername(username)
+                .map(com.billbull.backend.user.User::getResolvedDisplayName)
+                .orElse(username);
     }
 
     /** ACTIVE-only sum — voided movements never contribute to Expected Cash or any other
@@ -216,6 +232,7 @@ public class PosSessionService {
         session.setTerminalId(terminalId);
         session.setCounterName(counterName);
         session.setOpenedBy(currentUser());
+        session.setOpenedByDisplayName(resolveDisplayName(session.getOpenedBy()));
         session.setSessionDate(businessDate);
         session.setOpenedAt(now);
         session.setLastActivityAt(now);
@@ -269,6 +286,7 @@ public class PosSessionService {
         repo.findByBranchIdAndTerminalIdAndStatus(branch.getId(), terminalId, PosSessionStatus.OPEN)
                 .ifPresent(session -> {
                     session.setOpenedBy(newOwnerUsername);
+                    session.setOpenedByDisplayName(resolveDisplayName(newOwnerUsername));
                     repo.save(session);
                 });
     }
@@ -362,6 +380,7 @@ public class PosSessionService {
 
         LocalDateTime closeTime = LocalDateTime.now();
         session.setClosedBy(currentUser());
+        session.setClosedByDisplayName(resolveDisplayName(session.getClosedBy()));
         session.setClosedAt(closeTime);
         if (session.getOpenedAt() != null) {
             session.setDurationSeconds(Math.max(0, ChronoUnit.SECONDS.between(session.getOpenedAt(), closeTime)));
@@ -395,6 +414,7 @@ public class PosSessionService {
         if (session.getXReportGeneratedAt() == null) {
             session.setXReportGeneratedAt(closeTime);
             session.setXReportGeneratedBy(currentUser());
+            session.setXReportGeneratedByDisplayName(resolveDisplayName(session.getXReportGeneratedBy()));
         }
         session.setXReportPrinted(true);
 
@@ -665,22 +685,24 @@ public class PosSessionService {
         if (session.getStatus() == PosSessionStatus.OPEN && session.getXReportGeneratedAt() == null) {
             LocalDateTime generatedAt = LocalDateTime.now();
             String generatedBy = currentUser();
+            String generatedByDisplayName = resolveDisplayName(generatedBy);
             session.setXReportGeneratedAt(generatedAt);
             session.setXReportGeneratedBy(generatedBy);
+            session.setXReportGeneratedByDisplayName(generatedByDisplayName);
             session.setXReportPrinted(true);
             repo.save(session);
 
             Map<String, Object> report = getXReport(sessionId);
             String reportNumber = reportNumberService.nextReportNumber("XR", session.getBranchId(), session.getSessionDate());
             report.put("reportNumber", reportNumber);
-            persistXReportSnapshot(session, report, reportNumber, generatedAt, generatedBy);
+            persistXReportSnapshot(session, report, reportNumber, generatedAt, generatedBy, generatedByDisplayName);
             return report;
         }
         return getXReport(sessionId);
     }
 
     private void persistXReportSnapshot(PosSession session, Map<String, Object> report, String reportNumber,
-                                         LocalDateTime generatedAt, String generatedBy) {
+                                         LocalDateTime generatedAt, String generatedBy, String generatedByDisplayName) {
         try {
             PosXReportSnapshot snapshot = new PosXReportSnapshot();
             snapshot.setReportNumber(reportNumber);
@@ -691,8 +713,11 @@ public class PosSessionService {
             snapshot.setCounterId(session.getCounterId());
             snapshot.setCounterName(session.getCounterName());
             snapshot.setCashierName(session.getOpenedBy());
+            snapshot.setCashierDisplayName(session.getOpenedByDisplayName() != null
+                    ? session.getOpenedByDisplayName() : resolveDisplayName(session.getOpenedBy()));
             snapshot.setBusinessDate(session.getSessionDate());
             snapshot.setGeneratedBy(generatedBy);
+            snapshot.setGeneratedByDisplayName(generatedByDisplayName);
             snapshot.setGeneratedAt(generatedAt);
             snapshot.setReportJson(objectMapper.writeValueAsString(report));
             xReportSnapshotRepository.save(snapshot);
@@ -1252,6 +1277,7 @@ public class PosSessionService {
         dayClose.setBranchId(branchId);
         dayClose.setCloseDate(date);
         dayClose.setClosedBy(currentUser());
+        dayClose.setClosedByDisplayName(resolveDisplayName(dayClose.getClosedBy()));
         dayClose.setClosedAt(LocalDateTime.now());
         dayClose.setBranchName(branch.getName());
         dayClose.setBranchCode(branch.getCode());
@@ -1556,6 +1582,7 @@ public class PosSessionService {
                     .map(i -> nz(i.getInvoiceTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
             Map<String, Object> row = new java.util.LinkedHashMap<>();
             row.put("cashier", cashier);
+            row.put("cashierDisplayName", "—".equals(cashier) ? cashier : resolveDisplayName(cashier));
             row.put("invoiceCount", cashierInvoices.size());
             row.put("netSales", netSales);
             row.put("cash", t.byBucket.getOrDefault("cash", BigDecimal.ZERO));
@@ -1590,7 +1617,11 @@ public class PosSessionService {
         info.put("terminalName", terminalName);
         info.put("counter", s.getCounterName());
         info.put("cashier", s.getOpenedBy());
+        info.put("cashierDisplayName", s.getOpenedByDisplayName() != null
+                ? s.getOpenedByDisplayName() : resolveDisplayName(s.getOpenedBy()));
         info.put("closedBy", s.getClosedBy());
+        info.put("closedByDisplayName", s.getClosedByDisplayName() != null
+                ? s.getClosedByDisplayName() : resolveDisplayName(s.getClosedBy()));
         info.put("branch", s.getBranchName());
         info.put("device", deviceName != null ? deviceName : s.getTerminalId());
         info.put("deviceInfo", deviceInfo);
@@ -1927,6 +1958,7 @@ public class PosSessionService {
         for (Map.Entry<String, BigDecimal> e : collected.entrySet()) {
             Map<String, Object> row = new java.util.LinkedHashMap<>();
             row.put("cashier", e.getKey());
+            row.put("cashierDisplayName", "—".equals(e.getKey()) ? e.getKey() : resolveDisplayName(e.getKey()));
             row.put("collected", e.getValue());
             out.add(row);
         }

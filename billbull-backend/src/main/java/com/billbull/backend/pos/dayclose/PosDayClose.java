@@ -24,6 +24,12 @@ public class PosDayClose {
     @Column(name = "closed_by", length = 100)
     private String closedBy;
 
+    /** Resolved employee full name (User.getResolvedDisplayName()), captured once at close
+     *  time — display-only, never re-resolved on later reads. closedBy remains the
+     *  authoritative username for audit/identity purposes. */
+    @Column(name = "closed_by_display_name", length = 150)
+    private String closedByDisplayName;
+
     @Column(name = "closed_at", nullable = false)
     private LocalDateTime closedAt;
 
@@ -128,6 +134,14 @@ public class PosDayClose {
 
     public void setClosedBy(String closedBy) {
         this.closedBy = closedBy;
+    }
+
+    public String getClosedByDisplayName() {
+        return closedByDisplayName;
+    }
+
+    public void setClosedByDisplayName(String closedByDisplayName) {
+        this.closedByDisplayName = closedByDisplayName;
     }
 
     public LocalDateTime getClosedAt() {
