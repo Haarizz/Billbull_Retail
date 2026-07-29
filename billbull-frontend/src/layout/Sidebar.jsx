@@ -269,6 +269,7 @@ const Sidebar = ({ children }) => {
         { path: "/enterprise/branches",        label: "Branch / Outlets",  module: "userManagement.setup", icon: <Building2 size={14} /> },
         { path: "/enterprise/administration",  label: "Administration",    module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
         { path: "/enterprise/data-management", label: "Data Management",   module: "userManagement.setup", icon: <FileSpreadsheet size={14} /> },
+        { path: "/enterprise/pos-admin",       label: "POS Administration",module: "pos.admin",             icon: <ShieldCheck size={14} /> },
       ],
     },
     {
@@ -804,7 +805,17 @@ const Sidebar = ({ children }) => {
                 return !item.roles || (primaryRole && item.roles.includes(primaryRole));
               }
               // ── HORIZONTAL ACCESS ──
-              // canView(module) is the single source of truth once loaded
+              // canView(module) is the single source of truth once loaded. Dropdown groups are
+              // additionally visible when the user can view ANY of their child items, even
+              // without the group's own umbrella module (e.g. a BRANCH_ADMIN/SUPERVISOR/
+              // ACCOUNTANT holding pos.admin.* but not userManagement can still reach Enterprise
+              // Console). This is generic across every dropdown group — no group/child is
+              // special-cased — and only ever reveals a group that has at least one already
+              // individually-permitted child; the per-child `canView(sub.module)` check below
+              // still governs exactly which items render inside it.
+              if (item.isDropdown && Array.isArray(item.subItems)) {
+                return canView(item.module) || item.subItems.some(sub => !sub.module || canView(sub.module));
+              }
               return canView(item.module);
             })
             .map((item, index) => {

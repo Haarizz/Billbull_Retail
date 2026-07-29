@@ -145,9 +145,9 @@ export const closePosSession = async (sessionId, {
   return res.data;
 };
 
-export const addPosCashMovement = async (sessionId, { movementType, amount, description }) => {
+export const addPosCashMovement = async (sessionId, { movementType, amount, description, reference, categoryId }) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/cash-movement`, {
-    movementType, amount, description,
+    movementType, amount, description, reference, categoryId,
   });
   return res.data;
 };

@@ -23,8 +23,8 @@ export const getPosCashMovementById = async (id) => {
   return res.data;
 };
 
-export const createPosCashMovement = async ({ sessionId, movementType, amount, description, reference }) => {
-  const res = await api.post(BASE, { sessionId, movementType, amount, description, reference });
+export const createPosCashMovement = async ({ sessionId, movementType, amount, description, reference, categoryId }) => {
+  const res = await api.post(BASE, { sessionId, movementType, amount, description, reference, categoryId });
   return res.data;
 };
 

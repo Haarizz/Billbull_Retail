@@ -19,49 +19,43 @@ export const TradePOSTouchScreen = React.memo((props) => {
     <div className="flex flex-col h-screen w-full bg-[#F7F7FA] overflow-hidden">
       {/* Global Header */}
       <div className="shrink-0">
-        <TradeHeader />
+        <TradeHeader {...props} />
       </div>
 
-      {/* Main Content Area - Responsive Grid */}
-      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 p-4 pt-0">
+      {/* Main Content Area - Responsive Flex Grid */}
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-3 p-3 pt-0">
         
-        {/* Main Canvas (Catalog) */}
-        {/* On mobile, only visible if active tab is catalog */}
-        <div className={`flex-1 min-w-0 h-full ${mobileActiveTab === 'catalog' ? 'flex' : 'hidden'} lg:flex`}>
+        {/* LEFT PANEL: 42% (Customer, Search, Quick Picks) */}
+        <div className={`h-full flex flex-col min-w-0 ${mobileActiveTab === 'catalog' ? 'flex flex-1' : 'hidden'} lg:flex lg:w-[42%]`}>
           <TradeMainCanvas {...props} />
         </div>
 
-        {/* Cart Panel */}
-        {/* On mobile, only visible if active tab is cart */}
-        <div className={`h-full shrink-0 ${mobileActiveTab === 'cart' ? 'flex' : 'hidden'} lg:flex`}>
+        {/* CENTER PANEL: 36% (Invoice Header, Items, Totals, Checkout) */}
+        <div className={`h-full flex flex-col min-w-0 ${mobileActiveTab === 'cart' ? 'flex flex-1' : 'hidden'} lg:flex lg:w-[36%]`}>
           <TradeCartPanel {...props} />
         </div>
 
-        {/* Action Panel (Numpad, Quick Actions, Checkout) */}
-        {/* On mobile, this will eventually become a slide-up drawer or floating actions, for now it stacks or hides */}
-        <div className="h-full shrink-0 hidden lg:flex">
+        {/* RIGHT PANEL: 22% (Actions & Numpad Placeholders) */}
+        {/* On mobile, this will eventually become a slide-up drawer or floating actions */}
+        <div className="h-full flex flex-col min-w-0 hidden lg:flex lg:w-[22%]">
           <TradeActionPanel {...props} />
         </div>
 
       </div>
 
-      {/* Mobile Bottom Navigation (Placeholder for Phase 1) */}
-      <div className="lg:hidden shrink-0 bg-white border-t border-gray-200 p-2 flex justify-around shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] relative z-10">
+      {/* Mobile Bottom Navigation (Placeholder for Phase 1/4) */}
+      <div className="lg:hidden shrink-0 bg-white border-t border-gray-200 p-2 flex justify-around shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] relative z-10 gap-2">
         <button 
           onClick={() => setMobileActiveTab('catalog')}
-          className={`flex-1 py-3 text-center rounded-lg font-bold ${mobileActiveTab === 'catalog' ? 'bg-[#F5C742] text-[#1E293B]' : 'text-gray-500'}`}
+          className={`flex-1 py-3 text-center rounded-lg font-bold text-sm transition-colors ${mobileActiveTab === 'catalog' ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
         >
-          Catalog
+          Quick Picks
         </button>
         <button 
           onClick={() => setMobileActiveTab('cart')}
-          className={`flex-1 py-3 text-center rounded-lg font-bold ${mobileActiveTab === 'cart' ? 'bg-[#F5C742] text-[#1E293B]' : 'text-gray-500'}`}
+          className={`flex-1 py-3 text-center rounded-lg font-bold text-sm transition-colors ${mobileActiveTab === 'cart' ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
         >
-          Cart
-        </button>
-        {/* Mobile Action Drawer Trigger Placeholder */}
-        <button className="flex-1 py-3 text-center rounded-lg font-bold text-gray-500">
-          Actions
+          Invoice ({props.currentInvoice?.items?.filter(i => !i.isVoided)?.length || 0})
         </button>
       </div>
       

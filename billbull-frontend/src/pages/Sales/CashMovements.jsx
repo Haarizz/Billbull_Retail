@@ -10,6 +10,7 @@ import {
   editPosCashMovement,
   voidPosCashMovement,
 } from "../../api/posCashMovementApi";
+import { getSelectableCategories } from "../../api/posCashMovementCategoryApi";
 
 const MOVEMENT_TYPES = ["DROP_IN", "DROP_OUT"];
 const STATUSES = ["ACTIVE", "VOIDED"];
@@ -175,6 +176,7 @@ export default function CashMovements() {
                 <th className="px-4 py-2 font-semibold">Counter</th>
                 <th className="px-4 py-2 font-semibold">Terminal</th>
                 <th className="px-4 py-2 font-semibold">Type</th>
+                <th className="px-4 py-2 font-semibold">Category</th>
                 <th className="px-4 py-2 font-semibold text-right">Amount</th>
                 <th className="px-4 py-2 font-semibold">Description</th>
                 <th className="px-4 py-2 font-semibold">Status</th>
@@ -184,10 +186,10 @@ export default function CashMovements() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={11} className="px-4 py-6 text-center text-slate-400">Loading...</td></tr>
+                <tr><td colSpan={12} className="px-4 py-6 text-center text-slate-400">Loading...</td></tr>
               )}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={11} className="px-4 py-6 text-center text-slate-400">No cash movements found.</td></tr>
+                <tr><td colSpan={12} className="px-4 py-6 text-center text-slate-400">No cash movements found.</td></tr>
               )}
               {!loading && rows.map((row) => (
                 <tr key={row.id} className="group border-b border-slate-100 hover:bg-slate-50">
@@ -197,6 +199,9 @@ export default function CashMovements() {
                   <td className="px-4 py-2">{row.counterName || "-"}</td>
                   <td className="px-4 py-2">{row.terminalId || "-"}</td>
                   <td className="px-4 py-2">{row.movementType}</td>
+                  <td className="px-4 py-2">
+                    {row.categoryName || <span className="text-slate-400 italic">Uncategorized (Legacy)</span>}
+                  </td>
                   <td className="px-4 py-2 text-right font-bold">{formatAmount(row.amount)}</td>
                   <td className="px-4 py-2 max-w-[220px] truncate" title={row.description}>{row.description || "-"}</td>
                   <td className="px-4 py-2"><StatusBadge status={row.status} /></td>
@@ -297,6 +302,8 @@ function ViewModal({ row: initial, onClose }) {
       {loading && <div className="text-xs text-slate-400">Refreshing...</div>}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
         <dt className="text-slate-500">Type</dt><dd className="font-bold">{row.movementType}</dd>
+        <dt className="text-slate-500">Category</dt>
+        <dd>{row.categoryName || <span className="text-slate-400 italic">Uncategorized (Legacy)</span>}</dd>
         <dt className="text-slate-500">Amount</dt><dd className="font-bold">{formatAmount(row.amount)}</dd>
         <dt className="text-slate-500">Status</dt><dd><StatusBadge status={row.status} /></dd>
         <dt className="text-slate-500">Session</dt><dd>{row.sessionId}</dd>
@@ -325,23 +332,44 @@ function ViewModal({ row: initial, onClose }) {
 }
 
 function CreateModal({ onClose, onCreated }) {
+  const { activeBranch } = useBranch();
   const [sessionId, setSessionId] = useState("");
   const [movementType, setMovementType] = useState("DROP_IN");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [reference, setReference] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [categories, setCategories] = useState([]);
+  const [categoryRequired, setCategoryRequired] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setCategoryId("");
+    getSelectableCategories(movementType, activeBranch?.id)
+      .then((data) => {
+        setCategories(data?.categories || []);
+        setCategoryRequired(Boolean(data?.categoryRequired));
+      })
+      .catch(() => { setCategories([]); setCategoryRequired(false); });
+  }, [movementType, activeBranch?.id]);
 
   const submit = async () => {
     if (!sessionId || !amount || Number(amount) <= 0) {
       setError("Session ID and a positive amount are required.");
       return;
     }
+    if (categoryRequired && !categoryId) {
+      setError("Select a category before saving.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      await createPosCashMovement({ sessionId: Number(sessionId), movementType, amount: Number(amount), description, reference });
+      await createPosCashMovement({
+        sessionId: Number(sessionId), movementType, amount: Number(amount), description, reference,
+        categoryId: categoryId || undefined,
+      });
       onCreated();
     } catch (e) {
       setError(e?.response?.data?.message || "Failed to create cash movement.");
@@ -364,6 +392,18 @@ function CreateModal({ onClose, onCreated }) {
       <label className="block text-xs font-semibold text-slate-600">Amount</label>
       <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
         className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm font-bold" />
+      {(categories.length > 0 || categoryRequired) && (
+        <>
+          <label className="block text-xs font-semibold text-slate-600">
+            Category{categoryRequired ? " *" : " (optional)"}
+          </label>
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+            className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm bg-white">
+            <option value="">{categoryRequired ? "Select a category..." : "Uncategorized"}</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </>
+      )}
       <label className="block text-xs font-semibold text-slate-600">Reason / Description</label>
       <textarea value={description} onChange={(e) => setDescription(e.target.value)}
         className="w-full p-2 border border-slate-200 rounded-lg text-sm h-16 resize-none" />

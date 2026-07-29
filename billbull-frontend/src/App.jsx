@@ -89,6 +89,7 @@ import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
 import BranchOutlets from "./pages/Enterprise/BranchOutlets";
 import DataManagement from "./pages/Enterprise/DataManagement";
+import PosAdministration from "./pages/Enterprise/PosAdministration";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import VendorsPurchasesReports from "./pages/Purchase/Reports/VendorsPurchasesReports.tsx";
 import Notifications from "./pages/Notifications/Notifications";
@@ -706,6 +707,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <DataManagement />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/enterprise/pos-admin"
+                      element={
+                        <ResourceGuard module="pos.admin">
+                          <PosAdministration />
                         </ResourceGuard>
                       }
                     />
