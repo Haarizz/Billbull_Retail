@@ -36,6 +36,7 @@ import {
   reprintPosReceipt,
   getPosDayStatus, getPosSessionHistory,
 } from '../../api/posApi';
+import { getSelectableCategories } from '../../api/posCashMovementCategoryApi';
 import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from '../../api/branchTaxApi';
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
@@ -162,6 +163,7 @@ import { useCompany } from '../../context/CompanyContext';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
+import { TradePOSTouchScreen } from './POS/TradePOS/TradePOSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
 import { useHeartbeat } from '../../hooks/useHeartbeat';
@@ -1133,6 +1135,25 @@ export default function POSSales() {
   const [cashDropType, setCashDropType] = useState('in');
   const [cashDropAmount, setCashDropAmount] = useState('');
   const [cashDropDescription, setCashDropDescription] = useState('');
+  // Cash Movement Categories (Phase 2) — refetched whenever the dialog opens or the
+  // in/out direction changes, since categories are direction-compatible, not universal.
+  const [cashDropCategoryId, setCashDropCategoryId] = useState('');
+  const [cashDropCategories, setCashDropCategories] = useState([]);
+  const [cashDropCategoryRequired, setCashDropCategoryRequired] = useState(false);
+
+  useEffect(() => {
+    if (!showCashDropDialog) return;
+    const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
+    const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
+    const branchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL' ? activeBranchIdRaw : undefined;
+    setCashDropCategoryId('');
+    getSelectableCategories(movementType, branchId)
+      .then((data) => {
+        setCashDropCategories(data?.categories || []);
+        setCashDropCategoryRequired(Boolean(data?.categoryRequired));
+      })
+      .catch(() => { setCashDropCategories([]); setCashDropCategoryRequired(false); });
+  }, [showCashDropDialog, cashDropType]);
 
 
   const productCategories = useMemo(() => ([
@@ -4553,6 +4574,11 @@ export default function POSSales() {
     }
     const amount = parseFloat(cashDropAmount) || 0;
     if (amount <= 0) return;
+    if (cashDropCategoryRequired && !cashDropCategoryId) {
+      setCashDropFeedback({ type: 'error', message: 'Select a category before saving.' });
+      setTimeout(() => setCashDropFeedback(null), 3000);
+      return;
+    }
     const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
     openCashDrawer(cashDropType === 'in' ? 'CASH_DROP' : 'CASH_OUT');
     try {
@@ -4561,6 +4587,7 @@ export default function POSSales() {
           movementType,
           amount,
           description: cashDropDescription || (cashDropType === 'in' ? 'Cash Drop In' : 'Cash Out'),
+          categoryId: cashDropCategoryId || undefined,
         });
       }
       setCashDropFeedback({ type: 'success', message: cashDropType === 'in' ? 'Cash drop recorded.' : 'Cash out recorded.' });
@@ -4570,6 +4597,7 @@ export default function POSSales() {
     }
     setCashDropAmount('');
     setCashDropDescription('');
+    setCashDropCategoryId('');
     setShowCashDropDialog(false);
     setTimeout(() => setCashDropFeedback(null), 3000);
   };
@@ -8263,7 +8291,7 @@ export default function POSSales() {
       {/* Render current view */}
       {currentView === 'dashboard' && renderDashboard()}
       {currentView === 'console' && <POSConsole {...consoleProps} />}
-      {currentView === 'touch-screen' && <POSTouchScreen {...touchScreenProps} />}
+      {currentView === 'touch-screen' && (posTemplate === 'compact' ? <TradePOSTouchScreen {...touchScreenProps} /> : <POSTouchScreen {...touchScreenProps} />)}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
       {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal}
@@ -9957,6 +9985,25 @@ export default function POSSales() {
                 className="w-full h-11 px-4 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40"
               />
             </div>
+
+            {/* Category (Phase 2 — optional unless the branch requires it) */}
+            {(cashDropCategories.length > 0 || cashDropCategoryRequired) && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">
+                  Category{cashDropCategoryRequired ? ' *' : ' (optional)'}
+                </label>
+                <select
+                  value={cashDropCategoryId}
+                  onChange={e => setCashDropCategoryId(e.target.value)}
+                  className="w-full h-11 pl-4 pr-10 text-sm font-medium text-[#1E293B] border border-gray-200 rounded-xl bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40 cursor-pointer"
+                >
+                  <option value="">{cashDropCategoryRequired ? 'Select a category...' : 'Uncategorized'}</option>
+                  {cashDropCategories.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Description */}
             <div className="space-y-1.5">
