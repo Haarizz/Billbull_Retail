@@ -84,16 +84,26 @@ class PosSessionServiceTest {
     @Mock private com.billbull.backend.pos.reports.PosXReportSnapshotRepository xReportSnapshotRepository;
     @Mock private com.billbull.backend.pos.reports.PosReportNumberService reportNumberService;
     @Mock private com.billbull.backend.user.UserRepository userRepository;
+    @Mock private com.billbull.backend.pos.admin.PosCashMovementCategoryService cashMovementCategoryService;
+    @Mock private PosSessionTerminalHistoryRepository sessionTerminalHistoryRepository;
 
     private PosSessionService service;
 
     @BeforeEach
     void setUp() {
+        // Real (not mocked) Phase 2 wrapper services — they delegate to the same mocked
+        // repositories the tests already stub, so behavior is identical to the pre-wiring
+        // inline lookups.
+        PosSessionResolutionStrategy sessionResolutionStrategy = new PosSessionTerminalFirstResolutionStrategy(repo);
+        PosSessionOwnershipService sessionOwnershipService = new PosSessionOwnershipService();
+        com.billbull.backend.pos.terminal.PosTerminalHostingService terminalHostingService =
+                new com.billbull.backend.pos.terminal.PosTerminalHostingService(terminalRepository, sessionTerminalHistoryRepository);
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
                 terminalRepository, returnRepository, dayCloseRepository, objectMapper, terminalActivityService,
                 businessDateService, cashMovementRepository, receiptVoucherRepository,
-                xReportSnapshotRepository, reportNumberService, userRepository);
+                xReportSnapshotRepository, reportNumberService, userRepository, cashMovementCategoryService,
+                sessionResolutionStrategy, sessionOwnershipService, terminalHostingService);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
         // Default: no linked User row — resolveDisplayName() falls back to the raw username.
         lenient().when(userRepository.findByUsername(any())).thenReturn(java.util.Optional.empty());

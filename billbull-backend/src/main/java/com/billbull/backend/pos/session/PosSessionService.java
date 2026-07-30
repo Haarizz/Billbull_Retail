@@ -8,11 +8,15 @@ import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.audit.PosAuditAction;
 import com.billbull.backend.pos.audit.PosAuditLog;
 import com.billbull.backend.pos.audit.PosAuditLogRepository;
+import com.billbull.backend.pos.admin.PosCashMovementCategory;
+import com.billbull.backend.pos.admin.PosCashMovementCategoryService;
+import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.pos.terminal.PosTerminal;
 import com.billbull.backend.pos.terminal.PosTerminalActivityService;
+import com.billbull.backend.pos.terminal.PosTerminalHostingService;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
@@ -78,6 +82,10 @@ public class PosSessionService {
     private final PosXReportSnapshotRepository xReportSnapshotRepository;
     private final PosReportNumberService reportNumberService;
     private final UserRepository userRepository;
+    private final PosCashMovementCategoryService cashMovementCategoryService;
+    private final PosSessionResolutionStrategy sessionResolutionStrategy;
+    private final PosSessionOwnershipService sessionOwnershipService;
+    private final PosTerminalHostingService terminalHostingService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -106,7 +114,11 @@ public class PosSessionService {
                              ReceiptVoucherRepository receiptVoucherRepository,
                              PosXReportSnapshotRepository xReportSnapshotRepository,
                              PosReportNumberService reportNumberService,
-                             UserRepository userRepository) {
+                             UserRepository userRepository,
+                             PosCashMovementCategoryService cashMovementCategoryService,
+                             PosSessionResolutionStrategy sessionResolutionStrategy,
+                             PosSessionOwnershipService sessionOwnershipService,
+                             PosTerminalHostingService terminalHostingService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -127,6 +139,10 @@ public class PosSessionService {
         this.xReportSnapshotRepository = xReportSnapshotRepository;
         this.reportNumberService = reportNumberService;
         this.userRepository = userRepository;
+        this.cashMovementCategoryService = cashMovementCategoryService;
+        this.sessionResolutionStrategy = sessionResolutionStrategy;
+        this.sessionOwnershipService = sessionOwnershipService;
+        this.terminalHostingService = terminalHostingService;
     }
 
     private String currentUser() {
@@ -210,11 +226,9 @@ public class PosSessionService {
                             + ". Close the previous day's session before starting a new one.");
         }
 
-        // Resolve terminal entity for the DB-level lock
-        PosTerminal terminal = terminalRepository.findByTerminalId(terminalId).orElse(null);
-
         // App-level duplicate check: if same user returns to their own session, hand it back
-        Optional<PosSession> existing = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
+        // (terminal-first resolution — see PosSessionTerminalFirstResolutionStrategy)
+        Optional<PosSession> existing = sessionResolutionStrategy.resolveByTerminal(branchId, terminalId);
         if (existing.isPresent()) {
             if (!currentUser().equals(existing.get().getOpenedBy())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
@@ -233,6 +247,7 @@ public class PosSessionService {
         session.setCounterName(counterName);
         session.setOpenedBy(currentUser());
         session.setOpenedByDisplayName(resolveDisplayName(session.getOpenedBy()));
+        session.setOwnerUserId(sessionOwnershipService.currentPrincipalUserId());
         session.setSessionDate(businessDate);
         session.setOpenedAt(now);
         session.setLastActivityAt(now);
@@ -246,6 +261,9 @@ public class PosSessionService {
         session.setTotalMixedSales(BigDecimal.ZERO);
         session.setInvoiceCount(0);
 
+        // Resolve terminal entity for the DB-level lock (terminal-first hosting lookup —
+        // same terminalRepository.findByTerminalId call PosTerminalHostingService wraps).
+        PosTerminal terminal = terminalHostingService.resolveHostingTerminal(session).orElse(null);
         if (terminal != null) {
             session.setTerminalPk(terminal.getId());
             if (terminal.getCounterId() != null) session.setCounterId(terminal.getCounterId());
@@ -283,7 +301,7 @@ public class PosSessionService {
             return;
         }
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
-        repo.findByBranchIdAndTerminalIdAndStatus(branch.getId(), terminalId, PosSessionStatus.OPEN)
+        sessionResolutionStrategy.resolveByTerminal(branch.getId(), terminalId)
                 .ifPresent(session -> {
                     session.setOpenedBy(newOwnerUsername);
                     session.setOpenedByDisplayName(resolveDisplayName(newOwnerUsername));
@@ -296,7 +314,7 @@ public class PosSessionService {
         if (terminalId != null && !terminalId.isBlank()) {
             Branch branch = branchAccessService.getRequiredCurrentUserBranch();
             Long branchId = branch.getId();
-            Optional<PosSession> sessionOpt = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
+            Optional<PosSession> sessionOpt = sessionResolutionStrategy.resolveByTerminal(branchId, terminalId);
             if (sessionOpt.isPresent()) {
                 PosSession session = sessionOpt.get();
                 if (!currentUser().equals(session.getOpenedBy())) {
@@ -578,9 +596,25 @@ public class PosSessionService {
 
     /** {@code reference} is optional free-text (e.g. a supervisor-assigned drop slip
      *  number) — kept separate from description per the Cash Drop / Outs data model. */
-    @Transactional
     public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount,
                                             String description, String reference) {
+        return addCashMovement(sessionId, movementType, amount, description, reference, null);
+    }
+
+    /**
+     * Cash Movement Categories (Phase 2, § POS Integration): {@code categoryId} is optional
+     * unless the owning branch's {@code PosSettings.requireCashMovementCategory} toggle is on,
+     * in which case it's mandatory for every NEW movement — never retroactive, existing rows
+     * are untouched regardless of when the toggle flips. When a category is supplied its
+     * movement-type compatibility is validated (a DROP_IN-only category cannot be used on a
+     * DROP_OUT, per §7) and, if it carries an optional GL account override, that account is
+     * resolved once here and denormalized onto the movement (never re-resolved later) so a
+     * future void reversal mirrors the exact original posting even if the category's mapping
+     * changes afterward.
+     */
+    @Transactional
+    public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount,
+                                            String description, String reference, Long categoryId) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add cash movement to a closed session.");
@@ -593,6 +627,19 @@ public class PosSessionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid movement type: " + movementType);
         }
 
+        PosCashMovementCategory category = null;
+        if (categoryId != null) {
+            category = cashMovementCategoryService.getActiveEntityOrThrow(categoryId);
+            cashMovementCategoryService.assertCompatible(category, type);
+            if (category.isNotesRequired() && (description == null || description.isBlank())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Category \"" + category.getName() + "\" requires a description/notes.");
+            }
+        } else if (isCashMovementCategoryRequired(session.getBranchId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A cash movement category is required. Select one before saving.");
+        }
+
         PosCashMovement movement = new PosCashMovement();
         movement.setPosSession(session);
         movement.setMovementType(type);
@@ -600,14 +647,32 @@ public class PosSessionService {
         movement.setDescription(description);
         movement.setReference(reference);
         movement.setPerformedBy(currentUser());
+        movement.setPerformedByUserId(sessionOwnershipService.currentPrincipalUserId());
         movement.setPerformedAt(LocalDateTime.now());
         movement.setStatus(PosCashMovementStatus.ACTIVE);
         movement.setBusinessDate(session.getSessionDate());
         movement.setBranchId(session.getBranchId());
+        movement.setCategoryId(categoryId);
+
+        // Resolve the non-cash GL leg once, at creation — denormalized so a later void
+        // reversal always mirrors exactly what was posted (§9), regardless of any later change
+        // to the category's mapping.
+        String accountCode = type == PosCashMovementType.DROP_IN
+                ? PostingEngineService.ACC_PETTY_CASH : PostingEngineService.ACC_EXPENSE_GENERAL;
+        String accountName = type == PosCashMovementType.DROP_IN ? "Petty Cash" : "General Expense";
+        Account glOverride = cashMovementCategoryService.resolveGlAccount(category);
+        if (glOverride != null) {
+            accountCode = glOverride.getCode();
+            accountName = glOverride.getName();
+        }
+        movement.setPostedAccountCode(accountCode);
+        movement.setPostedAccountName(accountName);
+
         session.getCashMovements().add(movement);
         repo.save(session);
 
-        // Post GL journal: DROP_IN → Dr Cash / Cr Petty Cash; DROP_OUT → Dr Expense / Cr Cash
+        // Post GL journal: DROP_IN → Dr Cash / Cr Petty Cash (or category account);
+        // DROP_OUT → Dr Expense (or category account) / Cr Cash
         Branch branch = session.getBranchId() != null
                 ? branchRepository.findById(session.getBranchId()).orElse(null)
                 : null;
@@ -617,12 +682,22 @@ public class PosSessionService {
                 amount,
                 description,
                 session.getSessionDate(),
-                branch);
+                branch,
+                accountCode,
+                accountName);
 
         terminalActivityService.recordActivity(session.getTerminalId(), movementType);
         auditService.logCashMovement(sessionId, session.getTerminalId(), session.getBranchId(), movementType, amount.toPlainString());
 
         return movement;
+    }
+
+    private boolean isCashMovementCategoryRequired(Long branchId) {
+        if (branchId == null) return false;
+        return posSettingsRepository.findByBranchId(branchId)
+                .map(PosSettings::getRequireCashMovementCategory)
+                .map(Boolean.TRUE::equals)
+                .orElse(false);
     }
 
     @Transactional
@@ -1017,7 +1092,7 @@ public class PosSessionService {
             if (s.getXReportGeneratedAt() != null) continue;
             String terminalName = null;
             if (s.getTerminalId() != null && !s.getTerminalId().isBlank()) {
-                terminalName = terminalRepository.findByTerminalId(s.getTerminalId())
+                terminalName = terminalHostingService.resolveHostingTerminal(s)
                         .map(PosTerminal::getTerminalName).orElse(null);
             }
             Map<String, Object> p = new java.util.LinkedHashMap<>();
@@ -1603,7 +1678,7 @@ public class PosSessionService {
         Map<String, Object> info = new java.util.LinkedHashMap<>();
         String deviceName = null, deviceInfo = null, terminalName = null;
         if (s.getTerminalId() != null && !s.getTerminalId().isBlank()) {
-            PosTerminal term = terminalRepository.findByTerminalId(s.getTerminalId()).orElse(null);
+            PosTerminal term = terminalHostingService.resolveHostingTerminal(s).orElse(null);
             if (term != null) {
                 terminalName = term.getTerminalName();
                 deviceName = term.getTerminalName() != null ? term.getTerminalName() : term.getTerminalId();
