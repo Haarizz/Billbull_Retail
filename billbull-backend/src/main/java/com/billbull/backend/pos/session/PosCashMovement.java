@@ -77,6 +77,31 @@ public class PosCashMovement extends BaseEntity {
     @Column(name = "branch_id")
     private Long branchId;
 
+    // ── Cash Movement Categories (Phase 2) — nullable, never backfilled on legacy rows ──────
+
+    /** FK to {@code com.billbull.backend.pos.admin.PosCashMovementCategory}, set once at
+     *  creation. Null on every movement created before this feature existed or while it was
+     *  optional — rendered as "Uncategorized (Legacy)" by the UI, never guessed/backfilled. */
+    @Column(name = "category_id")
+    private Long categoryId;
+
+    /** The GL account code/name actually used for this movement's non-cash posting leg,
+     *  resolved once at creation (category override if present, else the existing default —
+     *  see PostingEngineService#createJournalFromCashMovement). Denormalized so a later void
+     *  reversal posts against the exact same account even if the category's GL mapping (or
+     *  its existence) changes afterward — reversal must mirror the original posting exactly. */
+    @Column(name = "posted_account_code", length = 20)
+    private String postedAccountCode;
+
+    @Column(name = "posted_account_name", length = 150)
+    private String postedAccountName;
+
+    /** Session Roaming Phase 1 (schema foundation only — unused by any service yet). Stable-id
+     *  counterpart to {@link #performedBy}. Null on every movement created before this feature
+     *  existed and never backfilled by this phase. */
+    @Column(name = "performed_by_user_id")
+    private Long performedByUserId;
+
     // Getters & Setters
 
     public PosSession getPosSession() { return posSession; }
@@ -132,4 +157,16 @@ public class PosCashMovement extends BaseEntity {
 
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }
+
+    public Long getCategoryId() { return categoryId; }
+    public void setCategoryId(Long categoryId) { this.categoryId = categoryId; }
+
+    public String getPostedAccountCode() { return postedAccountCode; }
+    public void setPostedAccountCode(String postedAccountCode) { this.postedAccountCode = postedAccountCode; }
+
+    public String getPostedAccountName() { return postedAccountName; }
+    public void setPostedAccountName(String postedAccountName) { this.postedAccountName = postedAccountName; }
+
+    public Long getPerformedByUserId() { return performedByUserId; }
+    public void setPerformedByUserId(Long performedByUserId) { this.performedByUserId = performedByUserId; }
 }

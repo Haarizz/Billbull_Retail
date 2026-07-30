@@ -85,6 +85,18 @@ public class PosSession extends BaseEntity {
     @Column(name = "day_close_id")
     private Long dayCloseId;
 
+    /** Session Roaming Phase 1 (schema foundation only — unused by any service yet). Stable
+     *  owner of this session, independent of which terminal currently hosts it. Null on every
+     *  session created before this feature existed and never backfilled by this phase. */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
+
+    /** Session Roaming Phase 1 (schema foundation only — unused by any service yet). Last time
+     *  the session's current-terminal "hosting" pointer was refreshed. Null until a later phase
+     *  starts writing it. */
+    @Column(name = "current_hosting_refreshed_at")
+    private LocalDateTime currentHostingRefreshedAt;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PosSessionStatus status = PosSessionStatus.OPEN;
@@ -344,4 +356,10 @@ public class PosSession extends BaseEntity {
 
     public Long getDayCloseId() { return dayCloseId; }
     public void setDayCloseId(Long dayCloseId) { this.dayCloseId = dayCloseId; }
+
+    public Long getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(Long ownerUserId) { this.ownerUserId = ownerUserId; }
+
+    public LocalDateTime getCurrentHostingRefreshedAt() { return currentHostingRefreshedAt; }
+    public void setCurrentHostingRefreshedAt(LocalDateTime currentHostingRefreshedAt) { this.currentHostingRefreshedAt = currentHostingRefreshedAt; }
 }
