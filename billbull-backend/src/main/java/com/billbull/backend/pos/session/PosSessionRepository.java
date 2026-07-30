@@ -14,6 +14,11 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     Optional<PosSession> findByBranchIdAndTerminalIdAndStatus(Long branchId, String terminalId, PosSessionStatus status);
 
+    // Session Roaming Phase 2 (backend plumbing) — not called by any production flow yet. Reserved
+    // for the future user-first session resolution (see PosSessionResolutionStrategy); existing
+    // lookups above remain terminal-first and unchanged.
+    List<PosSession> findByOwnerUserIdAndStatus(Long ownerUserId, PosSessionStatus status);
+
     Optional<PosSession> findByTerminalIdAndStatus(String terminalId, PosSessionStatus status);
 
     Optional<PosSession> findByTerminalPkAndStatus(Long terminalPk, PosSessionStatus status);
