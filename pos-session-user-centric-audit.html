@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BillBull POS Architecture Analysis</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1b1f24;
+  --muted: #5b6470;
+  --border: #e2e5e9;
+  --code-bg: #f3f4f6;
+  --accent: #b45309;
+  --table-head: #f7f5f0;
+  --link: #9a4d0a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #e6e8eb;
+    --muted: #9aa3ad;
+    --border: #2a2e35;
+    --code-bg: #1d2025;
+    --accent: #f0b866;
+    --table-head: #1d2025;
+    --link: #f0b866;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --fg: #e6e8eb; --muted: #9aa3ad; --border: #2a2e35;
+  --code-bg: #1d2025; --accent: #f0b866; --table-head: #1d2025; --link: #f0b866;
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --fg: #1b1f24; --muted: #5b6470; --border: #e2e5e9;
+  --code-bg: #f3f4f6; --accent: #b45309; --table-head: #f7f5f0; --link: #9a4d0a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  display: flex;
+}
+#toc {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  flex: 0 0 300px;
+  padding: 24px 18px;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+#toc a {
+  display: block;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 0;
+  border-radius: 4px;
+}
+#toc a:hover { color: var(--accent); }
+#toc .toc-title {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+#toc .toc-l1 { font-weight: 600; color: var(--fg); margin-top: 10px; }
+#toc .toc-l2 { padding-left: 14px; }
+#toc .toc-l3 { padding-left: 28px; font-size: 12px; }
+main {
+  flex: 1 1 auto;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 40px 48px 120px;
+  min-width: 0;
+}
+h1, h2, h3, h4 { scroll-margin-top: 20px; line-height: 1.3; }
+h1 { font-size: 1.9em; border-bottom: 2px solid var(--accent); padding-bottom: 10px; }
+h2 { font-size: 1.5em; margin-top: 2.4em; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 1.2em; margin-top: 1.8em; color: var(--accent); }
+h4 { font-size: 1.02em; margin-top: 1.4em; }
+p { color: var(--fg); }
+strong { color: var(--fg); }
+a { color: var(--link); }
+code {
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: 0.85em; }
+.mermaid {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.table-wrap { overflow-x: auto; margin: 1em 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--table-head); font-weight: 600; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.25em 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+@media (max-width: 900px) {
+  body { flex-direction: column; }
+  #toc { position: static; height: auto; flex: none; border-right: none; border-bottom: 1px solid var(--border); }
+  main { padding: 24px; }
+}
+</style>
+</head>
+<body>
+<nav id="toc">
+<div class="toc-title">Contents</div>
+<a class="toc-l1" href="#pos-session-architecture-audit-terminal-centric-as-built-pre-migration-to-user-centric-session-roaming">POS Session Architecture Audit — Terminal-Centric (As-Built), Pre-Migration to User-Centric Session Roaming</a>
+<a class="toc-l2" href="#1-session-lifecycle">1. Session Lifecycle</a>
+<a class="toc-l3" href="#11-creation-possessionserviceopensessionterminalid-countername-openingcash-possessionpossessionservicejava196-279">1.1 Creation — `PosSessionService.openSession(terminalId, counterName, openingCash)` (`pos/session/PosSessionService.java:196-279`)</a>
+<a class="toc-l3" href="#12-resume">1.2 Resume</a>
+<a class="toc-l3" href="#13-closing">1.3 Closing</a>
+<a class="toc-l3" href="#14-expiry-possessionscheduler-possessionpossessionschedulerjava-scheduledfixedrate60000">1.4 Expiry — `PosSessionScheduler` (`pos/session/PosSessionScheduler.java`, `@Scheduled(fixedRate=60_000)`)</a>
+<a class="toc-l3" href="#15-ownership-reassignment-adjacent-to-lifecycle-directly-relevant-to-user-centric-migration">1.5 Ownership reassignment (adjacent to lifecycle, directly relevant to User-Centric migration)</a>
+<a class="toc-l3" href="#16-states-and-full-transition-table">1.6 States and full transition table</a>
+<a class="toc-l2" href="#2-terminal-lifecycle">2. Terminal Lifecycle</a>
+<a class="toc-l3" href="#21-registration">2.1 Registration</a>
+<a class="toc-l3" href="#22-activation">2.2 Activation</a>
+<a class="toc-l3" href="#23-ownership-currentopensessionid">2.3 Ownership — `currentOpenSessionId`</a>
+<a class="toc-l3" href="#24-validation">2.4 Validation</a>
+<a class="toc-l3" href="#25-locking">2.5 Locking</a>
+<a class="toc-l3" href="#26-authentication">2.6 Authentication</a>
+<a class="toc-l2" href="#3-counter-lifecycle">3. Counter Lifecycle</a>
+<a class="toc-l3" href="#31-assignment">3.1 Assignment</a>
+<a class="toc-l3" href="#32-validation">3.2 Validation</a>
+<a class="toc-l3" href="#33-relationship-with-terminal">3.3 Relationship with Terminal</a>
+<a class="toc-l3" href="#34-relationship-with-session">3.4 Relationship with Session</a>
+<a class="toc-l2" href="#4-user-authentication">4. User Authentication</a>
+<a class="toc-l3" href="#41-login-flow">4.1 Login flow</a>
+<a class="toc-l3" href="#42-pos-login">4.2 "POS login"</a>
+<a class="toc-l3" href="#43-cashier-identification">4.3 Cashier identification</a>
+<a class="toc-l3" href="#44-session-ownership">4.4 Session ownership</a>
+<a class="toc-l3" href="#45-security-validation">4.5 Security validation</a>
+<a class="toc-l2" href="#5-startup-flow-login-usable-pos-sales-screen">5. Startup Flow (Login → Usable POS Sales Screen)</a>
+<a class="toc-l2" href="#6-backend-services-and-interactions">6. Backend Services and Interactions</a>
+<a class="toc-l2" href="#7-database">7. Database</a>
+<a class="toc-l2" href="#8-apis">8. APIs</a>
+<a class="toc-l2" href="#9-business-rules-extracted">9. Business Rules Extracted</a>
+<a class="toc-l2" href="#10-sequence-diagram">10. Sequence Diagram</a>
+<a class="toc-l2" href="#11-risks-for-migration-to-a-user-centric-session-model">11. Risks for Migration to a User-Centric Session Model</a>
+</nav>
+<main>
+<h1 id="pos-session-architecture-audit-terminal-centric-as-built-pre-migration-to-user-centric-session-roaming">POS Session Architecture Audit — Terminal-Centric (As-Built), Pre-Migration to User-Centric Session Roaming</h1>
+<p><strong>Purpose of this document</strong>: a complete, code-grounded audit of the *existing* Terminal-Centric session model, produced before any redesign work toward a User-Centric ("session roaming" — a cashier's session follows them across terminals) model. No code was changed. Where something wasn't directly verified this pass, it is flagged rather than assumed.</p>
+<p><strong>Primary sources</strong> (this pass, line-verified): <code>pos/session/{PosSession,PosSessionService,PosSessionScheduler,PosSessionRepository,PosCashMovement*}.java</code>, <code>pos/terminal/{PosTerminal,PosTerminalRepository,PosTerminalService,PosTerminalController}.java</code>, <code>pos/counter/{PosCounter,PosCounterService,PosCounterController}.java</code>, <code>config/JwtFilter.java</code>, <code>auth/AuthController.java</code> region, plus the full prior architecture pass (entities, migrations, frontend) carried forward and re-verified against current source.</p>
+<hr>
+<h2 id="1-session-lifecycle">1. Session Lifecycle</h2>
+<h3 id="11-creation-possessionserviceopensessionterminalid-countername-openingcash-possessionpossessionservicejava196-279">1.1 Creation — <code>PosSessionService.openSession(terminalId, counterName, openingCash)</code> (<code>pos/session/PosSessionService.java:196-279</code>)</h3>
+<p>Ownership is established entirely by <strong>who the current authenticated user is at the moment of the call</strong> (<code>currentUser()</code>), scoped to <strong><code>(branchId, terminalId)</code></strong> — there is no user-level session registry independent of a terminal. Sequence:</p>
+<ol>
+<li>Resolve <code>Branch</code> via <code>branchAccessService.getRequiredCurrentUserBranch()</code> — this is JWT-branch-context-derived, not terminal-derived (see §4).</li>
+<li>Resolve <code>businessDate</code> for that branch (<code>PosBusinessDateService</code>).</li>
+<li><strong>Guard — day already closed</strong>: 403 if <code>businessDateService.isDateClosed(branchId, businessDate)</code>.</li>
+<li><strong>Guard — stale prior-day session</strong>: <code>repo.findUnclosedSessionsBeforeDate(branchId, businessDate)</code> — if any unclosed session exists from before today's business date <strong>for this branch</strong> (not scoped to this terminal), throws 409 <code>PREVIOUS_DAY_SESSION_OPEN: Session #{id} ... terminal {terminalId} ... Close the previous day's session before starting a new one.</code> This is branch-wide, so a stale session on Terminal A blocks opening a *new* session on Terminal B for the same branch/day only insofar as the frontend's day-status flow surfaces it — the service call itself does not filter by terminal, meaning <strong>any</strong> unclosed prior-day session anywhere in the branch blocks <strong>all</strong> new session opens branch-wide. Worth flagging for a user-centric design where a user might want to open elsewhere while an old session is stuck.</li>
+<li>Resolve the <code>PosTerminal</code> entity by <code>terminalId</code> string (<code>terminalRepository.findByTerminalId</code>) — used purely to get the lock target and denormalize <code>terminalPk</code>/<code>counterId</code>, not for any identity/auth check at this point.</li>
+<li><strong>App-level duplicate check</strong>: <code>repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, OPEN)</code>. If found:</li>
+<ul>
+<li>If <code>currentUser().equals(existing.getOpenedBy())</code> → hand the existing session back (idempotent "resume" — see §1.2).</li>
+<li>Else → 409 <code>"Terminal is already in use by active cashier: {openedBy}"</code>.</li>
+<ol>
+<li>Build a new <code>PosSession</code>: <code>branchId/Name</code>, <code>terminalId</code> (string), <code>counterName</code> (as passed by the client, not re-derived from the terminal record), <code>openedBy</code> = <code>currentUser()</code>, <code>openedByDisplayName</code> resolved via <code>resolveDisplayName</code>, <code>sessionDate</code> = business date, <code>openedAt</code>/<code>lastActivityAt</code> = now, <code>status=OPEN</code>, <code>openingCash</code>, all totals zeroed. If the terminal entity was found: <code>terminalPk</code> and <code>counterId</code> (from <code>terminal.getCounterId()</code>) are stamped — **<code>counterId</code> here is a snapshot from the terminal's *current* counter assignment at open time, never re-synced later**.</li>
+<li>Idle/hard-timeout snapshot: <code>PosSettings.sessionIdleTimeoutMinutes</code>/<code>sessionMaxDurationHours</code> are copied onto the session row (<code>idleTimeoutMinutes</code>, <code>sessionTimeoutAt = now + maxHours</code>) — <strong>per-session values frozen at open time</strong>; a later settings change does not retroactively affect already-open sessions.</li>
+<li><code>repo.save(session)</code> — INSERT.</li>
+<li><strong>Terminal lock acquisition</strong>: if the terminal entity was resolved, <code>terminalRepository.setOpenSession(terminal.getId(), saved.getId())</code> — a native atomic <code>UPDATE pos_terminals SET current_open_session_id = :sessionId WHERE id = :terminalId AND current_open_session_id IS NULL</code>. If 0 rows affected (another session already holds the lock, lost the race), the just-inserted <code>PosSession</code> row is <strong>deleted</strong> and 409 <code>"Terminal is already occupied by another session."</code> is thrown. If the terminal entity was *not* found (i.e., <code>terminalId</code> didn't resolve to a registered <code>PosTerminal</code>), <strong>no lock is taken at all</strong> — the session is created lock-free. This is a notable gap: a session can exist with no corresponding terminal-lock discipline if the terminal record is missing/mismatched.</li>
+<li>Audit log (<code>PosAuditService.logSessionOpened</code>) and terminal activity touch (<code>PosTerminalActivityService.recordActivity(terminalId, "SESSION_OPEN")</code>).</li>
+</ol>
+</ul>
+</ol>
+<h3 id="12-resume">1.2 Resume</h3>
+<p>There is no separate "resume" endpoint for a session still OPEN — step 6 above *is* the resume path: calling <code>openSession</code> again with the same terminal+user returns the existing OPEN session unchanged (idempotent). For a <strong>SUSPENDED</strong> session, resume is explicit: <code>resumeSession(id)</code> (line ~477) — only valid from SUSPENDED, sets status back to OPEN and touches <code>lastActivityAt</code>. No ownership re-check is performed in <code>resumeSession</code> itself (no comparison of <code>currentUser()</code> to <code>openedBy</code> was found in this method) — resume is closer to "un-suspend this session row" than "resume as the recorded owner."</p>
+<p>Terminal-level resume-on-mount (frontend) is <code>GET /api/pos/sessions/active?terminalId=</code> → <code>getActiveSession(terminalId)</code> (line 300-327): looks up the OPEN session for branch+terminalId; if found and <code>currentUser().equals(openedBy)</code>, returns it; if found under a <strong>different</strong> user, throws 409 <code>"Terminal is locked by active cashier: {openedBy}"</code> (this is the message the frontend's Supervisor Takeover flow reacts to); if not found at all, checks whether the <code>terminalId</code> is registered to a *different* branch and throws a distinct 409 if so (stale cross-branch cached id).</p>
+<h3 id="13-closing">1.3 Closing</h3>
+<p><code>closeSession(...)</code> — see the prior architecture pass (§5/§6) for the full breakdown; key points reconfirmed relevant to migration risk: closing releases the terminal lock via a matching atomic <code>clearOpenSession(terminalId, sessionId)</code> conditioned on the session id still matching — i.e., the lock-release is tied to the <strong>session row</strong>, not the user, so if ownership were ever reassigned mid-session (<code>reassignSessionOwner</code>, §1.5) the lock-release logic still works because it keys off session id, not <code>openedBy</code>.</p>
+<h3 id="14-expiry-possessionscheduler-possessionpossessionschedulerjava-scheduledfixedrate60000">1.4 Expiry — <code>PosSessionScheduler</code> (<code>pos/session/PosSessionScheduler.java</code>, <code>@Scheduled(fixedRate=60_000)</code>)</h3>
+<p><strong>Critical distinction for the migration</strong>: idle/hard-timeout expiry does <strong>not</strong> close a session — it <strong>suspends</strong> it (<code>status = SUSPENDED</code>). The terminal lock is <strong>not released</strong> on this auto-suspend (no call to <code>clearOpenSession</code> in <code>PosSessionScheduler</code>) — a suspended session still holds <code>pos_terminals.current_open_session_id</code>, meaning the terminal remains "occupied" and blocks any *new* session open on that terminal until the suspended session is either resumed or explicitly closed. Two independent triggers:</p>
+<ul>
+<li><strong>Hard wall-clock limit</strong>: <code>repo.findTimedOutSessions(now)</code> — sessions where <code>sessionTimeoutAt &lt; now</code> (set once at open time from <code>PosSettings.sessionMaxDurationHours</code>, never recalculated).</li>
+<li><strong>Idle timeout</strong>: two-phase query — <code>repo.findIdleSessionsBefore(now.minusMinutes(1))</code> (a conservative 1-minute floor query, since idle windows vary per-session) followed by an in-memory per-session check against that session's own frozen <code>idleTimeoutMinutes</code>, comparing <code>lastActivityAt</code> (or <code>openedAt</code> if never touched) against <code>now.minusMinutes(idleTimeoutMinutes)</code>.</li>
+</ul>
+<p><code>lastActivityAt</code> is kept fresh by: the frontend's <code>useIdleTimeout</code> hook pinging <code>touchSessionActivity(sessionId)</code> every 30s, and server-side by <code>recordInvoiceOnSession</code> (every checkout) and <code>PosTerminalActivityService.recordActivity</code> calls from various flows.</p>
+<h3 id="15-ownership-reassignment-adjacent-to-lifecycle-directly-relevant-to-user-centric-migration">1.5 Ownership reassignment (adjacent to lifecycle, directly relevant to User-Centric migration)</h3>
+<p>Two distinct mechanisms already exist for changing *who* owns an open session, without changing *which terminal* it's tied to:</p>
+<ul>
+<li><strong><code>reassignSessionOwner(terminalId, newOwnerUsername)</code></strong> (line 286-298) — silent no-op if no OPEN session exists; otherwise overwrites <code>openedBy</code>/<code>openedByDisplayName</code> directly, no PIN/approval check inside this method itself (calling-context authorization, if any, lives upstream — not traced in this pass).</li>
+<li><strong><code>supervisorTakeover(sessionId, supervisorPin)</code></strong> — BCrypt-verifies against <code>PosSettings.supervisorPin</code> if set, then reassigns <code>openedBy</code> to the current user and forces status back to OPEN.</li>
+</ul>
+<p>Both mechanisms prove the system already *can* decouple "session owner" from "who opened it," but always <strong>within the same terminal</strong> — there is no existing mechanism to move an open session's <code>terminalId</code>/<code>terminalPk</code> to a different physical terminal. That capability does not exist anywhere in the codebase today.</p>
+<h3 id="16-states-and-full-transition-table">1.6 States and full transition table</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>From</th><th>To</th><th>Trigger</th><th>Guard</th></tr></thead>
+<tbody>
+<tr><td>—</td><td>OPEN</td><td><code>openSession</code></td><td>day not closed, no stale prior-day session, terminal lock acquired (or terminal unresolved → no lock)</td></tr>
+<tr><td>OPEN</td><td>SUSPENDED</td><td><code>suspendSession</code> (manual) or <code>PosSessionScheduler</code> (idle/hard-timeout, automatic)</td><td>must currently be OPEN</td></tr>
+<tr><td>SUSPENDED</td><td>OPEN</td><td><code>resumeSession</code> (manual) or <code>supervisorTakeover</code> (with PIN)</td><td>must currently be SUSPENDED</td></tr>
+<tr><td>OPEN or SUSPENDED</td><td>CLOSED</td><td><code>closeSession</code></td><td>not already CLOSED; variance-threshold supervisor gate</td></tr>
+<tr><td>CLOSED</td><td>—</td><td>none</td><td>terminal — no path back from CLOSED</td></tr>
+</tbody></table></div>
+<p>No "EXPIRED" state exists — expiry is modeled entirely as an automatic transition into SUSPENDED, which is otherwise indistinguishable from a manually-suspended session in the schema (no reason/cause column on <code>PosSession</code> distinguishing manual vs. auto-suspend — flagged as a gap, not confirmed to have any code path checking it).</p>
+<hr>
+<h2 id="2-terminal-lifecycle">2. Terminal Lifecycle</h2>
+<h3 id="21-registration">2.1 Registration</h3>
+<p><code>PosTerminalController.register</code> (ungated, self-service) → <code>PosTerminalService.registerOrRefresh</code> — resolves by <code>terminalId</code> claim, falling back to <code>(deviceFingerprint, branchId)</code> composite unique lookup. Enforces <code>PosSettings.maxTerminalsPerBranch</code> (excludes ARCHIVED/DECOMMISSIONED from the count) for *new* terminals only. If <code>PosSettings.requireTerminalApproval</code>, starts <code>PENDING_REGISTRATION</code>.</p>
+<h3 id="22-activation">2.2 Activation</h3>
+<p><code>approve</code>/<code>reject</code> only from <code>PENDING_REGISTRATION</code>. Heartbeat (<code>heartbeat(terminalId, ip)</code>, 403 unless not ARCHIVED/DECOMMISSIONED/BLOCKED) auto-promotes OFFLINE → ACTIVE/IDLE.</p>
+<h3 id="23-ownership-currentopensessionid">2.3 Ownership — <code>currentOpenSessionId</code></h3>
+<p>This is the crux of the terminal-centric model. <code>PosTerminal.currentOpenSessionId</code> is a single nullable <code>Long</code> column, <strong>the sole mechanism</strong> representing "which session currently has this terminal locked." It is:</p>
+<ul>
+<li><strong>Set</strong> only via the native atomic UPDATE <code>setOpenSession</code> (compare-and-swap on <code>IS NULL</code>), never via a normal JPA setter+save path in the observed session-open flow.</li>
+<li><strong>Cleared</strong> only via the matching atomic <code>clearOpenSession</code> (compare-and-swap on <code>= :sessionId</code>), called from <code>closeSession</code>. <strong>Not called</strong> from <code>suspendSession</code> or the scheduler's auto-suspend — meaning a SUSPENDED session still holds the terminal.</li>
+<li><strong>Read</strong> implicitly by <code>archive</code>/<code>decommission</code> guards (409 if <code>currentOpenSessionId != null</code>) — terminal lifecycle actions are gated on this column, not on querying <code>PosSession</code> directly.</li>
+<li>There is <strong>no reverse consistency check</strong> found in this pass ensuring <code>PosTerminal.currentOpenSessionId</code> and <code>PosSession.terminalPk</code>/status always agree — they're kept in sync procedurally (both written inside the same <code>openSession</code>/<code>closeSession</code> transaction) rather than enforced by a DB constraint (e.g., no FK from <code>pos_terminals.current_open_session_id</code> to <code>pos_sessions.id</code> was confirmed — not explicitly checked this pass, flagged as unread).</li>
+</ul>
+<p>This column is the <strong>single biggest architectural obstacle to User-Centric session roaming</strong>: the entire "is this terminal available" question is answered by one nullable FK-like column on the terminal row, not by any query over sessions filtered by user. Moving to a model where a session isn't pinned to one terminal would require either repurposing this column's semantics or removing the terminal as the lock owner entirely.</p>
+<h3 id="24-validation">2.4 Validation</h3>
+<p>Register: rejects (403) if terminal status is BLOCKED/MAINTENANCE/DECOMMISSIONED/ARCHIVED. Heartbeat: rejects if ARCHIVED/DECOMMISSIONED/BLOCKED (MAINTENANCE excluded deliberately). Archive/decommission: rejects (409) if <code>currentOpenSessionId != null</code>.</p>
+<h3 id="25-locking">2.5 Locking</h3>
+<p>Exactly the CAS mechanism in §2.3 — no other locking primitive (<code>@Version</code>, <code>synchronized</code>, pessimistic lock) is used anywhere in the terminal or session write paths for this purpose.</p>
+<h3 id="26-authentication">2.6 Authentication</h3>
+<p><strong>None, at the terminal level.</strong> There is no terminal credential, terminal-scoped token, or terminal-specific claim in the JWT — confirmed by reading <code>config/JwtFilter.java</code> in full for this pass: the filter resolves <code>BranchContextHolder</code>/<code>OwnershipContextHolder</code> from the JWT's user/branch claims and an optional <code>X-Branch-Id</code> header (used only to let a multi-branch user pick their active branch, validated against their allowed-branch set — <code>resolveActiveBranchId</code>, lines 144-162). No terminal identifier appears anywhere in <code>JwtFilter</code>. Terminal identity is established purely by the request body's <code>deviceFingerprint</code>/<code>terminalId</code> at registration time and trusted thereafter — <strong>any authenticated user's browser can register as, or heartbeat, any terminal it has the string id for</strong>, with no cryptographic binding between a JWT and a terminal. This is a second major consideration for a user-centric redesign, since "terminal" today carries zero authentication weight of its own.</p>
+<hr>
+<h2 id="3-counter-lifecycle">3. Counter Lifecycle</h2>
+<h3 id="31-assignment">3.1 Assignment</h3>
+<p>Counters are assigned *to* terminals, never to sessions or users directly. <code>PosTerminalService.assignCounter(terminalId, counterId)</code> sets <code>PosTerminal.counterId</code> (404 if counter not found). There is no "assign counter to session" or "assign counter to user" operation anywhere in the codebase.</p>
+<h3 id="32-validation">3.2 Validation</h3>
+<p><code>PosCounterService</code>: unique <code>(branchId, counterCode)</code> on create (409 on duplicate); status change to INACTIVE/MAINTENANCE blocked (409) while any terminal is still assigned with an active status; delete blocked (409) while any terminal references the counter at all. <strong>No RBAC/permission gating exists on <code>PosCounterController</code></strong> at all (confirmed again this pass) — <code>isAuthenticated()</code> is the only check, unlike the terminal controller's per-action <code>ModulePermissionService</code> gating.</p>
+<h3 id="33-relationship-with-terminal">3.3 Relationship with Terminal</h3>
+<p>Many-to-one: <code>PosTerminal.counterId</code> → <code>PosCounter.id</code>, nullable (a terminal can be unassigned). A counter can have many terminals pointed at it simultaneously — nothing prevents two terminals from both claiming the same counter concurrently; counter assignment carries no exclusivity lock analogous to the session lock.</p>
+<h3 id="34-relationship-with-session">3.4 Relationship with Session</h3>
+<p><strong>Indirect and denormalized only.</strong> <code>PosSession.counterId</code>/<code>counterName</code> are copied from the *terminal's* counter assignment at the moment <code>openSession</code> runs (<code>terminal.getCounterId()</code>) and from the client-supplied <code>counterName</code> string parameter — there is no live FK from <code>PosSession</code> to <code>PosCounter</code>, and no re-sync if the terminal's counter assignment changes after the session opens. A session's "counter" is a point-in-time snapshot, not a relationship.</p>
+<hr>
+<h2 id="4-user-authentication">4. User Authentication</h2>
+<h3 id="41-login-flow">4.1 Login flow</h3>
+<p>Single, generic endpoint — no POS-specific login exists. Authenticates username/email+password (rate-limited via <code>LoginRateLimiter</code>/brute-force guard), issues one JWT (<code>JwtUtil.generateToken</code>) carrying the user's identity, primary branch, and role claims. This was confirmed in the prior pass and re-confirmed here by reading <code>JwtFilter</code> end-to-end: it never references anything POS-specific (terminal, counter, session).</p>
+<h3 id="42-pos-login">4.2 "POS login"</h3>
+<p>Does not exist as a distinct concept — entering <code>/sales/pos</code> re-uses the ambient app JWT and instead triggers <strong>terminal registration</strong> (§2.1) as its bootstrap step. The user is already fully authenticated before any POS-specific state exists.</p>
+<h3 id="43-cashier-identification">4.3 Cashier identification</h3>
+<p>Entirely by <code>currentUser()</code> (the JWT-derived username) at the moment of each POS API call — there is no separate "cashier badge" or PIN-based POS identity layer for the *primary* login. A PIN *does* exist, but only for the narrower <strong>supervisor takeover</strong> flow (<code>PosSettings.supervisorPin</code>, BCrypt-verified) — not for normal cashier identification.</p>
+<h3 id="44-session-ownership">4.4 Session ownership</h3>
+<p>As established in §1: ownership = <code>PosSession.openedBy</code>, a raw username string set from <code>currentUser()</code> at open time, mutable only via <code>reassignSessionOwner</code>/<code>supervisorTakeover</code>. It is <strong>not</strong> a JPA FK to <code>User</code> — it is a denormalized string, joined against <code>User.username</code> only when resolving display names (<code>resolveDisplayName</code>). This has a direct migration implication: any User-Centric model that wants strong referential integrity between session and user will need to introduce (or verify the presence of) a real FK, since today a rename of <code>username</code> (if that's ever mutable — not confirmed) would orphan the string reference.</p>
+<h3 id="45-security-validation">4.5 Security validation</h3>
+<p>Branch scoping is the dominant security control for POS session operations — <code>BranchAccessService.getRequiredCurrentUserBranch()</code> is called at the top of every session-affecting service method, meaning <strong>all session validation is implicitly scoped to "the branch the caller's JWT/header context currently resolves to,"</strong> not to any terminal- or session-specific credential. Terminal actions carry additional <code>ModulePermissionService</code> permission-key checks (§2 of the prior document); counter actions carry none; session actions carry only <code>isAuthenticated()</code> at the controller layer plus the ownership checks embedded in service logic (§1.2's <code>openedBy</code> comparison, §1.1's active-cashier conflict).</p>
+<hr>
+<h2 id="5-startup-flow-login-usable-pos-sales-screen">5. Startup Flow (Login → Usable POS Sales Screen)</h2>
+<pre><code class="lang-">1. App-wide login (src/auth/login.jsx) → JWT stored in sessionStorage.token
+2. Navigate to /sales/pos → ResourceGuard(module="sales.invoice") passes
+3. POSSales.jsx mounts → "POS initialization" useEffect fires:
+     a. GET /api/pos/settings → posSettings (+ template designer fields)
+     b. GET branch tax configuration → tax-inclusive flag, VAT rate
+     c. registerTerminalAndResumeSession():
+          i.   read/create deviceFingerprint (localStorage)
+          ii.  read cached terminalId for this branch (localStorage)
+          iii. POST /api/pos/terminals/register {terminalId, deviceFingerprint, deviceInfo}
+                 -&gt; 403 if terminal BLOCKED/MAINTENANCE/DECOMMISSIONED/ARCHIVED (hard stop, UI blocked)
+                 -&gt; else ACTIVE or PENDING_REGISTRATION terminal returned; cache terminal.terminalId
+          iv.  GET /api/pos/sessions/active?terminalId=
+                 -&gt; resumes existing OPEN session owned by currentUser()
+                 -&gt; 409 "Terminal is locked by active cashier" if a DIFFERENT user's session is open
+                    (frontend offers Supervisor Takeover)
+          v.   GET /api/pos/sessions/day-status?terminalId=
+                 -&gt; surfaces any prior-day unclosed session as a blocking popup
+4. Independent effects fire in parallel: departments, customers (paginated), products
+   (paginated, infinite scroll), printer config, scanner config (localStorage-persisted),
+   held sales, X-report cache warm (if a session is already active)
+5. useHeartbeat(terminalId) starts (60s interval); useIdleTimeout(sessionId) starts (30s touch)
+6. If no active session resumed: Start Session dialog (denomination entry) -&gt;
+   POST /api/pos/sessions/open -&gt; currentView = 'touch-screen'
+   If an active session WAS resumed: currentView = 'touch-screen' directly, cart state
+   re-derived from held sales / fresh cart (not restored from any server-side cart snapshot
+   tied to the session itself — POS carts are client-local until checkout, except for
+   explicitly "held" sales, which persist via PosHeldSale.cartJson).
+7. POS Sales screen (POSTouchScreen or TradePOSTouchScreen) becomes usable.</code></pre>
+<p>Note step 3.iii/3.iv: <strong>the terminal is the pivot of the entire startup sequence</strong> — a user cannot reach a usable sales screen without a successfully registered terminal, and their session resume query is filtered by <code>terminalId</code> first, current user second. This ordering (terminal-then-user) is precisely what a User-Centric redesign would need to invert.</p>
+<hr>
+<h2 id="6-backend-services-and-interactions">6. Backend Services and Interactions</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Service</th><th>Role</th><th>Key interactions</th></tr></thead>
+<tbody>
+<tr><td><code>PosSessionService</code></td><td>Session lifecycle (open/suspend/resume/close), cash movements, X/Z-report generation, Day Close</td><td>Calls <code>PosTerminalRepository</code> (lock CAS), <code>BranchAccessService</code>, <code>PosBusinessDateService</code>, <code>PostingEngineService</code> (GL), <code>PosAuditService</code>, <code>PosXReportSnapshotRepository</code>/<code>PosReportNumberService</code>, <code>PosCashMovementCategoryService</code></td></tr>
+<tr><td><code>PosTerminalService</code></td><td>Terminal register/heartbeat/approve/reject/archive/restore/decommission/assign-counter/set-main</td><td><code>PosTerminalRepository</code>, <code>PosSettingsRepository</code> (limits/approval config)</td></tr>
+<tr><td><code>PosTerminalLifecycleService</code></td><td>Auto-archive state machine (ACTIVE/OFFLINE → STALE → ARCHIVED)</td><td><code>PosSessionRepository</code>, <code>SalesInvoiceRepository</code> (archive-context snapshot)</td></tr>
+<tr><td><code>PosTerminalActivityService</code></td><td>Single integration point for <code>recordActivity(terminalId, source)</code>, called from many flows to keep <code>lastActivityAt</code>/<code>lastSeenAt</code> fresh</td><td>writes to <code>PosTerminalRepository</code></td></tr>
+<tr><td><code>PosCounterService</code></td><td>Counter CRUD, terminal-reference guards</td><td><code>PosCounterRepository</code>, <code>PosTerminalRepository</code> (reference counts)</td></tr>
+<tr><td><strong>No <code>POSSalesService</code> exists.</strong> Checkout/sale-completion logic lives directly inside <code>PosCheckoutController</code> (no separate service class was found in this or the prior pass) — flagged since the request names it explicitly; the closest equivalents are <code>PosCheckoutController</code> itself plus <code>SalesInvoiceService</code> (financials layer) which it delegates to.</td></tr>
+<tr><td><code>PostingEngineService</code></td><td>Central GL auto-posting; called from session close, cash movements (create/void)</td><td>Financials layer, outside <code>pos/**</code></td></tr>
+<tr><td><code>JwtFilter</code> / <code>AuthController</code> / <code>BranchAccessService</code></td><td>Authentication and branch-context resolution — no POS-specific logic</td><td><code>BranchContextHolder</code>, <code>OwnershipContextHolder</code></td></tr>
+<tr><td><code>PosAuditService</code></td><td>POS-specific audit trail (<code>pos_audit_log</code>), distinct from <code>security.AuditLogService</code></td><td>called from session open/close, terminal actions</td></tr>
+<tr><td>Device services (<code>DeviceManager</code>, <code>HardwareProfileService</code>, <code>HardwareProfileAssignmentEngine</code>, <code>DiscoveryService</code>, <code>HealthService</code>)</td><td>Hardware registration/health/profile-assignment — bound to <strong>terminal</strong>, not session or user</td><td><code>PosDevice</code>/<code>PosHardwareProfile</code> repos</td></tr>
+<tr><td><code>PosSessionScheduler</code></td><td>Idle/hard-timeout auto-suspend sweep (60s)</td><td><code>PosSessionRepository</code> only — does not touch <code>PosTerminalRepository</code> (lock not released on auto-suspend, §1.4)</td></tr>
+<tr><td><code>PosTerminalScheduler</code></td><td>Marks terminals OFFLINE past heartbeat threshold</td><td><code>PosTerminalRepository</code></td></tr>
+</tbody></table></div>
+<p><strong>Interaction pattern</strong>: <code>pos/session</code> is the hub. Checkout (<code>PosCheckoutController</code>) → <code>PosSessionService.recordInvoiceOnSession</code> (atomic totals UPDATE). Cash movement UI (<code>PosCashMovementController</code>) → <code>PosCashMovementService.create</code> → <code>PosSessionService.addCashMovement</code> (single source of truth). Terminal lifecycle only touches session data one-way (reads <code>currentOpenSessionId</code> to gate archive/decommission) — session never reaches back into terminal lifecycle beyond the lock CAS.</p>
+<hr>
+<h2 id="7-database">7. Database</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Table</th><th>Purpose</th><th>Key columns</th><th>Relationships / FKs</th><th>Columns touched during session creation</th></tr></thead>
+<tbody>
+<tr><td><code>pos_sessions</code></td><td>Cashier shift ledger</td><td><code>id</code>, <code>branch_id</code>, <code>terminal_id</code> (string), <code>terminal_pk</code>, <code>counter_id</code>, <code>counter_name</code>, <code>opened_by</code>, <code>status</code>, <code>opening_cash</code>, <code>expected_cash</code>, <code>closing_cash</code>, totals columns, <code>day_close_id</code>, <code>idle_timeout_minutes</code>, <code>session_timeout_at</code>, <code>last_activity_at</code></td><td><code>terminal_pk</code> → <code>pos_terminals.id</code> (loose, no enforced JPA FK confirmed); <code>day_close_id</code> → <code>pos_day_closes.id</code>; <code>branch_id</code>/<code>opened_by</code> loose (no FK)</td><td><code>branch_id</code>, <code>branch_name</code>, <code>terminal_id</code>, <code>terminal_pk</code>, <code>counter_id</code>, <code>counter_name</code>, <code>opened_by</code>, <code>opened_by_display_name</code>, <code>session_date</code>, <code>opened_at</code>, <code>last_activity_at</code>, <code>status=OPEN</code>, <code>opening_cash</code>, all <code>total_*</code> zeroed, <code>idle_timeout_minutes</code>, <code>session_timeout_at</code></td></tr>
+<tr><td><code>pos_terminals</code></td><td>Device/browser registration per branch</td><td><code>id</code>, <code>terminal_id</code> (unique), <code>device_fingerprint</code>, <code>branch_id</code>, <code>counter_id</code>, <code>status</code>, <code>registration_status</code>, <code>current_open_session_id</code>, <code>last_heartbeat_at</code>, <code>is_main_pos</code>, archive/decommission columns</td><td>unique <code>(device_fingerprint, branch_id)</code>; unique <code>terminal_id</code>; <code>counter_id</code> → <code>pos_counters.id</code></td><td>Not inserted during session creation — only <strong>updated</strong> (<code>current_open_session_id</code> CAS)</td></tr>
+<tr><td><code>pos_counters</code></td><td>Named billing points</td><td><code>id</code>, <code>branch_id</code>, <code>counter_code</code>, <code>counter_name</code>, <code>status</code>, <code>default_cash_drawer</code>, <code>default_receipt_printer</code></td><td>unique <code>(branch_id, counter_code)</code></td><td>Not touched during session creation — only read via the terminal's <code>counter_id</code></td></tr>
+<tr><td><code>pos_cash_movements</code></td><td>Cash drop-in/out ledger per session</td><td><code>id</code>, <code>pos_session_id</code>, <code>movement_type</code>, <code>amount</code>, <code>status</code>, <code>category_id</code>, <code>posted_account_code/name</code>, <code>business_date</code>, <code>branch_id</code></td><td><code>pos_session_id</code> → <code>pos_sessions.id</code>; <code>category_id</code> → <code>pos_cash_movement_categories.id</code></td><td>Not touched during session creation</td></tr>
+<tr><td><code>pos_day_closes</code></td><td>One row per branch+business date, finalized Z-Report</td><td><code>id</code>, <code>branch_id</code>, <code>close_date</code> (unique together), <code>report_number</code> (unique), <code>start_session_id</code>/<code>end_session_id</code>, <code>z_report_json</code></td><td>audit-only pointers to <code>pos_sessions</code>, no enforced FK confirmed</td><td>Read (via <code>isDateClosed</code>/<code>findUnclosedSessionsBeforeDate</code>-adjacent queries) but never written during session creation</td></tr>
+<tr><td><code>pos_settings</code></td><td>One row per branch, POS config</td><td><code>branch_id</code> (unique), <code>session_idle_timeout_minutes</code>, <code>session_max_duration_hours</code>, <code>max_terminals_per_branch</code>, <code>require_terminal_approval</code>, <code>cash_variance_threshold</code>, <code>supervisor_pin</code></td><td><code>branch_id</code> loose FK</td><td>Read (idle/max-duration snapshot copied onto the new session)</td></tr>
+<tr><td><code>pos_x_report_snapshots</code></td><td>Immutable per-session X-Report snapshot</td><td><code>id</code>, <code>pos_session_id</code>, <code>report_number</code> (unique)</td><td><code>pos_session_id</code> → <code>pos_sessions.id</code></td><td>Not touched during session creation</td></tr>
+<tr><td><code>pos_report_sequences</code></td><td>Atomic XR-/ZR- number generator</td><td><code>report_type</code>, <code>branch_id</code>, <code>business_date</code> (unique together), <code>next_number</code></td><td>none</td><td>Not touched during session creation</td></tr>
+<tr><td><code>branches</code></td><td>Tenant branch record</td><td><code>id</code>, <code>code</code>, <code>default_warehouse_id</code></td><td><code>default_warehouse_id</code> → <code>warehouses.id</code></td><td>Read only (<code>branchAccessService.getRequiredCurrentUserBranch</code>)</td></tr>
+<tr><td><code>users</code></td><td>Login identity</td><td><code>id</code>, <code>username</code> (unique), <code>full_name</code>, <code>branch_id</code>, employee link</td><td>loose</td><td>Read only, for <code>currentUser()</code> and <code>resolveDisplayName</code></td></tr>
+</tbody></table></div>
+<p>No stored procedures, views, or triggers were found touching these tables in this pass beyond the runtime-created partial unique index <code>uix_one_open_session_per_terminal</code> (installed by <code>PosSessionIndexInitializer</code> at app startup, not via Flyway).</p>
+<hr>
+<h2 id="8-apis">8. APIs</h2>
+<p><strong>Open Session</strong>: <code>POST /api/pos/sessions/open</code> (body: <code>terminalId</code>, <code>counterName</code>, <code>openingCash</code>). <strong>Resume Session</strong>: implicit via <code>GET /api/pos/sessions/active?terminalId=</code> (OPEN case, idempotent re-return) and <code>POST /api/pos/sessions/{id}/resume</code> (SUSPENDED → OPEN case) and <code>POST /api/pos/sessions/{id}/supervisor-takeover</code> (forced reassignment + resume). <strong>Close Session</strong>: <code>POST /api/pos/sessions/{id}/close</code>. <strong>Login</strong>: <code>POST /api/auth/login</code> (generic, app-wide — no POS-specific login endpoint exists). <strong>Terminal</strong>: <code>POST /api/pos/terminals/register</code>, <code>POST /{terminalId}/heartbeat</code>, <code>POST /{id}/approve|reject|archive|restore|decommission|keep-active|archive-now</code>, <code>PUT /{id}/auto-archive-exempt</code>, <code>POST /{id}/assign-counter</code>, <code>GET /branch/{branchId}[/all|/pending]</code>, <code>PUT /{terminalId}/rename|status|set-main</code>. <strong>Counter</strong>: <code>GET /api/pos/counters[/active][/{id}]</code>, <code>POST /</code> (create), <code>PUT /{id}</code> (update), <code>PATCH /{id}/status</code>, <code>DELETE /{id}</code>. <strong>Reports</strong>: <code>GET /{id}/x-report</code>, <code>POST /{id}/x-report/generate</code>, <code>POST /{id}/x-report/print-check</code>, <code>GET /z-report</code>, <code>GET /z-report/print-check</code>, <code>GET /day-close/summary</code>, <code>POST /close-day</code> (role-gated), <code>GET /day-status</code>, <code>GET /history</code>. <strong>Also relevant</strong>: <code>POST /{id}/cash-movement</code>, <code>POST /{id}/touch-activity</code> (idle-clock keepalive), <code>POST /{id}/suspend</code>.</p>
+<hr>
+<h2 id="9-business-rules-extracted">9. Business Rules Extracted</h2>
+<ol>
+<li><strong>One OPEN session per terminal</strong>, enforced at two levels: application atomic CAS on <code>pos_terminals.current_open_session_id</code>, and a DB partial unique index. — *terminal-scoped, not user-scoped.*</li>
+<li><strong>A session's owner is whichever user was authenticated when <code>openSession</code> (or a reassignment) last ran</strong> — no independent "user's active session" registry exists; the only way to find "does user X have an open session" is to scan <code>pos_sessions</code> for <code>opened_by = X AND status = OPEN</code>, which is not how the system currently queries (it always queries by terminal first).</li>
+<li><strong>A terminal can only be un-locked by closing its session</strong>, not by suspending it — auto-suspend on idle/timeout leaves the lock held.</li>
+<li><strong>A user can resume their own OPEN session automatically</strong> (idempotent <code>openSession</code>) but is blocked from a *different* user's OPEN session on the same terminal (409, requires Supervisor Takeover).</li>
+<li><strong>Session ownership can be reassigned without closing the session</strong>, but only within the same terminal (<code>reassignSessionOwner</code>, <code>supervisorTakeover</code>) — proves the domain already tolerates "owner != opener," just not "session moves across terminals."</li>
+<li><strong>New session opens are blocked branch-wide</strong> (not terminal-scoped) if any prior-day session anywhere in the branch is still unclosed.</li>
+<li><strong>New session opens are blocked</strong> if the branch's business day is already closed.</li>
+<li><strong>Terminal identity is per-branch</strong> (<code>device_fingerprint</code> + <code>branch_id</code> composite) — the same physical device registers as a *different* logical terminal on a different branch; no cross-branch terminal continuity exists.</li>
+<li><strong>Terminal archive/decommission is blocked while a session is open on it</strong> — session state gates terminal lifecycle, one direction only.</li>
+<li><strong>Counter assignment has no exclusivity</strong> — multiple terminals may point at the same counter with no conflict check, unlike the strict one-terminal-one-session rule.</li>
+<li><strong>Idle/hard-timeout auto-suspend never releases the terminal lock</strong> — only an explicit <code>closeSession</code> call does.</li>
+<li><strong>No terminal-level authentication or credential exists</strong> — any authenticated user's browser can register/heartbeat any terminal string id it knows, with the only real gate being terminal *status* (not identity).</li>
+<li><strong>Session's counter reference is a point-in-time denormalized snapshot</strong> from the terminal's counter at open time, not a live relationship — later counter reassignment on the terminal does not affect already-open sessions.</li>
+<li><strong>Role-based gating is minimal</strong> — only Day Close hardcodes roles (SUPERVISOR/MANAGER/ADMIN); everything else uses fine-grained permission keys (terminal) or nothing at all (counter), with session operations relying on ownership checks rather than roles.</li>
+</ol>
+<hr>
+<h2 id="10-sequence-diagram">10. Sequence Diagram</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant U as User Browser (JWT-authenticated)
+    participant FE as POSSales.jsx
+    participant TC as PosTerminalController
+    participant TS as PosTerminalService
+    participant SC as PosSessionController
+    participant SS as PosSessionService
+    participant TR as PosTerminalRepository
+    participant DB as Postgres (pos_terminals / pos_sessions)
+
+    U->>FE: navigate to /sales/pos
+    FE->>TC: POST /terminals/register {terminalId, deviceFingerprint}
+    TC->>TS: registerOrRefresh(...)
+    TS->>DB: lookup by terminalId, else (deviceFingerprint, branchId)
+    alt terminal blocked/archived/decommissioned/maintenance
+        TS-->>FE: 403 "Terminal is {STATUS}"
+        Note over FE: startup halts here
+    else ok
+        TS-->>FE: terminal (ACTIVE or PENDING_REGISTRATION)
+    end
+
+    FE->>SC: GET /sessions/active?terminalId=
+    SC->>SS: getActiveSession(terminalId)
+    SS->>DB: find OPEN session WHERE branch_id=? AND terminal_id=?
+    alt session exists, different owner
+        SS-->>FE: 409 "Terminal is locked by active cashier"
+        FE->>FE: offer Supervisor Takeover
+    else session exists, same owner
+        SS-->>FE: existing session (resumed)
+    else no session
+        SS-->>FE: empty
+        FE->>FE: show Start Session dialog
+        FE->>SC: POST /sessions/open {terminalId, counterName, openingCash}
+        SC->>SS: openSession(...)
+        SS->>DB: guards (day closed? stale prior-day session?)
+        SS->>DB: INSERT pos_sessions (status=OPEN, opened_by=currentUser())
+        SS->>TR: setOpenSession(terminalPk, sessionId) [atomic CAS]
+        alt lock lost
+            SS->>DB: DELETE just-inserted session
+            SS-->>FE: 409 "Terminal is already occupied"
+        else lock acquired
+            SS-->>FE: 200 new session
+        end
+    end
+
+    FE->>FE: currentView = 'touch-screen' (POS Sales screen usable)
+    loop shift
+        FE->>SC: checkout, cash movements, touch-activity (all keyed by sessionId)
+    end
+    FE->>SC: POST /sessions/{id}/close
+    SC->>SS: closeSession(...)
+    SS->>TR: clearOpenSession(terminalPk, sessionId) [atomic CAS]
+    SS-->>FE: 200 closed
+</div>
+<hr>
+<h2 id="11-risks-for-migration-to-a-user-centric-session-model">11. Risks for Migration to a User-Centric Session Model</h2>
+<p>These are architectural <strong>assumptions baked into the current implementation</strong> that a User-Centric ("session roams with the user, independent of which terminal they're physically at") design will have to explicitly confront — not proposed fixes, just the load-bearing facts a redesign must reckon with:</p>
+<ol>
+<li><strong>The lock primitive is on the terminal, not the user.</strong> <code>pos_terminals.current_open_session_id</code> is the *only* mechanism preventing double-booking. There is no equivalent "does this user already have an open session (anywhere)" check today — <code>openSession</code>'s duplicate-check query is <code>findByBranchIdAndTerminalIdAndStatus</code>, never <code>findByOpenedByAndStatus</code>. A user-centric model needs an analogous atomic lock keyed on the user, and must decide what happens to the *existing* terminal-lock column — remove it, repurpose it, or run both in parallel during a transition.</li>
+</ol>
+<ol>
+<li><strong>Every lookup path is terminal-first.</strong> Startup (<code>GET /sessions/active?terminalId=</code>), the duplicate-open check, and the lock CAS all take <code>terminalId</code> as the primary key parameter. A roaming session model needs a *user-first* lookup (<code>GET /sessions/active?userId=</code> or equivalent) as a first-class, equally-supported path — today that query shape doesn't exist anywhere in <code>PosSessionRepository</code>.</li>
+</ol>
+<ol>
+<li><strong>Idle/hard-timeout expiry suspends without releasing the terminal lock</strong> (§1.4/§2.3). If sessions become user-centric and no longer terminal-pinned, "suspend" semantics need to be revisited — today a suspended session still monopolizes a terminal, which may be exactly wrong (or exactly right, depending on intent) once a user can resume from a *different* terminal.</li>
+</ol>
+<ol>
+<li><strong>Session ownership reassignment already exists but is single-terminal.</strong> <code>reassignSessionOwner</code>/<code>supervisorTakeover</code> prove the domain model already separates "who opened it" from "who owns it now" — this is a reusable pattern — but neither method, nor anything else found, changes <code>terminalId</code>/<code>terminalPk</code> on an existing session. Moving a session between terminals is an entirely new code path, not an extension of an existing one.</li>
+</ol>
+<ol>
+<li><strong>Counter and terminal-hardware bindings (printer/scanner/drawer, hardware profiles) are terminal-scoped, not user-scoped.</strong> If a user roams between terminals mid-shift, their receipt printer, cash drawer, and hardware profile all change with them physically — the current schema has no concept of "this user's preferred/assigned hardware," only "this terminal's hardware." A roaming session doesn't automatically carry hardware context; that's a separate design problem the migration will surface.</li>
+</ol>
+<ol>
+<li><strong>No terminal authentication exists</strong> (§2.6) — terminal identity today is trust-on-first-use via <code>deviceFingerprint</code>. If a user-centric model relies more heavily on "this session belongs to this user regardless of device," the *absence* of terminal auth actually reduces risk on that front (nothing to unwind) but means device/location context can't be trusted as a secondary signal without adding it.</li>
+</ol>
+<ol>
+<li><strong><code>counterId</code>/<code>counterName</code> on <code>PosSession</code> are a denormalized snapshot from the terminal, taken once at open time</strong> (§3.4). In a user-centric model where a session might not have a fixed terminal (and therefore not a fixed counter) for its whole lifetime, this snapshot-at-open pattern breaks down — counter becomes either meaningless, or something that needs to become a per-transaction attribute rather than a per-session one.</li>
+</ol>
+<ol>
+<li><strong>Branch-wide (not terminal-scoped) blocking on stale prior-day sessions</strong> (§1.1 step 4, §9 rule 6) — this rule already operates at the branch level, which is closer to user-centric thinking than terminal-centric; it's one of the few existing behaviors that likely translates cleanly.</li>
+</ol>
+<ol>
+<li><strong><code>opened_by</code>/<code>performedBy</code> are raw username strings, not FKs to <code>users.id</code></strong> (§4.4) — a user-centric redesign that wants strong referential guarantees (e.g., cascading on user deactivation, or querying "all sessions for user #123" reliably across a username change) will need to confirm whether <code>username</code> is ever mutable and, if so, decide whether to backfill a real FK.</li>
+</ol>
+<ol>
+<li><strong>GL posting on session close is tied to the session record, not the user or terminal</strong>, and is fire-and-forget (try/catch swallows failure) — this dependency is largely orthogonal to the terminal-vs-user question and likely carries over unchanged, but is worth confirming doesn't implicitly assume "one terminal, one till" bookkeeping anywhere in <code>PostingEngineService.createJournalFromSessionClose</code> (not read in this pass — flagged for follow-up before migration).</li>
+</ol>
+<ol>
+<li><strong>Day Close (<code>closeDay</code>) reconciliation aggregates by branch+date across all sessions</strong>, already user/terminal-agnostic in its math — this is another piece of existing logic that likely needs little to no change for a user-centric model, since it never assumed one-session-per-user or one-session-per-terminal in its reconciliation formulas.</li>
+</ol>
+<ol>
+<li><strong>No existing test coverage for cross-terminal session behavior was located in this pass</strong> (not exhaustively searched — <code>PosSessionServiceTest.java</code> exists per the repo's test tree but its contents weren't read here) — before migration work begins, worth confirming what the current test suite assumes about the terminal-session relationship, since those tests will need conscious updating rather than incidental breakage.</li>
+</ol>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  function currentTheme() {
+    var attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark' || attr === 'light') return attr;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad: true, theme: currentTheme() === 'dark' ? 'dark' : 'default' });
+  }
+</script>
+</body>
+</html>

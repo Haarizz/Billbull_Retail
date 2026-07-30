@@ -2477,7 +2477,7 @@ export default function POSSales() {
 
   // Returns { ok, reason }. Callers can surface `reason` when ok === false so
   // the cashier learns why an add was refused (one-batch-one-unit enforcement).
-  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null) => {
+  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null, overrides = {}) => {
     // A serialized unit is always qty 1 and never merges (a serial is unique by
     // definition). A pinned batch is also a single scanned physical unit.
     const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
@@ -2487,8 +2487,13 @@ export default function POSSales() {
     // We add a single qty-1 line and refuse to merge/re-add; extra units must be
     // scanned. Non-controlled products keep the normal merge-by-id behaviour.
     const isBatchControlled = !isPinned && (Boolean(product.isBatch) || Boolean(product.isSerial));
-    const qtyToAdd = (pinnedSerialNumber || isBatchControlled) ? 1 : Math.max(1, Number(quantity) || 1);
-    const unitPrice = toNumber(product.price, 0);
+    const defaultQtyToAdd = (pinnedSerialNumber || isBatchControlled) ? 1 : Math.max(1, Number(quantity) || 1);
+    const qtyToAdd = overrides.isAbsoluteQuantity ? defaultQtyToAdd : defaultQtyToAdd; 
+    const unitPrice = overrides.price !== undefined ? toNumber(overrides.price, 0) : toNumber(product.price, 0);
+    const unitDiscount = overrides.discount !== undefined ? toNumber(overrides.discount, 0) : toNumber(product.defaultDiscount, 0);
+    const unitDiscountType = overrides.discountType || 'percent'; // currently always percent in model but extensible
+    const unitTaxRate = overrides.taxRate !== undefined ? overrides.taxRate : resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false);
+
 
     // Block re-adding a batch-controlled product from the grid (its line already
     // holds one physical unit; another unit means another batch → must be scanned).
@@ -2510,15 +2515,24 @@ export default function POSSales() {
       let newItems;
 
       if (existingItem) {
-        newItems = prev.items.map(item =>
-          item.id === product.id
-            ? {
+        newItems = prev.items.map(item => {
+          if (item.id === product.id) {
+            const mergedQuantity = overrides.isAbsoluteQuantity ? qtyToAdd : item.quantity + qtyToAdd;
+            const mergedPrice = overrides.price !== undefined ? unitPrice : item.price;
+            const mergedDiscount = overrides.discount !== undefined ? unitDiscount : item.discount;
+            const mergedTaxRate = overrides.taxRate !== undefined ? unitTaxRate : item.taxRate;
+            return {
               ...item,
-              quantity: item.quantity + qtyToAdd,
-              total: (item.quantity + qtyToAdd) * item.price * (1 - item.discount / 100)
-            }
-            : item
-        );
+              quantity: mergedQuantity,
+              price: mergedPrice,
+              discount: mergedDiscount,
+              taxRate: mergedTaxRate,
+              notes: overrides.notes !== undefined ? overrides.notes : item.notes,
+              total: mergedQuantity * mergedPrice * (1 - mergedDiscount / 100)
+            };
+          }
+          return item;
+        });
       } else {
         // Add new item to the TOP of the list. Pinned lines use a composite id
         // so every existing item.id-keyed cart op (qty/discount/remove/void/
@@ -2541,9 +2555,10 @@ export default function POSSales() {
           retailPrice: product.retailPrice != null && product.retailPrice !== '' ? toNumber(product.retailPrice) : null,
           cost: product.cost != null && product.cost !== '' ? toNumber(product.cost) : null,
           quantity: qtyToAdd,
-          discount: toNumber(product.defaultDiscount, 0),
-          taxRate: resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false),
-          total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
+          discount: unitDiscount,
+          taxRate: unitTaxRate,
+          notes: overrides.notes || '',
+          total: unitPrice * qtyToAdd * (1 - unitDiscount / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
           expiryDate: pinnedExpiry || product.expiryDate || null,
@@ -2557,6 +2572,69 @@ export default function POSSales() {
     });
     return { ok: true };
   };
+
+  /**
+   * Helper wrapper around addToInvoice that accepts a rich initial payload.
+   * Recommended for new Item Entry workflows to ensure single-transaction mutations.
+   */
+  const createInvoiceLine = useCallback((payload) => {
+    if (!payload || !payload.product) {
+      return { ok: false, reason: 'Missing product payload' };
+    }
+    
+    return addToInvoice(
+      payload.product,
+      payload.quantity || 1,
+      payload.batch || null,
+      payload.serial || null,
+      payload.expiry || null,
+      {
+        price: payload.price,
+        discount: payload.discount,
+        discountType: payload.discountType,
+        taxRate: payload.tax,
+        notes: payload.notes,
+        isAbsoluteQuantity: true // If passed through wrapper, assume it's the exact final line qty
+      }
+    );
+  }, []);
+
+  /**
+   * Helper wrapper to mutate an existing invoice row.
+   * Internally leverages addToInvoice's merge logic with overrides.
+   */
+  const updateInvoiceLine = useCallback((payload) => {
+    if (!payload || !payload.invoiceLine) {
+      return { ok: false, reason: 'Missing invoiceLine payload' };
+    }
+    
+    // To cleanly target the existing line in addToInvoice, we pass the invoiceLine
+    // structured identically to how the grid passes it (id/productId).
+    const fakeProduct = {
+      id: payload.invoiceLine.productId || payload.invoiceLine.id,
+      name: payload.invoiceLine.name,
+      code: payload.invoiceLine.code,
+      barcode: payload.invoiceLine.barcode,
+      isBatch: payload.invoiceLine.batchControlled,
+      isSerial: payload.invoiceLine.serialNumber ? 1 : 0
+    };
+
+    return addToInvoice(
+      fakeProduct,
+      payload.quantity,
+      payload.invoiceLine.pinnedBatchNumber || null,
+      payload.invoiceLine.serialNumber || null,
+      payload.invoiceLine.expiryDate || null,
+      {
+        price: payload.price,
+        discount: payload.discount,
+        discountType: payload.discountType,
+        taxRate: payload.tax,
+        notes: payload.notes,
+        isAbsoluteQuantity: true
+      }
+    );
+  }, []);
 
   const updateQuantity = (itemId, newQuantity) => {
     if (newQuantity <= 0) {
@@ -7970,7 +8048,21 @@ export default function POSSales() {
     }
   }, [quickProductForm, loadPosProducts, addToInvoice, showFeedback]);
 
+  const handleCheckout = useCallback(() => {
+    const grandWithShip = (currentInvoice?.total || 0) + (Number(shippingCharge) || 0);
+    const balanceDue = activeLayawayId && activeLayawayDeposit > 0
+      ? Math.max(0, grandWithShip - activeLayawayDeposit)
+      : grandWithShip;
+    setCheckoutPhase('payment'); 
+    setShowPaymentDialog(true);
+    setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
+    setCheckoutKeypadVisible(false); 
+    setCheckoutKeypadMode('numeric'); 
+    setCheckoutKeypadTarget('tender');
+  }, [currentInvoice, shippingCharge, activeLayawayId, activeLayawayDeposit]);
+
   const touchScreenProps = {
+    handleCheckout,
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
     showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
     setCurrentView, currentSession, sessionId, posSettings,
@@ -7986,7 +8078,7 @@ export default function POSSales() {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
-    addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
+    addToInvoice, createInvoiceLine, updateInvoiceLine, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
@@ -8744,7 +8836,7 @@ export default function POSSales() {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden">
                 {/* Header */}
-                <div className="bg-gradient-to-b from-[#327F74] to-[#256660] px-6 pt-8 pb-6 text-center">
+                <div className="bg-gradient-to-b from-[#F5C742] to-[#E5B532] px-6 pt-8 pb-6 text-center">
                   <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3">
                     <CheckCircle className="h-9 w-9 text-white" />
                   </div>
@@ -8763,9 +8855,9 @@ export default function POSSales() {
                     already confirmed; this only reflects that the receipt is being
                     sent to the printer. Disappears once printing/finalize completes. */}
                 {checkoutFinalizing && (
-                  <div className="bg-[#327F74]/5 border-b border-[#327F74]/15 px-6 py-2.5 flex items-center justify-center gap-2">
-                    <div className="w-3.5 h-3.5 border-2 border-[#327F74]/40 border-t-[#327F74] rounded-full animate-spin" />
-                    <span className="text-[11px] font-bold text-[#327F74]">Printing receipt…</span>
+                  <div className="bg-[#F5C742]/10 border-b border-[#F5C742]/25 px-6 py-2.5 flex items-center justify-center gap-2">
+                    <div className="w-3.5 h-3.5 border-2 border-[#F5C742]/50 border-t-[#B8942E] rounded-full animate-spin" />
+                    <span className="text-[11px] font-bold text-[#B8942E]">Printing receipt…</span>
                   </div>
                 )}
                 {/* Change Due alert (only if change is > 0) */}
@@ -8887,7 +8979,7 @@ export default function POSSales() {
                     </button>
                   </div>
                   <button type="button" onClick={closeComplete}
-                    className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#256660] text-white font-black text-sm transition-colors flex items-center justify-center gap-2">
+                    className="w-full py-3 rounded-xl bg-[#F5C742] hover:bg-[#E5B532] text-white font-black text-sm transition-colors flex items-center justify-center gap-2">
                     <ArrowRightCircle className="h-5 w-5" />New Sale
                   </button>
                   <p className="text-center text-[10px] text-gray-400">Scan next item to start a new sale automatically</p>
@@ -9090,23 +9182,23 @@ export default function POSSales() {
             <div className="flex-1 flex flex-col bg-[#F7F7FA] overflow-hidden min-h-0">
 
               {/* Right header */}
-              <div className="bg-[#1E293B] px-3 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="bg-[#F5C742] px-3 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#F5C742] flex items-center justify-center">
-                    <CreditCard className="h-5 w-5 text-[#1E293B]" />
+                  <div className="w-9 h-9 rounded-xl bg-[#1E293B] flex items-center justify-center">
+                    <CreditCard className="h-5 w-5 text-[#F5C742]" />
                   </div>
                   <div>
                     <p className="text-white font-bold text-base leading-none">Checkout</p>
-                    <p className="text-gray-400 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''}{invoiceNo ? ` · ${invoiceNo}` : ''}</p>
+                    <p className="text-[#1E293B]/60 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''}{invoiceNo ? ` · ${invoiceNo}` : ''}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="text-right">
-                    <p className="text-gray-400 text-[10px]">{depositAmt > 0 ? 'Balance Due' : 'Total Amount'}</p>
-                    <p className="text-[#F5C742] font-black text-2xl leading-none"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
+                    <p className="text-[#1E293B]/60 text-[10px]">{depositAmt > 0 ? 'Balance Due' : 'Total Amount'}</p>
+                    <p className="text-white font-black text-2xl leading-none"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
                   </div>
-                  <button type="button" onClick={() => setShowPaymentDialog(false)} className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors">
-                    <X className="h-5 w-5 text-white" />
+                  <button type="button" onClick={() => setShowPaymentDialog(false)} className="w-9 h-9 rounded-xl bg-black/10 hover:bg-black/20 flex items-center justify-center transition-colors">
+                    <X className="h-5 w-5 text-[#1E293B]" />
                   </button>
                 </div>
               </div>
@@ -10606,37 +10698,37 @@ export default function POSSales() {
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowReprintModal(false)} />
             <div className="relative ml-auto w-full max-w-6xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
               {/* Modal Header */}
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
+              <div className="bg-white border-b border-[#F5C742]/20 px-5 py-3 flex items-start justify-between shrink-0">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Printer className="h-5 w-5 text-[#327F74]" />
+                    <Printer className="h-5 w-5 text-[#F5C742]" />
                     <span className="text-base font-semibold text-[#1E293B]">Reprint Previous Invoices</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">View and reprint previously generated POS invoices.</p>
-                  <p className="text-xs text-[#327F74] mt-0.5">Showing invoices for: {reprintFilterDateFrom}{reprintFilterDateTo !== reprintFilterDateFrom ? ` → ${reprintFilterDateTo}` : ''}</p>
+                  <p className="text-xs text-[#F5C742] mt-0.5">Showing invoices for: {reprintFilterDateFrom}{reprintFilterDateTo !== reprintFilterDateFrom ? ` → ${reprintFilterDateTo}` : ''}</p>
                 </div>
                 <button onClick={() => setShowReprintModal(false)} className="text-gray-400 hover:text-gray-600 p-1"><X className="h-5 w-5" /></button>
               </div>
 
               {/* Filter Bar */}
-              <div className="bg-white border-b border-[#327F74]/10 px-5 py-3 shrink-0">
+              <div className="bg-white border-b border-[#F5C742]/10 px-5 py-3 shrink-0">
                 <div className="flex flex-wrap gap-2 items-end">
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date From</label><input type="date" value={reprintFilterDateFrom} onChange={e => setReprintFilterDateFrom(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date To</label><input type="date" value={reprintFilterDateTo} onChange={e => setReprintFilterDateTo(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Invoice No.</label><input value={reprintFilterInvoiceNo} onChange={e => setReprintFilterInvoiceNo(e.target.value)} placeholder="SI-POS-..." className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Customer</label><input value={reprintFilterCustomer} onChange={e => setReprintFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Cashier</label><input value={reprintFilterCashier} onChange={e => setReprintFilterCashier(e.target.value)} placeholder="Cashier" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date From</label><input type="date" value={reprintFilterDateFrom} onChange={e => setReprintFilterDateFrom(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date To</label><input type="date" value={reprintFilterDateTo} onChange={e => setReprintFilterDateTo(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Invoice No.</label><input value={reprintFilterInvoiceNo} onChange={e => setReprintFilterInvoiceNo(e.target.value)} placeholder="SI-POS-..." className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Customer</label><input value={reprintFilterCustomer} onChange={e => setReprintFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Cashier</label><input value={reprintFilterCashier} onChange={e => setReprintFilterCashier(e.target.value)} placeholder="Cashier" className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Payment Mode</label>
-                    <select value={reprintFilterPayMode} onChange={e => setReprintFilterPayMode(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                    <select value={reprintFilterPayMode} onChange={e => setReprintFilterPayMode(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]">
                       {['All', 'Cash', 'Card', 'Mixed', 'Credit'].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Status</label>
-                    <select value={reprintFilterStatus} onChange={e => setReprintFilterStatus(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                    <select value={reprintFilterStatus} onChange={e => setReprintFilterStatus(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]">
                       {['All', 'Completed', 'Returned', 'Cancelled', 'Reprinted'].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
-                  <button onClick={fetchReprintInvoices} disabled={reprintLoading} className="mt-auto bg-[#327F74] hover:bg-[#286660] disabled:opacity-60 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />{reprintLoading ? 'Loading…' : 'Search'}</button>
+                  <button onClick={fetchReprintInvoices} disabled={reprintLoading} className="mt-auto bg-[#F5C742] hover:bg-[#E5B532] disabled:opacity-60 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />{reprintLoading ? 'Loading…' : 'Search'}</button>
                   <button onClick={() => { setReprintFilterInvoiceNo(''); setReprintFilterCustomer(''); setReprintFilterCashier(''); setReprintFilterPayMode('All'); setReprintFilterStatus('All'); }} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
                 </div>
                 {reprintError && <p className="text-xs text-red-500 mt-1">{reprintError}</p>}
@@ -10645,10 +10737,10 @@ export default function POSSales() {
               {/* Main body: list + preview */}
               <div className="flex flex-col lg:flex-row flex-1 min-h-0">
                 {/* Invoice List */}
-                <div className={`flex flex-col w-full min-h-0 ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#327F74]/10 overflow-hidden`}>
+                <div className={`flex flex-col w-full min-h-0 ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#F5C742]/10 overflow-hidden`}>
                   <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
                     <span className="text-xs text-gray-500">{filtered.length} invoice{filtered.length !== 1 ? 's' : ''} found</span>
-                    <span className="text-xs text-[#327F74]">Latest first</span>
+                    <span className="text-xs text-[#F5C742]">Latest first</span>
                   </div>
                   <div className="overflow-auto flex-1">
                     {reprintLoading ? (
@@ -10665,7 +10757,7 @@ export default function POSSales() {
                       <div className="overflow-x-auto">
                       <table className="w-full min-w-[820px] text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10">
-                          <tr className="text-gray-500 border-b border-[#327F74]/10">
+                          <tr className="text-gray-500 border-b border-[#F5C742]/10">
                             {['Invoice No.', 'Date & Time', 'Customer', 'Cashier', 'Terminal', 'Pay Mode', 'Items', 'Amount', 'Status', 'Action'].map((h, i) => (
                               <th key={i} className={`px-3 py-2 text-left font-medium whitespace-nowrap ${i >= 6 ? 'text-right' : ''} ${i === 9 ? 'text-center' : ''}`}>{h}</th>
                             ))}
@@ -10689,7 +10781,7 @@ export default function POSSales() {
                               <td className="px-3 py-2 text-right"><span className={`text-[10px] rounded px-1.5 py-0.5 ${statusColor(inv.status)}`}>{inv.status}</span></td>
                               <td className="px-3 py-2 text-center">
                                 <div className="flex items-center justify-center gap-1">
-                                  <button onClick={e => { e.stopPropagation(); setReprintSelectedInvoice(inv.id); }} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-2 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
+                                  <button onClick={e => { e.stopPropagation(); setReprintSelectedInvoice(inv.id); }} className="border border-[#F5C742]/30 text-[#F5C742] text-[10px] px-2 py-0.5 rounded hover:bg-[#F5C742]/5">View</button>
                                   <button onClick={e => { e.stopPropagation(); setReprintSelectedInvoice(inv.id); setReprintConfirmOpen(true); }}
                                     disabled={inv.status === 'Cancelled'}
                                     className={`text-[10px] px-2 py-0.5 rounded flex items-center gap-0.5 ${inv.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
@@ -10709,7 +10801,7 @@ export default function POSSales() {
                 {/* Receipt Preview Panel */}
                 {selected && (
                   <div className="w-full lg:w-[45%] flex flex-col overflow-hidden min-h-0 bg-white">
-                    <div className="px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
+                    <div className="px-4 py-2.5 border-b border-[#F5C742]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">Receipt Preview — {selected.id}</span>
                       <button onClick={() => setReprintSelectedInvoice(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
                     </div>
@@ -10769,15 +10861,15 @@ export default function POSSales() {
                         )}
                       </div>
                       {/* Audit Info */}
-                      <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
-                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#327F74]" />Invoice Info</p>
+                      <div className="mt-3 bg-[#F7F7FA] border border-[#F5C742]/20 rounded p-3 space-y-1 text-xs">
+                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#F5C742]" />Invoice Info</p>
                         {[['Invoice No.', selected.id], ['Date', selected.date || ''], ['Customer', selected.customer], ['Cashier', selected.cashier], ['Terminal', selected.terminal]].map(([k, v]) => (
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
                       {/* Audit / Reprint History */}
-                      <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
-                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#327F74]" />Audit / Reprint History</p>
+                      <div className="mt-3 bg-[#F7F7FA] border border-[#F5C742]/20 rounded p-3 space-y-1 text-xs">
+                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#F5C742]" />Audit / Reprint History</p>
                         {[
                           ['Original Printed By', selected.cashier || '—'],
                           ['Original Printed Time', (() => { const raw = selected._raw?.createdAt; return raw ? new Date(raw).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'; })()],
@@ -10790,13 +10882,13 @@ export default function POSSales() {
                       </div>
                     </div>
                     {/* Print Actions */}
-                    <div className="border-t border-[#327F74]/10 p-3 bg-white flex items-center gap-2 shrink-0 flex-wrap">
+                    <div className="border-t border-[#F5C742]/10 p-3 bg-white flex items-center gap-2 shrink-0 flex-wrap">
                       <button onClick={() => { setReprintPrintMode('thermal'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
                         <Printer className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'thermal' ? 'Printing…' : 'Print Thermal Receipt'}
                       </button>
                       <button onClick={() => { setReprintPrintMode('a4'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
-                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-[#327F74]/40 text-[#327F74] hover:bg-[#327F74]/5'}`}>
+                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-[#F5C742]/40 text-[#F5C742] hover:bg-[#F5C742]/5'}`}>
                         <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'a4' ? 'Printing…' : 'Print A4 Invoice'}
                       </button>
                       <button onClick={() => { setReprintPrintMode('pdf'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
@@ -10814,7 +10906,7 @@ export default function POSSales() {
               </div>
 
               {/* Modal Footer */}
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-2.5 flex items-center gap-2 shrink-0">
+              <div className="bg-white border-t border-[#F5C742]/10 px-5 py-2.5 flex items-center gap-2 shrink-0">
                 <div className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 rounded px-2 py-1 border border-amber-200">
                   <Info className="h-3 w-3 shrink-0" />Reprint does not create a new invoice. Every reprint is recorded in the audit log.
                 </div>
@@ -13813,9 +13905,30 @@ export default function POSSales() {
             </div>
 
             <div className="p-4 border-t border-gray-100">
-              <Button onClick={() => setShowPOSConfig(false)} className="w-full bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold">
+              <Button
+                disabled={settingsSaving}
+                onClick={async () => {
+                  setSettingsSaving(true);
+                  try {
+                    const saved = await savePosSettings({
+                      ...(posSettings || {}),
+                      defaultLayout: posTemplate,
+                      layoutHideCategoryPanel: hideCategoriesPanel,
+                      layoutHideItemsPanel: hideItemsPanel,
+                      layoutHiddenPanelButtons: [...hiddenPanelButtons].join(','),
+                    });
+                    setPosSettings(saved);
+                  } catch (e) {
+                    console.warn('POS layout save failed', e);
+                  } finally {
+                    setSettingsSaving(false);
+                    setShowPOSConfig(false);
+                  }
+                }}
+                className="w-full bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-60 text-[#1E293B] font-semibold"
+              >
                 <CheckCircle className="h-4 w-4 mr-2" />
-                Apply & Close
+                {settingsSaving ? 'Saving…' : 'Apply & Close'}
               </Button>
             </div>
           </div>

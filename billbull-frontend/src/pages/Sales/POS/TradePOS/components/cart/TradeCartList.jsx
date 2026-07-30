@@ -7,6 +7,9 @@ export const TradeCartList = React.memo(({
   items = [],
   selectedItemId,
   onSelectItem,
+  onEditItem,
+  onUpdateQuantity,
+  onRemoveItem,
   formatCurrency
 }) => {
   const listRef = useRef(null);
@@ -42,6 +45,9 @@ export const TradeCartList = React.memo(({
             item={item}
             selected={item.id === selectedItemId}
             onClick={onSelectItem}
+            onDoubleClick={onEditItem}
+            onUpdateQuantity={onUpdateQuantity}
+            onRemoveItem={onRemoveItem}
             formatCurrency={formatCurrency}
           />
         ))}

@@ -197,6 +197,62 @@ public class NotificationEventPublisher {
                 "/sales/pos-console?tab=terminals", terminalId, "POS_TERMINAL");
     }
 
+    // ── POS Administration > Correction lifecycle (Phase 5) ───────────────────
+    // Single integration point for every correction type (denomination, transaction, cash
+    // movement category) — all flow through the shared CorrectionRequestService state
+    // machine, so wiring notifications there once covers every domain uniformly.
+
+    /** A correction has been submitted and needs a decision → sent to every role holding
+     *  approve rights on pos.admin.approvals (ADMIN, BRANCH_ADMIN, ACCOUNTANT). */
+    public void correctionRequiresApproval(String requestNumber, String targetType, Long targetId) {
+        String title = "Correction Requires Approval";
+        String message = String.format("Correction %s (%s #%d) is pending approval.",
+                requestNumber, targetType, targetId);
+        notifyRoles(List.of("ADMIN", "BRANCH_ADMIN", "ACCOUNTANT"),
+                title, message, "INFO", "POS", "MEDIUM",
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+    }
+
+    /** Correction approved → sent to the original requester. */
+    public void correctionApproved(String requestedByUsername, String requestNumber, String targetType, Long targetId) {
+        String title = "Correction Approved";
+        String message = String.format("Your correction %s (%s #%d) was approved.",
+                requestNumber, targetType, targetId);
+        notifyUser(requestedByUsername, title, message, "SUCCESS", "POS", "MEDIUM",
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+    }
+
+    /** Correction rejected → sent to the original requester. */
+    public void correctionRejected(String requestedByUsername, String requestNumber, String targetType, Long targetId, String reason) {
+        String title = "Correction Rejected";
+        String message = String.format("Your correction %s (%s #%d) was rejected. Reason: %s",
+                requestNumber, targetType, targetId, reason);
+        notifyUser(requestedByUsername, title, message, "ERROR", "POS", "MEDIUM",
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+    }
+
+    /** Correction applied — now the effective overlay → sent to the original requester. */
+    public void correctionApplied(String requestedByUsername, String requestNumber, String targetType, Long targetId) {
+        String title = "Correction Applied";
+        String message = String.format("Correction %s (%s #%d) has been applied.",
+                requestNumber, targetType, targetId);
+        notifyUser(requestedByUsername, title, message, "SUCCESS", "POS", "LOW",
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+    }
+
+    /** Execution failed after approval → sent to the requester and every approver role, since
+     *  this needs follow-up attention (approval history is preserved, nothing was lost). */
+    public void correctionFailed(String requestedByUsername, String requestNumber, String targetType, Long targetId, String failureReason) {
+        String title = "Correction Failed";
+        String message = String.format("Correction %s (%s #%d) failed to apply: %s",
+                requestNumber, targetType, targetId, failureReason);
+        notifyUser(requestedByUsername, title, message, "ERROR", "POS", "HIGH",
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+        notifyRoles(List.of("ADMIN", "BRANCH_ADMIN", "ACCOUNTANT"),
+                title, message, "ERROR", "POS", "HIGH",
+                "/enterprise/pos-admin?tab=approvals", requestNumber, "POS_CORRECTION_REQUEST");
+    }
+
     // ── Private ───────────────────────────────────────────────────────────────
 
     private List<String> resolveUsernamesForRole(String roleName) {

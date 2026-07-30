@@ -86,6 +86,7 @@ class PosSessionServiceTest {
     @Mock private com.billbull.backend.user.UserRepository userRepository;
     @Mock private com.billbull.backend.pos.admin.PosCashMovementCategoryService cashMovementCategoryService;
     @Mock private PosSessionTerminalHistoryRepository sessionTerminalHistoryRepository;
+    @Mock private PosSessionTransferLogRepository transferLogRepository;
 
     private PosSessionService service;
 
@@ -98,13 +99,19 @@ class PosSessionServiceTest {
         PosSessionOwnershipService sessionOwnershipService = new PosSessionOwnershipService();
         com.billbull.backend.pos.terminal.PosTerminalHostingService terminalHostingService =
                 new com.billbull.backend.pos.terminal.PosTerminalHostingService(terminalRepository, sessionTerminalHistoryRepository);
+        PosSessionDiscoveryService sessionDiscoveryService = new PosSessionDiscoveryService(repo);
+        PosSessionTransferService sessionTransferService = new PosSessionTransferService(
+                repo, terminalRepository, terminalHostingService, transferLogRepository);
+        PosSessionTransferPolicy sessionTransferPolicy = new PosSessionTransferPolicy(posSettingsRepository);
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
                 terminalRepository, returnRepository, dayCloseRepository, objectMapper, terminalActivityService,
                 businessDateService, cashMovementRepository, receiptVoucherRepository,
                 xReportSnapshotRepository, reportNumberService, userRepository, cashMovementCategoryService,
-                sessionResolutionStrategy, sessionOwnershipService, terminalHostingService);
+                sessionResolutionStrategy, sessionOwnershipService, terminalHostingService, sessionDiscoveryService,
+                sessionTransferService, transferLogRepository, sessionTransferPolicy);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(transferLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
         // Default: no linked User row — resolveDisplayName() falls back to the raw username.
         lenient().when(userRepository.findByUsername(any())).thenReturn(java.util.Optional.empty());
         // Default: no tender / audit rows unless a test stubs them.
@@ -143,7 +150,7 @@ class PosSessionServiceTest {
         when(repo.findUnclosedSessionsBeforeDate(branchId, businessDate)).thenReturn(List.of());
         when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN))
                 .thenReturn(Optional.empty());
-        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
+        lenient().when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
     }
 
     @Test
@@ -202,6 +209,80 @@ class PosSessionServiceTest {
 
         assertEquals(existing, result);
         verify(sessionTerminalHistoryRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    // ---------------------------------------------------------------------
+    // Session Roaming Phase 7 — discovery-blocked openSession() cases
+    // ---------------------------------------------------------------------
+
+    @Test
+    void openSessionBlocksWithOwnerSessionResponse_whenUserOwnsOpenSessionOnAnotherTerminal() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        com.billbull.backend.common.ownership.OwnershipContextHolder.set(
+                new com.billbull.backend.common.ownership.OwnershipContextHolder.OwnershipContext(42L, false));
+        PosSession elsewhere = openSession();
+        elsewhere.setId(7L);
+        elsewhere.setTerminalId("T2");
+        elsewhere.setOwnerUserId(42L);
+        when(repo.findByOwnerUserIdAndStatus(42L, PosSessionStatus.OPEN)).thenReturn(List.of(elsewhere));
+
+        PosSessionDiscoveryBlockedException ex = assertThrows(PosSessionDiscoveryBlockedException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(PosSessionDiscoveryStatus.OWNER_SESSION, ex.getResponse().getStatus());
+        assertEquals(7L, ex.getResponse().getOwnerSessionId());
+        assertEquals("T2", ex.getResponse().getOwnerSessionTerminalId());
+        verify(repo, org.mockito.Mockito.never()).save(any(PosSession.class));
+    }
+
+    @Test
+    void openSessionBlocksWithConflictResponse_whenTerminalHasDifferentSessionThanOwners() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        com.billbull.backend.common.ownership.OwnershipContextHolder.set(
+                new com.billbull.backend.common.ownership.OwnershipContextHolder.OwnershipContext(42L, false));
+        PosSession terminalSession = openSession();
+        terminalSession.setId(8L);
+        terminalSession.setTerminalId("T1");
+        terminalSession.setOpenedBy("otherCashier");
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN))
+                .thenReturn(Optional.of(terminalSession));
+        PosSession elsewhere = openSession();
+        elsewhere.setId(9L);
+        elsewhere.setTerminalId("T2");
+        elsewhere.setOwnerUserId(42L);
+        when(repo.findByOwnerUserIdAndStatus(42L, PosSessionStatus.OPEN)).thenReturn(List.of(elsewhere));
+
+        PosSessionDiscoveryBlockedException ex = assertThrows(PosSessionDiscoveryBlockedException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(PosSessionDiscoveryStatus.CONFLICT, ex.getResponse().getStatus());
+        assertEquals(8L, ex.getResponse().getTerminalSessionId());
+        assertEquals(9L, ex.getResponse().getOwnerSessionId());
+        verify(repo, org.mockito.Mockito.never()).save(any(PosSession.class));
+    }
+
+    @Test
+    void openSessionBlocksWithMultipleOwnerSessionsResponse_refusingToGuess() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        com.billbull.backend.common.ownership.OwnershipContextHolder.set(
+                new com.billbull.backend.common.ownership.OwnershipContextHolder.OwnershipContext(42L, false));
+        PosSession first = openSession();
+        first.setId(10L);
+        first.setOwnerUserId(42L);
+        PosSession second = openSession();
+        second.setId(11L);
+        second.setOwnerUserId(42L);
+        when(repo.findByOwnerUserIdAndStatus(42L, PosSessionStatus.OPEN)).thenReturn(List.of(first, second));
+
+        PosSessionDiscoveryBlockedException ex = assertThrows(PosSessionDiscoveryBlockedException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(PosSessionDiscoveryStatus.MULTIPLE_OWNER_SESSIONS, ex.getResponse().getStatus());
+        assertEquals(2, ex.getResponse().getOwnerSessionCount());
+        verify(repo, org.mockito.Mockito.never()).save(any(PosSession.class));
     }
 
     @Test
@@ -949,6 +1030,298 @@ class PosSessionServiceTest {
 
         assertEquals("ZR-20260101-000001", captor.getValue().getReportNumber());
         assertEquals("ZR-20260101-000001", report.get("reportNumber"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Session Roaming Phase 8 — explicit session transfer endpoint wiring
+    // ---------------------------------------------------------------------
+
+    @Test
+    void transferSessionDelegatesToTransferServiceAndShapesResponse() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        existing.setBranchId(7L);
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.terminal.PosTerminal source = new com.billbull.backend.pos.terminal.PosTerminal();
+        source.setId(99L);
+        source.setTerminalId("T1");
+        when(terminalRepository.findById(99L)).thenReturn(Optional.of(source));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        destination.setCounterId(6L);
+        destination.setCounterName("Counter 2");
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+        when(terminalRepository.clearOpenSession(99L, 1L)).thenReturn(1);
+        when(terminalRepository.setOpenSession(200L, 1L)).thenReturn(1);
+
+        PosSessionTransferLog savedLog = new PosSessionTransferLog();
+        savedLog.setId(500L);
+        savedLog.setSessionId(1L);
+        savedLog.setFromTerminalId(99L);
+        savedLog.setToTerminalId(200L);
+        savedLog.setSupervisorAuthorized(false);
+        when(transferLogRepository.save(any())).thenReturn(savedLog);
+        when(transferLogRepository.findBySessionIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(savedLog));
+
+        PosSessionTransferResponse response = service.transferSession(1L, "T2", "counter relocation", null);
+
+        assertEquals(1L, response.getSessionId());
+        assertEquals("T1", response.getSourceTerminalId());
+        assertEquals("T2", response.getDestinationTerminalId());
+        assertEquals(500L, response.getTransferLogId());
+        assertFalse(response.isSupervisorAuthorized());
+        assertEquals("counter relocation", response.getReason());
+        assertEquals("T2", existing.getTerminalId());
+        assertEquals(200L, existing.getTerminalPk());
+    }
+
+    @Test
+    void transferSessionRejectsClosedSession() {
+        PosSession closed = openSession();
+        closed.setStatus(PosSessionStatus.CLOSED);
+        closed.setTerminalPk(99L);
+        closed.setTerminalId("T1");
+        when(repo.findById(1L)).thenReturn(Optional.of(closed));
+
+        assertThrows(ResponseStatusException.class, () -> service.transferSession(1L, "T2", null, null));
+
+        verify(terminalRepository, org.mockito.Mockito.never()).setOpenSession(any(), any());
+        verify(transferLogRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void transferSessionRejectsDestinationAlreadyHostingASession() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        destination.setCurrentOpenSessionId(555L);
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.transferSession(1L, "T2", null, null));
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        verify(transferLogRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void transferSessionRejectsSameDestinationAsCurrentTerminal() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(200L);
+        existing.setTerminalId("T2");
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+
+        assertThrows(ResponseStatusException.class, () -> service.transferSession(1L, "T2", null, null));
+        verify(transferLogRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void transferSessionAbortsOnConcurrentDestinationClaim() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+        when(terminalRepository.clearOpenSession(99L, 1L)).thenReturn(1);
+        when(terminalRepository.setOpenSession(200L, 1L)).thenReturn(0);
+
+        assertThrows(ResponseStatusException.class, () -> service.transferSession(1L, "T2", null, null));
+
+        verify(repo, org.mockito.Mockito.never()).save(any(PosSession.class));
+        verify(transferLogRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void transferSessionRejectsInvalidSupervisorPin() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        existing.setBranchId(7L);
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.settings.PosSettings settings = new com.billbull.backend.pos.settings.PosSettings();
+        settings.setSupervisorPin(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode("9999"));
+        when(posSettingsRepository.findByBranchId(7L)).thenReturn(Optional.of(settings));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.transferSession(1L, "T2", null, "0000"));
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, ex.getStatusCode());
+
+        verify(terminalRepository, org.mockito.Mockito.never()).setOpenSession(any(), any());
+        verify(transferLogRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void transferSessionMarksSupervisorAuthorizedWhenPinMatches() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        existing.setBranchId(7L);
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.settings.PosSettings settings = new com.billbull.backend.pos.settings.PosSettings();
+        settings.setSupervisorPin(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode("1234"));
+        when(posSettingsRepository.findByBranchId(7L)).thenReturn(Optional.of(settings));
+
+        com.billbull.backend.pos.terminal.PosTerminal source = new com.billbull.backend.pos.terminal.PosTerminal();
+        source.setId(99L);
+        source.setTerminalId("T1");
+        when(terminalRepository.findById(99L)).thenReturn(Optional.of(source));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+        when(terminalRepository.clearOpenSession(99L, 1L)).thenReturn(1);
+        when(terminalRepository.setOpenSession(200L, 1L)).thenReturn(1);
+
+        org.mockito.ArgumentCaptor<PosSessionTransferLog> logCaptor =
+                org.mockito.ArgumentCaptor.forClass(PosSessionTransferLog.class);
+        when(transferLogRepository.save(logCaptor.capture())).thenAnswer(inv -> inv.getArgument(0));
+        when(transferLogRepository.findBySessionIdOrderByCreatedAtDesc(1L))
+                .thenAnswer(inv -> List.of(logCaptor.getValue()));
+
+        PosSessionTransferResponse response = service.transferSession(1L, "T2", "handover", "1234");
+
+        assertTrue(response.isSupervisorAuthorized());
+        assertTrue(logCaptor.getValue().getSupervisorAuthorized());
+    }
+
+    // ---------------------------------------------------------------------
+    // Session Roaming Phase 9 — supervisor authorization policy integration
+    // ---------------------------------------------------------------------
+
+    @Test
+    void transferSessionRejectsCrossBranchTransferWithoutSupervisorAuthorization() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        existing.setBranchId(7L);
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        destination.setBranchId(8L);
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+        lenient().when(posSettingsRepository.findByBranchId(7L)).thenReturn(Optional.empty());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.transferSession(1L, "T2", null, null));
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, ex.getStatusCode());
+
+        verify(terminalRepository, org.mockito.Mockito.never()).setOpenSession(any(), any());
+        verify(transferLogRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void transferSessionAllowsCrossBranchTransferWithSupervisorAuthorization() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        existing.setBranchId(7L);
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.settings.PosSettings settings = new com.billbull.backend.pos.settings.PosSettings();
+        settings.setSupervisorPin(new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode("1234"));
+        settings.setRequireSupervisorForCrossBranchTransfer(true);
+        when(posSettingsRepository.findByBranchId(7L)).thenReturn(Optional.of(settings));
+
+        com.billbull.backend.pos.terminal.PosTerminal source = new com.billbull.backend.pos.terminal.PosTerminal();
+        source.setId(99L);
+        source.setTerminalId("T1");
+        when(terminalRepository.findById(99L)).thenReturn(Optional.of(source));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        destination.setBranchId(8L);
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+        when(terminalRepository.clearOpenSession(99L, 1L)).thenReturn(1);
+        when(terminalRepository.setOpenSession(200L, 1L)).thenReturn(1);
+        when(transferLogRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(transferLogRepository.findBySessionIdOrderByCreatedAtDesc(1L)).thenReturn(List.of());
+
+        PosSessionTransferResponse response = service.transferSession(1L, "T2", "branch handover", "1234");
+
+        assertEquals("T2", response.getDestinationTerminalId());
+        assertEquals(PosSessionTransferAuthorization.SUPERVISOR_REQUIRED, response.getPolicyAuthorization());
+        assertEquals(PosSessionTransferReasonCode.CROSS_BRANCH_TRANSFER, response.getPolicyReasonCode());
+    }
+
+    @Test
+    void transferSessionRejectsWhenDestinationTerminalAlreadyOccupiedViaPolicy() {
+        PosSession existing = openSession();
+        existing.setTerminalPk(99L);
+        existing.setTerminalId("T1");
+        existing.setBranchId(7L);
+        when(repo.findById(1L)).thenReturn(Optional.of(existing));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(200L);
+        destination.setTerminalId("T2");
+        destination.setBranchId(7L);
+        destination.setCurrentOpenSessionId(555L);
+        when(terminalRepository.findByTerminalId("T2")).thenReturn(Optional.of(destination));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.transferSession(1L, "T2", null, null));
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        verify(transferLogRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void discoveryResponseIncludesTransferPolicyForOwnerSessionElsewhere() {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        "cashier2", null, List.of()));
+        com.billbull.backend.common.ownership.OwnershipContextHolder.set(
+                new com.billbull.backend.common.ownership.OwnershipContextHolder.OwnershipContext(42L, false));
+
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(businessDate);
+        when(businessDateService.isDateClosed(1L, businessDate)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(1L, businessDate)).thenReturn(List.of());
+
+        PosSession ownerSessionElsewhere = openSession();
+        ownerSessionElsewhere.setId(9L);
+        ownerSessionElsewhere.setOwnerUserId(42L);
+        ownerSessionElsewhere.setBranchId(1L);
+        ownerSessionElsewhere.setTerminalId("T-OTHER");
+        ownerSessionElsewhere.setTerminalPk(50L);
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN)).thenReturn(Optional.empty());
+        when(repo.findByOwnerUserIdAndStatus(42L, PosSessionStatus.OPEN)).thenReturn(List.of(ownerSessionElsewhere));
+
+        com.billbull.backend.pos.terminal.PosTerminal destination = new com.billbull.backend.pos.terminal.PosTerminal();
+        destination.setId(60L);
+        destination.setTerminalId("T1");
+        destination.setBranchId(1L);
+        when(terminalRepository.findByTerminalId("T1")).thenReturn(Optional.of(destination));
+
+        PosSessionDiscoveryBlockedException ex = assertThrows(PosSessionDiscoveryBlockedException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(PosSessionDiscoveryStatus.OWNER_SESSION, ex.getResponse().getStatus());
+        assertEquals(PosSessionTransferAuthorization.ALLOWED, ex.getResponse().getTransferAuthorization());
+        assertEquals(PosSessionTransferReasonCode.SAME_BRANCH_TRANSFER, ex.getResponse().getTransferReasonCode());
     }
 
     // ---------------------------------------------------------------------

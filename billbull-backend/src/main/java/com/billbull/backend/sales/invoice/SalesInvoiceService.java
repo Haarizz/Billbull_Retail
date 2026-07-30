@@ -216,10 +216,14 @@ public class SalesInvoiceService {
         double total = BigDecimal.valueOf(invoiceAmt + openingBalance)
                 .setScale(2, RoundingMode.HALF_UP).doubleValue();
 
-        return Map.of(
-                "outstanding", total,
-                "invoiceOutstanding", BigDecimal.valueOf(invoiceAmt).setScale(2, RoundingMode.HALF_UP).doubleValue(),
-                "openingBalance", BigDecimal.valueOf(openingBalance).setScale(2, RoundingMode.HALF_UP).doubleValue());
+        java.time.LocalDate lastPurchaseDate = invoiceRepo.findLastPurchaseDateByCustomerCode(customerCode);
+
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("outstanding", total);
+        result.put("invoiceOutstanding", BigDecimal.valueOf(invoiceAmt).setScale(2, RoundingMode.HALF_UP).doubleValue());
+        result.put("openingBalance", BigDecimal.valueOf(openingBalance).setScale(2, RoundingMode.HALF_UP).doubleValue());
+        result.put("lastPurchaseDate", lastPurchaseDate);
+        return result;
     }
 
     /** Open (balance > 0, non-cancelled) invoices for a customer, oldest first — for payment allocation pickers. */
@@ -1886,16 +1890,27 @@ public class SalesInvoiceService {
     // PRICE HISTORY
     // ----------------------------
     @Transactional(readOnly = true)
-    public List<PriceHistoryDTO> getPriceHistory(String itemCode, String customerCode) {
+    public PriceHistoryResponse getPriceHistory(String itemCode, String customerCode) {
         Long currentBranchId = branchAccessService.getCurrentUserBranchId();
         if (currentBranchId == null) {
-            return List.of();
+            return new PriceHistoryResponse(List.of(), List.of());
         }
-        return invoiceRepo.findPriceHistoryByItemCodeAndBranchScope(
+
+        List<PriceHistoryDTO> customerPrices = (customerCode == null || customerCode.isBlank())
+                ? List.of()
+                : invoiceRepo.findCustomerPriceHistory(
+                        itemCode,
+                        customerCode,
+                        currentBranchId,
+                        org.springframework.data.domain.PageRequest.of(0, 5));
+
+        List<PriceHistoryDTO> recentSales = invoiceRepo.findRecentSalesExcludingCustomer(
                 itemCode,
                 customerCode,
                 currentBranchId,
-                org.springframework.data.domain.PageRequest.of(0, 10));
+                org.springframework.data.domain.PageRequest.of(0, 5));
+
+        return new PriceHistoryResponse(customerPrices, recentSales);
     }
 
     // ----------------------------

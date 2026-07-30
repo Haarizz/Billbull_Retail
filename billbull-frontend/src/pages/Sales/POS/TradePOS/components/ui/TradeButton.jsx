@@ -20,11 +20,11 @@ export const TradeButton = React.memo(({
   const baseStyles = 'inline-flex items-center justify-center font-bold rounded-xl transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 shrink-0';
   
   const variants = {
-    primary: 'bg-[#F5C742] text-[#1E293B] hover:opacity-90 shadow-sm',
-    secondary: 'bg-white text-[#1E293B] border border-gray-200 hover:bg-gray-50 shadow-sm',
-    ghost: 'bg-transparent text-gray-500 hover:bg-gray-100 hover:text-[#1E293B]',
+    primary: 'bg-primary text-foreground hover:opacity-90 shadow-sm',
+    secondary: 'bg-white text-foreground border border-gray-200 hover:bg-gray-50 shadow-sm',
+    ghost: 'bg-transparent text-gray-500 hover:bg-gray-100 hover:text-foreground',
     danger: 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200',
-    outline: 'bg-transparent border-2 border-[#F5C742] text-[#F5C742] hover:bg-[#F5C742] hover:text-[#1E293B]'
+    outline: 'bg-transparent border-2 border-primary text-primary hover:bg-primary hover:text-foreground'
   };
 
   const sizes = {

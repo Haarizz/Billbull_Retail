@@ -4,7 +4,7 @@ import React, { forwardRef } from 'react';
  * TradeInput
  * 
  * Standardized input component for the Trade POS.
- * Ensures consistent borders, focus rings (Saffron #F5C742), and optional icons.
+ * Ensures consistent borders, focus rings (Saffron var(--color-primary)), and optional icons.
  */
 export const TradeInput = React.memo(forwardRef(({
   className = '',
@@ -14,7 +14,7 @@ export const TradeInput = React.memo(forwardRef(({
   containerClassName = '',
   ...props
 }, ref) => {
-  const baseStyles = 'w-full bg-gray-50 border rounded-xl text-sm transition-all focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 focus:bg-white text-[#1E293B] placeholder:text-gray-400';
+  const baseStyles = 'w-full bg-gray-50 border rounded-xl text-sm transition-all focus:outline-none focus:ring-2 focus:ring-primary/50 focus:bg-white text-foreground placeholder:text-gray-400';
   
   // Dynamic padding based on icon presence and position
   const paddingX = icon ? (iconPosition === 'left' ? 'pl-9 pr-3' : 'pl-3 pr-9') : 'px-3';
@@ -23,7 +23,7 @@ export const TradeInput = React.memo(forwardRef(({
   // Height must be sufficient for mobile touch targets (~44px min for inputs)
   const sizing = 'min-h-[44px]';
   
-  const borderStyles = error ? 'border-red-300 focus:border-red-500' : 'border-gray-200 focus:border-[#F5C742]';
+  const borderStyles = error ? 'border-red-300 focus:border-red-500' : 'border-gray-200 focus:border-primary';
 
   return (
     <div className={`relative ${containerClassName}`}>

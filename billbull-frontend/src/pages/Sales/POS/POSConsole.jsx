@@ -838,6 +838,7 @@ const POSConsole = React.memo((props) => {
               supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
               supervisorPin: posSettings?.supervisorPin || '',
               voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',
+              productEntryMode: posSettings?.productEntryMode || 'DIRECT_ADD',
               cartViewMode: posSettings?.cartViewMode === 'DETAILED' ? 'DETAILED' : 'MINIMAL',
               cartShowBarcode: posSettings?.cartShowBarcode !== false,
               cartShowProductCode: posSettings?.cartShowProductCode !== false,
@@ -876,6 +877,29 @@ const POSConsole = React.memo((props) => {
             ];
             return (
             <div className="space-y-6">
+
+              {/* Product Entry Mode */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><ShoppingCart className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Product Entry Mode
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">When a product is selected, either add it directly to the invoice or open the Product Entry dialog before adding.</p>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    ['DIRECT_ADD', 'Direct Add', 'Instantly adds 1 qty to the cart. Quickest workflow.'],
+                    ['OPEN_ENTRY_DIALOG', 'Open Entry Dialog', 'Opens a dialog to specify qty, price, and discount before adding.'],
+                  ].map(([val, label, desc]) => (
+                    <button key={val} type="button" onClick={() => patch({ productEntryMode: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.productEntryMode === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.productEntryMode === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
+                      {d.productEntryMode === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               {/* Item Removal / Supervisor approval */}
               <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">

@@ -86,6 +86,10 @@ public class PosSessionService {
     private final PosSessionResolutionStrategy sessionResolutionStrategy;
     private final PosSessionOwnershipService sessionOwnershipService;
     private final PosTerminalHostingService terminalHostingService;
+    private final PosSessionDiscoveryService sessionDiscoveryService;
+    private final PosSessionTransferService sessionTransferService;
+    private final PosSessionTransferLogRepository transferLogRepository;
+    private final PosSessionTransferPolicy sessionTransferPolicy;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -118,7 +122,11 @@ public class PosSessionService {
                              PosCashMovementCategoryService cashMovementCategoryService,
                              PosSessionResolutionStrategy sessionResolutionStrategy,
                              PosSessionOwnershipService sessionOwnershipService,
-                             PosTerminalHostingService terminalHostingService) {
+                             PosTerminalHostingService terminalHostingService,
+                             PosSessionDiscoveryService sessionDiscoveryService,
+                             PosSessionTransferService sessionTransferService,
+                             PosSessionTransferLogRepository transferLogRepository,
+                             PosSessionTransferPolicy sessionTransferPolicy) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -143,6 +151,10 @@ public class PosSessionService {
         this.sessionResolutionStrategy = sessionResolutionStrategy;
         this.sessionOwnershipService = sessionOwnershipService;
         this.terminalHostingService = terminalHostingService;
+        this.sessionDiscoveryService = sessionDiscoveryService;
+        this.sessionTransferService = sessionTransferService;
+        this.transferLogRepository = transferLogRepository;
+        this.sessionTransferPolicy = sessionTransferPolicy;
     }
 
     private String currentUser() {
@@ -226,9 +238,29 @@ public class PosSessionService {
                             + ". Close the previous day's session before starting a new one.");
         }
 
+        // Session Roaming Phase 7 — controlled discovery. NO_SESSION/TERMINAL_SESSION/SAME_SESSION
+        // fall through to the pre-existing terminal-first duplicate check below, unchanged;
+        // OWNER_SESSION/CONFLICT/MULTIPLE_OWNER_SESSIONS are surfaced as a structured response
+        // instead of silently opening a second concurrent session for the same owner. Nothing is
+        // moved, hosted, or transferred here — this only reports what discovery found.
+        Long ownerUserId = sessionOwnershipService.currentPrincipalUserId();
+        PosSessionDiscoveryResult discovery = sessionDiscoveryService.discover(branchId, terminalId, ownerUserId);
+        switch (discovery.status()) {
+            case OWNER_SESSION -> throw new PosSessionDiscoveryBlockedException(
+                    PosSessionDiscoveryResponse.ownerSessionElsewhere(discovery.ownerSession().orElseThrow(),
+                            evaluateTransferToTerminal(discovery.ownerSession().orElseThrow(), terminalId)));
+            case CONFLICT -> throw new PosSessionDiscoveryBlockedException(
+                    PosSessionDiscoveryResponse.conflict(
+                            discovery.terminalSession().orElseThrow(), discovery.ownerSession().orElseThrow(),
+                            evaluateTransferToTerminal(discovery.ownerSession().orElseThrow(), terminalId)));
+            case MULTIPLE_OWNER_SESSIONS -> throw new PosSessionDiscoveryBlockedException(
+                    PosSessionDiscoveryResponse.multipleOwnerSessions(discovery.ownerSessionCount()));
+            default -> { /* NO_SESSION, TERMINAL_SESSION, SAME_SESSION: continue existing flow below */ }
+        }
+
         // App-level duplicate check: if same user returns to their own session, hand it back
-        // (terminal-first resolution — see PosSessionTerminalFirstResolutionStrategy)
-        Optional<PosSession> existing = sessionResolutionStrategy.resolveByTerminal(branchId, terminalId);
+        // (terminal-first resolution — same terminalSession discovery already looked up above).
+        Optional<PosSession> existing = discovery.terminalSession();
         if (existing.isPresent()) {
             if (!currentUser().equals(existing.get().getOpenedBy())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
@@ -247,7 +279,7 @@ public class PosSessionService {
         session.setCounterName(counterName);
         session.setOpenedBy(currentUser());
         session.setOpenedByDisplayName(resolveDisplayName(session.getOpenedBy()));
-        session.setOwnerUserId(sessionOwnershipService.currentPrincipalUserId());
+        session.setOwnerUserId(ownerUserId);
         session.setSessionDate(businessDate);
         session.setOpenedAt(now);
         session.setLastActivityAt(now);
@@ -544,6 +576,87 @@ public class PosSessionService {
 
         auditService.logSessionOpened(updated.getId(), updated.getTerminalId(), updated.getBranchId());
         return updated;
+    }
+
+    /**
+     * Session Roaming Phase 8 — explicit, operator-confirmed transfer of a session's hosting
+     * to another terminal. Ownership ({@code ownerUserId}/{@code openedBy}) is never touched;
+     * only the physical terminal hosting the session changes. All validation, the atomic
+     * terminal-lock hand-off, the hosting-history update, and the transfer-log write happen
+     * inside {@link PosSessionTransferService#transfer} — this method only resolves the
+     * initiating user, optionally verifies a supervisor PIN, and shapes the response.
+     *
+     * <p>Supervisor authorization is optional today (Phase 9 may make it mandatory for certain
+     * destinations/roles): if {@code supervisorPin} is blank, the transfer proceeds as an
+     * operator-confirmed move with {@code supervisorAuthorized=false}; if provided, it is
+     * verified against the session's branch {@link PosSettings#getSupervisorPin()} the same
+     * way {@link #supervisorTakeover} does, and a mismatch is rejected outright.
+     */
+    @Transactional
+    public PosSessionTransferResponse transferSession(Long sessionId, String destinationTerminalId,
+                                                        String reason, String supervisorPin) {
+        PosSession before = getById(sessionId);
+        Long sourceTerminalPk = before.getTerminalPk();
+        boolean supervisorAuthorized = verifySupervisorPinIfProvided(before, supervisorPin);
+
+        // Session Roaming Phase 9 — evaluate the transfer policy before attempting the move.
+        // PosSessionTransferService#transfer stays business-operation only: it never decides
+        // whether supervisor authorization is required, only whether an already-authorized
+        // move can physically happen.
+        PosTerminal destination = terminalRepository.findByTerminalId(destinationTerminalId).orElse(null);
+        PosSessionTransferDecision decision = sessionTransferPolicy.evaluate(before, destination);
+        if (decision.isDenied()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, decision.getMessage());
+        }
+        if (decision.isSupervisorRequired() && !supervisorAuthorized) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Supervisor authorization required: " + decision.getMessage());
+        }
+
+        Long initiatedByUserId = sessionOwnershipService.currentPrincipalUserId();
+
+        PosSession moved = sessionTransferService.transfer(sessionId, destinationTerminalId,
+                initiatedByUserId, supervisorAuthorized);
+
+        PosSessionTransferLog logEntry = transferLogRepository.findBySessionIdOrderByCreatedAtDesc(sessionId)
+                .stream().findFirst().orElse(null);
+        String sourceTerminalId = sourceTerminalPk != null
+                ? terminalRepository.findById(sourceTerminalPk).map(PosTerminal::getTerminalId).orElse(null)
+                : null;
+
+        return PosSessionTransferResponse.of(moved, sourceTerminalId, logEntry, reason, decision);
+    }
+
+    /** Session Roaming Phase 9 — read-only preview of what {@link #transferSession} would decide
+     *  if the caller chose to transfer {@code ownerSession} onto {@code destinationTerminalId}.
+     *  Used only to enrich the discovery response; never invoked from the transfer path itself
+     *  (which re-evaluates the policy against the live destination lookup there). */
+    private PosSessionTransferDecision evaluateTransferToTerminal(PosSession ownerSession, String destinationTerminalId) {
+        PosTerminal destination = terminalRepository.findByTerminalId(destinationTerminalId).orElse(null);
+        return sessionTransferPolicy.evaluate(ownerSession, destination);
+    }
+
+    /** Blank/absent PIN: no supervisor authorization asserted (returns false, transfer still
+     *  allowed as an operator-confirmed move). Non-blank PIN: verified against the session's
+     *  branch supervisor PIN (BCrypt) exactly like {@link #supervisorTakeover}; a mismatch
+     *  throws 403 rather than silently downgrading to unauthorized. */
+    private boolean verifySupervisorPinIfProvided(PosSession session, String supervisorPin) {
+        if (supervisorPin == null || supervisorPin.isBlank()) {
+            return false;
+        }
+        if (session.getBranchId() == null) {
+            return false;
+        }
+        PosSettings settings = posSettingsRepository.findByBranchId(session.getBranchId()).orElse(null);
+        if (settings == null || !settings.isSupervisorPinSet()) {
+            return false;
+        }
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder encoder =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        if (!encoder.matches(supervisorPin, settings.getSupervisorPin())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid supervisor PIN.");
+        }
+        return true;
     }
 
     /** Date-range session history for the X-Report history picker (reprint/browse a past

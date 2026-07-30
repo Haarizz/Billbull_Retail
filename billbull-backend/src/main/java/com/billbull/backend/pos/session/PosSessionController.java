@@ -7,9 +7,11 @@ import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.PageResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -40,12 +42,50 @@ public class PosSessionController {
 
     @PostMapping("/open")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<PosSession> openSession(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> openSession(@RequestBody Map<String, Object> body) {
         String terminalId = body.getOrDefault("terminalId", "").toString();
         String counterName = body.getOrDefault("counterName", "Main Counter").toString();
         BigDecimal openingCash = body.get("openingCash") != null
                 ? new BigDecimal(body.get("openingCash").toString()) : BigDecimal.ZERO;
-        return ResponseEntity.ok(service.openSession(terminalId, counterName, openingCash));
+        try {
+            return ResponseEntity.ok(service.openSession(terminalId, counterName, openingCash));
+        } catch (PosSessionDiscoveryBlockedException ex) {
+            // Session Roaming Phase 7 — discovery found an existing/ambiguous session elsewhere;
+            // the JSON body shape for the success path above is unchanged, this only adds a new
+            // structured 409 body for a case the pre-Phase-7 API never detected at all.
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getResponse());
+        }
+    }
+
+    /**
+     * Session Roaming Phase 8 — explicit, operator-confirmed session transfer to another
+     * terminal. Deliberately separate from {@code openSession}: transfer moves an existing
+     * OPEN/SUSPENDED session's hosting, it never opens a new one. Requires {@code confirm: true}
+     * in the body so a transfer can never be triggered by an incidental/automated call; all
+     * eligibility, concurrency, and locking checks happen inside
+     * {@code PosSessionService#transferSession} / {@code PosSessionTransferService#transfer}.
+     */
+    @PostMapping("/{id}/transfer")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSessionTransferResponse> transferSession(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        String destinationTerminalId = body != null && body.get("destinationTerminalId") != null
+                ? body.get("destinationTerminalId").toString() : null;
+        boolean confirm = body != null && Boolean.TRUE.equals(body.get("confirm"));
+        String reason = body != null && body.get("reason") != null ? body.get("reason").toString() : null;
+        String supervisorPin = body != null && body.get("supervisorPin") != null
+                ? body.get("supervisorPin").toString() : null;
+
+        if (destinationTerminalId == null || destinationTerminalId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "destinationTerminalId is required.");
+        }
+        if (!confirm) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Session transfer requires explicit confirmation (confirm: true).");
+        }
+
+        return ResponseEntity.ok(service.transferSession(id, destinationTerminalId, reason, supervisorPin));
     }
 
     @GetMapping("/active")
@@ -99,7 +139,9 @@ public class PosSessionController {
         String type = body.getOrDefault("movementType", "DROP_IN").toString();
         BigDecimal amount = new BigDecimal(body.get("amount").toString());
         String description = body.get("description") != null ? body.get("description").toString() : "";
-        return ResponseEntity.ok(service.addCashMovement(id, type, amount, description));
+        String reference = body.get("reference") != null ? body.get("reference").toString() : null;
+        Long categoryId = body.get("categoryId") != null ? Long.valueOf(body.get("categoryId").toString()) : null;
+        return ResponseEntity.ok(service.addCashMovement(id, type, amount, description, reference, categoryId));
     }
 
     @GetMapping("/{id}/x-report")

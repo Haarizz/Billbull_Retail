@@ -15,7 +15,7 @@ export const TradeCard = React.memo(({
 }) => {
   const baseStyles = 'bg-white rounded-2xl overflow-hidden';
   const borderStyles = noBorder ? '' : 'border border-gray-200 shadow-sm';
-  const interactiveStyles = onClick ? 'cursor-pointer hover:border-[#F5C742] hover:shadow-md transition-all active:scale-[0.98]' : '';
+  const interactiveStyles = onClick ? 'cursor-pointer hover:border-primary hover:shadow-md transition-all active:scale-[0.98]' : '';
 
   return (
     <div 

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-  ShieldCheck, Coins, ArrowLeftRight, Tags, ClipboardCheck,
-  CheckCircle2, XCircle, Clock, Ban, Loader2, AlertCircle,
+  ShieldCheck, Coins, ArrowLeftRight, Tags, ClipboardCheck, LayoutDashboard, History as HistoryIcon, BarChart3,
+  CheckCircle2, XCircle, Ban, Loader2, AlertCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { usePermissions } from '../../context/PermissionContext';
@@ -9,7 +9,14 @@ import {
   getCorrectionRequests, approveCorrectionRequest, rejectCorrectionRequest, cancelCorrectionRequest,
 } from '../../api/posAdminApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import CorrectionExportButtons from '../../components/common/CorrectionExportButtons';
 import PosCashMovementCategories from './PosCashMovementCategories';
+import PosSessionDenominationCorrections from './PosSessionDenominationCorrections';
+import PosTransactionCorrections from './PosTransactionCorrections';
+import PosCorrectionDashboard from './PosCorrectionDashboard';
+import PosCorrectionHistory from './PosCorrectionHistory';
+import PosCorrectionAnalytics from './PosCorrectionAnalytics';
+import PosCorrectionAuditView from './PosCorrectionAuditView';
 
 const PAGE_SIZE = 20;
 
@@ -23,22 +30,6 @@ const STATUS_BADGE = {
   CANCELLED: 'bg-slate-100 text-slate-500',
   FAILED: 'bg-red-100 text-red-700',
 };
-
-/** Informational placeholder for tabs whose correction workflow hasn't shipped yet — deliberately
- *  not a fake form, per the architectural review's Phase 1 scope (docs/
- *  pos-administration-architecture-review-2026-07-29.md §15). */
-const ComingSoonPanel = ({ icon: Icon, title, phase, description }) => (
-  <div className="min-h-[320px] flex flex-col items-center justify-center p-8 bg-white rounded-2xl border-2 border-dashed border-slate-200">
-    <div className="w-16 h-16 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mb-4">
-      <Icon size={28} />
-    </div>
-    <h3 className="text-lg font-bold text-slate-800 mb-1">{title}</h3>
-    <p className="text-slate-500 text-center max-w-md text-sm mb-3">{description}</p>
-    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-500 text-xs font-semibold">
-      <Clock size={12} /> Ships in {phase}
-    </span>
-  </div>
-);
 
 const CorrectionApprovalsPanel = () => {
   const { canApprove } = usePermissions();
@@ -124,16 +115,29 @@ const CorrectionApprovalsPanel = () => {
             Every correction request across POS Administration, in one governance queue.
           </p>
         </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#F5C742]"
-        >
-          <option value="">All statuses</option>
-          {Object.keys(STATUS_BADGE).map((s) => (
-            <option key={s} value={s}>{s.replace('_', ' ')}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#F5C742]"
+          >
+            <option value="">All statuses</option>
+            {Object.keys(STATUS_BADGE).map((s) => (
+              <option key={s} value={s}>{s.replace('_', ' ')}</option>
+            ))}
+          </select>
+          <CorrectionExportButtons
+            data={rows}
+            columns={[
+              { header: 'Request #', key: 'requestNumber' }, { header: 'Target Type', key: 'targetType' },
+              { header: 'Target ID', key: 'targetId' }, { header: 'Correction Type', key: 'correctionType' },
+              { header: 'Reason', key: 'reason' }, { header: 'Requested By', key: 'requestedBy' },
+              { header: 'Status', key: 'status' },
+            ]}
+            title="Approval Queue"
+            fileName="pos-admin-approval-queue"
+          />
+        </div>
       </div>
 
       {loading ? (
@@ -223,10 +227,14 @@ const CorrectionApprovalsPanel = () => {
 };
 
 const TABS = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, module: 'pos.admin' },
   { id: 'denomination', label: 'Session Denomination Corrections', icon: Coins, module: 'pos.admin.session' },
   { id: 'transaction', label: 'Transaction Corrections', icon: ArrowLeftRight, module: 'pos.admin.transaction' },
   { id: 'categories', label: 'Cash Movement Categories', icon: Tags, module: 'pos.admin.cashmovement.category' },
   { id: 'approvals', label: 'Correction Approvals', icon: ClipboardCheck, module: 'pos.admin.approvals' },
+  { id: 'history', label: 'History', icon: HistoryIcon, module: 'pos.admin' },
+  { id: 'analytics', label: 'Analytics', icon: BarChart3, module: 'pos.admin' },
+  { id: 'audit', label: 'Audit View', icon: ShieldCheck, module: 'pos.admin.audit' },
 ];
 
 const PosAdministration = () => {
@@ -289,24 +297,14 @@ const PosAdministration = () => {
               })}
             </div>
 
-            {activeTab === 'denomination' && (
-              <ComingSoonPanel
-                icon={Coins}
-                title="Session Denomination Corrections"
-                phase="Phase 3"
-                description="Correct denomination breakdowns on closed X/Z Reports without ever touching the immutable snapshot or changing expected cash, cash difference, or GL totals."
-              />
-            )}
-            {activeTab === 'transaction' && (
-              <ComingSoonPanel
-                icon={ArrowLeftRight}
-                title="Transaction Corrections"
-                phase="Phase 4"
-                description="Governed corrections for payment mode, customer, sales returns, receipts, and advances — append-only records with full GL reversal integration."
-              />
-            )}
+            {activeTab === 'dashboard' && <PosCorrectionDashboard />}
+            {activeTab === 'denomination' && <PosSessionDenominationCorrections />}
+            {activeTab === 'transaction' && <PosTransactionCorrections />}
             {activeTab === 'categories' && <PosCashMovementCategories />}
             {activeTab === 'approvals' && <CorrectionApprovalsPanel />}
+            {activeTab === 'history' && <PosCorrectionHistory />}
+            {activeTab === 'analytics' && <PosCorrectionAnalytics />}
+            {activeTab === 'audit' && <PosCorrectionAuditView />}
           </>
         )}
       </div>

@@ -8,7 +8,7 @@ import React from 'react';
 export const TradeSummaryCard = React.memo(({
   label,
   amount,
-  accentColor = 'text-[#1E293B]', // Can be overridden for primary totals (e.g. text-[#F5C742])
+  accentColor = 'text-foreground', // Can be overridden for primary totals (e.g. text-primary)
   size = 'md', // sm, md, lg
   className = ''
 }) => {

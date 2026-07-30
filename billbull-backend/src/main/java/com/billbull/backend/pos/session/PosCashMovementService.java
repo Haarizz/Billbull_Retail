@@ -1,6 +1,8 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.pos.admin.PosCashMovementCategory;
+import com.billbull.backend.pos.admin.PosCashMovementCategoryRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -20,7 +22,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Back-office CRUD surface for the Cash Drop / Outs Management module — list/view/limited-edit/
@@ -39,19 +43,39 @@ public class PosCashMovementService {
     private final BranchRepository branchRepository;
     private final PosAuditService auditService;
     private final ObjectMapper objectMapper;
+    private final PosCashMovementCategoryRepository categoryRepository;
 
     public PosCashMovementService(PosCashMovementRepository repo,
                                    PosSessionService posSessionService,
                                    PostingEngineService postingEngine,
                                    BranchRepository branchRepository,
                                    PosAuditService auditService,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   PosCashMovementCategoryRepository categoryRepository) {
         this.repo = repo;
         this.posSessionService = posSessionService;
         this.postingEngine = postingEngine;
         this.branchRepository = branchRepository;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.categoryRepository = categoryRepository;
+    }
+
+    /** Batch-resolves category names for a page of responses (same lazy-enrichment pattern as
+     *  {@code setBranchName}) — never guesses a name for a null categoryId, which the UI
+     *  renders as "Uncategorized (Legacy)". */
+    private List<PosCashMovementResponse> withCategoryNames(List<PosCashMovementResponse> rows) {
+        List<Long> categoryIds = rows.stream().map(PosCashMovementResponse::getCategoryId)
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        if (categoryIds.isEmpty()) return rows;
+        Map<Long, String> names = categoryRepository.findAllById(categoryIds).stream()
+                .collect(Collectors.toMap(PosCashMovementCategory::getId, PosCashMovementCategory::getName));
+        rows.forEach(r -> {
+            if (r.getCategoryId() != null) {
+                r.setCategoryName(names.get(r.getCategoryId()));
+            }
+        });
+        return rows;
     }
 
     private String currentUser() {
@@ -66,14 +90,14 @@ public class PosCashMovementService {
         Pageable pageable = PageRequest.of(Math.max(page, 0), size <= 0 ? 20 : size);
         Page<PosCashMovement> result = repo.search(branchId, sessionId, status, movementType, fromDate, toDate,
                 performedBy, pageable);
-        var content = result.getContent().stream().map(PosCashMovementResponse::from).toList();
+        var content = withCategoryNames(result.getContent().stream().map(PosCashMovementResponse::from).collect(Collectors.toList()));
         return new PageResponse<>(content, result.getNumber(), result.getSize(),
                 result.getTotalElements(), result.getTotalPages());
     }
 
     @Transactional(readOnly = true)
     public PosCashMovementResponse getById(Long id) {
-        return PosCashMovementResponse.from(getEntity(id));
+        return withCategoryNames(List.of(PosCashMovementResponse.from(getEntity(id)))).get(0);
     }
 
     private PosCashMovement getEntity(Long id) {
@@ -85,9 +109,9 @@ public class PosCashMovementService {
      *  (see {@link PosSessionService#addCashMovement}); session must still be OPEN. */
     @Transactional
     public PosCashMovementResponse create(Long sessionId, String movementType, BigDecimal amount,
-                                           String description, String reference) {
-        PosCashMovement movement = posSessionService.addCashMovement(sessionId, movementType, amount, description, reference);
-        return PosCashMovementResponse.from(movement);
+                                           String description, String reference, Long categoryId) {
+        PosCashMovement movement = posSessionService.addCashMovement(sessionId, movementType, amount, description, reference, categoryId);
+        return withCategoryNames(List.of(PosCashMovementResponse.from(movement))).get(0);
     }
 
     /** Limited edit: description/reference only. Amount, movement type, session, performed-by
@@ -140,8 +164,12 @@ public class PosCashMovementService {
         Branch branch = saved.getBranchId() != null
                 ? branchRepository.findById(saved.getBranchId()).orElse(null)
                 : null;
+        // Reverse against the exact account originally posted to (category override or
+        // default, denormalized at creation) — never re-resolve from the category's current
+        // state, which may have changed or been deactivated since.
         postingEngine.reverseJournalFromCashMovementVoid(saved.getId(), saved.getMovementType().name(),
-                saved.getAmount(), saved.getDescription(), LocalDate.now(), branch);
+                saved.getAmount(), saved.getDescription(), LocalDate.now(), branch,
+                saved.getPostedAccountCode(), saved.getPostedAccountName());
 
         String newJson = toJson(saved);
         PosSession session = saved.getPosSession();

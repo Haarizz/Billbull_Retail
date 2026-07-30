@@ -46,7 +46,7 @@ class PosCashMovementControllerTest {
         controller.create(body);
 
         verify(modulePermissionService).requireCanView("permissions.pos.cashmovement.create");
-        verify(service).create(1L, "DROP_IN", new BigDecimal("50"), "Float top-up", null);
+        verify(service).create(1L, "DROP_IN", new BigDecimal("50"), "Float top-up", null, null);
     }
 
     @Test

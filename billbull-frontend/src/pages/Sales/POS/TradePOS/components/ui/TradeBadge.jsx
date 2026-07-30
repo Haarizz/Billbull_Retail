@@ -8,7 +8,7 @@ import React from 'react';
  */
 export const TradeBadge = React.memo(({
   label,
-  color = 'gray', // gray, green, amber, red, saffron, blue
+  color = 'gray', // gray, green, amber, red, saffron, slate
   variant = 'soft', // soft, solid, outline
   className = '',
   icon,
@@ -21,24 +21,24 @@ export const TradeBadge = React.memo(({
       green: 'bg-green-50 text-green-700',
       amber: 'bg-amber-50 text-amber-700',
       red: 'bg-red-50 text-red-600',
-      saffron: 'bg-[#F5C742]/20 text-[#b8920e]',
-      blue: 'bg-blue-50 text-blue-700'
+      saffron: 'bg-primary/20 text-primary-foreground',
+      slate: 'bg-slate-100 text-slate-700'
     },
     solid: {
       gray: 'bg-gray-500 text-white',
       green: 'bg-green-600 text-white',
       amber: 'bg-amber-500 text-white',
       red: 'bg-red-500 text-white',
-      saffron: 'bg-[#F5C742] text-[#1E293B]',
-      blue: 'bg-blue-600 text-white'
+      saffron: 'bg-primary text-foreground',
+      slate: 'bg-slate-600 text-white'
     },
     outline: {
       gray: 'border border-gray-200 text-gray-600 bg-white',
       green: 'border border-green-200 text-green-700 bg-white',
       amber: 'border border-amber-200 text-amber-700 bg-white',
       red: 'border border-red-200 text-red-600 bg-white',
-      saffron: 'border border-[#F5C742]/50 text-[#b8920e] bg-white',
-      blue: 'border border-blue-200 text-blue-700 bg-white'
+      saffron: 'border border-primary/50 text-primary-foreground bg-white',
+      slate: 'border border-slate-200 text-slate-700 bg-white'
     }
   };
 

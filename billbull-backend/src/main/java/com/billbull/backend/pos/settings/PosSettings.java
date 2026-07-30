@@ -19,11 +19,27 @@ public class PosSettings extends BaseEntity {
     @Column(name = "require_supervisor_for_void")
     private Boolean requireSupervisorForVoid = false;
 
+    /** Enterprise Console > POS Administration > Cash Movement Categories feature toggle
+     *  (architectural review §7 / Phase 2 brief "Feature Toggle"): while false, category
+     *  selection stays optional on new POS Cash Drop/Out movements; once true, every newly
+     *  created movement for this branch must carry a category. Per-branch so multi-tenant/
+     *  multi-branch rollouts can be staged rather than flipped globally. Never retroactive —
+     *  historical movements without a category remain valid regardless of this flag. */
+    @Column(name = "require_cash_movement_category")
+    private Boolean requireCashMovementCategory = false;
+
     @Column(name = "supervisor_approval_mode", length = 20)
     private String supervisorApprovalMode = "PIN"; // PIN or PASSWORD
 
     @Column(name = "supervisor_pin", length = 100)
     private String supervisorPin;
+
+    /** Session Roaming Phase 9 — whether a cross-branch session transfer requires supervisor
+     *  authorization. See {@code pos.session.PosSessionTransferPolicy}. Defaults to {@code true}
+     *  (require it) so an unconfigured branch never silently allows an unauthorized cross-branch
+     *  move; same-branch transfers are never gated by this flag. */
+    @Column(name = "require_supervisor_for_cross_branch_transfer")
+    private Boolean requireSupervisorForCrossBranchTransfer = true;
 
     // Void behavior
     @Column(name = "void_mode", length = 20)
@@ -178,8 +194,14 @@ public class PosSettings extends BaseEntity {
     public Boolean getRequireSupervisorForVoid() { return requireSupervisorForVoid; }
     public void setRequireSupervisorForVoid(Boolean requireSupervisorForVoid) { this.requireSupervisorForVoid = requireSupervisorForVoid; }
 
+    public Boolean getRequireCashMovementCategory() { return requireCashMovementCategory; }
+    public void setRequireCashMovementCategory(Boolean requireCashMovementCategory) { this.requireCashMovementCategory = requireCashMovementCategory; }
+
     public String getSupervisorApprovalMode() { return supervisorApprovalMode; }
     public void setSupervisorApprovalMode(String supervisorApprovalMode) { this.supervisorApprovalMode = supervisorApprovalMode; }
+
+    public Boolean getRequireSupervisorForCrossBranchTransfer() { return requireSupervisorForCrossBranchTransfer; }
+    public void setRequireSupervisorForCrossBranchTransfer(Boolean requireSupervisorForCrossBranchTransfer) { this.requireSupervisorForCrossBranchTransfer = requireSupervisorForCrossBranchTransfer; }
 
     // ARCHFIX S5: never serialize the supervisor PIN (now a BCrypt hash) to the client. The setter
     // stays public so the save request body can still carry a new raw PIN (Jackson deserializes via

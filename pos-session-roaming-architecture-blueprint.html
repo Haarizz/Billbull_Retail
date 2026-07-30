@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BillBull POS Architecture Analysis</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1b1f24;
+  --muted: #5b6470;
+  --border: #e2e5e9;
+  --code-bg: #f3f4f6;
+  --accent: #b45309;
+  --table-head: #f7f5f0;
+  --link: #9a4d0a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #e6e8eb;
+    --muted: #9aa3ad;
+    --border: #2a2e35;
+    --code-bg: #1d2025;
+    --accent: #f0b866;
+    --table-head: #1d2025;
+    --link: #f0b866;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --fg: #e6e8eb; --muted: #9aa3ad; --border: #2a2e35;
+  --code-bg: #1d2025; --accent: #f0b866; --table-head: #1d2025; --link: #f0b866;
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --fg: #1b1f24; --muted: #5b6470; --border: #e2e5e9;
+  --code-bg: #f3f4f6; --accent: #b45309; --table-head: #f7f5f0; --link: #9a4d0a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  display: flex;
+}
+#toc {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  flex: 0 0 300px;
+  padding: 24px 18px;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+#toc a {
+  display: block;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 0;
+  border-radius: 4px;
+}
+#toc a:hover { color: var(--accent); }
+#toc .toc-title {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+#toc .toc-l1 { font-weight: 600; color: var(--fg); margin-top: 10px; }
+#toc .toc-l2 { padding-left: 14px; }
+#toc .toc-l3 { padding-left: 28px; font-size: 12px; }
+main {
+  flex: 1 1 auto;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 40px 48px 120px;
+  min-width: 0;
+}
+h1, h2, h3, h4 { scroll-margin-top: 20px; line-height: 1.3; }
+h1 { font-size: 1.9em; border-bottom: 2px solid var(--accent); padding-bottom: 10px; }
+h2 { font-size: 1.5em; margin-top: 2.4em; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 1.2em; margin-top: 1.8em; color: var(--accent); }
+h4 { font-size: 1.02em; margin-top: 1.4em; }
+p { color: var(--fg); }
+strong { color: var(--fg); }
+a { color: var(--link); }
+code {
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: 0.85em; }
+.mermaid {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.table-wrap { overflow-x: auto; margin: 1em 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--table-head); font-weight: 600; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.25em 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+@media (max-width: 900px) {
+  body { flex-direction: column; }
+  #toc { position: static; height: auto; flex: none; border-right: none; border-bottom: 1px solid var(--border); }
+  main { padding: 24px; }
+}
+</style>
+</head>
+<body>
+<nav id="toc">
+<div class="toc-title">Contents</div>
+<a class="toc-l1" href="#billbull-pos-user-centric-session-session-roaming-architecture-blueprint">BillBull POS — User-Centric Session (Session Roaming) Architecture Blueprint</a>
+<a class="toc-l2" href="#chapter-1-design-goals">Chapter 1 — Design Goals</a>
+<a class="toc-l3" href="#why-the-architecture-is-changing">Why the architecture is changing</a>
+<a class="toc-l3" href="#current-limitations-carried-forward-from-the-dependency-audit-not-re-derived-here">Current limitations (carried forward from the dependency audit, not re-derived here)</a>
+<a class="toc-l3" href="#expected-business-benefits">Expected business benefits</a>
+<a class="toc-l3" href="#design-philosophy">Design philosophy</a>
+<a class="toc-l3" href="#backward-compatibility-goals">Backward compatibility goals</a>
+<a class="toc-l2" href="#chapter-2-new-domain-model">Chapter 2 — New Domain Model</a>
+<a class="toc-l3" href="#branch">Branch</a>
+<a class="toc-l3" href="#user-cashier">User (Cashier)</a>
+<a class="toc-l3" href="#session">Session</a>
+<a class="toc-l3" href="#terminal">Terminal</a>
+<a class="toc-l3" href="#counter">Counter</a>
+<a class="toc-l3" href="#hardware-profile-printer-cash-drawer-scanner">Hardware Profile / Printer / Cash Drawer / Scanner</a>
+<a class="toc-l3" href="#reports-x-report-z-report-day-close-session-history">Reports (X-Report, Z-Report, Day Close, Session History)</a>
+<a class="toc-l3" href="#cash-movements">Cash Movements</a>
+<a class="toc-l3" href="#invoices-checkout">Invoices (Checkout)</a>
+<a class="toc-l3" href="#held-sales-draft-sales">Held Sales / Draft Sales</a>
+<a class="toc-l2" href="#chapter-3-entity-relationships">Chapter 3 — Entity Relationships</a>
+<a class="toc-l3" href="#why-this-shape-specifically">Why this shape, specifically</a>
+<a class="toc-l2" href="#chapter-4-session-lifecycle">Chapter 4 — Session Lifecycle</a>
+<a class="toc-l3" href="#states-unchanged-set">States (unchanged set)</a>
+<a class="toc-l3" href="#full-lifecycle">Full lifecycle</a>
+<a class="toc-l3" href="#key-behavioral-change-suspend-releases-the-terminal">Key behavioral change: Suspend releases the terminal</a>
+<a class="toc-l3" href="#step-by-step">Step-by-step</a>
+<a class="toc-l2" href="#chapter-5-terminal-lifecycle">Chapter 5 — Terminal Lifecycle</a>
+<a class="toc-l2" href="#chapter-6-counter-behavior">Chapter 6 — Counter Behavior</a>
+<a class="toc-l3" href="#recommended-approach-and-justification">Recommended approach and justification</a>
+<a class="toc-l2" href="#chapter-7-session-transfer">Chapter 7 — Session Transfer</a>
+<a class="toc-l3" href="#overview">Overview</a>
+<a class="toc-l3" href="#the-complete-process">The complete process</a>
+<a class="toc-l3" href="#every-scenario">Every scenario</a>
+<a class="toc-l2" href="#chapter-8-business-rules">Chapter 8 — Business Rules</a>
+<a class="toc-l2" href="#chapter-9-reporting">Chapter 9 — Reporting</a>
+<a class="toc-l3" href="#how-reporting-behaves-after-session-transfer-summarized">How reporting behaves after session transfer, summarized</a>
+<a class="toc-l2" href="#chapter-10-security">Chapter 10 — Security</a>
+<a class="toc-l2" href="#chapter-11-database-strategy">Chapter 11 — Database Strategy</a>
+<a class="toc-l3" href="#entities-that-change">Entities that change</a>
+<a class="toc-l3" href="#new-entities">New entities</a>
+<a class="toc-l3" href="#entities-that-remain-unchanged">Entities that remain unchanged</a>
+<a class="toc-l3" href="#new-relationships">New relationships</a>
+<a class="toc-l3" href="#new-ownership-model">New ownership model</a>
+<a class="toc-l3" href="#migration-philosophy">Migration philosophy</a>
+<a class="toc-l3" href="#backward-compatibility-strategy">Backward compatibility strategy</a>
+<a class="toc-l3" href="#future-cleanup-strategy">Future cleanup strategy</a>
+<a class="toc-l2" href="#chapter-12-backend-strategy">Chapter 12 — Backend Strategy</a>
+<a class="toc-l3" href="#new-services">New services</a>
+<a class="toc-l3" href="#existing-services-responsibility-changes">Existing services — responsibility changes</a>
+<a class="toc-l3" href="#api-philosophy">API philosophy</a>
+<a class="toc-l3" href="#validation-strategy">Validation strategy</a>
+<a class="toc-l3" href="#session-resolution-strategy">Session resolution strategy</a>
+<a class="toc-l3" href="#transfer-strategy">Transfer strategy</a>
+<a class="toc-l2" href="#chapter-13-frontend-strategy">Chapter 13 — Frontend Strategy</a>
+<a class="toc-l2" href="#chapter-14-migration-strategy">Chapter 14 — Migration Strategy</a>
+<a class="toc-l2" href="#chapter-15-risks">Chapter 15 — Risks</a>
+<a class="toc-l3" href="#business-risks">Business risks</a>
+<a class="toc-l3" href="#technical-risks">Technical risks</a>
+<a class="toc-l3" href="#migration-risks">Migration risks</a>
+<a class="toc-l3" href="#concurrency-risks">Concurrency risks</a>
+<a class="toc-l3" href="#data-integrity-risks">Data integrity risks</a>
+<a class="toc-l3" href="#operational-risks">Operational risks</a>
+<a class="toc-l2" href="#chapter-16-future-enhancements">Chapter 16 — Future Enhancements</a>
+</nav>
+<main>
+<h1 id="billbull-pos-user-centric-session-session-roaming-architecture-blueprint">BillBull POS — User-Centric Session (Session Roaming) Architecture Blueprint</h1>
+<p><strong>Status</strong>: Design document. No code written, no SQL scripts, no API implementations. This is the official blueprint for redesigning the BillBull POS module from a Terminal-Centric session model to a User-Centric ("Session Roaming") model.</p>
+<p><strong>Inputs to this design</strong>: <code>pos-architecture-analysis.html</code> (baseline domain audit), <code>pos-session-user-centric-audit.html</code> (session-lifecycle deep dive), <code>pos-terminal-dependency-audit.html</code> (exhaustive dependency sweep). Every design decision below is made with full knowledge of the existing implementation documented in those three passes; this document does not re-derive or re-justify facts already established there except where needed to explain a design choice.</p>
+<p><strong>Core principles this design is built to satisfy</strong> (given, not derived): User owns the Session. Session belongs to exactly one Branch. Terminal no longer owns the session — it only *hosts* whichever session is currently running on it. Counter is the physical billing location. Hardware always belongs to the Terminal and never follows the User. A session may move between Terminals but never across Branches. One user may have at most one active session per branch. One session runs on at most one terminal at a time. The terminal a session just left must become locked immediately. X-Report, Z-Report, and Day Close must keep working unchanged from the outside.</p>
+<hr>
+<h2 id="chapter-1-design-goals">Chapter 1 — Design Goals</h2>
+<h3 id="why-the-architecture-is-changing">Why the architecture is changing</h3>
+<p>The existing model (fully documented in the prior audits) makes the <strong>Terminal</strong> the unit of session ownership: <code>pos_terminals.current_open_session_id</code> is the sole lock authority, every session lookup is terminal-first (<code>findByBranchIdAndTerminalIdAndStatus</code>), and the frontend's entire startup sequence is built around "register this device, then see what session it owns." A cashier's shift is, today, physically welded to whichever browser/device they first opened it on. Moving that cashier to a different till, replacing a faulty terminal mid-shift, or letting a supervisor hand a register to someone else all require either closing and reopening a session (losing shift continuity, splitting X/Z-Report data across two session rows) or working around the model entirely.</p>
+<h3 id="current-limitations-carried-forward-from-the-dependency-audit-not-re-derived-here">Current limitations (carried forward from the dependency audit, not re-derived here)</h3>
+<ul>
+<li>A session cannot survive a terminal swap without being closed and reopened.</li>
+<li>The one-open-session-per-terminal invariant is enforced twice, redundantly, at the database level (<code>uq_pos_session_terminal_open</code> and <code>uix_one_open_session_per_terminal</code>), both keyed on the terminal, not the user.</li>
+<li>Idle/hard-timeout auto-suspend leaves the terminal lock held, so a suspended session still blocks that terminal from being used by anyone else — even though nobody is actively using it.</li>
+<li>Ownership reassignment (<code>reassignSessionOwner</code>, <code>supervisorTakeover</code>) already exists but is hard-restricted to "the same terminal" — the domain has never needed to move a session's terminal identity, so nothing in the codebase does it.</li>
+<li>Checkout and reprint payloads carry <code>sessionId</code>, <code>terminalId</code>, and <code>branchId</code> as three independent, never-cross-validated fields.</li>
+</ul>
+<h3 id="expected-business-benefits">Expected business benefits</h3>
+<ul>
+<li>A cashier can move from a slow or malfunctioning till to a working one without losing their shift, their running totals, or their audit trail.</li>
+<li>A single register can be freed up the moment its current user suspends or steps away, instead of sitting locked for the rest of the shift.</li>
+<li>Supervisors gain a real, first-class "move this cashier's session" operation instead of the current close-and-reopen workaround.</li>
+<li>Reporting (X/Z/Day Close) becomes naturally cashier-centric rather than till-centric, which is closer to how the business actually reasons about a shift.</li>
+<li>The redesign surfaces and formalizes a capability (device replacement, temporary terminals, remote recovery) that today requires manual database intervention or a lost shift.</li>
+</ul>
+<h3 id="design-philosophy">Design philosophy</h3>
+<ol>
+<li><strong>Ownership moves, hosting stays.</strong> The User owns the Session. The Terminal hosts whichever Session is currently running on it. These are two different relationships, modeled as two different fields on two different sides — not one overloaded lock column.</li>
+<li><strong>Nothing about Hardware changes.</strong> Per the given principles, hardware belongs to the Terminal, full stop. This resolves the one open question left dangling in the dependency audit (whether hardware should roam) — it does not, by design. This dramatically shrinks the blast radius: <code>PosPrinter</code>, <code>PosCashDrawer</code>, <code>PosScanner</code>, <code>PosHardwareProfile</code>, and <code>HardwareProfileAssignmentEngine</code> require <strong>no</strong> structural change.</li>
+<li><strong>Every existing invariant that isn't explicitly named for removal is preserved.</strong> "One session per terminal at a time" survives, restated as a hosting constraint rather than an ownership constraint. "One session per user per branch" is new. Both can be enforced with the same kind of mechanism (atomic compare-and-swap plus a partial unique index) already proven in production by the current terminal-lock code — we are not introducing a new concurrency primitive, we are pointing the existing one at a different column.</li>
+<li><strong>Reporting is decoupled from session-level terminal identity wherever it already is.</strong> The audits confirmed that individual invoices/checkouts already stamp their own point-in-time <code>terminalId</code>/<code>counterName</code> independent of the session. This means Terminal Summary and Counter Summary reporting can be built (or rebuilt) on a per-transaction basis rather than a per-session basis, sidestepping the entire "what if the session moved mid-day" problem for anything invoice-shaped.</li>
+<li><strong>No big-bang cutover.</strong> Every phase in Chapter 14 is independently deployable and independently reversible. The old terminal-centric lock and the new user-centric lock run side by side for a full phase before the old one is ever removed.</li>
+</ol>
+<h3 id="backward-compatibility-goals">Backward compatibility goals</h3>
+<ul>
+<li>Every existing API contract (<code>POST /sessions/open</code>, <code>GET /sessions/active</code>, <code>POST /sessions/{id}/close</code>, etc.) keeps working with its current request/response shape throughout the migration; new capabilities are additive endpoints, not breaking changes to existing ones.</li>
+<li>Every existing report (X-Report, Z-Report, Day Close, Session History) continues to produce results indistinguishable from today for any branch that never uses transfer.</li>
+<li>Any client (frontend build, or a third-party integration hitting these APIs) that has not been updated to be transfer-aware continues to function exactly as it does today — it will simply never see a session move, because it has no code path that initiates a transfer.</li>
+<li>The two legacy DB-level partial unique indexes are not dropped until a phase dedicated to that removal, well after the new model is proven in production (Chapter 14).</li>
+</ul>
+<hr>
+<h2 id="chapter-2-new-domain-model">Chapter 2 — New Domain Model</h2>
+<p>Each entity below states its <strong>responsibility</strong> and <strong>who owns it</strong>, per the given principles.</p>
+<h3 id="branch">Branch</h3>
+<p>Unchanged. The top-level tenant-scoping entity. Owns nothing new in this redesign; remains the boundary that Sessions, Terminals, Counters, and Hardware are all scoped within, and — critically — the boundary a Session may never cross.</p>
+<h3 id="user-cashier">User (Cashier)</h3>
+<p><strong>Responsibility</strong>: the human identity that owns a shift. <strong>Ownership</strong>: owns exactly zero-or-one *active* Session per Branch (defined precisely in Chapter 8). This redesign elevates User from "a string recorded on the session" (<code>PosSession.openedBy</code>) to "the entity the session's lifecycle is actually keyed on." The existing <code>OwnershipContextHolder</code> primitive — already carrying a real, JWT-derived, numeric <code>userId</code> through every request, already used elsewhere in the application, and confirmed by the dependency audit to be <strong>completely unused by POS today</strong> — becomes the canonical identity source for this relationship. This is the single most load-bearing decision in the domain model: it means the "user" side of the new architecture is not a new concept being bolted onto the app, it is an existing, already-battle-tested primitive being plugged into POS for the first time.</p>
+<h3 id="session">Session</h3>
+<p><strong>Responsibility</strong>: the shift ledger — cash totals, sales totals, opening/closing balances, X/Z-Report data. Unchanged in that respect. <strong>Ownership</strong>: owned by exactly one User, scoped to exactly one Branch, for its entire lifetime. <strong>New responsibility</strong>: a Session now tracks which Terminal is *currently* hosting it, as a mutable pointer rather than a fixed-at-creation value. The session's own identity (its row, its id, its totals, its audit trail) is completely independent of which terminal happens to be hosting it at any given moment.</p>
+<h3 id="terminal">Terminal</h3>
+<p><strong>Responsibility</strong>: represents a physical device/browser at a fixed Counter within a Branch, and is the anchor for Hardware. <strong>Ownership</strong>: owns nothing that used to be "session ownership." <strong>New responsibility</strong>: hosts at most one Session at a time (a *hosting* relationship, not an *ownership* relationship — the distinction is the entire point of this redesign) and owns its assigned Hardware Profile, exactly as today.</p>
+<h3 id="counter">Counter</h3>
+<p><strong>Responsibility</strong>: the physical billing location a Terminal is stationed at. <strong>Ownership</strong>: unchanged — a Counter is assigned to a Terminal (or several), never to a Session or a User directly. A Session's "current counter" is a derived value read through whichever Terminal is currently hosting it, not a fact the Session owns for itself. This is elaborated in Chapter 6.</p>
+<h3 id="hardware-profile-printer-cash-drawer-scanner">Hardware Profile / Printer / Cash Drawer / Scanner</h3>
+<p><strong>Responsibility</strong>: unchanged from today in every respect. <strong>Ownership</strong>: belongs to the Terminal, exclusively, permanently, by explicit design principle. A Session roaming from Terminal A to Terminal B does not take "its" printer with it — it starts using whatever printer Terminal B has. This is a deliberate business decision (hardware is nailed to the counter it sits on) and it is the reason the hardware layer requires <strong>zero structural changes</strong> in this redesign.</p>
+<h3 id="reports-x-report-z-report-day-close-session-history">Reports (X-Report, Z-Report, Day Close, Session History)</h3>
+<p><strong>Responsibility</strong>: unchanged in output shape. <strong>Ownership</strong>: X-Report is owned by the Session (as today — it is a snapshot of one shift's activity, regardless of how many terminals hosted that shift along the way). Z-Report/Day Close is owned by the Branch+Date, aggregating across all Sessions that were active that day (as today). Terminal Summary and Counter Summary reporting, where they need to attribute activity to a specific physical location, are owned by the <strong>transaction/history record</strong>, not the Session — see Chapter 9.</p>
+<h3 id="cash-movements">Cash Movements</h3>
+<p><strong>Responsibility</strong>: unchanged — a cash drop-in/out event during a shift. <strong>Ownership</strong>: belongs to the Session (as today, via the <code>posSession</code> FK), performed by a User (strengthened from a raw string to a real identity, per Chapter 11). Cash movements are not terminal-owned in the new model any more than they were meaningfully terminal-owned in the old one — the only terminal-coupling that existed was the activity-tracking side effect, which is resolved naturally once the session's "current terminal" pointer is kept live (Chapter 4).</p>
+<h3 id="invoices-checkout">Invoices (Checkout)</h3>
+<p><strong>Responsibility</strong>: unchanged — the system of record for a completed sale. <strong>Ownership</strong>: belongs to the Session that recorded it, but — as the dependency audit confirmed — <strong>each invoice already independently stamps its own point-in-time <code>terminalId</code>/<code>counterName</code>/<code>branchId</code></strong> at the moment of checkout. This per-transaction stamping is untouched by this redesign and becomes the foundation for Terminal/Counter-level reporting under roaming (Chapter 9).</p>
+<h3 id="held-sales-draft-sales">Held Sales / Draft Sales</h3>
+<p><strong>Responsibility</strong>: parked carts. <strong>Ownership</strong>: belongs to the Session (the existing Layaway-based "hold" mechanism already filters by <code>posSessionId</code>, confirmed session-first in the dependency audit) — this redesign changes nothing about held-sale ownership, only removes the incidental terminal-coupling that existed purely as denormalized metadata on the hold payload.</p>
+<hr>
+<h2 id="chapter-3-entity-relationships">Chapter 3 — Entity Relationships</h2>
+<p><strong>Who owns Session?</strong> The <strong>User</strong>. A Session has exactly one owning <code>userId</code> for its entire life. This is a hard, unconditional fact — nothing in this design allows a Session to change owner except through the explicit, audited Supervisor Takeover / Reassignment operation (Chapter 4/7), and that operation is a deliberate ownership *transfer*, not a side effect of moving terminals.</p>
+<p><strong>Who owns Hardware?</strong> The <strong>Terminal</strong>. Unconditionally, per the given principle. This relationship is identical to today's and is not part of the migration surface at all — it is called out here only so the document is unambiguous that "session roaming" and "hardware roaming" are two different, unrelated concepts, and this redesign implements only the first.</p>
+<p><strong>Who owns Counter?</strong> The <strong>Terminal</strong> (a Terminal is assigned to a Counter; a Counter may have several Terminals pointed at it, unchanged from today). A Session does not own a Counter — it observes whichever Counter its current hosting Terminal happens to be assigned to. This is why Counter behavior needs its own chapter (Chapter 6): under roaming, "the session's counter" stops being a fixed fact and becomes a fact that changes when the hosting terminal changes, exactly as it should, since the counter is a physical place and the session is now free to move between physical places.</p>
+<p><strong>Who owns Reports?</strong> X-Reports are owned by the Session (one X-Report life-cycle per session, regardless of how many terminals hosted it). Z-Report/Day Close is owned by Branch+Date, unchanged. Terminal-level and Counter-level reporting is owned by the transaction/history layer (invoices' own stamped fields, plus the new Session-Terminal-History record introduced in this chapter's Session Transfer discussion and detailed in Chapter 9) — not by the Session itself, because a single session may have legitimately operated from more than one physical location in one shift.</p>
+<p><strong>Who owns Cash Movements?</strong> The <strong>Session</strong>, unchanged. A cash movement recorded while a session was hosted at Terminal A remains attributed to Terminal A at the moment it happened (via its own denormalized snapshot, following the same pattern invoices already use), even after the session later transfers to Terminal B.</p>
+<p><strong>Who owns Held Sales / Draft Sales?</strong> The <strong>Session</strong>, unchanged — this was already true before this redesign (the dependency audit confirmed the existing hold/recall filter is session-first, not terminal-first). Roaming makes this relationship *more* correct, not less: a cashier who transfers to a new terminal mid-shift can already, today, only recall holds tied to their own session id — under roaming, that continues to work identically regardless of which terminal is currently hosting the session.</p>
+<h3 id="why-this-shape-specifically">Why this shape, specifically</h3>
+<p>The prior model conflated two relationships — "who is allowed to use this terminal right now" and "who owns this shift" — into one column (<code>current_open_session_id</code>) living on the Terminal. This redesign's central move is to split that into two explicit, independently-lifecycled relationships:</p>
+<ul>
+<li><strong>Ownership</strong> (<code>Session.ownerUserId</code>): who this shift belongs to. Set once at session creation. Changes only via an explicit, audited reassignment operation.</li>
+<li><strong>Hosting</strong> (<code>Terminal.hostedSessionId</code> / <code>Session.currentTerminalPk</code>): which physical device is currently displaying/operating this shift. Mutable, expected to change over the life of a session, and — this is the important part — <strong>changing it never touches ownership</strong>.</li>
+</ul>
+<p>Everything else in this document follows from that one split.</p>
+<div class="mermaid">
+erDiagram
+    BRANCH ||--o{ USER : "scopes"
+    BRANCH ||--o{ TERMINAL : "scopes"
+    BRANCH ||--o{ COUNTER : "scopes"
+    BRANCH ||--o{ SESSION : "scopes (never crosses)"
+    USER ||--o| SESSION : "owns (0..1 active per branch)"
+    TERMINAL ||--o| SESSION : "hosts (0..1 at a time)"
+    TERMINAL }o--|| COUNTER : "assigned to"
+    TERMINAL ||--o| HARDWARE_PROFILE : "owns (never roams)"
+    HARDWARE_PROFILE ||--o{ PRINTER : "binds"
+    HARDWARE_PROFILE ||--o{ CASH_DRAWER : "binds"
+    HARDWARE_PROFILE ||--o{ SCANNER : "binds"
+    SESSION ||--o{ CASH_MOVEMENT : "owns"
+    SESSION ||--o{ HELD_SALE : "owns"
+    SESSION ||--o{ INVOICE : "records (each stamps its own terminal/counter)"
+    SESSION ||--o{ SESSION_TERMINAL_HISTORY : "logs hosting segments"
+    TERMINAL ||--o{ SESSION_TERMINAL_HISTORY : "logs hosting segments"
+</div>
+<hr>
+<h2 id="chapter-4-session-lifecycle">Chapter 4 — Session Lifecycle</h2>
+<h3 id="states-unchanged-set">States (unchanged set)</h3>
+<p>The externally-visible <code>PosSessionStatus</code> set stays exactly <code>OPEN</code>, <code>SUSPENDED</code>, <code>CLOSED</code> — no new status value is introduced. This is a deliberate compatibility decision: X-Report, Z-Report, and every existing status-based query/report continues to filter on the same three values. <strong>Transfer is a same-status event</strong> (a session moves from <code>OPEN</code>-hosted-at-A to <code>OPEN</code>-hosted-at-B); it is never itself a status.</p>
+<h3 id="full-lifecycle">Full lifecycle</h3>
+<div class="mermaid">
+stateDiagram-v2
+    [*] --> Authenticated: Login (JWT, carries userId)
+    Authenticated --> Resolving: Enter POS (terminal self-registers, independent of session)
+    Resolving --> Resumed: Existing active session found FOR THIS USER, hosted on THIS terminal
+    Resolving --> TransferPrompt: Existing active session found FOR THIS USER, hosted on ANOTHER terminal
+    Resolving --> AutoClaimed: Existing SUSPENDED session found for this user (not hosted anywhere)
+    Resolving --> NoSession: No active session found for this user in this branch
+    NoSession --> Open: Create Session (unchanged validations: day not closed, no stale prior-day session)
+    TransferPrompt --> Open: Transfer confirmed (Chapter 7)
+    TransferPrompt --> NoSession: Transfer declined (cashier opens a fresh session instead — rare, supervisor-gated)
+    AutoClaimed --> Open: silently re-hosted on this terminal, no interruption elsewhere
+    Resumed --> Open
+    Open --> Open: Sales, Cash Movements, Held Sales (unchanged)
+    Open --> Suspended: Manual suspend, idle timeout, or hard-timeout (terminal is released — see below)
+    Suspended --> Open: Resume (on ANY terminal — this is what "roaming while suspended" means)
+    Open --> Transferring: Transfer initiated (Chapter 7) — short-lived internal guard, not an external status
+    Transferring --> Open: Transfer completed (now hosted on new terminal)
+    Transferring --> Open: Transfer failed/rolled back (still hosted on original terminal)
+    Open --> Closed: Close Session
+    Suspended --> Closed: Close Session (valid from Suspended too, unchanged)
+    Closed --> [*]: Terminal released, X-Report auto-stamped if needed, Z-Report snapshot built
+    Closed --> DayClosed: Day Close (branch+date aggregate, unchanged)
+</div>
+<h3 id="key-behavioral-change-suspend-releases-the-terminal">Key behavioral change: Suspend releases the terminal</h3>
+<p>Today, an idle/hard-timeout auto-suspend leaves <code>pos_terminals.current_open_session_id</code> set, so the terminal stays locked even though nobody is using it. Under the new model, <strong>suspend releases the hosting terminal</strong> (clears <code>Terminal.hostedSessionId</code>, terminal returns to <code>ACTIVE</code>/<code>IDLE</code> and is immediately available to host a different session). This is not an incidental side effect — it is the direct, intended consequence of splitting ownership from hosting: a suspended session still belongs to its User, but it is not *using* any terminal right now, so there is no reason for a terminal to sit locked on its behalf. This also means "resume" is now inherently roaming-capable — resuming a suspended session on any terminal is architecturally identical to a fresh transfer-in, not a special case.</p>
+<h3 id="step-by-step">Step-by-step</h3>
+<ol>
+<li><strong>Login</strong> — unchanged. JWT carries <code>userId</code> (via the existing <code>OwnershipContextHolder</code> pipeline).</li>
+<li><strong>Terminal self-registration</strong> — unchanged mechanism, but its *purpose* narrows: it establishes hardware/heartbeat/print-target identity for this device. It is no longer, by itself, a gate on session resolution.</li>
+<li><strong>Find Existing Session</strong> — a new, user-first resolution call: "does this user have an active (OPEN or SUSPENDED) session in this branch?" This replaces terminal-first lookup as the primary resolution path (Chapter 12 details the service responsible).</li>
+<li><strong>Resume</strong> — three sub-cases, as shown in the diagram: already hosted here (silent), hosted elsewhere-and-OPEN (needs a Transfer confirmation, because interrupting a live till has consequences), or SUSPENDED-and-hosted-nowhere (silently re-hosted, since nothing active is being interrupted).</li>
+<li><strong>Create Session</strong> — unchanged validations (business day not closed, no stale prior-day session — these remain branch-wide checks per the existing behavior, which the dependency audit already noted is naturally roaming-compatible). New: the duplicate-check is now user-first (<code>findByOwnerUserIdAndBranchIdAndStatusIn(OPEN, SUSPENDED)</code>) rather than terminal-first.</li>
+<li><strong>Sales / Cash Movements / Held Sales</strong> — unchanged behaviorally; the only structural change is that any code path that used to reach for "the session's terminal" now reaches for "the session's *current* terminal," which is always accurate because Transfer keeps it live (Chapter 7).</li>
+<li><strong>Suspend</strong> — releases the hosting terminal (see above).</li>
+<li><strong>Transfer</strong> — detailed fully in Chapter 7; a same-status relocation of the hosting terminal while <code>OPEN</code>.</li>
+<li><strong>Resume</strong> — from <code>SUSPENDED</code>, on any terminal, no different in mechanism from a fresh AutoClaim.</li>
+<li><strong>Close</strong> — unchanged behavior: releases the hosting terminal, auto-stamps X-Report if needed, builds the immutable Z-Report snapshot, posts GL (still best-effort/non-blocking).</li>
+<li><strong>Day Close</strong> — unchanged branch+date aggregate; unaffected by how many terminals any given session touched during the day (Chapter 9).</li>
+</ol>
+<hr>
+<h2 id="chapter-5-terminal-lifecycle">Chapter 5 — Terminal Lifecycle</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Aspect</th><th>Changes</th><th>Stays unchanged</th></tr></thead>
+<tbody>
+<tr><td><strong>Registration</strong></td><td>Purpose narrows: establishes device/hardware/branch identity only. No longer a precondition for session resolution (it happens in parallel, not upstream, of session lookup).</td><td>Mechanism itself (device fingerprint, <code>(deviceFingerprint, branchId)</code> composite identity, approval workflow, status gates) is unchanged.</td></tr>
+<tr><td><strong>Heartbeat</strong></td><td>Unchanged. Still purely a liveness signal, still decoupled from session activity exactly as it is today (the dependency audit already found <code>useHeartbeat</code>/<code>useIdleTimeout</code> cleanly split on terminal vs. session — this redesign preserves that split rather than merging it).</td><td>Cadence, endpoint, offline-detection scheduler.</td></tr>
+<tr><td><strong>Hardware</strong></td><td>Unchanged, by explicit design principle — hardware never roams.</td><td>Everything: <code>PosPrinter</code>, <code>PosCashDrawer</code>, <code>PosScanner</code>, <code>PosHardwareProfile</code>, assignment engine.</td></tr>
+<tr><td><strong>Current Session</strong></td><td>Renamed in meaning (not necessarily in storage — see Chapter 11) from "the session I own" to "the session I am currently hosting." Now mutable across a session's lifetime via Transfer, where before it was fixed at session-open time.</td><td>The underlying mechanism (a nullable pointer, set/cleared via an atomic compare-and-swap) is preserved — only its semantics and the *side* it's authoritative for change.</td></tr>
+<tr><td><strong>Transfer</strong></td><td>New. A terminal can now be the *source* or *target* of a transfer event (Chapter 7).</td><td>—</td></tr>
+<tr><td><strong>Lock</strong></td><td>New terminal status: <code>LOCKED</code>. Entered automatically the instant a hosted session is transferred away. Distinct from <code>BLOCKED</code> (admin-imposed) and <code>MAINTENANCE</code> (admin-imposed) — <code>LOCKED</code> is system-imposed, transfer-caused, and self-clearing once acknowledged (see Unlock).</td><td>The concept of a terminal being unusable for a reason is not new — <code>BLOCKED</code>/<code>MAINTENANCE</code>/<code>OFFLINE</code> already exist; <code>LOCKED</code> is a new member of the same status family.</td></tr>
+<tr><td><strong>Unlock</strong></td><td>New. A <code>LOCKED</code> terminal returns to <code>ACTIVE</code> only via an explicit acknowledgment: either the original cashier's browser receives the "your session moved" notice and dismisses it (an authenticated, low-friction self-service unlock), or a supervisor force-unlocks it. Auto-unlock without acknowledgment is deliberately <strong>not</strong> provided — the whole point of <code>LOCKED</code> is to stop a stale screen from being used silently.</td><td>—</td></tr>
+<tr><td><strong>Offline</strong></td><td>Unchanged detection mechanism (<code>PosTerminalScheduler</code>, per-branch threshold).</td><td>Fully unchanged — offline detection is orthogonal to session ownership and was already confirmed compatible in the dependency audit.</td></tr>
+<tr><td><strong>Recovery</strong></td><td>A terminal recovering from <code>OFFLINE</code> or <code>STALE</code> no longer implies anything about a session — since it never truly "owned" one under the new model, there is nothing to reconcile. This actually *simplifies* the existing <code>PosTerminalLifecycleService.recoverFromStale</code> logic's relationship to sessions, though the mechanism (recover on next live activity) is unchanged.</td><td>—</td></tr>
+<tr><td><strong>Decommission / Archive</strong></td><td>Guard condition changes from "does this terminal have <code>current_open_session_id != null</code>" to "is this terminal currently <code>LOCKED</code> or actively hosting an <code>OPEN</code> session" — functionally almost identical, since a hosted session still blocks archival, but a <code>LOCKED</code> (already-vacated) terminal is now explicitly archivable/decommissionable without needing anyone to "close" a session that already left. This is a net loosening, not a tightening, of the existing guard.</td><td>The daily auto-archive job's cadence and STALE→ARCHIVED state machine are unchanged.</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="chapter-6-counter-behavior">Chapter 6 — Counter Behavior</h2>
+<p><strong>Counter ownership</strong>: unchanged — a Counter belongs to a Branch and is assigned to one or more Terminals. This redesign does not introduce Session-owned or User-owned counters.</p>
+<p><strong>Counter assignment</strong>: unchanged mechanism (<code>assignCounter(terminalId, counterId)</code>), still Terminal-scoped, still non-exclusive (multiple terminals may share a counter, exactly as today).</p>
+<p><strong>Counter after session transfer</strong>: the session's *current* counter becomes whatever counter its *current* hosting terminal is assigned to. This is now a <strong>live-derived value</strong>, read through the hosting relationship at query time (or refreshed onto the session row at the moment of transfer, for query convenience — an implementation detail for Chapter 11, not a design ambiguity), rather than the "snapshot taken once at session-open and never touched again" behavior that exists today.</p>
+<p><strong>Counter history</strong>: the new <strong>Session-Terminal-History</strong> record (introduced in Chapter 4/7) is also, transitively, a counter history — because each history segment records which terminal hosted the session, and a terminal's counter assignment at that moment is resolvable from that segment's timestamp range plus the terminal's assignment log (terminal-to-counter reassignment is rare and already audited via the terminal's own update timestamps). A session that worked Counter 1 for the morning and Counter 3 after lunch has that fact fully reconstructable after the day is over.</p>
+<p><strong>Counter in reports</strong>: reports that need "which counter did this activity happen at" (Cash Summary, Sales Summary, Counter Summary) should read the counter from the <strong>transaction-level</strong> stamp (invoices and cash movements already denormalize their own point-in-time terminal/counter identity, per Chapter 2/3) rather than from "the session's counter," because a single session may span multiple counters in one shift under roaming. The session-level counter field remains useful for *display* ("where is this cashier right now") but must not be treated as authoritative for historical attribution.</p>
+<p><strong>Counter snapshots</strong>: the existing pattern (denormalize onto the session at a point in time) is kept, but its *meaning* changes from "the counter for this session's entire life" to "the counter as of the last time this session's hosting terminal changed." This is the recommended approach.</p>
+<h3 id="recommended-approach-and-justification">Recommended approach and justification</h3>
+<p><strong>Recommendation</strong>: keep Counter as a purely Terminal-owned, physical-location concept; never introduce a Session-Counter or User-Counter relationship. Represent "where is this session right now" as a derived/refreshed field on the session (for cheap reads), and represent "where has this session been" as an explicit, append-only history table keyed by (session, terminal, counter, start, end) rather than trying to infer it after the fact from terminal update logs.</p>
+<p><strong>Justification</strong>: a Counter is a fixed, physical thing — a numbered lane, a specific desk. It cannot roam, was never asked to roam by the given principles, and giving it any owner other than the Terminal it's bolted to would contradict the explicit "Hardware always belongs to the Terminal" principle by implication (since a counter is where the hardware sits). Making the session's counter a live/refreshed pointer rather than a one-time snapshot is the smallest change that makes the existing denormalization pattern correct under roaming, without inventing a new relationship type. The explicit history table is what makes reporting (Chapter 9) trustworthy without forcing every report query to reconstruct "where was this session at 2pm" from scattered audit logs.</p>
+<hr>
+<h2 id="chapter-7-session-transfer">Chapter 7 — Session Transfer</h2>
+<h3 id="overview">Overview</h3>
+<p>Transfer is the operation that moves an <code>OPEN</code> session's hosting terminal from A (source) to B (target) without changing its owner, its id, its totals, or its status. It is the one genuinely new capability in this architecture; everything else in this document exists to support it correctly.</p>
+<h3 id="the-complete-process">The complete process</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant Cashier
+    participant TerminalB as Target Terminal (B)
+    participant Resolve as Session Resolution Service
+    participant Transfer as Session Transfer Service
+    participant TerminalA as Source Terminal (A)
+
+    Cashier->>TerminalB: Logs in / registers device
+    TerminalB->>Resolve: "Find my active session" (userId, branchId)
+    Resolve-->>TerminalB: Active session found, currently hosted on Terminal A
+    TerminalB->>Cashier: Show Transfer Confirmation ("Your session is active on Terminal A. Move it here?")
+    Cashier->>TerminalB: Confirms transfer
+    TerminalB->>Transfer: initiateTransfer(sessionId, targetTerminalId)
+    Transfer->>Transfer: Re-verify: session still OPEN, still owned by this user, still hosted on A
+    alt verification fails (already closed / already moved / ownership changed)
+        Transfer-->>TerminalB: 409 — refresh and retry
+    else verification passes
+        Transfer->>Transfer: Acquire transfer guard (atomic, prevents concurrent transfer of same session)
+        Transfer->>TerminalA: Detach — clear hostedSessionId, set status=LOCKED (lockedReason=TRANSFERRED)
+        Transfer->>Transfer: Close current Session-Terminal-History segment (endAt=now)
+        Transfer->>TerminalB: Attach — set hostedSessionId=session, terminal becomes the session's current terminal
+        Transfer->>Transfer: Open new Session-Terminal-History segment (terminal=B, startAt=now)
+        Transfer->>Transfer: Refresh session's denormalized counter/terminal fields to B's
+        Transfer->>Transfer: Write Session Transfer Log entry (from=A, to=B, by=userId, at=now)
+        Transfer->>Transfer: Release transfer guard
+        Transfer-->>TerminalB: 200 — session now hosted here
+        Transfer-->>TerminalA: (async/on next contact) LOCKED — show "session moved" screen
+    end
+</div>
+<h3 id="every-scenario">Every scenario</h3>
+<ul>
+<li><strong>Cashier logs into another terminal while their session is still actively OPEN elsewhere</strong>: the flow above — explicit Transfer Confirmation is required, because a live till at Terminal A may have an in-progress cart, an unresolved payment, or a customer standing at the counter. This is a deliberate friction point, not an oversight.</li>
+<li><strong>Existing session detected</strong>: handled by the Session Resolution Service (Chapter 12), which is consulted independently of terminal registration on every POS entry.</li>
+<li><strong>Transfer confirmation</strong>: a modal/screen the cashier must actively accept; declining leaves the session where it is and does not force a new session to be created (the cashier can go back to Terminal A, or a supervisor can intervene).</li>
+<li><strong>Current terminal (source) locking</strong>: happens as part of the same atomic transaction that attaches the session to the target — there is no window where the session is hosted "nowhere" or hosted on *both* terminals simultaneously (see Race-Condition Protection, Chapter 10).</li>
+<li><strong>New terminal activation</strong>: the target terminal's <code>hostedSessionId</code> is set in the same transaction; from the target's perspective, activation is instantaneous and indistinguishable from a normal session resume.</li>
+<li><strong>Failure recovery — transfer request fails mid-flight (network drop between confirm and server ack)</strong>: the transfer transaction is atomic (Chapter 10) — either it fully committed (target hosts the session, source is LOCKED) or it fully rolled back (source still hosts it, target shows nothing happened). The client's job on reconnect is simply to re-run Session Resolution, which will report the true current state either way — there is no client-side state to reconcile.</li>
+<li><strong>Unexpected browser close (on the source terminal, mid-shift, no transfer initiated)</strong>: not a transfer scenario at all — this is identical to today's idle-timeout path. The session auto-suspends after the idle window, which (per Chapter 4's new behavior) releases the terminal. No data is lost; the cashier resumes from anywhere.</li>
+<li><strong>Unexpected browser close (on the target terminal, mid-transfer, after confirmation but before the server responds)</strong>: the transfer either completed server-side (in which case the session is now correctly hosted on the target and simply waiting for a browser to reconnect to it) or did not (in which case it's still on the source) — never both, never neither, by virtue of the transaction being atomic. Reconnecting anywhere re-runs Session Resolution and shows the true state.</li>
+<li><strong>Terminal crash (source terminal dies mid-shift, no clean disconnect)</strong>: the session on it eventually auto-suspends via the existing idle/hard-timeout scheduler (unchanged mechanism), which releases the hosting terminal. The cashier (or a supervisor) can then resume/transfer the session onto a working terminal, with no special "crash recovery" code path needed — the existing timeout machinery already covers it.</li>
+<li><strong>Network interruption (during an active transfer)</strong>: covered by the atomic-transaction guarantee above; from the client's perspective this is indistinguishable from "browser closed mid-transfer."</li>
+<li><strong>Session timeout during a pending transfer confirmation (cashier has the confirmation dialog open but doesn't act in time)</strong>: the underlying session may auto-suspend on the source in the background; when the cashier does eventually confirm, the transfer service re-verifies current state (the "re-verify" step in the sequence diagram) and — since a SUSPENDED session isn't hosted anywhere — this degrades gracefully into an AutoClaim rather than a true transfer, with no error shown to the user.</li>
+<li><strong>Supervisor takeover interacting with transfer</strong>: takeover (reassigning <code>ownerUserId</code>) and transfer (reassigning hosting terminal) are orthogonal operations that can be composed — a supervisor can take over a session (become its new owner) and, in the same or a following action, transfer it to a different terminal. Neither operation is a special case of the other; both go through their own audited, atomic paths.</li>
+</ul>
+<hr>
+<h2 id="chapter-8-business-rules">Chapter 8 — Business Rules</h2>
+<ol>
+<li><strong>One active session per user, per branch.</strong> "Active" means <code>OPEN</code> or <code>SUSPENDED</code> (not <code>CLOSED</code>). Enforced atomically, the same way the current one-per-terminal rule is enforced today (Chapter 10). *Why*: this is the direct restatement of the given principle, and mirrors the concurrency-safety pattern already proven in production for the terminal-based version of this same rule.</li>
+<li><strong>A user may hold active sessions in more than one branch simultaneously.</strong> Not prohibited by any given principle ("Session may NOT move across Branches" governs a single session's movement, not a user's total session count across branches) — a multi-branch user opening a shift in Branch A and, separately, one in Branch B is two independent sessions, each obeying rule 1 within its own branch. *Why*: nothing in the given principles forbids this, and forbidding it would be a new restriction this redesign has no mandate to introduce.</li>
+<li><strong>A session belongs to exactly one branch for its entire life and can never move to a different branch.</strong> Transfer is terminal-to-terminal *within* the same branch only; a target terminal registered under a different branch is not a valid transfer target and the operation is rejected outright, before any confirmation is even shown.</li>
+<li><strong>A session can be hosted on at most one terminal at a time.</strong> Restated, not removed, from today's "one open session per terminal" — the direction of the relationship flips (terminal no longer *owns*, but a session still cannot be simultaneously live on two screens), enforced by the same style of atomic compare-and-swap as before, now applied to the hosting pointer rather than the ownership pointer.</li>
+<li><strong>Transferring a session locks its previous terminal immediately, unconditionally, as part of the same atomic operation.</strong> No transfer can complete while leaving the source terminal in any state other than <code>LOCKED</code>.</li>
+<li><strong>A <code>LOCKED</code> terminal cannot host a new or resumed session until explicitly unlocked</strong> (self-service acknowledgment or supervisor override), even if the user standing in front of it is a different cashier entirely.</li>
+<li><strong>Session ownership changes only via explicit reassignment (Supervisor Takeover / shift handover), never as a side effect of a transfer.</strong> Moving terminals never changes who the session belongs to.</li>
+<li><strong>Suspend releases the hosting terminal.</strong> A suspended session holds no terminal lock; resuming it (on any terminal) is architecturally identical to a fresh AutoClaim.</li>
+<li><strong>Held Sales / Draft Sales remain session-owned</strong>, recallable regardless of which terminal currently hosts the session, unchanged from today's already-correct behavior.</li>
+<li><strong>Checkout requires a valid, currently-<code>OPEN</code> session</strong> whose current hosting terminal matches the terminal the checkout request actually originates from — this closes the "three uncorrelated fields" gap the dependency audit flagged, by making terminal/session agreement a server-side validation rather than an unchecked assumption (Chapter 10).</li>
+<li><strong>Printing always targets the requesting terminal's own hardware</strong>, never anything associated with the session's owner or the session's prior hosting terminals — a direct consequence of "hardware never follows the user."</li>
+<li><strong>Cash movements remain session-owned</strong>, and their point-in-time terminal/counter attribution is a snapshot taken at the moment of the movement, not a live-follow of wherever the session is hosted now — consistent with how invoices already behave.</li>
+<li><strong>X-Report is generated per session</strong> and reflects the session's full life, regardless of how many terminals hosted it — no change to when or how it is triggered.</li>
+<li><strong>Z-Report / Day Close eligibility is redefined from "every terminal has reported" to "every active/closed session for the branch+date has reported"</strong> — since a terminal may have hosted zero, one, or several sessions across the day under roaming, the terminal-count framing no longer maps cleanly to a completeness check; the session-count framing does (Chapter 9).</li>
+<li><strong>Day Close's business-day-advance and reconciliation math are unchanged</strong> — they already operate at branch+date granularity and were already confirmed roaming-agnostic.</li>
+<li><strong>A transfer requires the transferring user to be the session's current owner</strong> (or a supervisor acting on their behalf) — a cashier cannot transfer someone else's session without a supervisor-authorized takeover first.</li>
+</ol>
+<hr>
+<h2 id="chapter-9-reporting">Chapter 9 — Reporting</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Report</th><th>Impact</th><th>Behavior after transfer</th></tr></thead>
+<tbody>
+<tr><td><strong>X-Report</strong></td><td>None — remains a per-session snapshot.</td><td>A session that transferred mid-shift produces one X-Report exactly as before; it simply reflects activity that happened across more than one physical terminal, which the report's existing cashier-wise/tender-wise breakdowns already summarize correctly since they were never terminal-keyed to begin with.</td></tr>
+<tr><td><strong>Z-Report</strong></td><td>Eligibility check redefined (Rule 14): "every session active in the branch+date has an X-Report," replacing "every terminal has reported."</td><td>Functionally near-identical in the common case (each terminal hosts one session all day, so "every terminal reported" and "every session reported" coincide) — it only diverges, correctly, on days where a session roamed across terminals or a terminal hosted more than one session.</td></tr>
+<tr><td><strong>Cash Summary</strong></td><td>None to the aggregation math (session-scoped, unchanged).</td><td>Per-terminal cash-drop attribution (if ever needed) reads from each cash movement's own point-in-time terminal snapshot (Rule 12), not from the session's current terminal.</td></tr>
+<tr><td><strong>Sales Summary</strong></td><td>None.</td><td>Unchanged — already session/cashier-scoped.</td></tr>
+<tr><td><strong>Cashier Summary</strong></td><td>Strengthened, not changed — this report was already effectively user-centric (<code>buildCashierWiseSummary</code>) before this redesign; it becomes more accurate once cashier identity is a real FK rather than a denormalized string (Chapter 11).</td><td>No behavioral change from transfer.</td></tr>
+<tr><td><strong>Terminal Summary</strong></td><td>New reporting basis: built from the per-invoice/per-cash-movement point-in-time terminal stamp, not from "sessions that were opened on this terminal."</td><td>A Terminal Summary for a day where three different sessions each spent part of the day at that terminal now correctly shows all three contributions, which the old terminal-owns-session model could never have represented cleanly.</td></tr>
+<tr><td><strong>Branch Summary</strong></td><td>None — already branch+date scoped, roaming-agnostic.</td><td>Unchanged.</td></tr>
+<tr><td><strong>Day Close</strong></td><td>None to the reconciliation formulas; only the eligibility gate (see Z-Report row).</td><td>Unchanged reconciliation tolerance and business-date-advance behavior.</td></tr>
+<tr><td><strong>Session History</strong></td><td>Additive — gains an optional user-first filter and, for any session that transferred, a visible hosting-history trail (from the new Session-Terminal-History record) in its detail view.</td><td>Existing branch/date/terminal/status filters continue to work exactly as today.</td></tr>
+<tr><td><strong>Audit</strong></td><td>The existing <code>PosAuditLog</code> already carries <code>sessionId</code>, <code>terminalId</code>, <code>branchId</code>, and <code>userId</code> independently as flat columns (confirmed in the dependency audit as the *least* terminal-locked entity in the whole POS schema) — it requires no structural change and simply gains new <code>action</code> values for Transfer, Lock, and Unlock events.</td><td>Every transfer produces its own audit entries on both the source and target terminal, plus a dedicated Session Transfer Log entry (Chapter 11) for a fast, purpose-built transfer history view.</td></tr>
+</tbody></table></div>
+<h3 id="how-reporting-behaves-after-session-transfer-summarized">How reporting behaves after session transfer, summarized</h3>
+<p>Any report that already reasoned in terms of the <strong>Session</strong> (X-Report, Sales Summary, Cashier Summary, Cash Summary) needs no conceptual change — a session is a session regardless of where it was hosted. Any report that reasons in terms of a <strong>physical location</strong> (Terminal Summary, Counter Summary) must be rebuilt (or, in most cases, already *is* built, per the dependency audit's finding that invoices self-stamp) on top of per-transaction location data rather than per-session location data, because location is no longer a fixed fact about a session.</p>
+<hr>
+<h2 id="chapter-10-security">Chapter 10 — Security</h2>
+<p><strong>User authentication</strong>: unchanged — JWT-based, app-wide login, no POS-specific credential. The redesign's dependency is on the JWT's <code>userId</code> claim being reliably present and already flowing into <code>OwnershipContextHolder</code> on every request, which the dependency audit confirmed is already true today.</p>
+<p><strong>Terminal validation</strong>: unchanged status-gate checks (<code>BLOCKED</code>/<code>MAINTENANCE</code>/<code>DECOMMISSIONED</code>/<code>ARCHIVED</code> reject registration; the new <code>LOCKED</code> status joins this family and additionally blocks *hosting* — a <code>LOCKED</code> terminal can still heartbeat and still exists, it simply cannot host a session until unlocked).</p>
+<p><strong>Branch validation</strong>: unchanged mechanism (<code>BranchAccessService</code>/<code>BranchContextHolder</code>, JWT + <code>X-Branch-Id</code> header resolution), and it gains one new hard rule: a transfer's target terminal must resolve to the *same* <code>branchId</code> as the session being transferred, checked before any confirmation UI is even shown, and re-checked server-side as a non-negotiable precondition (Rule 3, Chapter 8).</p>
+<p><strong>Session ownership validation</strong>: strengthened. Today, ownership is checked by comparing <code>currentUser()</code> (a string) against <code>PosSession.openedBy</code> (a string). Under the new model, ownership is validated against the numeric <code>ownerUserId</code> FK, sourced from <code>OwnershipContextHolder.currentUserId()</code> — a stronger, tamper-resistant comparison than a username string match, and the same primitive already trusted elsewhere in the application for ownership-restricted records.</p>
+<p><strong>Supervisor takeover</strong>: unchanged mechanism (BCrypt-verified <code>PosSettings.supervisorPin</code>, or the credential-based <code>supervisor-auth</code> alternative) — this redesign does not alter *how* a supervisor proves themselves, only clarifies that takeover changes <code>ownerUserId</code> while transfer changes <code>hostedSessionId</code>/current-terminal, and the two are independently authorized (a supervisor takeover does not implicitly authorize a transfer, and vice versa).</p>
+<p><strong>Session transfer authorization</strong>: new. A transfer may be initiated by (a) the session's current owner, authenticated normally, with no additional PIN/credential required for a same-user transfer (this is just "I am moving my own shift," not a privilege escalation), or (b) a supervisor acting on another user's session, which <strong>does</strong> require the same supervisor authorization already used for takeover — a cashier cannot transfer a session they don't own without supervisor sign-off, closing off "steal someone else's shift by transferring it to my terminal" as an attack.</p>
+<p><strong>Audit logging</strong>: every transfer writes: an audit-log entry on the source terminal (action: session left), an audit-log entry on the target terminal (action: session arrived), and a dedicated Session Transfer Log row (from-terminal, to-terminal, session, initiating user, timestamp, whether supervisor-authorized). Lock and unlock events are audited identically.</p>
+<p><strong>Race-condition protection</strong>: the transfer operation is a single atomic database transaction (Chapter 7's sequence diagram) guarded the same way today's session-open lock is guarded — an atomic compare-and-swap that can only succeed if the session is still, at the instant of the swap, <code>OPEN</code> and still hosted on the claimed source terminal. Two concurrent transfer attempts for the same session (e.g., a cashier double-clicking "confirm," or confirming on two devices) resolve with exactly one winner; the loser receives a clean "already moved" response and re-runs Session Resolution rather than erroring destructively. This mirrors, rather than reinvents, the concurrency pattern already proven by the existing terminal-lock CAS mechanism.</p>
+<p><strong>Concurrent login protection</strong>: unchanged in spirit — "one active session per user per branch" (Rule 1) is itself the concurrent-login guard. A user who is somehow authenticated on two devices at once and tries to open a *second* session in the same branch is rejected by the same duplicate-check that exists today, just re-keyed to the user instead of the terminal; their only path forward on the second device is to either resume/transfer their existing session or have a supervisor intervene.</p>
+<hr>
+<h2 id="chapter-11-database-strategy">Chapter 11 — Database Strategy</h2>
+<p>*(Design-level only — no SQL.)*</p>
+<h3 id="entities-that-change">Entities that change</h3>
+<ul>
+<li><strong><code>PosSession</code></strong>: gains a canonical, non-nullable owner reference (<code>ownerUserId</code>, a real foreign key to the user table) alongside the existing <code>openedBy</code> display string, which is retained during migration for backward-compatible reads and eventually becomes a pure display/audit field. Gains a live-refreshed "current terminal/counter" pair (reusing the existing <code>terminalPk</code>/<code>terminalId</code>/<code>counterId</code>/<code>counterName</code> columns, but changing their update discipline from write-once-at-open to updated-on-transfer). The existing <code>PosCashMovement.performedBy</code> string gains an equivalent <code>performedByUserId</code> FK for the same reason.</li>
+<li><strong><code>PosTerminal</code></strong>: the existing <code>current_open_session_id</code> column is repurposed in meaning (hosting, not owning) rather than replaced — this is a deliberate reuse to minimize schema churn, since its atomic CAS access pattern is exactly what the hosting relationship needs. Gains the new <code>LOCKED</code> status value in its existing status enum, plus supporting fields for *why* and *when* it was locked and *which* session it was hosting at the moment it was (for the unlock-acknowledgment screen and for audit).</li>
+</ul>
+<h3 id="new-entities">New entities</h3>
+<ul>
+<li><strong>Session-Terminal-History</strong>: an append-only log of hosting segments (session, terminal, counter-at-the-time, started-at, ended-at). This is the entity that makes Counter/Terminal history (Chapter 6) and any future "where was this session at time T" question answerable without inference.</li>
+<li><strong>Session Transfer Log</strong>: a purpose-built audit record for transfer events specifically (distinct from, and complementary to, the general <code>PosAuditLog</code>), optimized for building a fast "transfer history" view without scanning the general audit trail.</li>
+</ul>
+<h3 id="entities-that-remain-unchanged">Entities that remain unchanged</h3>
+<p>Everything in the hardware layer (<code>PosPrinter</code>, <code>PosCashDrawer</code>, <code>PosScanner</code>, <code>PosHardwareProfile</code>, <code>PosHardwareProfileDevice</code>), <code>PosCounter</code>, <code>PosDayClose</code>, <code>PosXReportSnapshot</code>, <code>PosReportSequence</code>, <code>PosSettings</code>, <code>PosHeldSale</code>, <code>PosLayaway</code> and its payments, <code>PosAuditLog</code> (structurally — it already has every column this redesign needs), and every hardware-adjacent scheduled-job table. This is the majority of the POS schema by table count, confirmed unaffected by the dependency audit's classification of the hardware layer as exclusively Terminal-scoped.</p>
+<h3 id="new-relationships">New relationships</h3>
+<p><code>Session.ownerUserId → users.id</code> (new, real FK, replacing the informal string-match relationship). <code>Session ↔ Terminal</code> becomes explicitly a *current-hosting* relationship rather than an ownership relationship, even though it may reuse the same physical columns. <code>Session-Terminal-History</code> introduces the first explicit temporal relationship in the POS schema — a session's location becomes a *timeline*, not a single fact.</p>
+<h3 id="new-ownership-model">New ownership model</h3>
+<p>Ownership (User → Session) and hosting (Terminal → Session) become two independently-updatable relationships instead of one overloaded one. This is the schema-level expression of the design philosophy stated in Chapter 3.</p>
+<h3 id="migration-philosophy">Migration philosophy</h3>
+<p>Additive first, cutover second, cleanup last — never destructive in the same phase that introduces something new. Every new column is nullable/backfillable and every new table is populated going forward without requiring a backfill of historical data (history before the migration simply has no transfer records, which is correct — those sessions never transferred). The two existing legacy DB-level partial unique indexes are left in place, unmodified, until a session's ownership-based locking has been proven correct in production for a full phase (Chapter 14) — they continue enforcing "one open session per terminal" as a *hosting* constraint, which remains true and desirable even under the new model (Rule 4, Chapter 8), so in practice they may never need to be dropped at all, only reinterpreted.</p>
+<h3 id="backward-compatibility-strategy">Backward compatibility strategy</h3>
+<p>The existing <code>openedBy</code> string column and the existing terminal-CAS lock mechanism keep functioning throughout the migration — new code paths are added alongside them, not in place of them, until the new user-first paths are proven (Chapter 14). Any report, integration, or client that only ever reads the old columns continues to see correct, meaningful data at every phase.</p>
+<h3 id="future-cleanup-strategy">Future cleanup strategy</h3>
+<p>Once every client is confirmed migrated to user-first session resolution (verified by the phase-gating in Chapter 14, not by a deadline), the <code>openedBy</code>/<code>performedBy</code> string columns can be demoted to pure audit-display fields (never read for logic), and the DB-level terminal-string-keyed unique index (<code>uq_pos_session_terminal_open</code>, the older of the two redundant indexes) can be retired in favor of relying solely on the numeric <code>terminal_pk</code>-keyed one, removing the last piece of duplicated enforcement. None of this cleanup is a precondition for shipping the new model — it is deliberately deferred to keep every migration phase small and reversible.</p>
+<hr>
+<h2 id="chapter-12-backend-strategy">Chapter 12 — Backend Strategy</h2>
+<p>*(Design-level only — no code.)*</p>
+<h3 id="new-services">New services</h3>
+<ul>
+<li><strong>Session Resolution Service</strong>: the new primary entry point for "what session, if any, is active for this user in this branch, and where is it currently hosted." Replaces terminal-first lookup as the first thing the POS frontend consults on entry. Returns one of: hosted-here, hosted-elsewhere (triggers Transfer Confirmation), suspended-and-unhosted (triggers AutoClaim), or none (triggers Create Session) — exactly the branches in Chapter 4's state diagram.</li>
+<li><strong>Session Transfer Service</strong>: owns the atomic detach/attach/history/audit transaction described in Chapter 7. This is a genuinely new capability with no analog in the existing codebase (the existing <code>reassignSessionOwner</code>/<code>supervisorTakeover</code> change *owner*, not *host* — the new service changes *host*, and is explicitly designed to compose with, not replace, those existing operations).</li>
+<li><strong>Terminal Lock/Unlock Service</strong>: owns the <code>LOCKED</code> state transition and its acknowledgment/override paths, including the "your session moved" notice delivered to the source terminal.</li>
+</ul>
+<h3 id="existing-services-responsibility-changes">Existing services — responsibility changes</h3>
+<ul>
+<li><strong><code>PosSessionService</code></strong>: its <code>openSession</code>/<code>getActiveSession</code> duplicate-check and lookup logic is re-keyed from terminal-first to user-first (delegating the actual "where is my session" question to the new Resolution Service), while <code>closeSession</code>, <code>suspendSession</code>, cash-movement handling, and report generation keep their existing responsibilities, adjusted only to read the session's *current* hosting terminal instead of a fixed one.</li>
+<li><strong><code>PosTerminalService</code></strong>: unchanged responsibility for registration/heartbeat/approve/reject/archive/decommission; gains awareness of the new <code>LOCKED</code> status in its existing status-transition validation, and its archive/decommission guard is updated per Chapter 5's table.</li>
+<li><strong><code>PosTerminalActivityService</code></strong>: its six existing call sites (Chapter 5 of the dependency audit) continue to record activity against "the terminal a request actually came from," which — once the session's current-terminal pointer is kept live by the Transfer Service — is now always the terminal the caller is genuinely operating on, resolving the staleness risk the dependency audit flagged.</li>
+<li><strong><code>HardwareProfileAssignmentEngine</code>, printer/scanner/drawer services</strong>: entirely unchanged — no new responsibility, no new coupling to session or user.</li>
+<li><strong><code>PosSessionScheduler</code></strong>: unchanged trigger logic (idle/hard-timeout), but its suspend action now also releases the hosting terminal (Chapter 4), which is a one-line-of-responsibility addition to an otherwise-unchanged job.</li>
+</ul>
+<h3 id="api-philosophy">API philosophy</h3>
+<p>New capabilities are added as new endpoints (session resolution, transfer, lock-acknowledgment) rather than by overloading existing ones. Every existing endpoint's request/response contract is preserved exactly; where an existing endpoint's *internal* resolution logic changes (e.g., <code>GET /sessions/active</code> becoming user-aware rather than purely terminal-scoped), its external behavior for any caller who hasn't started using the new user-first flow remains identical to today, because a terminal that has only ever hosted one user's session behaves indistinguishably under either model.</p>
+<h3 id="validation-strategy">Validation strategy</h3>
+<p>Validation gains one new class of check that didn't need to exist before: <strong>cross-field agreement</strong>. Where checkout/reprint today accept <code>sessionId</code>/<code>terminalId</code>/<code>branchId</code> as three independent, uncorrelated fields (a gap the dependency audit explicitly flagged as High risk), the new backend strategy requires that the terminal identified in a request actually be the session's *current* hosting terminal before honoring session-mutating operations — closing the exact gap identified.</p>
+<h3 id="session-resolution-strategy">Session resolution strategy</h3>
+<p>User-first, always. Terminal registration and session resolution become two independent, parallel operations on POS entry rather than a sequential dependency (today's <code>registerTerminalAndResumeSession</code> conflates them; the new startup flow, Chapter 13, runs them side by side). Terminal registration answers "what hardware do I have here." Session resolution answers "what shift am I running, and where."</p>
+<h3 id="transfer-strategy">Transfer strategy</h3>
+<p>Optimistic-confirm, pessimistic-commit: the frontend shows a transfer confirmation based on a read-only resolution result (optimistic, cheap, no lock held), but the actual transfer transaction re-verifies and atomically commits under a lock (pessimistic, correctness-critical) — never the reverse. This avoids holding any lock during the "cashier is looking at a confirmation dialog" window, which could otherwise be arbitrarily long.</p>
+<hr>
+<h2 id="chapter-13-frontend-strategy">Chapter 13 — Frontend Strategy</h2>
+<p><strong>Startup flow</strong>: unchanged shape at the top level (login → enter POS → initialize), but internally reordered: terminal registration and session resolution now happen as two independent calls rather than one gating the other. Terminal registration failures (blocked/archived/etc.) still hard-stop the UI, exactly as today, since a terminal that can't be used is a hardware problem, not a session problem. Session resolution failures/results now drive a <strong>new</strong> decision tree (Chapter 4's diagram) instead of the old "resume-if-mine, 409-if-someone-else's" binary.</p>
+<p><strong>POS initialization</strong>: everything not related to session/terminal identity (departments, customers, products, printer/scanner config, held sales) is unaffected and continues exactly as today, since none of it was ever coupled to terminal-owns-session in the first place (confirmed by the dependency audit).</p>
+<p><strong>Resume session flow</strong>: three visually distinct outcomes instead of today's one: (1) silent resume (session already hosted here — no UI change from today), (2) silent AutoClaim (suspended session found, nothing interrupted, brief "resumed your session" toast at most), (3) Transfer Confirmation (session found hosted elsewhere and still OPEN — a modal, not a toast, since it has real consequences for whatever is happening at the other terminal).</p>
+<p><strong>Transfer popup</strong>: presents the source terminal's identity/counter (so the cashier can confirm this is really their own shift and not a mistaken match), a single confirm/decline action, and — for a supervisor-initiated transfer of someone else's session — the existing supervisor-auth challenge reused verbatim from the takeover flow.</p>
+<p><strong>Session locked screen</strong>: shown on the *source* terminal once it receives (via its existing heartbeat cadence — no new polling channel required, the heartbeat response simply gains a "you are now LOCKED, here's why" field) notice that its hosted session was transferred away. Presents a clear explanation ("This session moved to Terminal B, opened by you") and a single acknowledgment action that unlocks the terminal for its next use.</p>
+<p><strong>Recovery flow</strong>: on any unexpected reload/reconnect (browser crash, network drop, terminal crash-and-restart), the frontend's only required recovery action is to re-run Session Resolution — because the backend transaction guarantees (Chapter 7/10) mean there is never an ambiguous server-side state to reconcile, only a possibly-stale client that needs to ask again.</p>
+<p><strong>Failure handling</strong>: transfer confirmation failures (409 "already moved," "already closed," "no longer yours") are treated uniformly as "re-run resolution and show whatever it says now" rather than as distinct error states requiring bespoke handling — this keeps the frontend's error-handling surface small despite the new capability.</p>
+<p><strong>State management philosophy</strong>: unchanged at the architectural level — the existing local-component-state approach (no Redux/Zustand/dedicated context, per the dependency audit's finding) is preserved; the new session-resolution result simply becomes one more piece of state <code>POSSales.jsx</code> (or its eventual successor) owns, following the exact same pattern <code>currentSession</code>/<code>currentTerminal</code> already follow today. This redesign does not mandate a state-management-library migration as a precondition — that would be scope creep beyond what session roaming requires.</p>
+<hr>
+<h2 id="chapter-14-migration-strategy">Chapter 14 — Migration Strategy</h2>
+<p>Each phase is independently deployable and independently rollback-safe: a phase can be deployed and, if a problem surfaces, the *previous* phase's behavior can be restored without data loss, because every phase is additive until explicitly stated otherwise.</p>
+<div class="mermaid">
+gantt
+    dateFormat  X
+    axisFormat %s
+    section Phase 1 — Foundation
+    Add ownerUserId FK (nullable, backfilled from openedBy) :p1, 0, 1
+    Add Session-Terminal-History table (write-only, unread) :p1b, 0, 1
+    Add Session Transfer Log table (write-only, unread)     :p1c, 0, 1
+    section Phase 2 — Parallel resolution
+    Ship Session Resolution Service (read-only, shadow mode) :p2, 1, 2
+    Compare shadow results against legacy terminal-first lookup :p2b, 1, 2
+    section Phase 3 — Transfer capability
+    Ship Session Transfer Service + LOCKED terminal status   :p3, 2, 3
+    Ship Transfer Confirmation / Locked-screen UI behind a flag :p3b, 2, 3
+    section Phase 4 — Cutover
+    Frontend startup flow switches to user-first resolution  :p4, 3, 4
+    Suspend now releases hosting terminal (behavior change)  :p4b, 3, 4
+    section Phase 5 — Reporting alignment
+    Z-Report eligibility gate redefined to session-based      :p5, 4, 5
+    Terminal/Counter Summary rebuilt on per-transaction data  :p5b, 4, 5
+    section Phase 6 — Cleanup (optional, deferred)
+    Demote openedBy/performedBy to display-only               :p6, 5, 6
+    Retire the older of the two redundant DB unique indexes   :p6b, 5, 6
+</div>
+<p><strong>Phase 1 — Foundation.</strong> Purely additive schema changes: the new <code>ownerUserId</code> FK (nullable at first, backfilled from <code>openedBy</code> via the existing username→user lookup already used for <code>resolveDisplayName</code>), the new Session-Terminal-History and Session Transfer Log tables (written to going forward, read by nothing yet). No behavior changes anywhere. Rollback: drop the new columns/tables; nothing depended on them yet.</p>
+<p><strong>Phase 2 — Parallel resolution.</strong> The new Session Resolution Service is deployed but runs in <strong>shadow mode</strong> — it computes its user-first answer on every request and logs it alongside the legacy terminal-first answer, without either the frontend or any other backend code consuming its output yet. This phase exists purely to build confidence that the new resolution logic agrees with the old one in every case where they *should* agree (i.e., every session that has never transferred). Rollback: stop calling the shadow service; zero user-facing impact either way, since it was never consumed.</p>
+<p><strong>Phase 3 — Transfer capability.</strong> The Session Transfer Service, the <code>LOCKED</code> terminal status, and the Transfer Confirmation/Locked-screen UI are shipped, but gated behind a feature flag defaulting off. Enabled first for a single pilot branch. This is the first phase where the new capability is actually usable, and it is the phase most worth rollback-testing explicitly before wider rollout. Rollback: disable the flag; terminals never enter <code>LOCKED</code> because transfers are never initiated, and the system behaves exactly as it did in Phase 2.</p>
+<p><strong>Phase 4 — Cutover.</strong> The frontend's startup flow switches its primary resolution path from terminal-first to the (by now proven) user-first Session Resolution Service, across all branches. The "suspend releases the terminal" behavior change (Chapter 4) ships in this phase, since it only matters once user-first resolution is live everywhere. Rollback: revert the frontend to terminal-first resolution (Phase 2/3's code paths remain in place and functional, since nothing from Phase 1-3 was removed) — this is the primary reason every earlier phase was additive rather than replacing anything.</p>
+<p><strong>Phase 5 — Reporting alignment.</strong> Z-Report eligibility and Terminal/Counter Summary reports are updated to their new session-based / per-transaction bases (Chapter 9). Deployed after Phase 4 has been stable, since these reports are the ones most likely to surface subtle discrepancies if the underlying resolution logic had any edge case. Rollback: revert report queries to their prior terminal-based logic — safe, since the underlying data (invoices' own stamped fields, the new history table) has been accumulating since Phase 1 regardless of which report logic is active.</p>
+<p><strong>Phase 6 — Cleanup (optional, deferred, no fixed deadline).</strong> Only after a full operational cycle (at minimum, several complete Day-Close cycles) with zero rollback events, the legacy string-based ownership fields are demoted to display-only and the older of the two redundant DB unique indexes may be retired. This phase is explicitly optional — the system is fully correct and fully supported indefinitely without ever executing it, per the Database Strategy chapter's cleanup philosophy.</p>
+<p><strong>Not breaking existing customers</strong>: at every phase boundary, a branch/tenant that has not opted into the new flag (Phase 3+) continues to experience the terminal-centric model exactly as it exists today — session roaming is never forced on a tenant, only made available.</p>
+<hr>
+<h2 id="chapter-15-risks">Chapter 15 — Risks</h2>
+<h3 id="business-risks">Business risks</h3>
+<ul>
+<li><strong>Cashier confusion during the transition</strong> if Transfer Confirmation and Locked-screen UX aren't clearly explained/trained before Phase 3-4 rollout. *Mitigation*: pilot-branch rollout (Phase 3) specifically to surface UX gaps before wide release, plus the deliberate choice to make Transfer an explicit, confirmed action rather than a silent one.</li>
+<li><strong>Perceived loss of terminal accountability</strong> ("who used this till today" becoming less obvious once sessions roam). *Mitigation*: the Session-Terminal-History table exists specifically to answer this question better than today's system can, not worse.</li>
+</ul>
+<h3 id="technical-risks">Technical risks</h3>
+<ul>
+<li><strong>The <code>openedBy</code>/<code>performedBy</code> string-to-FK backfill (Phase 1) matching incorrectly</strong> for any historical username that doesn't cleanly resolve to a current user record (renamed/deactivated users). *Mitigation*: the FK is nullable and additive; any row that fails to backfill cleanly simply keeps functioning off the legacy string field until manually reconciled — it is never a blocking condition.</li>
+<li><strong>Session Resolution Service and legacy terminal-first lookup disagreeing</strong> in some untested edge case. *Mitigation*: this is exactly what Phase 2's shadow mode exists to catch before Phase 4 makes the new path load-bearing.</li>
+</ul>
+<h3 id="migration-risks">Migration risks</h3>
+<ul>
+<li><strong>Phase 4 cutover exposing a resolution-service bug at full scale that Phase 2/3's smaller-scale validation didn't catch.</strong> *Mitigation*: Phase 4 is explicitly the highest-scrutiny phase in the plan and the rollback path (revert frontend to terminal-first) is kept intact and functional through Phase 5, not removed early.</li>
+<li><strong>Feature-flag sprawl if Phase 3's pilot-branch flag lingers too long.</strong> *Mitigation*: flag removal is folded into Phase 4's cutover, not left indefinitely optional the way Phase 6 is.</li>
+</ul>
+<h3 id="concurrency-risks">Concurrency risks</h3>
+<ul>
+<li><strong>Two simultaneous transfer attempts for the same session</strong> (double-click, or two devices racing). *Mitigated structurally* by the same atomic compare-and-swap pattern already proven for today's terminal-lock, applied to the new hosting/ownership fields (Chapter 10) — this is a known, already-solved problem in this codebase, not a novel one.</li>
+<li><strong>A transfer racing against a concurrent Close or Suspend of the same session.</strong> *Mitigation*: the transfer transaction's re-verification step (Chapter 7) re-checks the session's status immediately before committing, inside the same atomic operation — a session that closed or suspended a moment before the transfer commits causes the transfer to cleanly fail rather than commit against stale state.</li>
+</ul>
+<h3 id="data-integrity-risks">Data integrity risks</h3>
+<ul>
+<li><strong>Session-Terminal-History gaps</strong> if a code path ever changes a session's hosting terminal without going through the Transfer Service (e.g., a future direct-DB fix). *Mitigation*: this is a process/discipline risk, not architectural — flagged here so the implementing team treats the Transfer Service as the *only* sanctioned path to changing a session's host, never a manual update.</li>
+<li><strong>Denormalized counter/terminal fields on <code>PosSession</code> drifting from the true current hosting terminal</strong> if the "refresh on transfer" step is ever skipped. *Mitigation*: keeping this refresh inside the same atomic transaction as the hosting-pointer change (rather than a separate follow-up step) is a hard architectural requirement of this design, not a nice-to-have.</li>
+</ul>
+<h3 id="operational-risks">Operational risks</h3>
+<ul>
+<li><strong>Support/ops staff needing new runbooks</strong> for "a terminal is stuck LOCKED and nobody is unlocking it" (e.g., the original cashier went home without acknowledging). *Mitigation*: the supervisor force-unlock path (Chapter 5/10) exists precisely for this, and should be part of Phase 3's pilot-branch training material.</li>
+<li><strong>Reporting discrepancies noticed by finance/ops during Phase 5</strong> if Terminal/Counter Summary numbers shift from their historical (terminal-owns-session) basis to the new per-transaction basis, even where the new basis is more correct. *Mitigation*: this is a communication risk more than a technical one — flagged so the rollout plan includes explaining the reporting basis change before Phase 5 ships, not after someone notices a number moved.</li>
+</ul>
+<hr>
+<h2 id="chapter-16-future-enhancements">Chapter 16 — Future Enhancements</h2>
+<p>Naturally enabled, not required, by this architecture:</p>
+<ul>
+<li><strong>Full session roaming</strong> — this document's core deliverable, but future phases could extend it further (e.g., cross-device handoff initiated remotely by a supervisor without the cashier present at the target terminal).</li>
+<li><strong>Improved supervisor takeover</strong> — since takeover (ownership) and transfer (hosting) are now cleanly separated primitives, a supervisor could be given a combined "reassign and relocate in one action" tool, or fine-grained permission to do one without the other.</li>
+<li><strong>Device replacement</strong> — a terminal physically dying mid-shift becomes a "transfer the session to a spare terminal" operation instead of a data-loss incident, since the session was never tied to the dead hardware's identity in the first place.</li>
+<li><strong>Temporary/pop-up terminals</strong> — a terminal that only needs to exist for a single event or a single day becomes low-stakes to register and decommission, since it never "owns" anything that outlives it — sessions it hosted simply transferred elsewhere or closed normally.</li>
+<li><strong>Remote recovery</strong> — a supervisor or admin, from any authenticated device, could resolve a stuck/LOCKED terminal or force-transfer a session without needing to be physically present at either terminal, since the Transfer Service's authorization model (Chapter 10) already supports supervisor-initiated transfers.</li>
+<li><strong>Multi-device dashboards</strong> — the Session-Terminal-History and Session Transfer Log tables (Chapter 11) are ready-made data sources for a "live view of who is where" operational dashboard, which the old terminal-owns-session model had no clean way to construct (it could only ever answer "who is on this terminal right now," never "where is this cashier right now").</li>
+<li><strong>Advanced auditing</strong> — the strengthened <code>ownerUserId</code>/<code>performedByUserId</code> FKs (Chapter 11) enable reliable "everything this specific user did today, across every session and every terminal they touched" queries, which are unreliable today given the string-based identity fields.</li>
+<li><strong>Future offline support</strong> — because Session Resolution is now a single, well-defined question ("what does this user own, and where is it hosted") rather than a terminal-coupled handshake, it becomes a cleaner target for an eventual offline-first client to reason about and reconcile against once connectivity returns — this document does not design offline support, but notes that this architecture does not foreclose it the way the terminal-centric model implicitly did.</li>
+</ul>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  function currentTheme() {
+    var attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark' || attr === 'light') return attr;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad: true, theme: currentTheme() === 'dark' ? 'dark' : 'default' });
+  }
+</script>
+</body>
+</html>

@@ -44,13 +44,14 @@ class PosCashMovementServiceTest {
     @Mock private BranchRepository branchRepository;
     @Mock private PosAuditService auditService;
     @Mock private ObjectMapper objectMapper;
+    @Mock private com.billbull.backend.pos.admin.PosCashMovementCategoryRepository categoryRepository;
 
     private PosCashMovementService service;
 
     @BeforeEach
     void setUp() {
         service = new PosCashMovementService(repo, posSessionService, postingEngine,
-                branchRepository, auditService, objectMapper);
+                branchRepository, auditService, objectMapper, categoryRepository);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("supervisor1", null, List.of()));
         lenient().when(repo.save(any(PosCashMovement.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -179,8 +180,11 @@ class PosCashMovementServiceTest {
         assertEquals(new BigDecimal("75"), m.getAmount());
         assertEquals(PosCashMovementType.DROP_OUT, m.getMovementType());
 
+        // m.postedAccountCode/Name are null (never set on this legacy-style fixture), so the
+        // reversal call correctly passes nulls through — PostingEngineService falls back to the
+        // original default accounts, exactly matching pre-Phase-2 behavior.
         verify(postingEngine).reverseJournalFromCashMovementVoid(eq(10L), eq("DROP_OUT"),
-                eq(new BigDecimal("75")), any(), any(LocalDate.class), any(Branch.class));
+                eq(new BigDecimal("75")), any(), any(LocalDate.class), any(Branch.class), isNull(), isNull());
         verify(auditService).logCashMovementVoided(eq(1L), eq("T1"), eq(7L), eq(10L),
                 eq("Cashier miscounted the drop"), any(), any());
         verify(repo).save(m);
@@ -219,13 +223,13 @@ class PosCashMovementServiceTest {
     void createDelegatesToPosSessionServiceAddCashMovement() {
         PosSession session = openSessionForDay(false);
         PosCashMovement created = activeMovement(session, PosCashMovementType.DROP_IN, new BigDecimal("100"));
-        when(posSessionService.addCashMovement(1L, "DROP_IN", new BigDecimal("100"), "Float top-up", "SLIP-1"))
+        when(posSessionService.addCashMovement(1L, "DROP_IN", new BigDecimal("100"), "Float top-up", "SLIP-1", null))
                 .thenReturn(created);
 
-        PosCashMovementResponse result = service.create(1L, "DROP_IN", new BigDecimal("100"), "Float top-up", "SLIP-1");
+        PosCashMovementResponse result = service.create(1L, "DROP_IN", new BigDecimal("100"), "Float top-up", "SLIP-1", null);
 
         assertEquals(PosCashMovementType.DROP_IN, result.getMovementType());
-        verify(posSessionService).addCashMovement(1L, "DROP_IN", new BigDecimal("100"), "Float top-up", "SLIP-1");
+        verify(posSessionService).addCashMovement(1L, "DROP_IN", new BigDecimal("100"), "Float top-up", "SLIP-1", null);
     }
 
     // ---------------------------------------------------------------------

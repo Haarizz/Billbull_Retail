@@ -6,14 +6,14 @@ import { TradeSkeleton, TradeEmptyState } from '../ui';
 export const TradeProductGrid = React.memo(({
   products = [],
   loading = false,
-  addToInvoice,
+  onProductSelected,
   formatCurrency
 }) => {
   if (loading) {
     return (
-      <div className="grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2 pb-20 lg:pb-4">
-        {Array.from({ length: 18 }).map((_, i) => (
-          <TradeSkeleton key={i} className="h-14 w-full rounded" />
+      <div className="flex flex-col gap-2 pb-20 lg:pb-4">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <TradeSkeleton key={i} className="h-16 w-full rounded-lg" />
         ))}
       </div>
     );
@@ -30,12 +30,12 @@ export const TradeProductGrid = React.memo(({
   }
 
   return (
-    <div className="grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-2 pb-20 lg:pb-4 content-start">
+    <div className="flex flex-col gap-2 pb-20 lg:pb-4">
       {products.map(product => (
         <TradeProductCard
           key={product.id}
           product={product}
-          addToInvoice={addToInvoice}
+          onProductSelected={onProductSelected}
           formatCurrency={formatCurrency}
         />
       ))}

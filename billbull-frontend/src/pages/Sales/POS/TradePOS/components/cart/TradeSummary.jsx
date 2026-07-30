@@ -32,7 +32,7 @@ export const TradeSummary = React.memo(({
         <TradeSummaryCard 
           label="Discount" 
           amount={`-${formatCurrency ? formatCurrency(discount) : discount}`} 
-          accentColor="text-orange-500"
+          accentColor="text-amber-600"
           size="sm" 
         />
       )}
@@ -48,7 +48,7 @@ export const TradeSummary = React.memo(({
       <TradeSummaryCard 
         label="Grand Total" 
         amount={formatCurrency ? formatCurrency(total) : total} 
-        accentColor="text-[#F5C742]"
+        accentColor="text-primary"
         size="lg" 
       />
     </div>

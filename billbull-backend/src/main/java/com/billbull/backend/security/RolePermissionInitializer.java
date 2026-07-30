@@ -286,6 +286,48 @@ public class RolePermissionInitializer implements ApplicationRunner {
         roleRepository.findByName("SALES").ifPresent(role -> {
             seedIfAbsent(role, "permissions.pos.reports.view", true, true, true, true, true);
         });
+
+        // ── Enterprise Console > POS Administration RBAC (Phase 1) ─────────────────────────────
+        // Post-transaction financial governance module — deliberately NOT part of "pos"/"sales"
+        // operational access above. Modules follow the brief's pos.admin.* naming, mapped onto
+        // the existing 6-flag shape (canView/canCreate/canEdit/canDelete/canApprove/canExport)
+        // since ModulePermissionService has no other action vocabulary:
+        //   pos.admin                          -> pos.admin.view                        (canView)
+        //   pos.admin.session                  -> pos.admin.session.correct             (canView+canCreate)
+        //   pos.admin.transaction               -> pos.admin.transaction.correct         (canView+canCreate)
+        //   pos.admin.cashmovement.category     -> .view (canView) / .manage (canCreate+canEdit+canDelete)
+        //   pos.admin.approvals                 -> .view (canView) / .approve+.reject (canApprove — both
+        //                                          actions share one flag, same single-approval-permission
+        //                                          model JournalEntryService uses)
+        //   pos.admin.audit                     -> pos.admin.audit.view                 (canView)
+        //
+        // Role mapping: there is no literal Cashier/Finance/Branch Manager role seeded in this
+        // system, so the review's hierarchy (§8/§12) is mapped onto the closest existing roles —
+        // ADMIN=Enterprise Admin, BRANCH_ADMIN=Branch Manager, ACCOUNTANT=Finance,
+        // SUPERVISOR=Supervisor (request-only, no approve). Cashier-equivalent roles (SALES,
+        // INVENTORY_MANAGER, HR, DELIVERY_PERSON, MANAGER) get no pos.admin.* access — this
+        // module is Enterprise Governance, not operational POS (§2 of the review).
+        for (String fullAccessRole : new String[]{"ADMIN", "BRANCH_ADMIN"}) {
+            roleRepository.findByName(fullAccessRole).ifPresent(role -> {
+                seedIfAbsent(role, "pos.admin",                      true, false, false, false, false);
+                seedIfAbsent(role, "pos.admin.session",              true, true,  false, false, false);
+                seedIfAbsent(role, "pos.admin.transaction",          true, true,  false, false, false);
+                seedIfAbsent(role, "pos.admin.cashmovement.category",true, true,  true,  false, false);
+                seedIfAbsent(role, "pos.admin.approvals",            true, false, false, true,  false);
+                seedIfAbsent(role, "pos.admin.audit",                true, false, false, false, false);
+            });
+        }
+        roleRepository.findByName("SUPERVISOR").ifPresent(role -> {
+            seedIfAbsent(role, "pos.admin",             true, false, false, false, false);
+            seedIfAbsent(role, "pos.admin.session",     true, true,  false, false, false);
+            seedIfAbsent(role, "pos.admin.transaction", true, true,  false, false, false);
+        });
+        roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
+            seedIfAbsent(role, "pos.admin",                       true, false, false, false, false);
+            seedIfAbsent(role, "pos.admin.cashmovement.category", true, true,  true,  false, false);
+            seedIfAbsent(role, "pos.admin.approvals",             true, false, false, true,  false);
+            seedIfAbsent(role, "pos.admin.audit",                 true, false, false, false, false);
+        });
     }
 
     private void seedIfAbsent(

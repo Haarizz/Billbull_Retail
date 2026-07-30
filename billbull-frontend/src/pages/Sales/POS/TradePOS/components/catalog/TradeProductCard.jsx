@@ -1,66 +1,59 @@
 import React, { useCallback } from 'react';
 import { Package, Star } from 'lucide-react';
-import { TradeCard, TradeBadge } from '../ui';
 
 export const TradeProductCard = React.memo(({
   product,
-  addToInvoice,
+  onProductSelected,
   formatCurrency
 }) => {
   const handleClick = useCallback(() => {
-    if (addToInvoice && product) {
-      addToInvoice(product);
+    if (onProductSelected && product) {
+      onProductSelected(product);
     }
-  }, [addToInvoice, product]);
+  }, [onProductSelected, product]);
 
   if (!product) return null;
 
   return (
-    <TradeCard 
+    <div 
       onClick={handleClick}
-      padding="p-1.5"
-      className="flex flex-row items-center gap-2.5 h-14 hover:shadow-sm hover:border-[#F5C742] transition-all group overflow-hidden bg-white cursor-pointer"
+      className="flex items-center justify-between p-3 bg-white rounded-xl hover:bg-gray-50 hover:shadow-sm border border-transparent hover:border-gray-200 cursor-pointer transition-all group"
     >
-      {/* Dense Image Thumbnail */}
-      <div className="relative w-11 h-11 bg-gray-50 flex-shrink-0 flex items-center justify-center rounded overflow-hidden border border-gray-100">
-        {product.image ? (
-          <img 
-            src={product.image} 
-            alt={product.name} 
-            loading="lazy"
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110" 
-          />
-        ) : (
-          <Package className="w-5 h-5 text-gray-300" />
-        )}
+      <div className="flex items-center gap-4">
+        {/* Icon / Image */}
+        <div className="w-10 h-10 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-slate-300 shrink-0">
+          {product.image ? (
+            <img 
+              src={product.image} 
+              alt={product.name} 
+              loading="lazy"
+              className="w-full h-full object-cover rounded-lg" 
+            />
+          ) : (
+            <Package className="w-5 h-5" />
+          )}
+        </div>
         
-        {/* Favourite Indicator (Tiny) */}
-        {product.favourite && (
-          <div className="absolute top-0.5 right-0.5 bg-white/90 backdrop-blur-sm p-0.5 rounded shadow-sm text-yellow-500">
-            <Star className="w-2.5 h-2.5 fill-current" />
-          </div>
-        )}
-      </div>
-
-      {/* Dense Content Area */}
-      <div className="flex flex-col flex-1 min-w-0 justify-center h-full">
-        {/* Title */}
-        <h3 className="text-[11px] font-bold text-[#1E293B] leading-tight truncate mb-0.5" title={product.name}>
-          {product.name}
-        </h3>
-        
-        {/* Footer: Code & Price */}
-        <div className="flex items-center justify-between mt-auto">
-          <p className="text-[9px] font-mono text-gray-400 truncate max-w-[50%]">
-            {product.barcode || product.id}
+        {/* Content */}
+        <div className="flex flex-col justify-center">
+          <h3 className="text-sm font-bold text-slate-800 leading-tight group-hover:text-primary transition-colors">
+            {product.name}
+          </h3>
+          <p className="text-[11px] font-mono text-slate-400 mt-0.5 uppercase tracking-wide">
+            {product.barcode || product.id} &bull; {product.unit || 'UNIT'}
           </p>
-          <span className="text-[11px] font-black text-[#327F74] shrink-0">
-            {formatCurrency ? formatCurrency(product.price) : product.price}
-          </span>
         </div>
       </div>
-    </TradeCard>
+
+      {/* Price */}
+      <div className="text-right shrink-0">
+        <span className="text-sm font-black text-teal-600">
+          {formatCurrency ? formatCurrency(product.price) : `AED ${Number(product.price || 0).toFixed(2)}`}
+        </span>
+      </div>
+    </div>
   );
 });
 
 TradeProductCard.displayName = 'TradeProductCard';
+

@@ -20,7 +20,7 @@ export const getStockAvailability = async (itemCode, filtersOrSignal, maybeAbort
     });
 
     try {
-        const res = await api.get(`/api/inventory/stock-availability/by-code/${itemCode}`, {
+        const res = await api.get(`/api/inventory/stock-availability/by-code/${encodeURIComponent(itemCode)}`, {
             params,
             signal: abortSignal
         });

@@ -24,6 +24,12 @@ public class PosCashMovementResponse {
     private LocalDate businessDate;
     private PosCashMovementStatus status;
 
+    /** Null on any movement created before Cash Movement Categories existed or while the
+     *  feature was optional for this branch — the UI renders that as "Uncategorized (Legacy)",
+     *  never guessed/backfilled (architectural review §7). */
+    private Long categoryId;
+    private String categoryName;
+
     private String voidReason;
     private String voidedBy;
     private LocalDateTime voidedAt;
@@ -53,6 +59,7 @@ public class PosCashMovementResponse {
             r.dayClosed = session.getDayCloseId() != null;
         }
         r.branchId = m.getBranchId();
+        r.categoryId = m.getCategoryId();
         r.movementType = m.getMovementType();
         r.amount = m.getAmount();
         r.description = m.getDescription();
@@ -82,6 +89,12 @@ public class PosCashMovementResponse {
     public Long getBranchId() { return branchId; }
     public String getBranchName() { return branchName; }
     public void setBranchName(String branchName) { this.branchName = branchName; }
+    public Long getCategoryId() { return categoryId; }
+    /** Resolved by the service after {@link #from} (same lazy-enrichment pattern as {@link
+     *  #setBranchName}) — null here means genuinely uncategorized, rendered by the UI as
+     *  "Uncategorized (Legacy)". */
+    public String getCategoryName() { return categoryName; }
+    public void setCategoryName(String categoryName) { this.categoryName = categoryName; }
     public PosCashMovementType getMovementType() { return movementType; }
     public BigDecimal getAmount() { return amount; }
     public String getDescription() { return description; }

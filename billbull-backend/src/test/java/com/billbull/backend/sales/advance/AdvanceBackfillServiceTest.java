@@ -34,8 +34,11 @@ class AdvanceBackfillServiceTest {
     private final com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService =
             mock(com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService.class);
 
+    private final com.billbull.backend.pos.session.PosSessionService posSessionService =
+            mock(com.billbull.backend.pos.session.PosSessionService.class);
+
     private final AdvanceApplicationService advanceApplicationService =
-            new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService);
+            new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService);
 
     private final AdvanceBackfillService backfillService =
             new AdvanceBackfillService(receiptRepo, salesInvoiceRepo, advanceApplicationService);

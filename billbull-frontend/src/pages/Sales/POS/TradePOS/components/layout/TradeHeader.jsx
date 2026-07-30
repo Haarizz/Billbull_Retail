@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Clock, Settings, Store, Monitor } from 'lucide-react';
-import { TradeButton } from '../ui';
+import { ArrowLeft, Settings, ShoppingCart } from 'lucide-react';
 
 export const TradeHeader = React.memo(({
   setCurrentView,
+  setShowPOSConfig,
   currentSession,
   posSettings
 }) => {
@@ -15,79 +15,65 @@ export const TradeHeader = React.memo(({
   }, []);
 
   return (
-    <header className="bg-slate-900 text-white h-14 flex items-center px-4 justify-between shrink-0 shadow-md relative z-20">
-      {/* Left Area: Navigation & Title */}
-      <div className="flex items-center gap-4 h-full">
-        <button 
-          onClick={() => setCurrentView && setCurrentView('dashboard')}
-          className="flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors py-2 px-1 text-sm font-semibold group"
-          title="Return to Dashboard"
-        >
-          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-          Dashboard
-        </button>
-        
-        <div className="h-6 w-px bg-slate-700 mx-2"></div>
-        
-        <h1 className="text-lg font-black tracking-tight text-white flex items-center gap-2">
-          Trade POS
-          <span className="bg-[#F5C742] text-slate-900 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded-sm tracking-wider">PRO</span>
-        </h1>
-      </div>
+    <div className="flex flex-col w-full">
+      {/* Top Tier (White) */}
+      <div className="bg-white flex flex-col gap-1.5 px-3 sm:px-4 py-2.5 border-b border-gray-200 shrink-0">
+        <div className="flex items-start justify-between gap-2">
+          <button
+            onClick={() => setCurrentView && setCurrentView('dashboard')}
+            className="flex items-center gap-2 text-amber-500 hover:text-amber-600 transition-colors py-1.5 px-3 border border-amber-200 hover:bg-amber-50 rounded-lg text-xs sm:text-sm font-bold shrink-0"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span className="hidden sm:inline">Dashboard</span>
+          </button>
 
-      {/* Center Area: Session & Branch Info */}
-      <div className="hidden lg:flex items-center gap-6">
-        <div className="flex flex-col items-center">
-          <div className="flex items-center gap-1.5 text-slate-300">
-            <Store className="w-3.5 h-3.5" />
-            <span className="text-xs font-semibold">{posSettings?.branchName || 'Main Branch'}</span>
-          </div>
-          <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Location</span>
-        </div>
-        
-        <div className="h-8 w-px bg-slate-800"></div>
-        
-        <div className="flex flex-col items-center">
-          <div className="flex items-center gap-1.5 text-slate-300">
-            <Monitor className="w-3.5 h-3.5" />
-            <span className="text-xs font-semibold">{currentSession?.terminal || 'Terminal 1'}</span>
-          </div>
-          <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Register</span>
+          {/* Settings / Configure */}
+          <button
+            onClick={() => setShowPOSConfig && setShowPOSConfig(true)}
+            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors py-1.5 px-3 border border-gray-200 hover:bg-gray-50 rounded-full text-xs sm:text-sm font-semibold shadow-sm shrink-0"
+          >
+            <Settings className="w-4 h-4" />
+            <span className="hidden sm:inline">Configure</span>
+          </button>
         </div>
 
-        <div className="h-8 w-px bg-slate-800"></div>
-        
-        <div className="flex flex-col items-center">
-          <span className="text-xs font-bold text-emerald-400">{currentSession?.id || 'NO SESSION'}</span>
-          <span className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">Session ID</span>
+        <div className="text-slate-500 font-medium text-xs sm:text-sm leading-snug">
+          <span>Session: <span className="font-semibold text-slate-600">{currentSession?.id || 'NO SESSION'}</span></span>
+          <span className="hidden sm:inline">
+            {' '}&bull;{' '}
+            {time.toLocaleDateString()} {time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+          </span>
         </div>
       </div>
 
-      {/* Right Area: Time & Settings */}
-      <div className="flex items-center gap-4 h-full">
-        <div className="hidden md:flex flex-col items-end text-right">
-          <span className="text-sm font-bold text-white flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-slate-400" />
+      {/* Second Tier (Brand Amber) */}
+      <div className="bg-primary text-white min-h-12 flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 shrink-0 shadow-sm">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="bg-white p-1.5 rounded-full text-primary shrink-0">
+            <ShoppingCart className="w-4 h-4" />
+          </div>
+          <div className="flex flex-col min-w-0">
+            <h1 className="text-sm sm:text-base font-black tracking-wide leading-tight truncate">
+              Compact — Trade POS
+            </h1>
+            <span className="text-white/80 text-[11px] font-medium leading-tight truncate">
+              {posSettings?.branchName || 'Main Branch'} &bull; {currentSession?.terminal || 'Terminal 01'}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-end text-right justify-center shrink-0">
+          <span className="text-xs sm:text-sm font-bold tracking-wider leading-none">
             {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </span>
-          <span className="text-[10px] text-slate-400 font-medium">
-            {time.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
+          <span className="hidden sm:block text-[10px] text-white/80 font-medium uppercase tracking-widest mt-0.5 leading-none">
+            {time.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' })}
           </span>
         </div>
-
-        <div className="h-6 w-px bg-slate-700 hidden md:block mx-2"></div>
-
-        <TradeButton 
-          variant="secondary"
-          className="bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white !p-2"
-          onClick={() => {}}
-          title="Configure Trade POS"
-        >
-          <Settings className="w-4 h-4" />
-        </TradeButton>
       </div>
-    </header>
+    </div>
   );
 });
 
 TradeHeader.displayName = 'TradeHeader';
+

@@ -104,9 +104,20 @@ export const recordInvoicePayment = async (id, amount) => {
 // --------------------
 // GET ITEM PRICE HISTORY
 // --------------------
-export const getItemPriceHistory = async (itemCode, customerCode = '') => {
-    const res = await api.get(`${BASE_URL}/price-history/${itemCode}`, { params: { customerCode } });
-    return res.data;
+export const getItemPriceHistory = async (itemCode, customerCode, abortSignal) => {
+    try {
+        const res = await api.get(`${BASE_URL}/price-history/${encodeURIComponent(itemCode)}`, {
+            params: { customerCode: customerCode || '' },
+            signal: abortSignal
+        });
+        return res.data;
+    } catch (error) {
+        if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+            return null; // Return null intentionally to handle in UI
+        }
+        console.error("Failed to fetch item price history", error);
+        throw error;
+    }
 };
 
 // --------------------

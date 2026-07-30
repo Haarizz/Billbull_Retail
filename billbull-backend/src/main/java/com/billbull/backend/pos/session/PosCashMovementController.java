@@ -85,6 +85,9 @@ public class PosCashMovementController {
         public BigDecimal amount;
         public String description;
         public String reference;
+        /** Optional unless the branch's PosSettings.requireCashMovementCategory toggle is on
+         *  (Phase 2) — service/session layer enforces that, not this DTO. */
+        public Long categoryId;
     }
 
     @PostMapping
@@ -92,7 +95,7 @@ public class PosCashMovementController {
     public ResponseEntity<PosCashMovementResponse> create(@RequestBody CreateRequest body) {
         requireAction(PERM_CREATE);
         return ResponseEntity.ok(service.create(body.sessionId, body.movementType, body.amount,
-                body.description, body.reference));
+                body.description, body.reference, body.categoryId));
     }
 
     public static class EditRequest {

@@ -1,19 +1,16 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Search, X } from 'lucide-react';
-import { TradeInput } from '../ui/TradeInput';
 
 export const TradeSearchBar = React.memo(({
   searchQuery,
   setSearchQuery,
   handleUnifiedEntry,
   barcodeInputRef,
-  placeholder = "Search products or scan barcode..."
+  placeholder = "Scan barcode or type item code / name..."
 }) => {
-  // Local state for immediate typing feedback
   const [localQuery, setLocalQuery] = useState(searchQuery || '');
   const typingTimeoutRef = useRef(null);
 
-  // Sync incoming props (if cleared from outside)
   useEffect(() => {
     if (searchQuery !== localQuery) {
       setLocalQuery(searchQuery || '');
@@ -25,7 +22,6 @@ export const TradeSearchBar = React.memo(({
     const value = e.target.value;
     setLocalQuery(value);
 
-    // Debounce the actual global state update by 150ms to prevent heavy re-renders
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
@@ -38,7 +34,6 @@ export const TradeSearchBar = React.memo(({
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      // Cancel debounce since we are submitting now
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       setSearchQuery(localQuery);
       handleUnifiedEntry(localQuery, { fromGrid: true });
@@ -54,23 +49,24 @@ export const TradeSearchBar = React.memo(({
   }, [setSearchQuery, barcodeInputRef]);
 
   return (
-    <div className="relative w-full">
-      <TradeInput
+    <div className="relative w-full shadow-sm rounded-xl bg-white border border-amber-400 overflow-hidden focus-within:ring-2 focus-within:ring-amber-400 focus-within:border-amber-400 transition-all">
+      <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+        <Search className="h-5 w-5 text-amber-500" />
+      </div>
+      <input
         ref={barcodeInputRef}
         type="text"
         placeholder={placeholder}
         value={localQuery}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        icon={<Search className="w-5 h-5" />}
-        iconPosition="left"
-        className="w-full pr-10" // Make room for clear button
+        className="w-full h-12 pl-12 pr-12 text-sm font-semibold text-slate-800 placeholder:text-slate-400 bg-transparent border-none focus:outline-none focus:ring-0"
       />
       
       {localQuery && (
         <button
           onClick={handleClear}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+          className="absolute inset-y-0 right-0 pr-4 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
           title="Clear search"
         >
           <X className="w-5 h-5" />
@@ -81,3 +77,4 @@ export const TradeSearchBar = React.memo(({
 });
 
 TradeSearchBar.displayName = 'TradeSearchBar';
+

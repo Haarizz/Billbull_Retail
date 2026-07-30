@@ -98,6 +98,7 @@ public class PosSettingsService {
                 .map(existing -> {
                     existing.setMaxTerminalsPerBranch(settings.getMaxTerminalsPerBranch());
                     existing.setRequireSupervisorForVoid(settings.getRequireSupervisorForVoid());
+                    existing.setRequireCashMovementCategory(settings.getRequireCashMovementCategory());
                     existing.setSupervisorApprovalMode(settings.getSupervisorApprovalMode());
                     // ARCHFIX S5: hash a newly supplied PIN; a blank/absent PIN leaves the stored hash untouched.
                     if (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank()) {
