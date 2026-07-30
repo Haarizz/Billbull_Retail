@@ -108,4 +108,59 @@ class PosTerminalHostingServiceTest {
 
         assertThat(service().endOpenHostingSegment(10L)).isEmpty();
     }
+
+    @Test
+    void ensureHostingSegment_opensSegment_whenNoneOpen() {
+        PosSession session = new PosSession();
+        session.setId(10L);
+        PosTerminal terminal = new PosTerminal();
+        terminal.setId(20L);
+        when(historyRepository.findFirstBySessionIdAndEndedAtIsNullOrderByStartedAtDesc(10L))
+                .thenReturn(Optional.empty());
+        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSessionTerminalHistory result = service().ensureHostingSegment(session, terminal);
+
+        assertThat(result.getTerminalId()).isEqualTo(20L);
+        assertThat(result.getEndedAt()).isNull();
+        verify(historyRepository).save(any());
+    }
+
+    @Test
+    void ensureHostingSegment_isNoOp_whenAlreadyOpenOnSameTerminal() {
+        PosSession session = new PosSession();
+        session.setId(10L);
+        PosTerminal terminal = new PosTerminal();
+        terminal.setId(20L);
+        PosSessionTerminalHistory openSegment = new PosSessionTerminalHistory();
+        openSegment.setTerminalId(20L);
+        when(historyRepository.findFirstBySessionIdAndEndedAtIsNullOrderByStartedAtDesc(10L))
+                .thenReturn(Optional.of(openSegment));
+
+        PosSessionTerminalHistory result = service().ensureHostingSegment(session, terminal);
+
+        assertThat(result).isSameAs(openSegment);
+        assertThat(result.getEndedAt()).isNull();
+        verify(historyRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void ensureHostingSegment_closesOldAndOpensNew_whenHostingTerminalChanges() {
+        PosSession session = new PosSession();
+        session.setId(10L);
+        PosTerminal newTerminal = new PosTerminal();
+        newTerminal.setId(21L);
+        PosSessionTerminalHistory openSegment = new PosSessionTerminalHistory();
+        openSegment.setTerminalId(20L);
+        when(historyRepository.findFirstBySessionIdAndEndedAtIsNullOrderByStartedAtDesc(10L))
+                .thenReturn(Optional.of(openSegment));
+        when(historyRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSessionTerminalHistory result = service().ensureHostingSegment(session, newTerminal);
+
+        assertThat(openSegment.getEndedAt()).isNotNull();
+        assertThat(result.getTerminalId()).isEqualTo(21L);
+        assertThat(result.getEndedAt()).isNull();
+        verify(historyRepository, org.mockito.Mockito.times(2)).save(any());
+    }
 }

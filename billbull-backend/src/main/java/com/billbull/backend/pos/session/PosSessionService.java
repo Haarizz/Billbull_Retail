@@ -285,6 +285,9 @@ public class PosSessionService {
             }
         }
 
+        // Hosting history: this terminal becomes the session's host from open onward.
+        terminalHostingService.ensureHostingSegment(saved, terminal);
+
         auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
         terminalActivityService.recordActivity(saved.getTerminalId(), "SESSION_OPEN");
         return saved;
@@ -447,6 +450,9 @@ public class PosSessionService {
             terminalRepository.clearOpenSession(closed.getTerminalPk(), closed.getId());
         }
 
+        // Hosting history: the session is no longer hosted anywhere once closed.
+        terminalHostingService.endOpenHostingSegment(closed.getId());
+
         // §3.7 Session-close GL: transfer closing cash count to bank (daily pickup)
         try {
             Branch branch = closed.getBranchId() != null
@@ -493,7 +499,14 @@ public class PosSessionService {
         }
         session.setStatus(PosSessionStatus.OPEN);
         session.setLastActivityAt(LocalDateTime.now());
-        return repo.save(session);
+        PosSession resumed = repo.save(session);
+
+        // Hosting history: resuming on the same terminal must not duplicate the open segment;
+        // ensureHostingSegment is a no-op when the segment already points at this terminal.
+        PosTerminal terminal = terminalHostingService.resolveHostingTerminal(resumed).orElse(null);
+        terminalHostingService.ensureHostingSegment(resumed, terminal);
+
+        return resumed;
     }
 
     /**
@@ -523,6 +536,11 @@ public class PosSessionService {
         session.setStatus(PosSessionStatus.OPEN);
         session.setLastActivityAt(LocalDateTime.now());
         PosSession updated = repo.save(session);
+
+        // Hosting history: takeover happens on the same terminal, so this is a no-op when a
+        // segment is already open there; it only opens one if none existed (e.g. legacy session).
+        PosTerminal terminal = terminalHostingService.resolveHostingTerminal(updated).orElse(null);
+        terminalHostingService.ensureHostingSegment(updated, terminal);
 
         auditService.logSessionOpened(updated.getId(), updated.getTerminalId(), updated.getBranchId());
         return updated;

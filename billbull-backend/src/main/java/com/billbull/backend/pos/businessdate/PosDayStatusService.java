@@ -2,7 +2,7 @@ package com.billbull.backend.pos.businessdate;
 
 import com.billbull.backend.pos.session.PosSession;
 import com.billbull.backend.pos.session.PosSessionRepository;
-import com.billbull.backend.pos.session.PosSessionStatus;
+import com.billbull.backend.pos.session.PosSessionResolutionStrategy;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.pos.terminal.PosTerminal;
@@ -31,17 +31,20 @@ public class PosDayStatusService {
 
     private final PosBusinessDateService businessDateService;
     private final PosSessionRepository sessionRepository;
+    private final PosSessionResolutionStrategy sessionResolutionStrategy;
     private final PosSettingsRepository settingsRepository;
     private final PosTerminalRepository terminalRepository;
     private final BranchAccessService branchAccessService;
 
     public PosDayStatusService(PosBusinessDateService businessDateService,
                                 PosSessionRepository sessionRepository,
+                                PosSessionResolutionStrategy sessionResolutionStrategy,
                                 PosSettingsRepository settingsRepository,
                                 PosTerminalRepository terminalRepository,
                                 BranchAccessService branchAccessService) {
         this.businessDateService = businessDateService;
         this.sessionRepository = sessionRepository;
+        this.sessionResolutionStrategy = sessionResolutionStrategy;
         this.settingsRepository = settingsRepository;
         this.terminalRepository = terminalRepository;
         this.branchAccessService = branchAccessService;
@@ -73,8 +76,7 @@ public class PosDayStatusService {
 
         DayStatusResponse.CurrentSessionInfo currentSessionInfo = null;
         if (terminalId != null && !terminalId.isBlank()) {
-            Optional<PosSession> active = sessionRepository.findByBranchIdAndTerminalIdAndStatus(
-                    branchId, terminalId, PosSessionStatus.OPEN);
+            Optional<PosSession> active = sessionResolutionStrategy.resolveByTerminal(branchId, terminalId);
             if (active.isPresent()) {
                 PosSession s = active.get();
                 currentSessionInfo = new DayStatusResponse.CurrentSessionInfo(

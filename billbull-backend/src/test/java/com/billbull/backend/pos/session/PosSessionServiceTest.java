@@ -119,6 +119,150 @@ class PosSessionServiceTest {
     }
 
     // ---------------------------------------------------------------------
+    // Session Roaming Phase 4 — terminal-first hosting lifecycle
+    // ---------------------------------------------------------------------
+
+    @org.junit.jupiter.api.AfterEach
+    void clearOwnershipContext() {
+        com.billbull.backend.common.ownership.OwnershipContextHolder.clear();
+        org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
+
+    private com.billbull.backend.pos.terminal.PosTerminal terminal(Long id, Long counterId, String counterName) {
+        com.billbull.backend.pos.terminal.PosTerminal t = new com.billbull.backend.pos.terminal.PosTerminal();
+        t.setId(id);
+        t.setCounterId(counterId);
+        t.setCounterName(counterName);
+        return t;
+    }
+
+    private void stubOpenSessionPreconditions(Long branchId, LocalDate businessDate, String terminalId) {
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(businessDate);
+        when(businessDateService.isDateClosed(branchId, businessDate)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, businessDate)).thenReturn(List.of());
+        when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN))
+                .thenReturn(Optional.empty());
+        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
+    }
+
+    @Test
+    void openSessionCreatesExactlyOneHostingSegment() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        com.billbull.backend.pos.terminal.PosTerminal terminal = terminal(99L, 5L, "Counter 1");
+        when(terminalRepository.findByTerminalId("T1")).thenReturn(Optional.of(terminal));
+        when(terminalRepository.setOpenSession(eq(99L), any())).thenReturn(1);
+        org.mockito.ArgumentCaptor<PosSessionTerminalHistory> captor =
+                org.mockito.ArgumentCaptor.forClass(PosSessionTerminalHistory.class);
+        when(sessionTerminalHistoryRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(sessionTerminalHistoryRepository, org.mockito.Mockito.times(1)).save(any());
+        assertEquals(99L, captor.getValue().getTerminalId());
+        assertEquals(java.util.List.of(99L),
+                captor.getAllValues().stream().map(PosSessionTerminalHistory::getTerminalId).toList());
+    }
+
+    @Test
+    void openSessionStampsOwnerUserId() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(sessionTerminalHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        com.billbull.backend.common.ownership.OwnershipContextHolder.set(
+                new com.billbull.backend.common.ownership.OwnershipContextHolder.OwnershipContext(42L, false));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(42L, opened.getOwnerUserId());
+    }
+
+    @Test
+    void openSessionHandsBackExistingSessionWithoutDuplicateHostingSegment() {
+        // Pin the authenticated principal explicitly (rather than relying on the
+        // unauthenticated-context "system" fallback) since other test classes running earlier
+        // in the same forked JVM can leave a stale Authentication in the shared
+        // SecurityContextHolder ThreadLocal; clearOwnershipContext() resets it afterward.
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                        "cashier1", null, List.of()));
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(businessDate);
+        when(businessDateService.isDateClosed(1L, businessDate)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(1L, businessDate)).thenReturn(List.of());
+        PosSession existing = openSession();
+        existing.setOpenedBy("cashier1");
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN))
+                .thenReturn(Optional.of(existing));
+
+        PosSession result = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(existing, result);
+        verify(sessionTerminalHistoryRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void closeSessionClosesTheOpenHostingSegment() {
+        PosSession session = openSession();
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+        PosSessionTerminalHistory openSegment = new PosSessionTerminalHistory();
+        when(sessionTerminalHistoryRepository.findFirstBySessionIdAndEndedAtIsNullOrderByStartedAtDesc(1L))
+                .thenReturn(Optional.of(openSegment));
+        when(sessionTerminalHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.closeSession(1L, bd("0"), "eod");
+
+        assertTrue(openSegment.getEndedAt() != null);
+        verify(sessionTerminalHistoryRepository).save(openSegment);
+    }
+
+    @Test
+    void resumeSessionDoesNotDuplicateHostingSegmentOnSameTerminal() {
+        PosSession session = openSession();
+        session.setId(2L);
+        session.setStatus(PosSessionStatus.SUSPENDED);
+        session.setTerminalId("T1");
+        when(repo.findById(2L)).thenReturn(Optional.of(session));
+        com.billbull.backend.pos.terminal.PosTerminal terminal = terminal(99L, 5L, "Counter 1");
+        when(terminalRepository.findByTerminalId("T1")).thenReturn(Optional.of(terminal));
+        PosSessionTerminalHistory openSegment = new PosSessionTerminalHistory();
+        openSegment.setTerminalId(99L);
+        when(sessionTerminalHistoryRepository.findFirstBySessionIdAndEndedAtIsNullOrderByStartedAtDesc(2L))
+                .thenReturn(Optional.of(openSegment));
+
+        PosSession resumed = service.resumeSession(2L);
+
+        assertEquals(PosSessionStatus.OPEN, resumed.getStatus());
+        verify(sessionTerminalHistoryRepository, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void terminalReassignmentClosesOldSegmentAndOpensNewOne() {
+        // Exercises PosTerminalHostingService#ensureHostingSegment directly, the single place
+        // that would drive a hosting-terminal change if/when a later phase adds a transfer flow.
+        com.billbull.backend.pos.terminal.PosTerminalHostingService terminalHostingService =
+                new com.billbull.backend.pos.terminal.PosTerminalHostingService(terminalRepository, sessionTerminalHistoryRepository);
+        PosSession session = openSession();
+        session.setId(3L);
+        com.billbull.backend.pos.terminal.PosTerminal newTerminal = terminal(200L, 6L, "Counter 2");
+        PosSessionTerminalHistory openSegment = new PosSessionTerminalHistory();
+        openSegment.setTerminalId(99L);
+        when(sessionTerminalHistoryRepository.findFirstBySessionIdAndEndedAtIsNullOrderByStartedAtDesc(3L))
+                .thenReturn(Optional.of(openSegment));
+        when(sessionTerminalHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSessionTerminalHistory result = terminalHostingService.ensureHostingSegment(session, newTerminal);
+
+        assertTrue(openSegment.getEndedAt() != null);
+        assertEquals(200L, result.getTerminalId());
+        assertTrue(result.getEndedAt() == null);
+    }
+
+    // ---------------------------------------------------------------------
     // closeSession() — expected cash + cash difference
     // ---------------------------------------------------------------------
 
