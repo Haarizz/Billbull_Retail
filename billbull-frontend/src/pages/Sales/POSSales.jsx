@@ -35,6 +35,7 @@ import {
   getDeliveryOrders, settleDeliveryOrder,
   reprintPosReceipt,
   getPosDayStatus, getPosSessionHistory,
+  transferPosSession, syncPosSession,
 } from '../../api/posApi';
 import { getSelectableCategories } from '../../api/posCashMovementCategoryApi';
 import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from '../../api/branchTaxApi';
@@ -160,6 +161,7 @@ import {
 import CustomerPicker from './POS/CustomerPicker';
 import { formatUserDisplayName } from '../../utils/displayName';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
@@ -373,6 +375,7 @@ function resolveTerminalUnavailableConfig(rawMessage) {
 
 export default function POSSales() {
   const { company } = useCompany();
+  const { branches } = useBranch();
   // Active currency CODE from the company profile (falls back to AED). Report
   // view-models emit this code as the money token; the print engine
   // (renderTextWithCurrencySymbols) rewrites it to the configured symbol/image.
@@ -392,6 +395,11 @@ export default function POSSales() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
+
+  // Phase 12 - Session synchronization lock state
+  const [sessionInvalidated, setSessionInvalidated] = useState(false);
+  const [sessionInvalidReason, setSessionInvalidReason] = useState(null);
+
   // True when this terminal has a live POS session. Session-bound features
   // (X/Z report, cash drop/out, customer management) are locked until this is
   // true and re-enable automatically — no refresh — when a session is opened.
@@ -408,6 +416,59 @@ export default function POSSales() {
   // and the caller owns none of those open sessions — blocks POS entry with an
   // informational popup listing the unclosed session(s) until Day Close runs.
   const [openSessionsBlock, setOpenSessionsBlock] = useState(null); // { currentBusinessDate, openSessions } | null
+
+  // Phase 12 - Session Synchronization (Polling)
+  useEffect(() => {
+    if (!currentSession || !currentTerminal?.terminalId || sessionInvalidated) return;
+    let aborted = false;
+
+    const poll = async () => {
+      if (aborted || !currentSession || !currentTerminal?.terminalId || sessionInvalidated) return;
+      
+      // Do not poll if we are viewing a session from a DIFFERENT terminal
+      // (e.g. clicking "Go to Close Session" on the PREVIOUS_DAY_SESSION_OPEN modal
+      // to close a stale session left open on another machine). Polling here would
+      // immediately invalidate the session with "TRANSFERRED" since terminalId doesn't match.
+      if (currentSession.terminalId && currentSession.terminalId !== currentTerminal.terminalId) {
+        if (!aborted && currentSession && !sessionInvalidated) {
+          setTimeout(poll, 5000);
+        }
+        return;
+      }
+      
+      try {
+        const terminalId = currentTerminal.terminalId;
+        if (terminalId) {
+          const res = await syncPosSession(currentSession.id, terminalId);
+          if (res && res.sessionValid === false) {
+            setSessionInvalidated(true);
+            setSessionInvalidReason(res.message || 'This session has been transferred to another terminal.');
+            setCurrentSession(null);
+            setCurrentInvoice({ items: [], subtotal: 0, totalDiscount: 0, tax: 0, total: 0, billDiscountAmount: 0 });
+            setSelectedCustomer(WALK_IN_CUSTOMER.id);
+            setCheckoutPayMode('cash');
+            setShowPaymentDialog(false);
+            setShowCloseSessionDialog(false);
+            setShowCashDropDialog(false);
+            setShowCustomerSelector(false);
+            setCheckoutPhase('payment');
+            setCheckoutError(null);
+          }
+        }
+      } catch (err) {
+        // Ignore network failures, allow it to retry on next tick
+      }
+      if (!aborted && currentSession && !sessionInvalidated) {
+        setTimeout(poll, 5000);
+      }
+    };
+
+    const timer = setTimeout(poll, 5000);
+    return () => {
+      aborted = true;
+      clearTimeout(timer);
+    };
+  }, [currentSession, currentTerminal, sessionInvalidated]);
   // Set when this device's cached terminal_id was rejected (403 — terminal is ARCHIVED,
   // BLOCKED, DECOMMISSIONED, or in MAINTENANCE). Surfaces the reason instead of silently
   // leaving currentTerminal null, which previously let handleStartSession fabricate a
@@ -492,6 +553,11 @@ export default function POSSales() {
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
   const [prevDaySessionOpenMsg, setPrevDaySessionOpenMsg] = useState(null);
   const [prevDaySessionOpenId, setPrevDaySessionOpenId] = useState(null);
+  // Session Roaming Phase 11 — discovery response from openSession's Phase 7 structured 409.
+  const [discoveryResponse, setDiscoveryResponse] = useState(null);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState(null);
+  const [discoverySupervisorPin, setDiscoverySupervisorPin] = useState('');
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [customerAdvanceSummary, setCustomerAdvanceSummary] = useState(null);
@@ -1870,6 +1936,12 @@ export default function POSSales() {
       setCurrentSession(null);
       setTerminalLockedBy(null);
       setOpenSessionsBlock(null);
+      // Session Roaming Phase 11 — dismiss any open discovery dialog when the
+      // branch switches so stale cross-branch data doesn't linger.
+      setDiscoveryResponse(null);
+      setDiscoveryBusy(false);
+      setDiscoveryError(null);
+      setDiscoverySupervisorPin('');
       registerTerminalAndResumeSession();
     };
     window.addEventListener('billbull:branch-changed', handleBranchChanged);
@@ -2395,6 +2467,21 @@ export default function POSSales() {
         setPrevDaySessionOpenMsg(cleanMsg);
         return;
       }
+
+      // Session Roaming Phase 11 — detect the Phase 7 structured 409 from openSession's
+      // discovery integration. The response body carries a `status` field that is one of
+      // the PosSessionDiscoveryStatus enum values (OWNER_SESSION, CONFLICT,
+      // MULTIPLE_OWNER_SESSIONS). Distinguish from the PREVIOUS_DAY_SESSION_OPEN 409
+      // (plain string message) by checking for a recognized discovery status.
+      const DISCOVERY_STATUSES = new Set(['OWNER_SESSION', 'CONFLICT', 'MULTIPLE_OWNER_SESSIONS']);
+      if (err?.response?.status === 409 && DISCOVERY_STATUSES.has(err?.response?.data?.status)) {
+        setDiscoveryResponse(err.response.data);
+        setDiscoveryError(null);
+        setDiscoverySupervisorPin('');
+        setShowStartSessionDialog(false);
+        return;
+      }
+
       // Do NOT fabricate a local session here — a fake `SES-<timestamp>` id is never
       // persisted server-side, so every downstream action (settle payment, session
       // totals, X/Z reports) later fails with "not a valid Long value" once it's sent
@@ -2406,6 +2493,90 @@ export default function POSSales() {
     }
     setShowStartSessionDialog(false);
     setCurrentView('touch-screen');
+  };
+
+  // Session Roaming Phase 11 — transfer the user's existing session from its current
+  // terminal to this terminal, then automatically retry openSession. The transfer
+  // endpoint requires `confirm: true` (always sent) and optionally a `supervisorPin`
+  // when the policy reports SUPERVISOR_REQUIRED.
+  const handleSessionTransfer = async () => {
+    if (discoveryBusy) return; // prevent double-click
+    if (!discoveryResponse?.ownerSessionId || !currentTerminal?.terminalId) return;
+
+    // Phase 11.6: Capture the active branch to detect stale async continuations.
+    const startingBranchId = sessionStorage.getItem('activeBranchId');
+    const isStale = () => sessionStorage.getItem('activeBranchId') !== startingBranchId;
+
+    setDiscoveryBusy(true);
+    setDiscoveryError(null);
+    try {
+      await transferPosSession(discoveryResponse.ownerSessionId, {
+        destinationTerminalId: currentTerminal.terminalId,
+        reason: 'Session roaming — operator transferred session to current terminal',
+        supervisorPin: discoverySupervisorPin || undefined,
+      });
+
+      if (isStale()) return; // Abort silently
+
+      // Transfer succeeded — clear discovery state and retry openSession.
+      setDiscoveryResponse(null);
+      setDiscoverySupervisorPin('');
+      // Auto-retry: now that the user's session is hosted on this terminal, openSession
+      // should succeed (it finds SAME_SESSION and resumes). Use the same denomination
+      // total the user entered.
+      try {
+        const total = calculateDenominationTotal(denominations);
+        const terminalId = currentTerminal.terminalId;
+        const counterName = currentTerminal?.counterName || 'Main Counter';
+        const session = await openPosSession({ terminalId, counterName, openingCash: total });
+        
+        if (isStale()) return; // Abort silently
+
+        setCurrentSession(session);
+        setXReportData(null);
+        setZReportData(null);
+        setSessionNowMs(Date.now());
+        setShowStartSessionDialog(false);
+        setCurrentView('touch-screen');
+      } catch (retryErr) {
+        if (isStale()) return;
+        // Transfer worked but openSession still failed — surface the error and let
+        // the cashier try again manually. Do NOT loop.
+        console.error('Post-transfer openSession retry failed', retryErr);
+        alert(retryErr?.response?.data?.message || 'Session transferred but could not open it. Please try again.');
+      }
+    } catch (err) {
+      if (isStale()) return;
+      
+      const msg = err?.response?.data?.message || err?.response?.data;
+      const reasonCode = err?.response?.data?.policyReasonCode || err?.response?.data?.transferReasonCode;
+      // Map known backend reason codes to user-friendly messages.
+      if (reasonCode === 'DESTINATION_TERMINAL_OCCUPIED') {
+        setDiscoveryError('This terminal already has an active session. The other session must be closed first.');
+      } else if (reasonCode === 'SAME_TERMINAL_NOT_APPLICABLE') {
+        setDiscoveryError('Your session is already on this terminal.');
+      } else if (reasonCode === 'DESTINATION_TERMINAL_NOT_FOUND') {
+        setDiscoveryError('This terminal could not be found. Please refresh and try again.');
+      } else if (err?.response?.status === 403) {
+        setDiscoveryError('Invalid supervisor PIN or insufficient permissions.');
+      } else if (err?.response?.status === 409) {
+        setDiscoveryError(typeof msg === 'string' ? msg : 'A concurrent change prevented the transfer. Please try again.');
+      } else {
+        setDiscoveryError(typeof msg === 'string' ? msg : 'Transfer failed. Please try again.');
+      }
+    } finally {
+      if (!isStale()) {
+        setDiscoveryBusy(false);
+      }
+    }
+  };
+
+  // Session Roaming Phase 11 — dismiss the discovery dialog and clear all related state.
+  const handleDiscoveryDismiss = () => {
+    setDiscoveryResponse(null);
+    setDiscoveryBusy(false);
+    setDiscoveryError(null);
+    setDiscoverySupervisorPin('');
   };
 
   const handleCloseSession = async () => {
@@ -3038,6 +3209,17 @@ export default function POSSales() {
   const handleCloseDay = async (acknowledgeExclusions = false) => {
     const branchId = currentTerminal?.branchId || currentSession?.branchId;
     if (!branchId) return;
+
+    // Strict validation guard: Ensure Day Close cannot be triggered (e.g. via keyboard shortcut) 
+    // while blocking validations exist.
+    const isXReportsMissing = Array.isArray(zReportPending) && zReportPending.length > 0;
+    const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
+    const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
+    
+    if (isXReportsMissing || isOpenSessions || isSuspendedBills) {
+      alert("Cannot close day while blocking validations exist. Please resolve all pending actions.");
+      return;
+    }
     try {
       setZReportLoading(true);
       const data = await closePosDay(
@@ -6492,73 +6674,209 @@ export default function POSSales() {
       </div>
     );
 
-    const zrInfoCard = (
-      <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1 text-xs">
-            {[
-              ['Report Date', zReportDate || new Date().toLocaleDateString()],
-              ['Sessions', String(zSessionCount)],
-              ['Report Type', 'Z-Report (End-of-Day)'],
-            ].map(([k, v]) => (
-              <div key={k} className="flex gap-2"><span className="text-gray-500 w-32 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-            ))}
+    const renderZrInfoCard = () => (
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+        {/* Business Overview Card */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-5">
+          <h2 className="text-base font-bold text-[#1E293B] mb-4 border-b border-[#327F74]/10 pb-2">Business Overview</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Business Date</span><span className="text-sm font-bold text-[#1E293B]">{zReportDate || new Date().toLocaleDateString()}</span></div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Business Status</span>
+              <div>
+                {zReportData?.isDayClosed ? (
+                  <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center w-fit gap-1"><span className="h-2 w-2 rounded-full bg-gray-400"></span>DAY CLOSED</span>
+                ) : isDayCloseBlocked ? (
+                  <span className="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center w-fit gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500"></span>OPEN</span>
+                ) : (
+                  <span className="bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center w-fit gap-1"><span className="h-2 w-2 rounded-full bg-amber-500"></span>READY FOR DAY CLOSE</span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Generated Time</span><span className="text-sm font-bold text-[#1E293B]">{new Date().toLocaleTimeString()}</span></div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Report Type</span><span className="text-sm font-bold text-[#1E293B]">Consolidated Z-Report</span></div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Branch</span><span className="text-sm font-bold text-[#1E293B] truncate" title={zReportData?.branchName || currentTerminal?.branchName || '—'}>{zReportData?.branchName || currentTerminal?.branchName || '—'}</span></div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Session Scope</span><span className="text-sm font-bold text-[#1E293B]">{zSessionCount ? `${zSessionCount} session(s)` : '—'}</span></div>
           </div>
-          <div className="space-y-1 text-xs">
-            {[
-              ['Total Invoices', String(zInvoiceCount)],
-              ['Total Sales', formatCurrencyStr(zTotalSales)],
-              ['Cash Sales', formatCurrencyStr(zCashSales)],
-              ['Card Sales', formatCurrencyStr(zCardSales)],
-            ].map(([k, v]) => (
-              <div key={k} className="flex gap-2"><span className="text-gray-500 w-36 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-            ))}
+        </div>
+
+        {/* Store Operations Card */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-5">
+          <h2 className="text-base font-bold text-[#1E293B] mb-4 border-b border-[#327F74]/10 pb-2">Store Operations</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Sessions</span>
+              <div className="flex flex-wrap gap-2 mt-0.5">
+                <div className="bg-emerald-50 border border-emerald-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-emerald-600 font-bold">OPEN</span><span className="text-xs font-bold text-emerald-700">{typeof daySummary !== 'undefined' && daySummary ? daySummary.openSessionCount || 0 : '—'}</span></div>
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">CLOSED</span><span className="text-xs font-bold text-gray-700">{typeof daySummary !== 'undefined' && daySummary ? daySummary.closedSessionCount ?? zSessionCount : zSessionCount}</span></div>
+                <div className="bg-amber-50 border border-amber-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-amber-600 font-bold">PENDING</span><span className="text-xs font-bold text-amber-700">{typeof daySummary !== 'undefined' && daySummary ? daySummary.suspendedSessionCount || 0 : '—'}</span></div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Terminals</span>
+              <div className="flex flex-wrap gap-2 mt-0.5">
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">CONFIGURED</span><span className="text-xs font-bold text-gray-700">—</span></div>
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">ONLINE</span><span className="text-xs font-bold text-gray-700">—</span></div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Cashiers</span><span className="text-sm font-bold text-[#1E293B]">—</span></div>
+              <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Invoices</span><span className="text-sm font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Exceptions</span>
+              <div className="flex flex-wrap gap-2 mt-0.5">
+                <div className="bg-rose-50 border border-rose-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-rose-600 font-bold">RETURNS</span><span className="text-xs font-bold text-rose-700">{String(zSummary?.salesReturnCount || 0)}</span></div>
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">VOIDS</span><span className="text-xs font-bold text-gray-700">—</span></div>
+                <div className="bg-amber-50 border border-amber-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-amber-600 font-bold">SUSPENDED</span><span className="text-xs font-bold text-amber-700">—</span></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     );
 
+    const BusinessAccordionGroup = ({ title, icon, description, sectionCount, defaultOpen = false, summaryContent, children }) => {
+      const [isOpen, setIsOpen] = React.useState(defaultOpen);
+
+      return (
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm mb-6 overflow-hidden transition-all duration-300">
+          <button 
+            onClick={() => setIsOpen(!isOpen)}
+            className="w-full flex flex-col md:flex-row md:items-center justify-between p-5 bg-[#F7F7FA] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 transition-colors text-left"
+            aria-expanded={isOpen}
+          >
+            <div className="flex items-center gap-4 mb-3 md:mb-0">
+              <div className="h-12 w-12 rounded-lg bg-white border border-[#327F74]/10 flex items-center justify-center text-[#327F74] shadow-sm shrink-0">
+                {icon}
+              </div>
+              <div className="flex flex-col">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-semibold text-[#1E293B] uppercase">{title}</h3>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5 opacity-90">{description}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-6 self-start md:self-auto ml-16 md:ml-0">
+              {summaryContent && (
+                <div className="hidden lg:flex items-center gap-6 mr-4">
+                  {summaryContent}
+                </div>
+              )}
+              <span className="bg-[#327F74]/10 text-[#327F74] text-[11px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap">{sectionCount} Sections</span>
+              <div className="text-gray-400 shrink-0">
+                {isOpen ? <ChevronDown className="h-6 w-6" /> : <ChevronRight className="h-6 w-6" />}
+              </div>
+            </div>
+          </button>
+          {isOpen && (
+            <div className="p-4 md:p-6 border-t border-[#327F74]/10 bg-white">
+              {children}
+            </div>
+          )}
+        </div>
+      );
+    };
+
     const zrKpiCards = (
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-        {[
-          { label: 'Gross Sales', value: <CurrencyAmount amount={zTotalSales} />, sub: 'Before discounts', icon: <TrendingUp className="h-4 w-4" /> },
-          { label: 'Cash Sales', value: <CurrencyAmount amount={zCashSales} />, sub: 'Cash payments', icon: <Banknote className="h-4 w-4" /> },
-          { label: 'Card Sales', value: <CurrencyAmount amount={zCardSales} />, sub: 'Card payments', icon: <CreditCard className="h-4 w-4" /> },
-          { label: 'VAT Amount', value: <CurrencyAmount amount={zTotalTax} />, sub: '5% VAT', icon: <FileBarChart className="h-4 w-4" /> },
-          { label: 'Expected Cash', value: <CurrencyAmount amount={zExpectedCash} />, sub: 'Opening + cash sales', icon: <Wallet className="h-4 w-4" /> },
-          { label: 'Total Invoices', value: String(zInvoiceCount), sub: `${zSessionCount} session(s)`, icon: <FileText className="h-4 w-4" /> },
-        ].map(k => (
-          <div key={k.label} className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-3 flex flex-col gap-1">
-            <div className="flex items-center gap-1 text-[#327F74]">{k.icon}<span className="text-xs text-gray-500">{k.label}</span></div>
-            <div className="text-base font-bold text-[#1E293B]">{k.value}</div>
-            {k.sub && <span className="text-xs text-gray-400">{k.sub}</span>}
+      <div className="lg:sticky lg:top-0 lg:z-20 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8 bg-gray-50/80 backdrop-blur-md py-4 border-b border-[#327F74]/10">
+        {/* GROUP 1: SALES */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <TrendingUp className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">SALES</h2>
           </div>
-        ))}
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Gross Sales</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalSales} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Net Sales</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zSalesExTax} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Invoices</span><span className="text-sm font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+          </div>
+        </div>
+
+        {/* GROUP 2: PAYMENTS */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <CreditCard className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">PAYMENTS</h2>
+          </div>
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Cash</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zCashSales} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Card</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zCardSales} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Credit</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zCreditSales} /></span></div>
+          </div>
+        </div>
+
+        {/* GROUP 3: CASH */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <Wallet className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">CASH</h2>
+          </div>
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Opening Cash</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zOpeningCash} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Expected Cash</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zExpectedCash} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Cash Variance</span><span className="text-sm font-bold text-[#1E293B]">—</span></div>
+          </div>
+        </div>
+
+        {/* GROUP 4: COMPLIANCE */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <Shield className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">COMPLIANCE</h2>
+          </div>
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">VAT</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalTax} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Returns</span><span className="text-sm font-bold text-rose-600">{zSummary?.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount amount={0} />}</span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Discount</span><span className="text-sm font-bold text-amber-600">{zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount amount={0} />}</span></div>
+          </div>
+        </div>
       </div>
     );
 
-    const ZRTable = ({ title, icon, cols, rows, footerRow }) => (
-      <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-          <span className="text-[#327F74]">{icon}</span>
-          <span className="text-sm text-[#1E293B]">{title}</span>
+    const ZRTable = ({ title, icon, cols, rows, footerRow, emptyMessage }) => (
+      <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm mb-6 overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#327F74]/10 bg-[#F7F7FA]">
+          <div className="flex items-center gap-2.5">
+            <span className="text-[#327F74]">{icon}</span>
+            <span className="text-sm font-semibold text-[#1E293B] uppercase">{title}</span>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-[#F7F7FA] text-gray-500">
-                {cols.map((c, i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i > 0 && cols.length > 2 ? 'text-right' : i === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{c}</th>)}
+            <thead className="sticky top-0 z-10 bg-[#F7F7FA] shadow-sm">
+              <tr className="text-gray-500">
+                {cols.map((c, i) => <th key={i} className={`px-6 py-3.5 text-left font-medium border-b border-[#327F74]/10 whitespace-nowrap ${i > 0 && cols.length > 2 ? 'text-right' : i === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{c}</th>)}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, ri) => (
-                <tr key={ri} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                  {r.map((cell, ci) => <td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+              {rows && rows.length > 0 ? (
+                rows.map((r, ri) => (
+                  <tr key={ri} className="border-b border-gray-50 hover:bg-[#327F74]/5 transition-colors">
+                    {r.map((cell, ci) => <td key={ci} className={`px-6 py-4 text-[#1E293B] ${ri % 2 === 1 ? 'bg-gray-50/30' : ''} ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+                  </tr>
+                ))
+              ) : emptyMessage ? (
+                <tr>
+                  <td colSpan={cols.length} className="px-6 py-8 text-center bg-gray-50/50">
+                    <span className="text-gray-400 font-medium italic">{emptyMessage}</span>
+                  </td>
                 </tr>
-              ))}
+              ) : null}
               {footerRow && (
-                <tr className="bg-[#F7F7FA] border-t border-[#327F74]/20">
-                  {footerRow.map((cell, ci) => <td key={ci} className={`px-4 py-2 font-semibold text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+                <tr className="bg-[#F7F7FA] border-t-2 border-[#327F74]/20">
+                  {footerRow.map((cell, ci) => <td key={ci} className={`px-6 py-4 font-semibold text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
                 </tr>
               )}
             </tbody>
@@ -6567,76 +6885,266 @@ export default function POSSales() {
       </div>
     );
 
-    // End-of-day gate: when the backend reports terminals still owing an X-Report,
-    // show only this blocker (the report body and its actions stay hidden).
+    // End-of-day gate: when the backend reports terminals still owing an X-Report
     const zReportBlocked = Array.isArray(zReportPending) && zReportPending.length > 0;
-    const zrPendingBlocker = (
-      <div className="bg-white border border-red-200 rounded-lg shadow-sm p-6 mb-4">
-        <div className="flex items-center gap-2 mb-2 text-red-600">
-          <Lock className="h-5 w-5" />
-          <h3 className="text-base font-semibold">Z-Report blocked — terminals pending X-Report</h3>
+    
+    // Global Day Close Validation Gate
+    const isXReportsMissing = zReportBlocked;
+    const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
+    const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
+    const isDayCloseBlocked = isXReportsMissing || isOpenSessions || isSuspendedBills;
+
+    const renderValidationChecklist = () => {
+      const checklist = [
+        { label: 'All Sessions Closed', passed: !isOpenSessions },
+        { label: 'X-Reports Generated', passed: !isXReportsMissing },
+        { label: 'Draft Bills Cleared', passed: !isSuspendedBills },
+        { label: 'Cash Variance Within Limits', passed: true, info: 'Pending financial audit' },
+        { label: 'Business Date Ready', passed: !isDayCloseBlocked }
+      ];
+
+      const allPassed = !isDayCloseBlocked;
+
+      const issues = [];
+      if (typeof daySummary !== 'undefined' && daySummary) {
+        if (daySummary.openSessionCount > 0) {
+          issues.push({ title: 'Open Sessions', desc: `${daySummary.openSessionCount} session(s) are still open and must be closed.` });
+        }
+        if (daySummary.suspendedSessionCount > 0) {
+          issues.push({ title: 'Pending Draft Bills', desc: `${daySummary.suspendedSessionCount} suspended bill(s) found. Clear or void them.` });
+        }
+      }
+      if (zReportBlocked) {
+        issues.push({ title: 'Missing X-Reports', desc: `Some terminals are missing X-Reports.` });
+      }
+
+      return (
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-5 mb-6">
+          <div className="flex items-center justify-between mb-4 border-b border-[#327F74]/10 pb-3">
+            <h2 className="text-base font-bold text-[#1E293B]">Validation Checklist</h2>
+            {allPassed ? (
+              <span className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-[11px] font-bold px-3 py-1 rounded-full tracking-wide uppercase border border-emerald-200">
+                <CheckCircle className="h-3.5 w-3.5" />
+                Ready for Day Close
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 bg-rose-50 text-rose-700 text-[11px] font-bold px-3 py-1 rounded-full tracking-wide uppercase border border-rose-200">
+                <AlertCircle className="h-3.5 w-3.5" />
+                Attention Required
+              </span>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
+            {checklist.map((item, idx) => (
+              <div key={idx} className="flex items-center gap-2.5">
+                {item.passed ? (
+                  <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-rose-500 shrink-0" />
+                )}
+                <span className={`text-[13px] tracking-wide ${item.passed ? 'text-[#1E293B]' : 'text-rose-600 font-bold'}`}>{item.label}</span>
+                {item.info && <span className="text-[10px] text-gray-400 font-medium">({item.info})</span>}
+              </div>
+            ))}
+          </div>
+
+          {!allPassed && issues.length > 0 && (() => {
+            const blockingTerminals = [];
+            
+            // 1. Add all open sessions
+            allRangeSessions.forEach(s => {
+              if (s.status === 'OPEN') {
+                blockingTerminals.push({
+                  terminalId: s.terminalId,
+                  terminalName: s.terminalName || s.terminalId || '—',
+                  counter: s.counterName || '—',
+                  cashier: s.cashier || s.openedBy || '—',
+                  sessionNo: s.sessionNo || (s.sessionId ? `SESS-${s.sessionId}` : '—'),
+                  status: 'OPEN'
+                });
+              }
+            });
+            
+            // 2. Add missing X-reports not already captured by open sessions
+            (zReportPending || []).forEach(t => {
+              if (!blockingTerminals.some(b => String(b.terminalId) === String(t.terminalId))) {
+                // Find the latest session for this terminal (reverse chronological search)
+                const matchingSession = [...allRangeSessions].reverse().find(s => String(s.terminalId) === String(t.terminalId) && s.status === 'CLOSED')
+                                     || [...allRangeSessions].reverse().find(s => String(s.terminalId) === String(t.terminalId));
+                                     
+                blockingTerminals.push({
+                  terminalId: t.terminalId,
+                  terminalName: t.terminalName || matchingSession?.terminalName || t.terminalId || '—',
+                  counter: t.counter || matchingSession?.counterName || '—',
+                  cashier: t.openedBy || matchingSession?.cashier || matchingSession?.openedBy || '—',
+                  sessionNo: matchingSession ? (matchingSession.sessionNo || (matchingSession.sessionId ? `SESS-${matchingSession.sessionId}` : '—')) : '—',
+                  status: 'MISSING X-REPORT'
+                });
+              }
+            });
+
+            return (
+              <div className="bg-rose-50/50 border border-rose-200 rounded-lg p-4 mt-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertCircle className="h-4 w-4 text-rose-600" />
+                  <h3 className="text-[13px] font-bold text-rose-800 uppercase tracking-wide">Required Actions</h3>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {issues.map((issue, idx) => (
+                    <div key={idx} className="flex gap-2.5 bg-white p-3 rounded border border-rose-100">
+                      <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                      <div className="flex flex-col">
+                        <span className="text-[12px] font-bold text-rose-700">{issue.title}</span>
+                        <span className="text-[11px] text-rose-600/80 mt-1 leading-relaxed">{issue.desc}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Restored Day Close Blocking Details Table */}
+                {blockingTerminals.length > 0 && (
+                  <div className="bg-white border border-rose-200 rounded-lg overflow-hidden mt-4 shadow-sm">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="bg-rose-100/50 text-rose-800">
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Counter</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Terminal</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Cashier</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Session No.</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-rose-100">
+                        {blockingTerminals.map((bt, i) => (
+                          <tr key={i} className="hover:bg-rose-50/30 transition-colors text-xs">
+                            <td className="px-4 py-2.5 font-medium text-slate-800">{bt.counter}</td>
+                            <td className="px-4 py-2.5 text-slate-600">{bt.terminalName}</td>
+                            <td className="px-4 py-2.5 text-slate-600 flex items-center gap-1.5"><Users className="h-3 w-3 text-slate-400 shrink-0" />{bt.cashier}</td>
+                            <td className="px-4 py-2.5 text-slate-600">{bt.sessionNo}</td>
+                            <td className="px-4 py-2.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                                bt.status === 'OPEN' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-amber-100 text-amber-700 border border-amber-200'
+                              }`}>
+                                {bt.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
-        <p className="text-sm text-gray-600 mb-4">
-          Every active terminal must generate its X-Report before the end-of-day Z-Report can be produced.
-          The following terminal(s) are still open without an X-Report:
-        </p>
-        <div className="border border-red-100 rounded-lg overflow-hidden">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-red-50 text-red-700">
-                <th className="px-4 py-2 text-left font-medium">Terminal</th>
-                <th className="px-4 py-2 text-left font-medium">Counter</th>
-                <th className="px-4 py-2 text-left font-medium">Cashier</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(zReportPending || []).map((t, i) => (
-                <tr key={i} className="border-t border-red-50">
-                  <td className="px-4 py-2 text-[#1E293B]">{t.terminalName || t.terminalId || '—'}</td>
-                  <td className="px-4 py-2 text-[#1E293B]">{t.counter || '—'}</td>
-                  <td className="px-4 py-2 text-[#1E293B]">{t.openedBy || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      );
+    };
+
+    const renderDayCloseProgress = () => {
+      const steps = [
+        'Business Open',
+        'Trading Complete',
+        'Sessions Closed',
+        'Validation Passed',
+        'Financial Review',
+        'Ready For Day Close',
+        'Business Closed'
+      ];
+
+      let activeStepIndex = 0;
+      const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
+      const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
+
+      if (zReportData?.isDayClosed) {
+        activeStepIndex = 6;
+      } else {
+        activeStepIndex = 1;
+        if (!zReportBlocked) {
+          activeStepIndex = 2;
+          if (!isOpenSessions) {
+            activeStepIndex = 3;
+            if (!isSuspendedBills) {
+              activeStepIndex = 4;
+            }
+          }
+        }
+      }
+
+      return (
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-6 mb-6 overflow-x-auto">
+          <div className="flex min-w-[750px] justify-between">
+            {steps.map((step, idx) => {
+              const isCompleted = idx < activeStepIndex;
+              const isActive = idx === activeStepIndex;
+              const isLast = idx === steps.length - 1;
+              return (
+                <div key={idx} className={`relative flex flex-col items-center ${isLast ? '' : 'flex-1'}`}>
+                  {/* Line */}
+                  {!isLast && (
+                    <div className={`absolute top-2.5 left-[50%] w-full h-0.5 ${isCompleted ? 'bg-emerald-500' : 'bg-gray-200'} z-0`}></div>
+                  )}
+                  {/* Step Item */}
+                  <div className="flex flex-col items-center relative z-10">
+                    <div className={`h-5 w-5 rounded-full flex items-center justify-center border-2 mb-2 bg-white transition-colors ${
+                      isCompleted ? 'border-emerald-500 bg-emerald-500 text-white' : 
+                      isActive ? 'border-[#327F74] bg-white text-[#327F74] shadow-sm' : 
+                      'border-gray-200 bg-gray-50'
+                    }`}>
+                      {isCompleted ? <CheckCircle className="h-3 w-3" /> : <div className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-[#327F74]' : 'bg-transparent'}`}></div>}
+                    </div>
+                    <span className={`text-[10px] font-bold uppercase text-center max-w-[100px] whitespace-nowrap leading-none ${
+                      isCompleted ? 'text-emerald-700' : isActive ? 'text-[#1E293B]' : 'text-gray-400'
+                    }`}>
+                      {step}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <p className="text-xs text-gray-400 mt-3">
-          Ask each listed terminal to run <span className="font-medium text-[#327F74]">X-Report</span> from its POS dashboard, then generate the Z-Report again.
-        </p>
-      </div>
-    );
+      );
+    };
 
     return (
-      <div className="bg-[#F7F7FA] min-h-full p-6">
+      <div className="bg-[#F7F7FA] min-h-full p-4 lg:p-6">
         {/* Sticky Header */}
         <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start lg:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+              <div className="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-gray-400 mb-0.5">
                 <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
                 <ChevronRight className="h-3 w-3" />
                 <span>POS</span>
                 <ChevronRight className="h-3 w-3" />
-                <span className="text-[#327F74]">Z-Report</span>
+                <span className="text-[#327F74]">Day Close Management</span>
               </div>
-              <h1 className="text-xl text-[#1E293B]">Z-Report / End-of-Day Closing Report</h1>
-              <p className="text-xs text-gray-500 mt-0.5">Consolidated POS closing summary for daily sales, collections, tax, cash drawer, returns, and audit verification.</p>
+              <h1 className="text-2xl font-bold tracking-tight text-[#1E293B]">Day Close Management</h1>
+              <p className="text-xs text-gray-500 mt-1 max-w-2xl">Manage the complete end-of-business-day closing process, review financial summaries, validate sessions and finalize the business date.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-[#327F74]/40 text-[#327F74] text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
-                <option value="a4">A4</option>
-                <option value="80mm">Thermal 80mm</option>
-                <option value="58mm">Thermal 58mm</option>
-              </select>
-              <button onClick={handleZReportPreview} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-              <button onClick={handleZReportPrint} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to print the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
-              <button onClick={handleZReportExportPDF} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-              <button onClick={handleZReportExportExcel} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+            
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1 bg-white border border-[#327F74]/20 p-1 rounded-lg shadow-sm">
+                <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-transparent hover:border-[#327F74]/20 text-[#327F74] font-medium text-xs px-2 py-2 rounded focus:outline-none transition-colors">
+                  <option value="a4">A4</option>
+                  <option value="80mm">Thermal 80mm</option>
+                  <option value="58mm">Thermal 58mm</option>
+                </select>
+                <div className="w-px h-5 bg-gray-200 mx-1"></div>
+                <button onClick={handleZReportPreview} disabled={!zReportData} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><Eye className="h-4 w-4" />Preview</button>
+                <button onClick={handleZReportPrint} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to print the Z-Report.' : undefined} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><Printer className="h-4 w-4" />Print</button>
+                <button onClick={handleZReportExportPDF} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><FileText className="h-4 w-4" />Export PDF</button>
+                <button onClick={handleZReportExportExcel} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><Download className="h-4 w-4" />Export Excel</button>
+              </div>
+
               <button
                 onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
-                disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
-                className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
-                <Lock className="h-3 w-3" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
+                disabled={zReportLoading || !zReportData || zReportData?.isDayClosed || isDayCloseBlocked}
+                title={isDayCloseBlocked ? "Resolve all pending actions in the Validation Checklist before closing the day." : undefined}
+                className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed text-[#1E293B] font-bold shadow-sm text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 transition-all">
+                <Lock className="h-4 w-4" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
               </button>
             </div>
           </div>
@@ -6652,10 +7160,25 @@ export default function POSSales() {
           </div>
         )}
 
-        {zReportBlocked ? zrPendingBlocker : (<>
-          {zrInfoCard}
+        {renderZrInfoCard()}
+        {renderValidationChecklist()}
+        {renderDayCloseProgress()}
+
+        {isDayCloseBlocked ? null : (<>
           {zrKpiCards}
 
+          <BusinessAccordionGroup
+            title="Sales Performance"
+            icon={<TrendingUp className="h-6 w-6" />}
+            description="Sales performance, invoices and revenue"
+            sectionCount={2}
+            defaultOpen={true}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Gross Sales</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalSales} /></span></div>
+              </>
+            }
+          >
           {/* Section 1: Sales Summary */}
           <ZRTable
             title="1. Sales Summary"
@@ -6680,6 +7203,22 @@ export default function POSSales() {
             ]}
           />
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Payments & Cash"
+            icon={<Wallet className="h-6 w-6" />}
+            description="Tenders, cash drawer and bank settlements"
+            sectionCount={5}
+            defaultOpen={false}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Cash</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zCashSales} /></span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Card</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zCardSales} /></span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Tender Count</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+              </>
+            }
+          >
           {/* Section 3: Payment / Tender Summary */}
           <ZRTable
             title="3. Payment / Tender Summary"
@@ -6748,9 +7287,8 @@ export default function POSSales() {
             title="4b. Customer Receipts"
             icon={<Banknote className="h-4 w-4" />}
             cols={['Sl No', 'Customer Name', 'Received By', 'Received Amount']}
-            rows={zCpReceiptRows.length
-              ? zCpReceiptRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.receivedBy || '—', <CurrencyAmount key={`z4brow-${r.slNo}`} amount={r.receivedAmount ?? 0} />])
-              : [['—', 'No cash customer receipts', '—', <CurrencyAmount key="z4bempty" amount={0} />]]}
+            rows={zCpReceiptRows.length ? zCpReceiptRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.receivedBy || '—', <CurrencyAmount key={`z4brow-${r.slNo}`} amount={r.receivedAmount ?? 0} />]) : []}
+            emptyMessage="— No customer receipts recorded"
             footerRow={['', '', 'Total', <CurrencyAmount key="z4bt" amount={zCpReceiptsTotal} />]}
           />
 
@@ -6759,9 +7297,8 @@ export default function POSSales() {
             title="4c. Customer Advances"
             icon={<Banknote className="h-4 w-4" />}
             cols={['Sl No', 'Customer Name', 'Paid By', 'Paid Amount']}
-            rows={zCpAdvanceRows.length
-              ? zCpAdvanceRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.paidBy || '—', <CurrencyAmount key={`z4crow-${r.slNo}`} amount={r.paidAmount ?? 0} />])
-              : [['—', 'No cash customer advances', '—', <CurrencyAmount key="z4cempty" amount={0} />]]}
+            rows={zCpAdvanceRows.length ? zCpAdvanceRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.paidBy || '—', <CurrencyAmount key={`z4crow-${r.slNo}`} amount={r.paidAmount ?? 0} />]) : []}
+            emptyMessage="— No customer advances recorded"
             footerRow={['', '', 'Total', <CurrencyAmount key="z4ct" amount={zCpAdvancesTotal} />]}
           />
 
@@ -6770,9 +7307,8 @@ export default function POSSales() {
             title="4d. Cash Drop / Cash Out"
             icon={<Banknote className="h-4 w-4" />}
             cols={['Sl No', 'Type', 'Amount']}
-            rows={zCpDropRows.length
-              ? zCpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', <CurrencyAmount key={`z4drow-${r.slNo}`} amount={r.amount ?? 0} />])
-              : [['—', 'No cash drops recorded', <CurrencyAmount key="z4dempty" amount={0} />]]}
+            rows={zCpDropRows.length ? zCpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', <CurrencyAmount key={`z4drow-${r.slNo}`} amount={r.amount ?? 0} />]) : []}
+            emptyMessage="— No cash drops recorded"
             footerRow={['', 'Total', <CurrencyAmount key="z4dt" amount={zCpDropIn - zCpDropOut} />]}
           />
 
@@ -6787,6 +7323,22 @@ export default function POSSales() {
             ]}
           />
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Tax & Compliance"
+            icon={<Shield className="h-6 w-6" />}
+            description="VAT, returns, refunds and discounts"
+            sectionCount={3}
+            defaultOpen={false}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">VAT</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalTax} /></span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Returns</span><span className="text-[13px] font-bold text-rose-600">{zSummary?.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount amount={0} />}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Discount</span><span className="text-[13px] font-bold text-amber-600">{zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount amount={0} />}</span></div>
+              </>
+            }
+          >
           {/* Section 6: VAT / Tax Summary */}
           <ZRTable
             title="6. VAT / Tax Summary"
@@ -6830,6 +7382,22 @@ export default function POSSales() {
             ]}
           />
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Productivity"
+            icon={<Users className="h-6 w-6" />}
+            description="Item movement, cashier shifts and credit"
+            sectionCount={4}
+            defaultOpen={false}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Invoices</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Cashiers</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zSessionCount)}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Items</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zSummary?.totalItemsSold ?? 0)}</span></div>
+              </>
+            }
+          >
           {/* Section 9: Item Movement Summary */}
           {(() => {
             const topItems = Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : [];
@@ -6912,7 +7480,8 @@ export default function POSSales() {
                 title="10. Cashier Wise Summary"
                 icon={<Users className="h-4 w-4" />}
                 cols={['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit']}
-                rows={cashierRows.length > 0 ? cashierRows : [['—', '0', <CurrencyAmount key="c10e" amount={0} />, <CurrencyAmount key="c10e2" amount={0} />, <CurrencyAmount key="c10e3" amount={0} />, <CurrencyAmount key="c10e4" amount={0} />]]}
+                rows={cashierRows}
+                emptyMessage="— No cashier activity recorded"
                 footerRow={['Total', String(zInvoiceCount), <CurrencyAmount key="c10tf" amount={zTotalSales} />, <CurrencyAmount key="c10cf" amount={zCashSales} />, <CurrencyAmount key="c10df" amount={zCardSales} />, <CurrencyAmount key="c10rf" amount={zCreditSales} />]}
               />
             );
@@ -6954,30 +7523,68 @@ export default function POSSales() {
             );
           })()}
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Day Close"
+            icon={<Lock className="h-6 w-6" />}
+            description="Final declaration, verification and system notes"
+            sectionCount={3}
+            defaultOpen={true}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Business Status</span><span className="text-[13px] font-bold text-[#1E293B]">{zReportData?.isDayClosed ? 'CLOSED' : 'OPEN'}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Ready For Close</span><span className="text-[13px] font-bold text-[#1E293B]">{(!zReportBlocked && !((typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false) && !((typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false)) ? 'YES' : 'NO'}</span></div>
+                {zReportData?.isDayClosed && <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Z-Report #</span><span className="text-[13px] font-bold text-[#1E293B]">{`ZR-${String(zReportData?.sessions?.[0]?.id ?? '0').padStart(9, '0')}`}</span></div>}
+              </>
+            }
+          >
           {/* Section 13: Final Day Close Summary */}
           {(() => {
             const zId = zReportData?.sessions?.[0]?.id;
             const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
             const totalExpectedCash = zOpeningCash + zCashSales;
             return (
-              <div className="bg-[#1E293B] border border-[#327F74]/40 rounded-lg shadow p-4 mb-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle className="h-4 w-4 text-[#F5C742]" />
-                  <span className="text-sm text-white">13. Final Day Close Summary</span>
-                  <span className="ml-auto text-xs bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded">Z-Report #{reportNo}</span>
+              <div className="bg-[#1E293B] border border-[#327F74]/40 rounded-xl shadow-md p-6 mb-6">
+                <div className="flex items-center justify-between mb-5 border-b border-gray-700/50 pb-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="h-6 w-6 text-[#F5C742]" />
+                    <span className="text-[16px] font-bold uppercase tracking-wide text-white">Final Day Close Summary</span>
+                  </div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider bg-[#F5C742] text-[#1E293B] px-3 py-1 rounded-full">Z-Report #{reportNo}</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                
+                <div className="flex flex-wrap gap-x-8 gap-y-4 mb-6 border-b border-gray-700/50 pb-5">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Business Date</span>
+                    <span className="text-[13px] font-medium text-white">{zReportDate ? new Date(zReportDate).toLocaleDateString('en-GB') : '—'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Branch</span>
+                    <span className="text-[13px] font-medium text-white">{zReportData?.branchName || 'Main Branch'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Status</span>
+                    <span className="text-[13px] font-medium text-[#F5C742]">{zReportData?.isDayClosed ? 'CLOSED' : 'PENDING'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Generated</span>
+                    <span className="text-[13px] font-medium text-white">{new Date().toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[
-                    ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]'],
-                    ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400'],
-                    ['Total Collection', <CurrencyAmount key="z13c" amount={zTotalSales} />, 'text-[#F5C742]'],
-                    ['Opening Cash / Float', <CurrencyAmount key="z13d" amount={zOpeningCash} />, 'text-white'],
-                    ['Expected Cash in Drawer', <CurrencyAmount key="z13e" amount={totalExpectedCash} />, 'text-white'],
-                    ['Cash Sales', <CurrencyAmount key="z13f" amount={zCashSales} />, 'text-green-400'],
-                  ].map(([l, v, c]) => (
-                    <div key={l} className="bg-white/5 rounded p-2">
-                      <div className="text-xs text-gray-400">{l}</div>
-                      <div className={`text-sm font-bold ${c}`}>{v}</div>
+                    ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]', 'bg-[#F5C742]/10 border-[#F5C742]/20'],
+                    ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400', 'bg-red-400/10 border-red-400/20'],
+                    ['Total Collection', <CurrencyAmount key="z13c" amount={zTotalSales} />, 'text-[#F5C742]', 'bg-[#F5C742]/10 border-[#F5C742]/20'],
+                    ['Opening Cash / Float', <CurrencyAmount key="z13d" amount={zOpeningCash} />, 'text-white', 'bg-white/5 border-white/10'],
+                    ['Expected Cash in Drawer', <CurrencyAmount key="z13e" amount={totalExpectedCash} />, 'text-white', 'bg-white/5 border-white/10'],
+                    ['Cash Sales', <CurrencyAmount key="z13f" amount={zCashSales} />, 'text-emerald-400', 'bg-emerald-400/10 border-emerald-400/20'],
+                  ].map(([l, v, c, bg]) => (
+                    <div key={l} className={`border rounded-lg p-3 ${bg}`}>
+                      <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">{l}</div>
+                      <div className={`text-[16px] font-bold ${c}`}>{v}</div>
                     </div>
                   ))}
                 </div>
@@ -6986,26 +7593,26 @@ export default function POSSales() {
           })()}
 
           {/* Declaration & Verification */}
-          <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Shield className="h-4 w-4 text-[#327F74]" />
-              <span className="text-sm text-[#1E293B]">Declaration &amp; Verification</span>
+          <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm mb-6 p-6">
+            <div className="flex items-center gap-2 mb-4 border-b border-[#327F74]/10 pb-3">
+              <Shield className="h-5 w-5 text-[#327F74]" />
+              <span className="text-[14px] font-bold uppercase tracking-wide text-[#1E293B]">Declaration &amp; Verification</span>
             </div>
-            <p className="text-xs text-gray-600 mb-4 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
+            <p className="text-[13px] text-gray-600 mb-6 bg-[#F7F7FA] rounded-lg p-4 border-l-4 border-[#327F74] leading-relaxed">
               I confirm that the above sales, collections, returns, and cash drawer details have been verified and closed for the selected business date / shift.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               <div>
-                <label className="text-xs text-gray-500">Cashier Signature</label>
-                <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+                <label className="text-[11px] font-bold uppercase tracking-wide text-gray-500 block mb-2">Cashier Signature</label>
+                <div className="border border-[#327F74]/30 rounded-lg h-24 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400 border-dashed">Sign here</div>
               </div>
               <div>
-                <label className="text-xs text-gray-500">Supervisor / Manager Signature</label>
-                <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+                <label className="text-[11px] font-bold uppercase tracking-wide text-gray-500 block mb-2">Supervisor / Manager Signature</label>
+                <div className="border border-[#327F74]/30 rounded-lg h-24 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400 border-dashed">Sign here</div>
               </div>
               <div>
-                <label className="text-xs text-gray-500">Closing Remarks</label>
-                <textarea className="mt-1 w-full border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] text-xs p-1.5 text-[#1E293B] resize-none focus:outline-none focus:ring-1 focus:ring-[#327F74]" placeholder="Enter remarks..." />
+                <label className="text-[11px] font-bold uppercase tracking-wide text-gray-500 block mb-2">Closing Remarks</label>
+                <textarea className="w-full border border-[#327F74]/30 rounded-lg h-24 bg-[#F7F7FA] text-[13px] p-3 text-[#1E293B] resize-none focus:outline-none focus:ring-2 focus:ring-[#327F74]/50 transition-shadow" placeholder="Enter remarks..." />
               </div>
             </div>
           </div>
@@ -7024,6 +7631,7 @@ export default function POSSales() {
               <li>Z-Report number is auto-generated and stored for audit based on session ID.</li>
             </ul>
           </div>
+          </BusinessAccordionGroup>
         </>)}
       </div>
     );
@@ -8379,6 +8987,204 @@ export default function POSSales() {
           </div>
         </div>
       )}
+
+      {/* ─── SESSION ROAMING DISCOVERY DIALOG (Phase 11) ─── */}
+      {discoveryResponse && (() => {
+        const dr = discoveryResponse;
+        const isOwner = dr.status === 'OWNER_SESSION';
+        const isConflict = dr.status === 'CONFLICT';
+        const isMultiple = dr.status === 'MULTIPLE_OWNER_SESSIONS';
+        const canTransfer = isOwner && dr.transferAuthorization && dr.transferAuthorization !== 'DENIED';
+        const needsSupervisor = dr.transferAuthorization === 'SUPERVISOR_REQUIRED';
+        const isDenied = isOwner && dr.transferAuthorization === 'DENIED';
+        return (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            {/* ── Header ── */}
+            <div className={`p-5 sm:p-8 text-center relative rounded-t-2xl sm:rounded-t-3xl ${
+              isConflict || isMultiple
+                ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white'
+                : 'bg-[#F5C742] text-slate-900'
+            }`}>
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/30 shadow-inner">
+                {isConflict || isMultiple
+                  ? <AlertTriangle className="h-7 w-7 sm:h-10 sm:w-10 text-white" />
+                  : <ArrowRightCircle className="h-7 w-7 sm:h-10 sm:w-10 text-slate-900" />
+                }
+              </div>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">
+                {isOwner && 'Active Session Found'}
+                {isConflict && 'Session Conflict'}
+                {isMultiple && 'Multiple Sessions Detected'}
+              </h2>
+              <p className={`text-xs sm:text-sm font-medium ${isConflict || isMultiple ? 'text-white/80' : 'text-slate-800'}`}>
+                {isOwner && 'You have an open session on another terminal'}
+                {isConflict && 'Both this terminal and your account have active sessions'}
+                {isMultiple && 'Manual resolution required'}
+              </p>
+            </div>
+
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-5">
+              {/* ── Backend message ── */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 text-sm text-slate-700">
+                {dr.message}
+              </div>
+
+              {/* ── OWNER_SESSION details ── */}
+              {isOwner && (
+                <div className="space-y-3">
+                  <div className="bg-blue-50 border border-blue-200/80 rounded-2xl p-4 sm:p-5">
+                    <div className="flex items-center gap-2 text-blue-800 font-bold text-sm mb-2">
+                      <Info className="h-4 w-4 text-blue-600 shrink-0" />
+                      <span>Your Active Session</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-slate-500 font-medium">Session ID</span>
+                        <p className="text-slate-800 font-bold">#{dr.ownerSessionId}</p>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 font-medium">Terminal</span>
+                        <p className="text-slate-800 font-bold">{dr.ownerSessionTerminalId || '—'}</p>
+                      </div>
+                      {dr.ownerSessionBranchId && (
+                        <div>
+                          <span className="text-slate-500 font-medium">Branch</span>
+                          <p className="text-slate-800 font-bold">{branches?.find(b => b.id === dr.ownerSessionBranchId)?.name || dr.ownerSessionBranchId}</p>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-slate-500 font-medium">Transfer</span>
+                        <p className={`font-bold ${canTransfer ? 'text-emerald-700' : isDenied ? 'text-red-600' : 'text-amber-600'}`}>
+                          {canTransfer && !needsSupervisor && '✓ Available'}
+                          {canTransfer && needsSupervisor && '🔒 Supervisor Required'}
+                          {isDenied && '✗ Not Available'}
+                          {!dr.transferAuthorization && '—'}
+                        </p>
+                      </div>
+                    </div>
+                    {dr.transferMessage && (
+                      <p className="text-xs text-slate-500 mt-2 leading-relaxed">{dr.transferMessage}</p>
+                    )}
+                  </div>
+
+                  {/* Denied explanation */}
+                  {isDenied && dr.transferReasonCode && (
+                    <div className="bg-red-50 border border-red-200/80 rounded-2xl p-4 text-xs text-red-700">
+                      <div className="flex items-center gap-2 font-bold text-sm mb-1">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        <span>Transfer Not Possible</span>
+                      </div>
+                      {dr.transferReasonCode === 'DESTINATION_TERMINAL_OCCUPIED' && 'This terminal already has an active session owned by another user. That session must be closed before a transfer.'}
+                      {dr.transferReasonCode === 'SAME_TERMINAL_NOT_APPLICABLE' && 'Your session is already on this terminal.'}
+                      {dr.transferReasonCode === 'DESTINATION_TERMINAL_NOT_FOUND' && 'The destination terminal could not be found.'}
+                      {!['DESTINATION_TERMINAL_OCCUPIED', 'SAME_TERMINAL_NOT_APPLICABLE', 'DESTINATION_TERMINAL_NOT_FOUND'].includes(dr.transferReasonCode) && (dr.transferMessage || 'The transfer policy does not allow this operation.')}
+                    </div>
+                  )}
+
+                  {/* Supervisor PIN input when required */}
+                  {canTransfer && needsSupervisor && (
+                    <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 sm:p-5 space-y-3">
+                      <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                        <Shield className="h-5 w-5 text-amber-600 shrink-0" />
+                        <span>Supervisor Authorization Required</span>
+                      </div>
+                      <p className="text-xs text-amber-700 leading-relaxed">
+                        This transfer requires supervisor approval. Enter the supervisor PIN to proceed.
+                      </p>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={10}
+                        value={discoverySupervisorPin}
+                        onChange={(e) => { setDiscoverySupervisorPin(e.target.value); setDiscoveryError(null); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !discoveryBusy) handleSessionTransfer(); }}
+                        placeholder="Supervisor PIN"
+                        className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                          discoveryError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'
+                        }`}
+                        autoFocus
+                        disabled={discoveryBusy}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── CONFLICT details ── */}
+              {isConflict && (
+                <div className="space-y-3">
+                  <div className="bg-red-50 border border-red-200/80 rounded-2xl p-4 sm:p-5">
+                    <div className="flex items-center gap-2 text-red-800 font-bold text-sm mb-2">
+                      <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                      <span>Two Active Sessions</span>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="bg-white/70 rounded-xl p-3 border border-red-100">
+                        <span className="text-slate-500 font-medium">This Terminal's Session</span>
+                        <p className="text-slate-800 font-bold">#{dr.terminalSessionId} — opened by {dr.terminalSessionOpenedBy || 'unknown'}</p>
+                      </div>
+                      <div className="bg-white/70 rounded-xl p-3 border border-red-100">
+                        <span className="text-slate-500 font-medium">Your Session Elsewhere</span>
+                        <p className="text-slate-800 font-bold">#{dr.ownerSessionId} — terminal {dr.ownerSessionTerminalId || '—'}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Both sessions must be resolved manually. Contact a supervisor to close or transfer the conflicting sessions.
+                  </p>
+                </div>
+              )}
+
+              {/* ── MULTIPLE_OWNER_SESSIONS details ── */}
+              {isMultiple && (
+                <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 sm:p-5">
+                  <div className="flex items-center gap-2 text-amber-800 font-bold text-sm mb-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <span>{dr.ownerSessionCount || 'Multiple'} Open Sessions</span>
+                  </div>
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    Your account owns multiple active POS sessions. The system cannot determine which session to use.
+                    A supervisor must close the extra sessions from Console before you can start or transfer a session.
+                  </p>
+                </div>
+              )}
+
+              {/* ── Error message ── */}
+              {discoveryError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 font-semibold flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {discoveryError}
+                </div>
+              )}
+
+              {/* ── Action buttons ── */}
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleDiscoveryDismiss}
+                  disabled={discoveryBusy}
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                {canTransfer && (
+                  <button
+                    type="button"
+                    onClick={handleSessionTransfer}
+                    disabled={discoveryBusy || (needsSupervisor && !discoverySupervisorPin.trim())}
+                    className="flex-1 py-3 sm:py-3.5 rounded-2xl bg-[#F5C742] hover:bg-[#e3b83c] text-slate-900 font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowRightCircle className="h-4 w-4" />
+                    {discoveryBusy ? 'Transferring…' : 'Transfer Session Here'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Render current view */}
       {currentView === 'dashboard' && renderDashboard()}
@@ -14527,6 +15333,31 @@ export default function POSSales() {
           </div>
         );
       })()}
+
+      {/* Phase 12 - Session Transferred/Invalidated Overlay */}
+      {sessionInvalidated && (
+        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 text-center animate-in fade-in zoom-in duration-300">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Lock className="h-8 w-8 text-red-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">Session No Longer Available</h2>
+            <p className="text-gray-600 mb-8 leading-relaxed">
+              {sessionInvalidReason || 'Your active POS session has been transferred to another terminal or closed remotely. This terminal can no longer continue using that session.'}
+            </p>
+            <button
+              onClick={() => {
+                setSessionInvalidated(false);
+                setSessionInvalidReason(null);
+                setCurrentView('dashboard');
+              }}
+              className="w-full py-3.5 px-4 bg-gray-900 hover:bg-gray-800 text-white font-semibold rounded-xl transition-colors focus:ring-4 focus:ring-gray-200"
+            >
+              Return to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
