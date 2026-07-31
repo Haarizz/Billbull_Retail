@@ -374,6 +374,14 @@ function resolveTerminalUnavailableConfig(rawMessage) {
 }
 
 export default function POSSales() {
+  const renderCountRef = React.useRef(0);
+  renderCountRef.current++;
+  const currentRenderCount = renderCountRef.current;
+
+  React.useEffect(() => {
+    window.__LATEST_POS_SETTINGS = posSettings;
+  });
+
   const { company } = useCompany();
   const { branches } = useBranch();
   // Active currency CODE from the company profile (falls back to AED). Report
@@ -2649,6 +2657,14 @@ export default function POSSales() {
   // Returns { ok, reason }. Callers can surface `reason` when ok === false so
   // the cashier learns why an add was refused (one-batch-one-unit enforcement).
   const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null, overrides = {}) => {
+    window.__CURRENT_ADD_TO_INVOICE = addToInvoice; // track the latest reference
+    console.log(`\n======================================================`);
+    console.log(`[addToInvoice EXECUTION]`);
+    console.log(`- Caller Context Render ID: ${currentRenderCount}`);
+    console.log(`- Captured posSettings:`, posSettings);
+    console.log(`- Captured taxInclusive:`, posSettings?.taxInclusive);
+    console.log(`- addToInvoice Reference Match:`, window.__CURRENT_ADD_TO_INVOICE === addToInvoice ? 'LATEST' : 'STALE (from an older render!)');
+    console.log(`======================================================\n`);
     // A serialized unit is always qty 1 and never merges (a serial is unique by
     // definition). A pinned batch is also a single scanned physical unit.
     const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
@@ -3258,6 +3274,7 @@ export default function POSSales() {
     // Configuration — 0 outright when Tax Enabled is off (kill switch), regardless of the
     // configured Branch Default VAT Rate.
     const taxInclusive = !!posSettings?.taxInclusive;
+    console.log(`[recalculateInvoice] Evaluated taxInclusive = ${taxInclusive} (posSettings:`, posSettings, `)`);
     const fallbackRate = posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0);
 
     let subtotal = 0;       // gross line value (entered price x qty) before discount —
@@ -4966,6 +4983,13 @@ export default function POSSales() {
    * Supports an "N*VALUE" / "NxVALUE" quantity prefix.
    */
   const handleUnifiedEntry = useCallback(async (raw, { fromGrid = false } = {}) => {
+    console.log(`\n======================================================`);
+    console.log(`[handleUnifiedEntry EXECUTION - BARCODE SCANNER PATH]`);
+    console.log(`- Captured Render ID: ${currentRenderCount}`);
+    console.log(`- Captured posSettings:`, posSettings);
+    console.log(`- Captured taxInclusive:`, posSettings?.taxInclusive);
+    console.log(`- Captured addToInvoice Reference Match:`, window.__CURRENT_ADD_TO_INVOICE === addToInvoice ? 'LATEST' : 'STALE (from an older render!)');
+    console.log(`======================================================\n`);
     const trimmed = (raw || '').trim();
     if (!trimmed) return;
 
