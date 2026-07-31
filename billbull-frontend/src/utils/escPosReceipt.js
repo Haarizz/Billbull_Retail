@@ -487,16 +487,37 @@ export const emitEscPosBrandedHeader = async (w, {
   const printableDots = usableDotsFor(mm);
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
 
+  const centered = (text, w) => {
+    const t = String(text || '');
+    const pad = Math.max(0, Math.floor((w - t.length) / 2));
+    return `${' '.repeat(pad)}${t}`.slice(0, w);
+  };
+
+  let currentAlign = 1;
+  const setAlign = (align) => {
+    if (currentAlign === align) return;
+    w.push(align === 1 ? CMD.ALIGN_CENTER : CMD.ALIGN_LEFT);
+    currentAlign = align;
+  };
+
   // Same centred-text emitter the receipt body uses: crisp ESC/POS text for the
   // Latin case, canvas raster for Arabic/other non-Latin-1 so glyphs render.
   const emitCenteredText = (str, { fontPx = 26, bold = false } = {}) => {
     const text = String(str ?? '');
     if (!text) return;
-    if (!hasNonPrintableLatin(text)) { w.line(text); return; }
+    if (!hasNonPrintableLatin(text)) {
+      setAlign(0);
+      w.gline(gutter, centered(text, width));
+      return;
+    }
+    setAlign(1);
     const raster = renderTextLineToRasterCommand(text, {
       widthDots: Math.round(printableDots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
     });
-    if (raster) { w.push(raster); w.push([0x0a]); } else { w.line(text); }
+    if (raster) { w.push(raster); w.push([0x0a]); } else {
+      setAlign(0);
+      w.gline(gutter, centered(text, width));
+    }
   };
 
   w.push(CMD.ALIGN_CENTER);
@@ -514,16 +535,18 @@ export const emitEscPosBrandedHeader = async (w, {
   }
 
   if (documentTitle) {
+    setAlign(0);
     w.push(CMD.BOLD_ON);
-    w.line(documentTitle);
+    w.gline(gutter, centered(documentTitle, width));
     w.push(CMD.BOLD_OFF);
   }
   if (header) { emitCenteredText(header, { fontPx: 24 }); }
   if (hasNonPrintableLatin(companyName || '')) {
     emitCenteredText(companyName, { fontPx: 28, bold: true });
   } else {
+    setAlign(0);
     w.push(CMD.BOLD_ON);
-    w.line(companyName || '');
+    w.gline(gutter, centered(companyName || '', width));
     w.push(CMD.BOLD_OFF);
   }
   if (showCompanyDetails) {
@@ -532,9 +555,14 @@ export const emitEscPosBrandedHeader = async (w, {
     if (outletPhone) emitCenteredText(`Tel: ${outletPhone}`, { fontPx: 22 });
   }
   if (showTrn && trn) emitCenteredText(`TRN: ${trn}`, { fontPx: 22 });
-  if (isReprint) { w.push(CMD.BOLD_ON).line('*** COPY / REPRINT ***').push(CMD.BOLD_OFF); }
+  if (isReprint) {
+    setAlign(0);
+    w.push(CMD.BOLD_ON);
+    w.gline(gutter, centered('*** COPY / REPRINT ***', width));
+    w.push(CMD.BOLD_OFF);
+  }
 
-  w.push(CMD.ALIGN_LEFT);
+  setAlign(0);
   emitDivider(w, gutter, hr);
 };
 
