@@ -205,8 +205,13 @@ public class PosCheckoutController {
             String combinedMode = buildCombinedPaymentMode(request, cashAmt, cardLegs, useCardLegs, cardAmt, onlineAmt, advanceAmt, creditStamp);
 
             if (cashAmt > 0.001) {
-                invoiceService.recordPayment(saved.getId(), cashAmt, "Cash",
-                        null, LocalDate.now(), null, null, splitGroupId, combinedMode);
+                // Cash tender natively accepts overpayment (change), so we must cap it to the
+                // remaining invoice balance after non-cash legs to avoid voucher overpayment errors.
+                double appliedCash = Math.min(cashAmt, Math.max(0, paymentAmount - cardAmt - onlineAmt - advanceAmt));
+                if (appliedCash > 0.001) {
+                    invoiceService.recordPayment(saved.getId(), appliedCash, "Cash",
+                            null, LocalDate.now(), null, null, splitGroupId, combinedMode);
+                }
             }
             if (useCardLegs) {
                 for (PosCheckoutRequest.PosCardLeg leg : cardLegs) {

@@ -134,6 +134,22 @@ export const touchSessionActivity = async (sessionId) => {
   await api.post(`${BASE}/sessions/${sessionId}/touch-activity`);
 };
 
+// Session Roaming — explicit, operator-confirmed transfer of an existing session to a
+// different terminal. confirm:true is always sent (backend safety gate requires it).
+// supervisorPin is only required when the transfer policy reports SUPERVISOR_REQUIRED.
+export const transferPosSession = async (sessionId, { destinationTerminalId, reason, supervisorPin } = {}) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/transfer`, {
+    destinationTerminalId, reason, supervisorPin, confirm: true,
+  });
+  return res.data;
+};
+
+// Phase 12 - Lightweight session synchronization for polling
+export const syncPosSession = async (sessionId, terminalId) => {
+  const res = await api.get(`${BASE}/sessions/${sessionId}/sync`, { params: { terminalId } });
+  return res.data;
+};
+
 export const closePosSession = async (sessionId, {
   closingCash, notes, closingDenominations, supervisorApproved,
   cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,

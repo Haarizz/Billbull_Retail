@@ -55,7 +55,12 @@ const BranchSelector = () => {
             toast.success(value === 'ALL' ? 'Viewing all branches' : 'Branch switched');
             setOpen(false);
         } catch (err) {
-            toast.error(err.response?.data?.message || 'Failed to switch branch');
+            if (err.isPosConflict) {
+                // Suppress generic toast, the modal in BranchContext handles this
+                setOpen(false);
+            } else {
+                toast.error(err.response?.data?.message || 'Failed to switch branch');
+            }
         } finally {
             setSwitching(false);
         }

@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { getBranches, getDefaultBranch, switchBranchSession, getInventoryBranchScopeStatus } from '../api/branchApi';
 import { getUserProfile, getRoles } from '../api/auth';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
+import { Button } from '../components/ui/button';
 
 const BranchContext = createContext(null);
 
@@ -165,6 +167,9 @@ export const BranchProvider = ({ children }) => {
     // badges so the UI stays unchanged when the backend toggle is off (no cosmetic drift).
     const [branchScopeEnabled, setBranchScopeEnabled] = useState(false);
 
+    // Implementation Phase 2: Active POS Session Conflict during branch switch
+    const [activeSessionConflict, setActiveSessionConflict] = useState(null);
+
     const isAdmin = userCanAccessAllBranches();
     const isAllBranches = isAdmin && activeBranchId === 'ALL';
 
@@ -285,7 +290,19 @@ export const BranchProvider = ({ children }) => {
         const isAll = branchId === 'ALL' || branchId === null || branchId === undefined;
         const payload = isAll ? null : Number(branchId);
 
-        const result = await switchBranchSession(payload);
+        let result;
+        try {
+            result = await switchBranchSession(payload);
+        } catch (error) {
+            if (error.response?.status === 409 && error.response?.data?.code === 'ACTIVE_POS_SESSION') {
+                setActiveSessionConflict(error.response.data);
+                const customError = new Error('ACTIVE_POS_SESSION');
+                customError.isPosConflict = true;
+                throw customError;
+            }
+            throw error;
+        }
+
         if (result?.token) {
             sessionStorage.setItem('token', result.token);
         }
@@ -333,6 +350,30 @@ export const BranchProvider = ({ children }) => {
             branchScopeEnabled,
         }}>
             {children}
+            
+            <Dialog open={!!activeSessionConflict} onOpenChange={(open) => !open && setActiveSessionConflict(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Active POS Session Found</DialogTitle>
+                        <DialogDescription>
+                            You currently have an active POS session.
+                            <div className="mt-4 space-y-2">
+                                <p><strong>Branch:</strong> {activeSessionConflict?.branchName}</p>
+                                <p><strong>Terminal:</strong> {activeSessionConflict?.terminalName}</p>
+                                <p><strong>Session:</strong> {activeSessionConflict?.sessionNumber}</p>
+                            </div>
+                            <div className="mt-4">
+                                Please close this session, or transfer it to another terminal within the same branch, before switching branches.
+                            </div>
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="secondary" onClick={() => setActiveSessionConflict(null)}>
+                            Cancel
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </BranchContext.Provider>
     );
 };

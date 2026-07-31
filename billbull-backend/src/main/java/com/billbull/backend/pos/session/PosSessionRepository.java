@@ -18,6 +18,9 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
     // for the future user-first session resolution (see PosSessionResolutionStrategy); existing
     // lookups above remain terminal-first and unchanged.
     List<PosSession> findByOwnerUserIdAndStatus(Long ownerUserId, PosSessionStatus status);
+    
+    List<PosSession> findByOwnerUserIdAndBranchIdAndStatus(Long ownerUserId, Long branchId, PosSessionStatus status);
+
 
     Optional<PosSession> findByTerminalIdAndStatus(String terminalId, PosSessionStatus status);
 

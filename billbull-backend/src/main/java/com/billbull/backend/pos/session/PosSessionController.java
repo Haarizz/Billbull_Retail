@@ -24,16 +24,18 @@ import java.util.Optional;
 public class PosSessionController {
 
     private final PosSessionService service;
+    private final PosSessionSyncService syncService;
     private final ObjectMapper objectMapper;
     private final PosDayStatusService dayStatusService;
     private final PosBusinessDateService businessDateService;
     private final BranchAccessService branchAccessService;
 
-    public PosSessionController(PosSessionService service, ObjectMapper objectMapper,
+    public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
                                  PosDayStatusService dayStatusService,
                                  PosBusinessDateService businessDateService,
                                  BranchAccessService branchAccessService) {
         this.service = service;
+        this.syncService = syncService;
         this.objectMapper = objectMapper;
         this.dayStatusService = dayStatusService;
         this.businessDateService = businessDateService;
@@ -99,6 +101,12 @@ public class PosSessionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> getById(@PathVariable Long id) {
         return ResponseEntity.ok(service.getById(id));
+    }
+
+    @GetMapping("/{id}/sync")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSessionSyncResponse> syncSession(@PathVariable Long id, @RequestParam(required = false) String terminalId) {
+        return ResponseEntity.ok(syncService.syncSession(id, terminalId));
     }
 
     @PostMapping("/{id}/close")

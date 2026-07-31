@@ -55,7 +55,7 @@ public class PosDayStatusService {
         return auth != null ? auth.getName() : "system";
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public DayStatusResponse getDayStatus(String terminalId) {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         Long branchId = branch.getId();
