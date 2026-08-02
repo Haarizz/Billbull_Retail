@@ -22,6 +22,7 @@ import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
 import com.billbull.backend.sales.payment.Payment;
 import com.billbull.backend.sales.payment.PaymentRepository;
+import com.billbull.backend.sales.advance.AdvanceApplicationService;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.HttpStatus;
@@ -64,6 +65,7 @@ public class PosCheckoutController {
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
     private final PaymentRepository paymentRepository;
+    private final AdvanceApplicationService advanceApplicationService;
     private final com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
 
@@ -77,6 +79,7 @@ public class PosCheckoutController {
                                   ProductService productService,
                                   EmployeeRepository employeeRepository,
                                   PaymentRepository paymentRepository,
+                                  AdvanceApplicationService advanceApplicationService,
                                   com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService,
                                   com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService) {
         this.invoiceService = invoiceService;
@@ -92,6 +95,7 @@ public class PosCheckoutController {
         this.productService = productService;
         this.employeeRepository = employeeRepository;
         this.paymentRepository = paymentRepository;
+        this.advanceApplicationService = advanceApplicationService;
         this.terminalActivityService = terminalActivityService;
         this.branchTaxResolutionService = branchTaxResolutionService;
     }
@@ -108,6 +112,11 @@ public class PosCheckoutController {
             }
         }
 
+        // Structural validation of the multi-card split (if any) fails fast, before any
+        // invoice row is created — same validation whether this is a pure Card checkout
+        // split across N cards or a Mixed (Cash + N cards) checkout.
+        List<PosCheckoutRequest.PosCardLeg> cardLegs = resolveCardLegs(request);
+
         SalesInvoice invoice = buildInvoice(request);
 
         // Step 1: save builds the invoice (number, totals, items) as DRAFT.
@@ -117,19 +126,43 @@ public class PosCheckoutController {
         SalesInvoice saved = invoiceService.save(invoice);
 
         double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
+        boolean useCardLegs = !cardLegs.isEmpty();
         double cashAmt = request.getCashAmount() != null ? request.getCashAmount() : 0.0;
-        double cardAmt = request.getCardAmount() != null ? request.getCardAmount() : 0.0;
+        // Additive multi-card split: when cardLegs is present it is the source of truth for the
+        // card portion of the payment (see PosCheckoutRequest.cardLegs javadoc) — the legacy
+        // scalar cardAmount/cardType/cardReference fields are only consulted when it's absent,
+        // so old API clients keep working unchanged.
+        double cardAmt = useCardLegs
+                ? cardLegs.stream().mapToDouble(PosCheckoutRequest.PosCardLeg::getAmount).sum()
+                : (request.getCardAmount() != null ? request.getCardAmount() : 0.0);
         double onlineAmt = request.getOnlineAmount() != null ? request.getOnlineAmount() : 0.0;
-        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001 || onlineAmt > 0.001;
+        double advanceAmt = request.getAdvanceAmount() != null ? request.getAdvanceAmount() : 0.0;
+        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001 || onlineAmt > 0.001 || advanceAmt > 0.001;
         double paymentAmount = hasSplitAmounts
-                ? Math.min(cashAmt + cardAmt + onlineAmt, invoiceTotal)
+                ? Math.min(cashAmt + cardAmt + onlineAmt + advanceAmt, invoiceTotal)
                 : Math.min(request.getAmountTendered() != null ? request.getAmountTendered() : 0.0, invoiceTotal);
-        // A Credit checkout with a partial receipt (cashAmt/cardAmt/onlineAmt < invoiceTotal) must
-        // keep the invoice's paymentMode stamped "Credit" — the leg mode (Cash/Card/Online) belongs
+        // A Credit checkout with a partial receipt (cashAmt/cardAmt/onlineAmt/advanceAmt < invoiceTotal) must
+        // keep the invoice's paymentMode stamped "Credit" — the leg mode (Cash/Card/Online/Advance) belongs
         // on the Payment/Receipt row, not on the invoice, so the remaining balance still reads as
         // outstanding credit rather than looking like a plain Cash/Card sale.
         boolean isCreditCheckout = "credit".equalsIgnoreCase(request.getPaymentMode());
         String creditStamp = isCreditCheckout ? "Credit" : null;
+
+        // Explicit multi-card split on a non-credit checkout must fully settle the invoice —
+        // there's no "change" concept for card tenders the way there is for cash overpayment,
+        // so unlike the legacy cash/card scalars (which silently cap at invoiceTotal), a
+        // mismatched card-leg total is rejected rather than silently truncated.
+        if (useCardLegs && !isCreditCheckout && invoiceTotal > 0
+                && Math.abs((cashAmt + cardAmt + onlineAmt + advanceAmt) - invoiceTotal) > ROUNDING_TOLERANCE) {
+            try {
+                invoiceService.delete(saved.getId());
+            } catch (RuntimeException cleanupEx) {
+                // Best-effort cleanup — don't mask the real validation error.
+            }
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, String.format(
+                    "Total of all payment legs (%.2f) must equal the invoice total (%.2f).",
+                    cashAmt + cardAmt + onlineAmt + advanceAmt, invoiceTotal));
+        }
 
         // Step 2: transition status while the invoice is still DRAFT so that
         // doUpdateStatus() fires: FEFO/batch reservation, auto-DN generation,
@@ -153,41 +186,62 @@ public class PosCheckoutController {
             throw ex;
         }
 
-        // Step 3: record payment — creates Payment row(s) + Receipt Voucher(s) + GL.
-        // Split into per-leg rows when both cash and card amounts are provided: each leg
-        // gets the correct settlement account (Cash 1001 vs Merchant Clearing 1013).
+        // Step 3: record payment — creates Payment row(s) + Receipt Voucher(s) + GL, one of
+        // each per payment leg. Every checkout is treated as a collection of legs (Cash,
+        // 0..N card legs, Online) that all flow through the same recordPayment() pipeline —
+        // Cash+Card Mixed and an N-way card split are the same mechanism, just a different
+        // leg count. Legs sharing this checkout get a common splitGroupId so they can be
+        // traced back to one logical transaction; a single-leg checkout gets none (unchanged
+        // from prior behavior).
         if (paymentAmount > 0) {
-            if (hasSplitAmounts && cashAmt > 0.001 && cardAmt > 0.001) {
-                // Card leg first (exact); cash fills the remainder up to invoiceTotal.
-                double cardPayment = Math.min(cardAmt, invoiceTotal);
-                double cashPayment = Math.max(0, Math.min(invoiceTotal - cardPayment, cashAmt));
-                String cardMode = resolveCardMode(request);
-                // Each recordPayment call below re-stamps invoice.paymentMode, so both legs
-                // must carry the same combined label (e.g. "Cash + Card") — otherwise the
-                // second (cash) call silently overwrites the first with just its own leg mode.
-                String splitCombinedMode = request.getCombinedPaymentMode() != null
-                        ? request.getCombinedPaymentMode() : creditStamp;
-                if (cardPayment > 0) {
-                    invoiceService.recordPayment(saved.getId(), cardPayment, cardMode,
-                            request.getCardReference(), LocalDate.now(),
-                            null, null, null, splitCombinedMode);
+            int legCount = (cashAmt > 0.001 ? 1 : 0)
+                    + (useCardLegs ? cardLegs.size() : (cardAmt > 0.001 ? 1 : 0))
+                    + (onlineAmt > 0.001 ? 1 : 0)
+                    + (advanceAmt > 0.001 ? 1 : 0);
+            String splitGroupId = legCount > 1 ? java.util.UUID.randomUUID().toString() : null;
+            // Each recordPayment call re-stamps invoice.paymentMode, so every leg must carry
+            // the same combined label (e.g. "Cash + Visa + Mastercard") — otherwise the last
+            // call silently overwrites the invoice's displayed mode with just its own leg.
+            String combinedMode = buildCombinedPaymentMode(request, cashAmt, cardLegs, useCardLegs, cardAmt, onlineAmt, advanceAmt, creditStamp);
+
+            if (cashAmt > 0.001) {
+                // Cash tender natively accepts overpayment (change), so we must cap it to the
+                // remaining invoice balance after non-cash legs to avoid voucher overpayment errors.
+                double appliedCash = Math.min(cashAmt, Math.max(0, paymentAmount - cardAmt - onlineAmt - advanceAmt));
+                if (appliedCash > 0.001) {
+                    invoiceService.recordPayment(saved.getId(), appliedCash, "Cash",
+                            null, LocalDate.now(), null, null, splitGroupId, combinedMode);
                 }
-                if (cashPayment > 0) {
-                    invoiceService.recordPayment(saved.getId(), cashPayment, "Cash",
-                            null, LocalDate.now(), null, null, null, splitCombinedMode);
+            }
+            if (useCardLegs) {
+                for (PosCheckoutRequest.PosCardLeg leg : cardLegs) {
+                    invoiceService.recordPayment(saved.getId(), leg.getAmount(), leg.getCardType(),
+                            leg.getReferenceNumber(), LocalDate.now(), null, null, splitGroupId, combinedMode);
                 }
-            } else {
-                // Single-leg payment (pure Cash, pure Card, pure Online, Credit partial receipt, etc.)
-                String paymentMode = hasSplitAmounts && cardAmt > 0.001
-                        ? resolveCardMode(request)      // card-only with explicit cardAmt
-                        : hasSplitAmounts && onlineAmt > 0.001
-                        ? "Online"                       // online-only with explicit onlineAmt
-                        : hasSplitAmounts               // cash-only with explicit cashAmt
-                        ? "Cash"
-                        : resolvePaymentMode(request);  // legacy: use paymentMode string
-                String combinedMode = request.getCombinedPaymentMode() != null
-                        ? request.getCombinedPaymentMode() : creditStamp;
-                invoiceService.recordPayment(saved.getId(), paymentAmount, paymentMode,
+            } else if (cardAmt > 0.001) {
+                invoiceService.recordPayment(saved.getId(), cardAmt, resolveCardMode(request),
+                        request.getCardReference(), LocalDate.now(), null, null, splitGroupId, combinedMode);
+            }
+            if (onlineAmt > 0.001) {
+                invoiceService.recordPayment(saved.getId(), onlineAmt, "Online",
+                        null, LocalDate.now(), request.getBankAccountName(), null, splitGroupId, combinedMode);
+            }
+            if (advanceAmt > 0.001) {
+                // Apply the advance against the invoice
+                advanceApplicationService.applyAvailableAdvancesToInvoice(
+                        saved.getCustomerCode(), saved.getInvoiceNumber(), BigDecimal.valueOf(advanceAmt), LocalDate.now());
+                
+                // If it was just an advance (no other legs), we need to ensure the payment mode reflects it
+                if (legCount == 1) {
+                    saved.setPaymentMode(combinedMode != null ? combinedMode : "Customer Advance");
+                } else if (combinedMode != null) {
+                    saved.setPaymentMode(combinedMode);
+                }
+            }
+            if (legCount == 0) {
+                // Legacy path: no cash/card/online scalars or legs at all — a plain single-leg
+                // payment driven entirely by paymentMode + amountTendered, exactly as before.
+                invoiceService.recordPayment(saved.getId(), paymentAmount, resolvePaymentMode(request),
                         request.getCardReference(), LocalDate.now(),
                         request.getBankAccountName(), null, null, combinedMode);
             }
@@ -763,6 +817,72 @@ public class PosCheckoutController {
         }
         if (req.getPaymentMode() != null) return req.getPaymentMode();
         return "Cash";
+    }
+
+    /** Currency rounding tolerance used when comparing a payment-leg total against the invoice total. */
+    private static final double ROUNDING_TOLERANCE = 0.01;
+    /** Cap on how many card legs one checkout may itemize — a UI/receipt-layout sanity limit, not a technical one. */
+    private static final int MAX_CARD_LEGS = 5;
+
+    /**
+     * Validates and returns the multi-card split (if any) on the request. Returns an empty list
+     * when {@code cardLegs} is absent/empty, in which case the legacy scalar cardAmount/cardType/
+     * cardReference fields drive the (single) card leg instead — see the class javadoc on
+     * {@link PosCheckoutRequest#getCardLegs()}.
+     */
+    private List<PosCheckoutRequest.PosCardLeg> resolveCardLegs(PosCheckoutRequest request) {
+        List<PosCheckoutRequest.PosCardLeg> legs = request.getCardLegs();
+        if (legs == null || legs.isEmpty()) return List.of();
+
+        if (legs.size() > MAX_CARD_LEGS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A single payment can include at most " + MAX_CARD_LEGS + " card legs.");
+        }
+
+        java.util.Set<String> seenReferences = new java.util.HashSet<>();
+        for (PosCheckoutRequest.PosCardLeg leg : legs) {
+            if (leg.getCardType() == null || leg.getCardType().isBlank()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card type is required for every card leg.");
+            }
+            if (leg.getAmount() == null || leg.getAmount() <= 0.001) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Each card leg amount must be greater than zero.");
+            }
+            String ref = leg.getReferenceNumber();
+            if (ref != null && !ref.isBlank()) {
+                String normalized = ref.trim().toLowerCase();
+                if (!seenReferences.add(normalized)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Duplicate reference number \"" + ref.trim() + "\" across card legs.");
+                }
+            }
+        }
+        return legs;
+    }
+
+    /** Builds the invoice-level combined payment-mode label (e.g. "Cash + Visa + Mastercard")
+     *  from whichever legs are actually present, unless the caller already supplied one. */
+    private String buildCombinedPaymentMode(PosCheckoutRequest request, double cashAmt,
+                                            List<PosCheckoutRequest.PosCardLeg> cardLegs, boolean useCardLegs,
+                                            double cardAmt, double onlineAmt, double advanceAmt, String creditStamp) {
+        if (creditStamp != null) return creditStamp;
+        if (request.getCombinedPaymentMode() != null && !request.getCombinedPaymentMode().isBlank()) {
+            return request.getCombinedPaymentMode(); // Front-end provided override
+        }
+        java.util.List<String> modes = new java.util.ArrayList<>();
+        if (cashAmt > 0.001) modes.add("Cash");
+        if (useCardLegs) {
+            for (PosCheckoutRequest.PosCardLeg leg : cardLegs) {
+                String label = leg.getCardType() != null && !leg.getCardType().isBlank() ? leg.getCardType() : "Card";
+                if (!modes.contains(label)) modes.add(label);
+            }
+        } else if (cardAmt > 0.001) {
+            String label = resolveCardMode(request);
+            if (!modes.contains(label)) modes.add(label);
+        }
+        if (onlineAmt > 0.001) modes.add("Online");
+        if (advanceAmt > 0.001) modes.add("Customer Advance");
+        if (modes.isEmpty()) return resolvePaymentMode(request);
+        return String.join(" + ", modes);
     }
 
     /** Returns true when a BigDecimal value is non-null and strictly positive (> 0). */

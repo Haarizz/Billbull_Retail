@@ -24,6 +24,12 @@ public class PosDayClose {
     @Column(name = "closed_by", length = 100)
     private String closedBy;
 
+    /** Resolved employee full name (User.getResolvedDisplayName()), captured once at close
+     *  time — display-only, never re-resolved on later reads. closedBy remains the
+     *  authoritative username for audit/identity purposes. */
+    @Column(name = "closed_by_display_name", length = 150)
+    private String closedByDisplayName;
+
     @Column(name = "closed_at", nullable = false)
     private LocalDateTime closedAt;
 
@@ -78,6 +84,21 @@ public class PosDayClose {
     @Column(name = "total_sessions")
     private Integer totalSessions = 0;
 
+    /** FK to pos_sessions.id — the first/last session (by openedAt order) of the
+     *  resolved range this Day Close was generated from. Populated for every close
+     *  going forward; null on rows written before this field existed. Auditability
+     *  only — the authoritative membership set is PosSession.dayCloseId. */
+    @Column(name = "start_session_id")
+    private Long startSessionId;
+
+    @Column(name = "end_session_id")
+    private Long endSessionId;
+
+    /** Immutable Z-Report number (format ZR-yyyyMMdd-NNNNNN), assigned once at close time.
+     *  Null on rows written before this field existed. */
+    @Column(name = "report_number", unique = true, length = 50)
+    private String reportNumber;
+
     public PosDayClose() {
     }
 
@@ -113,6 +134,14 @@ public class PosDayClose {
 
     public void setClosedBy(String closedBy) {
         this.closedBy = closedBy;
+    }
+
+    public String getClosedByDisplayName() {
+        return closedByDisplayName;
+    }
+
+    public void setClosedByDisplayName(String closedByDisplayName) {
+        this.closedByDisplayName = closedByDisplayName;
     }
 
     public LocalDateTime getClosedAt() {
@@ -257,5 +286,29 @@ public class PosDayClose {
 
     public void setTotalSessions(Integer totalSessions) {
         this.totalSessions = totalSessions;
+    }
+
+    public Long getStartSessionId() {
+        return startSessionId;
+    }
+
+    public void setStartSessionId(Long startSessionId) {
+        this.startSessionId = startSessionId;
+    }
+
+    public Long getEndSessionId() {
+        return endSessionId;
+    }
+
+    public void setEndSessionId(Long endSessionId) {
+        this.endSessionId = endSessionId;
+    }
+
+    public String getReportNumber() {
+        return reportNumber;
+    }
+
+    public void setReportNumber(String reportNumber) {
+        this.reportNumber = reportNumber;
     }
 }

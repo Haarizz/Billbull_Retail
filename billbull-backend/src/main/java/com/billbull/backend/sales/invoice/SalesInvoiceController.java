@@ -241,7 +241,7 @@ public class SalesInvoiceController {
 
     @GetMapping("/price-history/{itemCode}")
     @PreAuthorize("isAuthenticated()")
-    public List<PriceHistoryDTO> getPriceHistory(
+    public PriceHistoryResponse getPriceHistory(
             @PathVariable String itemCode,
             @RequestParam(required = false) String customerCode) {
         return service.getPriceHistory(itemCode, customerCode);

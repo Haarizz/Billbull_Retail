@@ -478,25 +478,46 @@ export const emitEscPosBrandedHeader = async (w, {
   isReprint = false,
 } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
-  // Usable width/dots so the header centres inside the same symmetric software
-  // gutters as the body. Centred lines use the printer's ALIGN_CENTER; the only
-  // left-aligned line here (the divider) is prefixed with the left gutter.
+  // Usable width/dots so the divider centres inside the same symmetric software
+  // gutters as the body. Header text lines use the printer's native ALIGN_CENTER
+  // (see the note by emitCenteredText below); the divider is the only
+  // left-aligned line here, prefixed with the left gutter.
   const width = usableColsFor(mm);
   const gutter = leftGutterFor(mm);
   const hr = '-'.repeat(width);
   const printableDots = usableDotsFor(mm);
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
 
+  let currentAlign = 1;
+  const setAlign = (align) => {
+    if (currentAlign === align) return;
+    w.push(align === 1 ? CMD.ALIGN_CENTER : CMD.ALIGN_LEFT);
+    currentAlign = align;
+  };
+
   // Same centred-text emitter the receipt body uses: crisp ESC/POS text for the
-  // Latin case, canvas raster for Arabic/other non-Latin-1 so glyphs render.
+  // Latin case, canvas raster for Arabic/other non-Latin-1 so glyphs render. Per
+  // the MARGIN_COLS note above, header lines are centred with the printer's
+  // NATIVE ESC a 1 (ALIGN_CENTER) rather than software space-padding — a prior
+  // attempt to software-center these lines (leading-space padding under
+  // ALIGN_LEFT) printed flush-left on clone controllers that collapse/ignore a
+  // long leading run of space characters, even though the same controllers
+  // honour ESC a 1 correctly.
   const emitCenteredText = (str, { fontPx = 26, bold = false } = {}) => {
     const text = String(str ?? '');
     if (!text) return;
-    if (!hasNonPrintableLatin(text)) { w.line(text); return; }
+    if (!hasNonPrintableLatin(text)) {
+      setAlign(1);
+      w.line(text);
+      return;
+    }
+    setAlign(1);
     const raster = renderTextLineToRasterCommand(text, {
       widthDots: Math.round(printableDots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
     });
-    if (raster) { w.push(raster); w.push([0x0a]); } else { w.line(text); }
+    if (raster) { w.push(raster); w.push([0x0a]); } else {
+      w.line(text);
+    }
   };
 
   w.push(CMD.ALIGN_CENTER);
@@ -514,6 +535,7 @@ export const emitEscPosBrandedHeader = async (w, {
   }
 
   if (documentTitle) {
+    setAlign(1);
     w.push(CMD.BOLD_ON);
     w.line(documentTitle);
     w.push(CMD.BOLD_OFF);
@@ -522,6 +544,7 @@ export const emitEscPosBrandedHeader = async (w, {
   if (hasNonPrintableLatin(companyName || '')) {
     emitCenteredText(companyName, { fontPx: 28, bold: true });
   } else {
+    setAlign(1);
     w.push(CMD.BOLD_ON);
     w.line(companyName || '');
     w.push(CMD.BOLD_OFF);
@@ -532,9 +555,14 @@ export const emitEscPosBrandedHeader = async (w, {
     if (outletPhone) emitCenteredText(`Tel: ${outletPhone}`, { fontPx: 22 });
   }
   if (showTrn && trn) emitCenteredText(`TRN: ${trn}`, { fontPx: 22 });
-  if (isReprint) { w.push(CMD.BOLD_ON).line('*** COPY / REPRINT ***').push(CMD.BOLD_OFF); }
+  if (isReprint) {
+    setAlign(1);
+    w.push(CMD.BOLD_ON);
+    w.line('*** COPY / REPRINT ***');
+    w.push(CMD.BOLD_OFF);
+  }
 
-  w.push(CMD.ALIGN_LEFT);
+  setAlign(0);
   emitDivider(w, gutter, hr);
 };
 
@@ -598,6 +626,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
   mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
+  // Dynamic payment-leg list (e.g. multi-card split: Visa/Mastercard/Amex each
+  // printed on its own line). When provided and non-empty, this takes precedence
+  // over the legacy two-slot mixedCashGiven/mixedCardGiven rendering below —
+  // callers that still pass only the legacy fields keep working unchanged.
+  paymentLines = null,
   showCreditBalance = false,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
@@ -824,11 +857,21 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
 
   if (showPaymentDetails) {
     if (invoice.paymentMode) w.gline(gutter, buildFixedWidthLine('Payment Mode:', invoice.paymentMode, width));
+    // Dynamic payment-leg list (multi-card split, or any other N-way split) — one
+    // line per leg (e.g. "Visa ... AED 300", "Mastercard ... AED 450") instead of
+    // the fixed Cash/Card two-slot layout below.
+    const validPaymentLines = Array.isArray(paymentLines)
+      ? paymentLines.filter(l => l && parseFloat(l.amount) > 0)
+      : [];
     // Mixed (cash + card) split — each tender's portion so the receipt reconciles
     // with the drawer + card batch. Otherwise fall back to Cash Received.
     const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
       (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
-    if (hasMixedSplit) {
+    if (validPaymentLines.length > 0) {
+      for (const line of validPaymentLines) {
+        w.gline(gutter, buildFixedWidthLine(`${line.label}:`, fmt(line.amount), width));
+      }
+    } else if (hasMixedSplit) {
       if (parseFloat(mixedCashGiven) > 0) w.gline(gutter, buildFixedWidthLine('Cash Paid:', fmt(mixedCashGiven), width));
       if (parseFloat(mixedCardGiven) > 0) w.gline(gutter, buildFixedWidthLine(`Card Paid${mixedCardType ? ` (${mixedCardType})` : ''}:`, fmt(mixedCardGiven), width));
     } else if (cashGiven != null && parseFloat(cashGiven) > 0) {

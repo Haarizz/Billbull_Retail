@@ -98,6 +98,9 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
   mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
+  // Dynamic payment-leg list (e.g. multi-card split) — takes precedence over the
+  // legacy mixedCashGiven/mixedCardGiven two-slot rendering below when present.
+  paymentLines = null,
   showCreditBalance = false,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
@@ -453,9 +456,16 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     // Mixed (cash + card) split — surface how much was tendered on each tender so
     // the receipt reconciles with the drawer + card batch. Card row label carries
     // the card brand when known (e.g. "Card Paid (VISA)").
+    const validPaymentLines = Array.isArray(paymentLines)
+      ? paymentLines.filter(l => l && parseFloat(l.amount) > 0)
+      : [];
     const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
       (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
-    if (hasMixedSplit) {
+    if (validPaymentLines.length > 0) {
+      for (const line of validPaymentLines) {
+        kv2({ en: line.label, ar: line.label }, fmt(line.amount));
+      }
+    } else if (hasMixedSplit) {
       if (parseFloat(mixedCashGiven) > 0) kv2(L.CASH_PAID, fmt(mixedCashGiven));
       if (parseFloat(mixedCardGiven) > 0) {
         const cardLabel = mixedCardType

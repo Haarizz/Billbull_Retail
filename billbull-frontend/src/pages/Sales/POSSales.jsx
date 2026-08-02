@@ -26,7 +26,7 @@ import { getBankAccounts } from '../../api/ledgerApi';
 import {
   registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
   getPosSessionById,
-  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, closePosDay, posCheckout,
+  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
@@ -34,7 +34,10 @@ import {
   getPosCustomerHistory,
   getDeliveryOrders, settleDeliveryOrder,
   reprintPosReceipt,
+  getPosDayStatus, getPosSessionHistory,
+  transferPosSession, syncPosSession,
 } from '../../api/posApi';
+import { getSelectableCategories } from '../../api/posCashMovementCategoryApi';
 import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from '../../api/branchTaxApi';
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
@@ -42,6 +45,7 @@ import { resolvePrintTemplate } from '../../api/printTemplateApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
+import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -122,6 +126,7 @@ import {
   Phone,
   Upload,
   Heart,
+  Coins,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -156,9 +161,11 @@ import {
 import CustomerPicker from './POS/CustomerPicker';
 import { formatUserDisplayName } from '../../utils/displayName';
 import { useCompany } from '../../context/CompanyContext';
+import { useBranch } from '../../context/BranchContext';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
+import { TradePOSTouchScreen } from './POS/TradePOS/TradePOSTouchScreen';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
 import { useHeartbeat } from '../../hooks/useHeartbeat';
@@ -367,7 +374,16 @@ function resolveTerminalUnavailableConfig(rawMessage) {
 }
 
 export default function POSSales() {
+  const renderCountRef = React.useRef(0);
+  renderCountRef.current++;
+  const currentRenderCount = renderCountRef.current;
+
+  React.useEffect(() => {
+    window.__LATEST_POS_SETTINGS = posSettings;
+  });
+
   const { company } = useCompany();
+  const { branches } = useBranch();
   // Active currency CODE from the company profile (falls back to AED). Report
   // view-models emit this code as the money token; the print engine
   // (renderTextWithCurrencySymbols) rewrites it to the configured symbol/image.
@@ -387,6 +403,11 @@ export default function POSSales() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
+
+  // Phase 12 - Session synchronization lock state
+  const [sessionInvalidated, setSessionInvalidated] = useState(false);
+  const [sessionInvalidReason, setSessionInvalidReason] = useState(null);
+
   // True when this terminal has a live POS session. Session-bound features
   // (X/Z report, cash drop/out, customer management) are locked until this is
   // true and re-enable automatically — no refresh — when a session is opened.
@@ -399,6 +420,69 @@ export default function POSSales() {
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
+  // Set when the previous business date is still open past configured operating hours
+  // and the caller owns none of those open sessions — blocks POS entry with an
+  // informational popup listing the unclosed session(s) until Day Close runs.
+  const [openSessionsBlock, setOpenSessionsBlock] = useState(null); // { currentBusinessDate, openSessions } | null
+
+  // Phase 12 - Session Synchronization (Polling)
+  useEffect(() => {
+    // Once this terminal has closed the session itself, stop polling — the
+    // X-Report screen keeps `currentSession` around (status CLOSED) so the
+    // cashier can still Print/Export/History the just-closed report, and the
+    // sync check would otherwise treat "closed by us" the same as "closed/
+    // transferred remotely" and boot them out mid-review (see "Session No
+    // Longer Available" overlay).
+    if (!currentSession || currentSession.status === 'CLOSED' || !currentTerminal?.terminalId || sessionInvalidated) return;
+    let aborted = false;
+
+    const poll = async () => {
+      if (aborted || !currentSession || currentSession.status === 'CLOSED' || !currentTerminal?.terminalId || sessionInvalidated) return;
+      
+      // Do not poll if we are viewing a session from a DIFFERENT terminal
+      // (e.g. clicking "Go to Close Session" on the PREVIOUS_DAY_SESSION_OPEN modal
+      // to close a stale session left open on another machine). Polling here would
+      // immediately invalidate the session with "TRANSFERRED" since terminalId doesn't match.
+      if (currentSession.terminalId && currentSession.terminalId !== currentTerminal.terminalId) {
+        if (!aborted && currentSession && !sessionInvalidated) {
+          setTimeout(poll, 5000);
+        }
+        return;
+      }
+      
+      try {
+        const terminalId = currentTerminal.terminalId;
+        if (terminalId) {
+          const res = await syncPosSession(currentSession.id, terminalId);
+          if (res && res.sessionValid === false) {
+            setSessionInvalidated(true);
+            setSessionInvalidReason(res.message || 'This session has been transferred to another terminal.');
+            setCurrentSession(null);
+            setCurrentInvoice({ items: [], subtotal: 0, totalDiscount: 0, tax: 0, total: 0, billDiscountAmount: 0 });
+            setSelectedCustomer(WALK_IN_CUSTOMER.id);
+            setCheckoutPayMode('cash');
+            setShowPaymentDialog(false);
+            setShowCloseSessionDialog(false);
+            setShowCashDropDialog(false);
+            setShowCustomerSelector(false);
+            setCheckoutPhase('payment');
+            setCheckoutError(null);
+          }
+        }
+      } catch (err) {
+        // Ignore network failures, allow it to retry on next tick
+      }
+      if (!aborted && currentSession && !sessionInvalidated) {
+        setTimeout(poll, 5000);
+      }
+    };
+
+    const timer = setTimeout(poll, 5000);
+    return () => {
+      aborted = true;
+      clearTimeout(timer);
+    };
+  }, [currentSession, currentTerminal, sessionInvalidated]);
   // Set when this device's cached terminal_id was rejected (403 — terminal is ARCHIVED,
   // BLOCKED, DECOMMISSIONED, or in MAINTENANCE). Surfaces the reason instead of silently
   // leaving currentTerminal null, which previously let handleStartSession fabricate a
@@ -446,6 +530,14 @@ export default function POSSales() {
   // X-Report / Z-Report live data
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
+  // X-Report history picker: browse/reprint a past CLOSED session's X-Report without
+  // disturbing the live currentSession view.
+  const [showXReportHistory, setShowXReportHistory] = useState(false);
+  const [xHistoryDateFrom, setXHistoryDateFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [xHistoryDateTo, setXHistoryDateTo] = useState(new Date().toISOString().slice(0, 10));
+  const [xHistoryResults, setXHistoryResults] = useState([]);
+  const [xHistoryLoading, setXHistoryLoading] = useState(false);
+  const [viewingHistoricalXReport, setViewingHistoricalXReport] = useState(false);
   const [zReportData, setZReportData] = useState(null);
   // Auto-print bookkeeping for X/Z reports: printedReportKeysRef dedupes so a
   // report is auto-printed at most once per session/day close; the pending refs
@@ -460,11 +552,30 @@ export default function POSSales() {
   const [zReportPending, setZReportPending] = useState(null);
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
+  // Day Close session-range resolution: the backend auto-resolves first/last session
+  // by default (rangeOverride stays null); a supervisor may narrow the range via the
+  // collapsed Advanced section, which re-triggers loadDaySummary with the override.
+  const [daySummary, setDaySummary] = useState(null);
+  const [daySummaryLoading, setDaySummaryLoading] = useState(false);
+  const [rangeOverride, setRangeOverride] = useState({ startSessionId: '', endSessionId: '' });
+  const [showAdvancedRange, setShowAdvancedRange] = useState(false);
+  const [advancedRangeUnlocked, setAdvancedRangeUnlocked] = useState(false);
+  const [pendingUnlockAdvancedRange, setPendingUnlockAdvancedRange] = useState(false);
+  // Populated when close-day is rejected with SESSION_RANGE_EXCLUSION_UNCONFIRMED —
+  // holds the excluded-session list so the supervisor can review before confirming.
+  const [rangeExclusionConfirm, setRangeExclusionConfirm] = useState(null);
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
   const [prevDaySessionOpenMsg, setPrevDaySessionOpenMsg] = useState(null);
   const [prevDaySessionOpenId, setPrevDaySessionOpenId] = useState(null);
+  // Session Roaming Phase 11 — discovery response from openSession's Phase 7 structured 409.
+  const [discoveryResponse, setDiscoveryResponse] = useState(null);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  const [discoveryError, setDiscoveryError] = useState(null);
+  const [discoverySupervisorPin, setDiscoverySupervisorPin] = useState('');
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  const [customerAdvanceSummary, setCustomerAdvanceSummary] = useState(null);
+  const [mixedAdvanceAmount, setMixedAdvanceAmount] = useState('');
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
   // Live Session quick-view — dashboard tile that pops the current session's
@@ -570,6 +681,21 @@ export default function POSSales() {
   const [checkoutKeypadVisible, setCheckoutKeypadVisible] = useState(false);
   const [checkoutCardType, setCheckoutCardType] = useState('');
   const [checkoutCardRef, setCheckoutCardRef] = useState('');
+  // Multi-card split (Card payment mode only): [] = single-card mode, driven by
+  // checkoutCardType/checkoutCardRef above (unchanged legacy behavior). A non-empty
+  // array is the source of truth instead — one row per card, sent to the backend
+  // as PosCheckoutRequest.cardLegs (generalized Mixed-payment-style split).
+  const [checkoutCardLegs, setCheckoutCardLegs] = useState([]);
+  // Display label for the Card payment mode — "Visa" for a single card, or
+  // "Visa + Mastercard + Amex" once split across multiple. Used everywhere a
+  // preview/payload needs a human-readable payment-mode string before checkout
+  // actually posts (the backend independently derives its own combined label
+  // from the real Payment rows once the sale is recorded).
+  const checkoutCardModeLabel = useMemo(() => {
+    if (checkoutCardLegs.length === 0) return checkoutCardType || 'Card';
+    const types = checkoutCardLegs.map(l => l.cardType).filter(Boolean);
+    return types.length > 0 ? types.join(' + ') : 'Card';
+  }, [checkoutCardType, checkoutCardLegs]);
   // Online payment mode — bank account linking for reconciliation/reporting
   const [checkoutOnlineBankAccounts, setCheckoutOnlineBankAccounts] = useState([]);
   const [checkoutOnlineBankAccountsLoading, setCheckoutOnlineBankAccountsLoading] = useState(false);
@@ -632,6 +758,12 @@ export default function POSSales() {
     billDiscountAmount: 0,
   });
   const currentInvoiceRef = useRef(null);
+  // addToInvoice is redefined fresh every render (it closes over posSettings,
+  // e.g. taxInclusive). handleUnifiedEntry below is memoized with an empty
+  // dep array so its own closure is frozen from the first render — calling
+  // addToInvoice directly there would permanently use the mount-time tax
+  // mode. Route through this ref, kept current every render, instead.
+  const addToInvoiceRef = useRef(null);
   // True when the Quick Customer modal was launched from the Checkout credit
   // panel, so the newly created customer is auto-selected as the credit buyer.
   const quickCustomerCreditCtxRef = useRef(false);
@@ -1089,6 +1221,25 @@ export default function POSSales() {
   const [cashDropType, setCashDropType] = useState('in');
   const [cashDropAmount, setCashDropAmount] = useState('');
   const [cashDropDescription, setCashDropDescription] = useState('');
+  // Cash Movement Categories (Phase 2) — refetched whenever the dialog opens or the
+  // in/out direction changes, since categories are direction-compatible, not universal.
+  const [cashDropCategoryId, setCashDropCategoryId] = useState('');
+  const [cashDropCategories, setCashDropCategories] = useState([]);
+  const [cashDropCategoryRequired, setCashDropCategoryRequired] = useState(false);
+
+  useEffect(() => {
+    if (!showCashDropDialog) return;
+    const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
+    const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
+    const branchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL' ? activeBranchIdRaw : undefined;
+    setCashDropCategoryId('');
+    getSelectableCategories(movementType, branchId)
+      .then((data) => {
+        setCashDropCategories(data?.categories || []);
+        setCashDropCategoryRequired(Boolean(data?.categoryRequired));
+      })
+      .catch(() => { setCashDropCategories([]); setCashDropCategoryRequired(false); });
+  }, [showCashDropDialog, cashDropType]);
 
 
   const productCategories = useMemo(() => ([
@@ -1170,7 +1321,7 @@ export default function POSSales() {
         shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
         posCounterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
+        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? checkoutCardModeLabel : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
         taxInclusive: !!currentInvoice.taxInclusive,
@@ -1241,6 +1392,12 @@ export default function POSSales() {
       const previewMixedCash = checkoutPayMode === 'mixed' ? (parseFloat(mixedCashAmount) || 0) : 0;
       const previewMixedCard = checkoutPayMode === 'mixed' ? (parseFloat(mixedCardAmount) || 0) : 0;
       const previewHasMixed = checkoutPayMode === 'mixed' && (previewMixedCash > 0 || previewMixedCard > 0);
+      // Multi-card split preview — mirrors the real print path's paymentLines.
+      const previewPaymentLines = checkoutPayMode === 'card' && checkoutCardLegs.length > 0
+        ? checkoutCardLegs
+            .filter(leg => leg.cardType && (parseFloat(leg.amount) || 0) > 0)
+            .map(leg => ({ label: leg.cardType, amount: parseFloat(leg.amount) || 0 }))
+        : null;
 
       // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
       // preview must show whichever template is saved in Print Templates, same
@@ -1273,6 +1430,7 @@ export default function POSSales() {
           mixedCashGiven: previewHasMixed ? previewMixedCash : null,
           mixedCardGiven: previewHasMixed ? previewMixedCard : null,
           mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
+          paymentLines: previewPaymentLines,
         });
         const outlet = {
           name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
@@ -1310,6 +1468,7 @@ export default function POSSales() {
         mixedCashGiven: previewHasMixed ? previewMixedCash : null,
         mixedCardGiven: previewHasMixed ? previewMixedCard : null,
         mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
+        paymentLines: previewPaymentLines,
       });
 
       checkoutPreviewFreezeRef.current = html;
@@ -1319,7 +1478,7 @@ export default function POSSales() {
       return '';
     }
   }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
-    checkoutPayMode, checkoutCardType, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
+    checkoutPayMode, checkoutCardType, checkoutCardLegs, checkoutCardModeLabel, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
@@ -1361,7 +1520,7 @@ export default function POSSales() {
         saleType: currentInvoice.saleType || '',
         terminalId: currentTerminal?.terminalId || '',
         counterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? (checkoutCardType || 'Card') : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
+        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? checkoutCardModeLabel : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
         taxInclusive: !!currentInvoice.taxInclusive,
@@ -1397,7 +1556,7 @@ export default function POSSales() {
       return '';
     }
   }, [showA4CheckoutPreview, checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, shippingCharge,
-    checkoutPayMode, checkoutCardType, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
+    checkoutPayMode, checkoutCardType, checkoutCardModeLabel, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
     tplInvoiceFooter, tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, tplInvoiceShowStamp,
     tplInvoiceShowSignature, tplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode, tplInvoiceColItemImage,
@@ -1773,6 +1932,19 @@ export default function POSSales() {
         setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
       }
     }
+
+    // Business-date / operating-hours check: if the previous business date is still
+    // open past configured operating hours and this cashier owns none of the unclosed
+    // sessions, block POS entry with an informational popup naming them.
+    try {
+      const dayStatus = await getPosDayStatus(termId);
+      if (posTerminalMountedRef.current) {
+        setOpenSessionsBlock(dayStatus?.blocked ? dayStatus : null);
+      }
+    } catch {
+      // Non-blocking — day-status is a UX convenience layered on top of the
+      // authoritative server-side guards already enforced in openSession/closeDay.
+    }
   }, []);
 
   // Re-run terminal/session resolution whenever the active branch changes while POS stays
@@ -1783,6 +1955,13 @@ export default function POSSales() {
       setCurrentTerminal(null);
       setCurrentSession(null);
       setTerminalLockedBy(null);
+      setOpenSessionsBlock(null);
+      // Session Roaming Phase 11 — dismiss any open discovery dialog when the
+      // branch switches so stale cross-branch data doesn't linger.
+      setDiscoveryResponse(null);
+      setDiscoveryBusy(false);
+      setDiscoveryError(null);
+      setDiscoverySupervisorPin('');
       registerTerminalAndResumeSession();
     };
     window.addEventListener('billbull:branch-changed', handleBranchChanged);
@@ -2308,6 +2487,21 @@ export default function POSSales() {
         setPrevDaySessionOpenMsg(cleanMsg);
         return;
       }
+
+      // Session Roaming Phase 11 — detect the Phase 7 structured 409 from openSession's
+      // discovery integration. The response body carries a `status` field that is one of
+      // the PosSessionDiscoveryStatus enum values (OWNER_SESSION, CONFLICT,
+      // MULTIPLE_OWNER_SESSIONS). Distinguish from the PREVIOUS_DAY_SESSION_OPEN 409
+      // (plain string message) by checking for a recognized discovery status.
+      const DISCOVERY_STATUSES = new Set(['OWNER_SESSION', 'CONFLICT', 'MULTIPLE_OWNER_SESSIONS']);
+      if (err?.response?.status === 409 && DISCOVERY_STATUSES.has(err?.response?.data?.status)) {
+        setDiscoveryResponse(err.response.data);
+        setDiscoveryError(null);
+        setDiscoverySupervisorPin('');
+        setShowStartSessionDialog(false);
+        return;
+      }
+
       // Do NOT fabricate a local session here — a fake `SES-<timestamp>` id is never
       // persisted server-side, so every downstream action (settle payment, session
       // totals, X/Z reports) later fails with "not a valid Long value" once it's sent
@@ -2319,6 +2513,90 @@ export default function POSSales() {
     }
     setShowStartSessionDialog(false);
     setCurrentView('touch-screen');
+  };
+
+  // Session Roaming Phase 11 — transfer the user's existing session from its current
+  // terminal to this terminal, then automatically retry openSession. The transfer
+  // endpoint requires `confirm: true` (always sent) and optionally a `supervisorPin`
+  // when the policy reports SUPERVISOR_REQUIRED.
+  const handleSessionTransfer = async () => {
+    if (discoveryBusy) return; // prevent double-click
+    if (!discoveryResponse?.ownerSessionId || !currentTerminal?.terminalId) return;
+
+    // Phase 11.6: Capture the active branch to detect stale async continuations.
+    const startingBranchId = sessionStorage.getItem('activeBranchId');
+    const isStale = () => sessionStorage.getItem('activeBranchId') !== startingBranchId;
+
+    setDiscoveryBusy(true);
+    setDiscoveryError(null);
+    try {
+      await transferPosSession(discoveryResponse.ownerSessionId, {
+        destinationTerminalId: currentTerminal.terminalId,
+        reason: 'Session roaming — operator transferred session to current terminal',
+        supervisorPin: discoverySupervisorPin || undefined,
+      });
+
+      if (isStale()) return; // Abort silently
+
+      // Transfer succeeded — clear discovery state and retry openSession.
+      setDiscoveryResponse(null);
+      setDiscoverySupervisorPin('');
+      // Auto-retry: now that the user's session is hosted on this terminal, openSession
+      // should succeed (it finds SAME_SESSION and resumes). Use the same denomination
+      // total the user entered.
+      try {
+        const total = calculateDenominationTotal(denominations);
+        const terminalId = currentTerminal.terminalId;
+        const counterName = currentTerminal?.counterName || 'Main Counter';
+        const session = await openPosSession({ terminalId, counterName, openingCash: total });
+        
+        if (isStale()) return; // Abort silently
+
+        setCurrentSession(session);
+        setXReportData(null);
+        setZReportData(null);
+        setSessionNowMs(Date.now());
+        setShowStartSessionDialog(false);
+        setCurrentView('touch-screen');
+      } catch (retryErr) {
+        if (isStale()) return;
+        // Transfer worked but openSession still failed — surface the error and let
+        // the cashier try again manually. Do NOT loop.
+        console.error('Post-transfer openSession retry failed', retryErr);
+        alert(retryErr?.response?.data?.message || 'Session transferred but could not open it. Please try again.');
+      }
+    } catch (err) {
+      if (isStale()) return;
+      
+      const msg = err?.response?.data?.message || err?.response?.data;
+      const reasonCode = err?.response?.data?.policyReasonCode || err?.response?.data?.transferReasonCode;
+      // Map known backend reason codes to user-friendly messages.
+      if (reasonCode === 'DESTINATION_TERMINAL_OCCUPIED') {
+        setDiscoveryError('This terminal already has an active session. The other session must be closed first.');
+      } else if (reasonCode === 'SAME_TERMINAL_NOT_APPLICABLE') {
+        setDiscoveryError('Your session is already on this terminal.');
+      } else if (reasonCode === 'DESTINATION_TERMINAL_NOT_FOUND') {
+        setDiscoveryError('This terminal could not be found. Please refresh and try again.');
+      } else if (err?.response?.status === 403) {
+        setDiscoveryError('Invalid supervisor PIN or insufficient permissions.');
+      } else if (err?.response?.status === 409) {
+        setDiscoveryError(typeof msg === 'string' ? msg : 'A concurrent change prevented the transfer. Please try again.');
+      } else {
+        setDiscoveryError(typeof msg === 'string' ? msg : 'Transfer failed. Please try again.');
+      }
+    } finally {
+      if (!isStale()) {
+        setDiscoveryBusy(false);
+      }
+    }
+  };
+
+  // Session Roaming Phase 11 — dismiss the discovery dialog and clear all related state.
+  const handleDiscoveryDismiss = () => {
+    setDiscoveryResponse(null);
+    setDiscoveryBusy(false);
+    setDiscoveryError(null);
+    setDiscoverySupervisorPin('');
   };
 
   const handleCloseSession = async () => {
@@ -2390,7 +2668,15 @@ export default function POSSales() {
 
   // Returns { ok, reason }. Callers can surface `reason` when ok === false so
   // the cashier learns why an add was refused (one-batch-one-unit enforcement).
-  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null) => {
+  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null, overrides = {}) => {
+    window.__CURRENT_ADD_TO_INVOICE = addToInvoice; // track the latest reference
+    console.log(`\n======================================================`);
+    console.log(`[addToInvoice EXECUTION]`);
+    console.log(`- Caller Context Render ID: ${currentRenderCount}`);
+    console.log(`- Captured posSettings:`, posSettings);
+    console.log(`- Captured taxInclusive:`, posSettings?.taxInclusive);
+    console.log(`- addToInvoice Reference Match:`, window.__CURRENT_ADD_TO_INVOICE === addToInvoice ? 'LATEST' : 'STALE (from an older render!)');
+    console.log(`======================================================\n`);
     // A serialized unit is always qty 1 and never merges (a serial is unique by
     // definition). A pinned batch is also a single scanned physical unit.
     const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
@@ -2400,8 +2686,13 @@ export default function POSSales() {
     // We add a single qty-1 line and refuse to merge/re-add; extra units must be
     // scanned. Non-controlled products keep the normal merge-by-id behaviour.
     const isBatchControlled = !isPinned && (Boolean(product.isBatch) || Boolean(product.isSerial));
-    const qtyToAdd = (pinnedSerialNumber || isBatchControlled) ? 1 : Math.max(1, Number(quantity) || 1);
-    const unitPrice = toNumber(product.price, 0);
+    const defaultQtyToAdd = (pinnedSerialNumber || isBatchControlled) ? 1 : Math.max(1, Number(quantity) || 1);
+    const qtyToAdd = overrides.isAbsoluteQuantity ? defaultQtyToAdd : defaultQtyToAdd; 
+    const unitPrice = overrides.price !== undefined ? toNumber(overrides.price, 0) : toNumber(product.price, 0);
+    const unitDiscount = overrides.discount !== undefined ? toNumber(overrides.discount, 0) : toNumber(product.defaultDiscount, 0);
+    const unitDiscountType = overrides.discountType || 'percent'; // currently always percent in model but extensible
+    const unitTaxRate = overrides.taxRate !== undefined ? overrides.taxRate : resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false);
+
 
     // Block re-adding a batch-controlled product from the grid (its line already
     // holds one physical unit; another unit means another batch → must be scanned).
@@ -2423,15 +2714,24 @@ export default function POSSales() {
       let newItems;
 
       if (existingItem) {
-        newItems = prev.items.map(item =>
-          item.id === product.id
-            ? {
+        newItems = prev.items.map(item => {
+          if (item.id === product.id) {
+            const mergedQuantity = overrides.isAbsoluteQuantity ? qtyToAdd : item.quantity + qtyToAdd;
+            const mergedPrice = overrides.price !== undefined ? unitPrice : item.price;
+            const mergedDiscount = overrides.discount !== undefined ? unitDiscount : item.discount;
+            const mergedTaxRate = overrides.taxRate !== undefined ? unitTaxRate : item.taxRate;
+            return {
               ...item,
-              quantity: item.quantity + qtyToAdd,
-              total: (item.quantity + qtyToAdd) * item.price * (1 - item.discount / 100)
-            }
-            : item
-        );
+              quantity: mergedQuantity,
+              price: mergedPrice,
+              discount: mergedDiscount,
+              taxRate: mergedTaxRate,
+              notes: overrides.notes !== undefined ? overrides.notes : item.notes,
+              total: mergedQuantity * mergedPrice * (1 - mergedDiscount / 100)
+            };
+          }
+          return item;
+        });
       } else {
         // Add new item to the TOP of the list. Pinned lines use a composite id
         // so every existing item.id-keyed cart op (qty/discount/remove/void/
@@ -2454,9 +2754,10 @@ export default function POSSales() {
           retailPrice: product.retailPrice != null && product.retailPrice !== '' ? toNumber(product.retailPrice) : null,
           cost: product.cost != null && product.cost !== '' ? toNumber(product.cost) : null,
           quantity: qtyToAdd,
-          discount: toNumber(product.defaultDiscount, 0),
-          taxRate: resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false),
-          total: unitPrice * qtyToAdd * (1 - toNumber(product.defaultDiscount, 0) / 100),
+          discount: unitDiscount,
+          taxRate: unitTaxRate,
+          notes: overrides.notes || '',
+          total: unitPrice * qtyToAdd * (1 - unitDiscount / 100),
           pinnedBatchNumber: pinnedBatchNumber || null,
           serialNumber: pinnedSerialNumber || null,
           expiryDate: pinnedExpiry || product.expiryDate || null,
@@ -2470,6 +2771,70 @@ export default function POSSales() {
     });
     return { ok: true };
   };
+  addToInvoiceRef.current = addToInvoice;
+
+  /**
+   * Helper wrapper around addToInvoice that accepts a rich initial payload.
+   * Recommended for new Item Entry workflows to ensure single-transaction mutations.
+   */
+  const createInvoiceLine = useCallback((payload) => {
+    if (!payload || !payload.product) {
+      return { ok: false, reason: 'Missing product payload' };
+    }
+    
+    return addToInvoiceRef.current(
+      payload.product,
+      payload.quantity || 1,
+      payload.batch || null,
+      payload.serial || null,
+      payload.expiry || null,
+      {
+        price: payload.price,
+        discount: payload.discount,
+        discountType: payload.discountType,
+        taxRate: payload.tax,
+        notes: payload.notes,
+        isAbsoluteQuantity: true // If passed through wrapper, assume it's the exact final line qty
+      }
+    );
+  }, []);
+
+  /**
+   * Helper wrapper to mutate an existing invoice row.
+   * Internally leverages addToInvoice's merge logic with overrides.
+   */
+  const updateInvoiceLine = useCallback((payload) => {
+    if (!payload || !payload.invoiceLine) {
+      return { ok: false, reason: 'Missing invoiceLine payload' };
+    }
+    
+    // To cleanly target the existing line in addToInvoice, we pass the invoiceLine
+    // structured identically to how the grid passes it (id/productId).
+    const fakeProduct = {
+      id: payload.invoiceLine.productId || payload.invoiceLine.id,
+      name: payload.invoiceLine.name,
+      code: payload.invoiceLine.code,
+      barcode: payload.invoiceLine.barcode,
+      isBatch: payload.invoiceLine.batchControlled,
+      isSerial: payload.invoiceLine.serialNumber ? 1 : 0
+    };
+
+    return addToInvoiceRef.current(
+      fakeProduct,
+      payload.quantity,
+      payload.invoiceLine.pinnedBatchNumber || null,
+      payload.invoiceLine.serialNumber || null,
+      payload.invoiceLine.expiryDate || null,
+      {
+        price: payload.price,
+        discount: payload.discount,
+        discountType: payload.discountType,
+        taxRate: payload.tax,
+        notes: payload.notes,
+        isAbsoluteQuantity: true
+      }
+    );
+  }, []);
 
   const updateQuantity = (itemId, newQuantity) => {
     if (newQuantity <= 0) {
@@ -2629,6 +2994,11 @@ export default function POSSales() {
     }
     if (valid) {
       setShowSupervisorPin(false);
+      if (pendingUnlockAdvancedRange) {
+        setAdvancedRangeUnlocked(true);
+        setShowAdvancedRange(true);
+        setPendingUnlockAdvancedRange(false);
+      }
       if (pendingVoidItemId) {
         applyVoid(pendingVoidItemId);
         setPendingVoidItemId(null);
@@ -2751,12 +3121,53 @@ export default function POSSales() {
     }
   };
 
+  // Search past CLOSED sessions in a date range for the X-Report history picker.
+  const searchXReportHistory = async () => {
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    setXHistoryLoading(true);
+    try {
+      const page = await getPosSessionHistory({
+        branchId, dateFrom: xHistoryDateFrom, dateTo: xHistoryDateTo, status: 'CLOSED', size: 30,
+      });
+      setXHistoryResults(page?.content || []);
+    } catch (err) {
+      console.warn('X-Report history search failed', err);
+      setXHistoryResults([]);
+    } finally {
+      setXHistoryLoading(false);
+    }
+  };
+
+  // View a past session's X-Report read-only — never calls generatePosXReport (which
+  // would only stamp OPEN sessions anyway), so this never mutates historical state.
+  const loadHistoricalXReport = async (sessionId) => {
+    setXReportLoading(true);
+    try {
+      const data = await getPosXReport(sessionId);
+      setXReportData(data);
+      setViewingHistoricalXReport(true);
+      setShowXReportHistory(false);
+    } catch (err) {
+      console.warn('Historical X-Report load failed', err);
+    } finally {
+      setXReportLoading(false);
+    }
+  };
+
+  const returnToCurrentSessionXReport = () => {
+    setViewingHistoricalXReport(false);
+    loadXReport();
+  };
+
   const loadZReport = async (date) => {
     const branchId = currentTerminal?.branchId || currentSession?.branchId;
     if (!branchId) return;
     setZReportLoading(true);
     try {
-      const data = await getPosZReport(branchId, date || zReportDate);
+      const data = await getPosZReport(
+        branchId, date || zReportDate,
+        rangeOverride.startSessionId || undefined, rangeOverride.endSessionId || undefined
+      );
       // Backend blocks the day's report until every still-open terminal has run
       // its X-Report; surface the pending list instead of the report numbers.
       if (data && data.eligible === false) {
@@ -2771,15 +3182,85 @@ export default function POSSales() {
     } finally {
       setZReportLoading(false);
     }
+    loadDaySummary(date || zReportDate);
   };
 
-  const handleCloseDay = async () => {
+  /**
+   * Day Close review-screen summary — auto-resolved first/last session by default,
+   * or the supervisor-adjusted range when rangeOverride is set. Recalculates
+   * included sessions/count/time span immediately on every range change.
+   */
+  const loadDaySummary = async (date, override) => {
     const branchId = currentTerminal?.branchId || currentSession?.branchId;
     if (!branchId) return;
+    const eff = override !== undefined ? override : rangeOverride;
+    setDaySummaryLoading(true);
+    try {
+      const data = await getPosDayCloseSummary(
+        branchId, date || zReportDate,
+        eff.startSessionId || undefined, eff.endSessionId || undefined
+      );
+      setDaySummary(data);
+    } catch (err) {
+      console.warn('Day Close summary load failed', err);
+      setDaySummary(null);
+    } finally {
+      setDaySummaryLoading(false);
+    }
+  };
+
+  const applyRangeOverride = (nextOverride) => {
+    setRangeOverride(nextOverride);
+    loadDaySummary(zReportDate, nextOverride);
+  };
+
+  const resetRangeOverride = () => {
+    applyRangeOverride({ startSessionId: '', endSessionId: '' });
+  };
+
+  // Advanced session-range override is collapsed and supervisor-gated by default,
+  // reusing the existing supervisor-PIN pattern (see handleSupervisorPinSubmit).
+  const toggleAdvancedRange = () => {
+    if (showAdvancedRange) {
+      setShowAdvancedRange(false);
+      return;
+    }
+    if (advancedRangeUnlocked) {
+      setShowAdvancedRange(true);
+      return;
+    }
+    setPendingUnlockAdvancedRange(true);
+    setSupervisorPinValue('');
+    setSupervisorPinError('');
+    setShowSupervisorPin(true);
+  };
+
+  const handleCloseDay = async (acknowledgeExclusions = false) => {
+    const branchId = currentTerminal?.branchId || currentSession?.branchId;
+    if (!branchId) return;
+
+    // Strict validation guard: Ensure Day Close cannot be triggered (e.g. via keyboard shortcut) 
+    // while blocking validations exist.
+    const isXReportsMissing = Array.isArray(zReportPending) && zReportPending.length > 0;
+    const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
+    const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
+    const isNoSessions = !daySummary || daySummary.totalSessions === 0;
+
+    if (isXReportsMissing || isOpenSessions || isSuspendedBills || isNoSessions) {
+      alert(isNoSessions
+        ? "Cannot close day: no POS sessions exist for this business date."
+        : "Cannot close day while blocking validations exist. Please resolve all pending actions.");
+      return;
+    }
     try {
       setZReportLoading(true);
-      const data = await closePosDay(branchId, zReportDate);
+      const data = await closePosDay(
+        branchId, zReportDate,
+        rangeOverride.startSessionId || undefined, rangeOverride.endSessionId || undefined,
+        acknowledgeExclusions || undefined
+      );
       setZReportData(data);
+      setRangeExclusionConfirm(null);
       // Day closed successfully → arm the Z-Report auto-print. The effect watching
       // zReportData fires the 80mm print once, keyed on the closed date so a repeat
       // Close Day can't double-print. Only reached on success (a failure throws to
@@ -2790,6 +3271,10 @@ export default function POSSales() {
       const body = err?.response?.data;
       if (body?.code === 'RECONCILIATION_FAILED' && body?.breakdown) {
         setCloseDayVariance({ stage: body.stage, message: body.message, breakdown: body.breakdown });
+      } else if (body?.code === 'SESSION_RANGE_EXCLUSION_UNCONFIRMED') {
+        // Narrowed range leaves otherwise-eligible sessions out of this close —
+        // surface them for explicit supervisor confirmation instead of retrying blind.
+        setRangeExclusionConfirm({ message: body.message, ...body.details });
       } else {
         alert(body?.message || 'Failed to close business day.');
       }
@@ -2805,6 +3290,7 @@ export default function POSSales() {
     // Configuration — 0 outright when Tax Enabled is off (kill switch), regardless of the
     // configured Branch Default VAT Rate.
     const taxInclusive = !!posSettings?.taxInclusive;
+    console.log(`[recalculateInvoice] Evaluated taxInclusive = ${taxInclusive} (posSettings:`, posSettings, `)`);
     const fallbackRate = posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0);
 
     let subtotal = 0;       // gross line value (entered price x qty) before discount —
@@ -3630,6 +4116,10 @@ export default function POSSales() {
     mixedCashGiven = null,
     mixedCardGiven = null,
     mixedCardType = null,
+    // Dynamic payment-leg list (multi-card split) — [{label, amount}], one row per
+    // card. Takes precedence over mixedCashGiven/mixedCardGiven in every renderer
+    // when present and non-empty; null/absent falls back to the legacy fields.
+    paymentLines = null,
     customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
@@ -3771,6 +4261,7 @@ export default function POSSales() {
       mixedCashGiven,
       mixedCardGiven,
       mixedCardType,
+      paymentLines,
       depositApplied,
       balanceDue,
       shippingCharge,
@@ -3895,6 +4386,7 @@ export default function POSSales() {
       mixedCashGiven,
       mixedCardGiven,
       mixedCardType,
+      paymentLines,
       depositApplied,
       balanceDue,
       shippingCharge,
@@ -4010,6 +4502,18 @@ export default function POSSales() {
       const tenderedNum = parseFloat(tenderedAmount) || 0;
       const mixedCashNum = parseFloat(mixedCashAmount) || 0;
       const mixedCardNum = parseFloat(mixedCardAmount) || 0;
+      const mixedAdvanceNum = parseFloat(mixedAdvanceAmount) || 0;
+      // Multi-card split (Card payment mode only) — when the cashier used
+      // "+ Split across multiple cards", this array is the source of truth for
+      // the card portion; checkoutCardType/checkoutCardRef drive it otherwise.
+      const activeCardLegs = checkoutPayMode === 'card' ? checkoutCardLegs : [];
+      const cardLegsPayload = activeCardLegs
+        .filter(leg => leg.cardType && (parseFloat(leg.amount) || 0) > 0)
+        .map(leg => ({
+          cardType: leg.cardType,
+          amount: parseFloat(leg.amount) || 0,
+          referenceNumber: leg.reference || null,
+        }));
       const depositSnapshot = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const effectiveDueAmt = Math.max(0, grandTotal - depositSnapshot);
       // Partial receipt against a Credit sale — the amount collected now (if any);
@@ -4020,16 +4524,24 @@ export default function POSSales() {
 
       // Build payment mode string
       let paymentMode = checkoutPayMode === 'cash' ? 'Cash'
-        : checkoutPayMode === 'card' ? (checkoutCardType || 'Card')
+        : checkoutPayMode === 'card' ? checkoutCardModeLabel
           : checkoutPayMode === 'credit' ? 'Credit'
             : checkoutPayMode === 'online' ? 'Online'
-              : 'Cash + Card';
-      let combinedPaymentMode = checkoutPayMode === 'mixed' ? `Cash + ${mixedCardType || 'Card'}` : null;
+              : checkoutPayMode === 'advance' ? 'Advance'
+                : 'Mixed';
+      
+      let combinedModes = [];
+      if (mixedCashNum > 0) combinedModes.push('Cash');
+      if (mixedCardNum > 0) combinedModes.push(mixedCardType || 'Card');
+      if (mixedAdvanceNum > 0) combinedModes.push('Advance');
+      let combinedPaymentMode = checkoutPayMode === 'mixed' ? combinedModes.join(' + ') : null;
+
       let amountTendered = checkoutPayMode === 'cash' ? tenderedNum
         : checkoutPayMode === 'card' ? grandTotal
           : checkoutPayMode === 'credit' ? creditReceivedNum
             : checkoutPayMode === 'online' ? grandTotal
-              : mixedCashNum + mixedCardNum;
+              : checkoutPayMode === 'advance' ? grandTotal
+                : mixedCashNum + mixedCardNum + mixedAdvanceNum;
 
       // Selected bank account — for Online mode, or a Credit sale's partial receipt
       // when it was collected Online/Bank — formatted "{code} - {name}" so the
@@ -4100,10 +4612,15 @@ export default function POSSales() {
               : 0,
         onlineAmount: (checkoutPayMode === 'credit' && (checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank'))
           ? creditReceivedNum : 0,
+        advanceAmount: checkoutPayMode === 'advance' ? grandTotal : (checkoutPayMode === 'mixed' ? mixedAdvanceNum : 0),
         cardReference: checkoutPayMode === 'credit' ? (checkoutCreditReceivedRef || null)
           : checkoutPayMode === 'online' ? (checkoutOnlineReference || null)
             : (checkoutCardRef || null),
         cardType: checkoutPayMode === 'credit' ? (checkoutCreditReceivedCardType || null) : (checkoutCardType || mixedCardType || null),
+        // Additive multi-card split — when present, the backend treats this as the
+        // source of truth for the card portion instead of cardAmount/cardType/
+        // cardReference above (kept populated for older-client compatibility).
+        cardLegs: cardLegsPayload.length > 0 ? cardLegsPayload : undefined,
         bankAccountName,
         sessionId: currentSession?.id || null,
         terminalId: currentTerminal?.terminalId || null,
@@ -4155,7 +4672,7 @@ export default function POSSales() {
         paymentMode,
         depositAmount: depositSnapshot,
         paidAmount: checkoutPayMode === 'cash' ? tenderedNum
-          : checkoutPayMode === 'mixed' ? mixedCashNum + mixedCardNum
+          : checkoutPayMode === 'mixed' ? mixedCashNum + mixedCardNum + mixedAdvanceNum
             : checkoutPayMode === 'credit' ? creditReceivedNum
               : effectiveDueAmt,
         creditBalance: checkoutPayMode === 'credit' ? Math.max(0, effectiveDueAmt - creditReceivedNum) : 0,
@@ -4199,6 +4716,7 @@ export default function POSSales() {
       setCheckoutKeypadValue('');
       setCheckoutCardType('');
       setCheckoutCardRef('');
+      setCheckoutCardLegs([]);
       setCheckoutOnlineBankAccountId('');
       setCheckoutOnlineReference('');
       setCheckoutRemarks('');
@@ -4250,6 +4768,12 @@ export default function POSSales() {
               // other three fields stay on the pre-sale snapshot made the printed math
               // contradict itself (Previous showed the post-sale balance, Updated the
               // pre-sale one).
+              // Dynamic payment-leg list — only populated for an actual multi-card
+              // split, so a plain single Cash/Card/Online/Credit sale still falls
+              // back to the legacy cashGiven/mixedCashGiven/mixedCardGiven fields.
+              const paymentLinesForReceipt = cardLegsPayload.length > 0
+                ? cardLegsPayload.map(leg => ({ label: leg.cardType, amount: leg.amount }))
+                : null;
               const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                 full: savedInvoice,
                 cashGiven: paid.paidAmount,
@@ -4259,6 +4783,7 @@ export default function POSSales() {
                 mixedCashGiven: checkoutPayMode === 'mixed' && mixedCashNum > 0 ? mixedCashNum : null,
                 mixedCardGiven: checkoutPayMode === 'mixed' && mixedCardNum > 0 ? mixedCardNum : null,
                 mixedCardType: checkoutPayMode === 'mixed' ? (mixedCardType || 'Card') : null,
+                paymentLines: paymentLinesForReceipt,
                 // Print the actual selected customer's name (client item 3) — the same
                 // `customer` object the checkout preview rendered. Walk-in stays null so
                 // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
@@ -4342,6 +4867,11 @@ export default function POSSales() {
     }
     const amount = parseFloat(cashDropAmount) || 0;
     if (amount <= 0) return;
+    if (cashDropCategoryRequired && !cashDropCategoryId) {
+      setCashDropFeedback({ type: 'error', message: 'Select a category before saving.' });
+      setTimeout(() => setCashDropFeedback(null), 3000);
+      return;
+    }
     const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
     openCashDrawer(cashDropType === 'in' ? 'CASH_DROP' : 'CASH_OUT');
     try {
@@ -4350,6 +4880,7 @@ export default function POSSales() {
           movementType,
           amount,
           description: cashDropDescription || (cashDropType === 'in' ? 'Cash Drop In' : 'Cash Out'),
+          categoryId: cashDropCategoryId || undefined,
         });
       }
       setCashDropFeedback({ type: 'success', message: cashDropType === 'in' ? 'Cash drop recorded.' : 'Cash out recorded.' });
@@ -4359,6 +4890,7 @@ export default function POSSales() {
     }
     setCashDropAmount('');
     setCashDropDescription('');
+    setCashDropCategoryId('');
     setShowCashDropDialog(false);
     setTimeout(() => setCashDropFeedback(null), 3000);
   };
@@ -4467,6 +4999,13 @@ export default function POSSales() {
    * Supports an "N*VALUE" / "NxVALUE" quantity prefix.
    */
   const handleUnifiedEntry = useCallback(async (raw, { fromGrid = false } = {}) => {
+    console.log(`\n======================================================`);
+    console.log(`[handleUnifiedEntry EXECUTION - BARCODE SCANNER PATH]`);
+    console.log(`- Captured Render ID: ${currentRenderCount}`);
+    console.log(`- Captured posSettings:`, posSettings);
+    console.log(`- Captured taxInclusive:`, posSettings?.taxInclusive);
+    console.log(`- Captured addToInvoice Reference Match:`, window.__CURRENT_ADD_TO_INVOICE === addToInvoice ? 'LATEST' : 'STALE (from an older render!)');
+    console.log(`======================================================\n`);
     const trimmed = (raw || '').trim();
     if (!trimmed) return;
 
@@ -4495,7 +5034,7 @@ export default function POSSales() {
         clearInputs();
         return;
       }
-      const res = addToInvoice(cached, qty);
+      const res = addToInvoiceRef.current(cached, qty);
       if (res && res.ok === false) {
         showFeedback('error', res.reason || 'Could not add this item.');
         clearInputs();
@@ -4549,7 +5088,7 @@ export default function POSSales() {
           clearInputs();
           return;
         }
-        addToInvoice(product, 1, null, pinnedSerialNumber);
+        addToInvoiceRef.current(product, 1, null, pinnedSerialNumber);
         setLastScannedItem({
           name: product.name, nameAr: product.nameAr || '',
           barcode: pinnedSerialNumber, qty: 1, total: product.price,
@@ -4569,7 +5108,7 @@ export default function POSSales() {
       }
       // addToInvoice enforces one-batch-one-unit for batch/serial products added
       // without a pin (e.g. resolved by product code) — surface its refusal.
-      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
+      const addRes = addToInvoiceRef.current(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
       if (addRes && addRes.ok === false) {
         showFeedback('error', addRes.reason || 'Could not add this item.');
         clearInputs();
@@ -5590,270 +6129,14 @@ export default function POSSales() {
   });
 
   // ── Z-Report: build A4 view-model for print/PDF ───────────────────────────
-  const buildZReportViewModel = () => {
-    const zSummary = zReportData?.summary || {};
-    const zSessions = zReportData?.sessions || [];
-    const zInvoices = zReportData?.invoices || [];
-    const totalSalesV = Number(zSummary.totalSales ?? 0);
-    const cashSalesV = Number(zSummary.cashSales ?? 0);
-    const cardSalesV = Number(zSummary.cardSales ?? 0);
-    const creditSalesV = Number(zSummary.creditSales ?? 0);
-    // Online payments are tendered against a bank account, so they land in the
-    // same reconciliation bucket as generic bank transfers (see POS backend
-    // tenderBucket()).
-    const bankTransferSalesV = Number(zSummary.bankTransferSales ?? 0);
-    const totalTaxV = Number(zSummary.totalTax ?? 0);
-    const salesExTaxV = Number(zSummary.salesAmountExTax ?? 0);
-    const discountV = Number(zSummary.totalDiscount ?? 0);
-    const itemsSoldV = zSummary.totalItemsSold ?? 0;
-    const invoiceCount = zSummary.invoiceCount ?? 0;
-    const sessionCount = zSummary.sessionCount ?? zSessions.length;
-    const openingCash = zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0);
-    const expectedCash = openingCash + cashSalesV;
-    const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
-    const zId = zSessions[0]?.id;
-    const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
-
-    const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
-    const creditTotal = creditInvoices.reduce((s, inv) => s + (Number(inv.invoiceTotal) || 0), 0);
-    const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
-    // Detailed void/removal + per-cashier collection from the backend.
-    const postedVoids = Array.isArray(zReportData?.voids) ? zReportData.voids : [];
-    const cartRemovals = Array.isArray(zReportData?.cartRemovals) ? zReportData.cartRemovals : [];
-    const cashierRows = Array.isArray(zReportData?.cashiers) ? zReportData.cashiers : [];
-    const totalPaidV = Number(zSummary.totalPaid ?? totalSalesV);
-    const voidAmountV = Number(zSummary.voidAmount ?? 0);
-    const refundTotal = Number(zSummary.totalRefunds ?? 0);
-    const actualCash = zSessions.reduce((s, ss) => s + Number(ss.closingCash ?? 0), 0);
-    const cashVariance = actualCash - expectedCash;
-    const zCashierLabel = cashierRows.length ? cashierRows.map(c => c.cashier).filter(Boolean).join(', ') : 'All cashiers';
-    const zSessionInfoRows = Array.isArray(zReportData?.sessionInfo) ? zReportData.sessionInfo : [];
-    const fmtTs = (t) => {
-      const d = parseUTCDate(t);
-      if (!d) return '—';
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
-    const cardTypeBreakdown = Array.isArray(zSummary.cardTypeBreakdown) ? zSummary.cardTypeBreakdown : [];
-    const zDenominationTotals = denomKeys.reduce((acc, key) => ({ ...acc, [key]: 0 }), {});
-    zSessionInfoRows.forEach((row) => {
-      const raw = row?.closingDenominationsJson;
-      if (!raw) return;
-      try {
-        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        denomKeys.forEach((key) => { zDenominationTotals[key] += Number(parsed?.[key] || 0); });
-      } catch (err) {
-        console.warn('Unable to parse Z-report closing denominations', err);
-      }
-    });
-
-    return {
-      reportTitle: 'Z-Report / End-of-Day Closing Report',
-      note: `Report No: ${reportNo}  |  Business Date: ${zReportDate || new Date().toISOString().slice(0, 10)}  |  Sessions: ${sessionCount}`,
-      reportMeta: [
-        { label: 'Report No', value: reportNo },
-        { label: 'Session No', value: `${sessionCount} session${sessionCount === 1 ? '' : 's'}` },
-        { label: 'Cashier', value: zCashierLabel },
-        { label: 'Date & Time', value: new Date().toLocaleString() },
-        { label: 'Business Date', value: zReportDate || new Date().toISOString().slice(0, 10) },
-        { label: 'Terminal', value: currentTerminal?.terminalId || 'All Terminals' },
-      ],
-      kpis: [
-        { label: 'Opening Cash', value: fmt(openingCash), hint: `${sessionCount} session(s)`, icon: 'OC' },
-        { label: 'Total Sales', value: fmt(totalSalesV), hint: 'Inc. VAT', icon: 'TS' },
-        { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
-        { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
-        { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
-        { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
-        { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
-        { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
-        { label: 'Expected Cash', value: fmt(expectedCash), hint: 'Opening + cash sales', icon: 'EC' },
-        { label: 'Actual Cash', value: fmt(actualCash), hint: 'Closed session counts', icon: 'AC' },
-        { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: actualCash === 0 ? 'Pending close count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess', icon: 'CV' },
-      ],
-      sections: [
-        {
-          title: '0. Session Information', type: 'table',
-          cols: ['Session', 'Cashier', 'Opened At', 'Closed At', 'Expected Cash', 'Actual Cash'],
-          rows: zSessionInfoRows.length
-            ? zSessionInfoRows.map((row) => [
-              row.sessionNo || 'â€”',
-              row.cashier || 'â€”',
-              fmtTs(row.openedAt),
-              fmtTs(row.closedAt),
-              fmt(Number(row.expectedCash ?? 0)),
-              fmt(Number(row.closingCash ?? 0)),
-            ])
-            : zSessions.map((row) => [
-              row.id ? `SESS-${String(row.id).padStart(6, '0')}` : 'â€”',
-              row.openedBy || 'â€”',
-              fmtTs(row.openedAt),
-              fmtTs(row.closedAt),
-              fmt(Number(row.expectedCash ?? 0)),
-              fmt(Number(row.closingCash ?? 0)),
-            ]),
-        },
-        {
-          title: '1. Denomination Count', type: 'table',
-          cols: ['Denomination', 'Quantity', 'Total Amount'],
-          rows: denomKeys.map(k => [denomLabels[k], String(zDenominationTotals[k] || 0), fmt((zDenominationTotals[k] || 0) * parseFloat(k))]),
-          footer: ['Total Cash Counted', '', fmt(calculateDenominationTotal(zDenominationTotals))],
-        },
-        {
-          title: '2. Sales Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Gross Sales', fmt(totalSalesV)],
-            ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
-            ['Net Sales Before VAT', fmt(salesExTaxV)],
-            ['VAT Amount (5%)', fmt(totalTaxV)],
-            ['Net Sales Including VAT', fmt(totalSalesV)],
-          ],
-        },
-        {
-          title: '2. Invoice / Transaction Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [['Total Sales Invoices', String(invoiceCount), fmt(totalSalesV)]],
-        },
-        {
-          title: '3. Payment / Tender Summary', type: 'table',
-          cols: ['Payment Mode', 'Count', 'Amount'],
-          rows: [
-            ['Cash', String(zSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
-            ['Card', String(zSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
-            ['Credit', String(zSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
-          ],
-          footer: ['Total Collected', String(invoiceCount), fmt(totalSalesV)],
-        },
-        {
-          title: '4. Cash Drawer Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Opening Cash / Float', fmt(openingCash)],
-            ['Cash Sales', fmt(cashSalesV)],
-            ['Expected Cash in Drawer', fmt(expectedCash)],
-          ],
-        },
-        {
-          title: '5. Card / Bank Settlement Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ...cardTypeBreakdown.map(row => [row.cardType, fmt(row.amount ?? 0)]),
-            ['Total Card Sales', fmt(cardSalesV)],
-            ['Net Card Settlement Expected', fmt(cardSalesV)],
-          ],
-        },
-        {
-          title: '6. VAT / Tax Summary', type: 'table',
-          cols: ['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount'],
-          rows: [['VAT 5%', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)]],
-          footer: ['Total', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)],
-        },
-        {
-          title: '7. Discount Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)]],
-        },
-        {
-          title: '8. Returns / Refund Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${fmt(zSummary.salesReturnTotal)})` : fmt(0)],
-            ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${fmt(zSummary.refundTotal)})` : fmt(0)],
-            ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${fmt(zSummary.creditNoteTotal)})` : fmt(0)],
-            ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), fmt(zSummary.exchangeTotal ?? 0)],
-            ['Total Refunds (Tender)', String(zSummary.totalRefundCount ?? 0), fmt(zSummary.totalRefunds ?? 0)],
-          ],
-        },
-        {
-          title: '9. Product / Item Movement Summary', type: 'table',
-          cols: ['Description', 'Quantity', 'Amount'],
-          rows: [
-            ['Total Items Sold', String(itemsSoldV), fmt(totalSalesV)],
-            ['Total Items Returned', String(zSummary.totalItemsReturned ?? 0), (zSummary.totalItemsReturned ?? 0) > 0 ? `(${fmt(zSummary.salesReturnTotal ?? 0)})` : fmt(0)],
-            ['Net Quantity Sold', String(zSummary.netQuantitySold ?? itemsSoldV), fmt(totalSalesV)],
-            ...((Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map(it =>
-              [`  Top Seller: ${it.itemCode || '—'} — ${it.itemName || '—'}`, String(it.quantity ?? 0), fmt(it.amount ?? 0)])),
-          ],
-        },
-        {
-          title: '10. Cashier Wise Summary', type: 'table',
-          cols: ['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit'],
-          rows: (Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).length > 0
-            ? zReportData.cashierWiseSummary.map(c => [c.cashier || '—', String(c.invoiceCount || 0), fmt(c.netSales ?? 0), fmt(c.cash ?? 0), fmt(c.card ?? 0), fmt(c.credit ?? 0)])
-            : [['—', '0', fmt(0), fmt(0), fmt(0), fmt(0)]],
-          footer: ['Total', String(invoiceCount), fmt(totalSalesV), fmt(cashSalesV), fmt(cardSalesV), fmt(creditSalesV)],
-        },
-        {
-          // Per-cashier collection attribution (by who took payment) — supports
-          // multi-cashier operation within a single session.
-          title: '10a. Cashier Collection Attribution', type: 'table',
-          cols: ['Cashier', 'Collected'],
-          rows: cashierRows.length
-            ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
-            : [['—', fmt(0)]],
-          footer: ['Total Collected', fmt(totalPaidV)],
-        },
-        {
-          title: '10b. Voided Items (Posted then Voided)', type: 'table',
-          cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
-          rows: postedVoids.length
-            ? postedVoids.map(v => [
-              v.invoiceNumber || '—',
-              `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
-              String(v.quantity ?? 0),
-              fmt(Number(v.unitPrice ?? 0)),
-              fmt(Number(v.lineTotal ?? 0)),
-              v.voidReason || '—',
-              v.voidedBy || '—',
-              v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No voided items', '', '', '', '', '', '']],
-          footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
-        },
-        {
-          title: '10c. Removed From Cart (Never Posted)', type: 'table',
-          cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
-          rows: cartRemovals.length
-            ? cartRemovals.map(r => [
-              r.itemCode || '—',
-              r.description || '—',
-              r.voidedBy || '—',
-              r.terminalId || '—',
-              r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No cart removals', '', '', '']],
-        },
-        {
-          title: '11. Customer Credit Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Credit Sales', String(creditInvoices.length), fmt(creditTotal)],
-            ['Outstanding Created Today', String(creditInvoices.length), fmt(creditTotal)],
-          ],
-        },
-        {
-          title: '12. Opening & Closing Invoice Numbers', type: 'table',
-          cols: ['Document Type', 'Starting No.', 'Ending No.'],
-          rows: [['Sales Invoice', invNums[0] || '—', invNums[invNums.length - 1] || '—']],
-        },
-        {
-          title: '13. Final Day Close Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Total Net Sales Inc. VAT', fmt(totalSalesV)],
-            ['Total Discount', fmt(discountV)],
-            ['Total Collection', fmt(totalPaidV)],
-            ['Opening Cash / Float', fmt(openingCash)],
-            ['Expected Cash in Drawer', fmt(expectedCash)],
-            ['Cash Sales', fmt(cashSalesV)],
-          ],
-        },
-      ],
-    };
-  };
+  // Delegates to the shared, pure builder in utils/posReportViewModel.js so the live
+  // POS screen and the back-office "POS Reports" historical viewer render identical
+  // output from identical input — single implementation, never duplicated.
+  const buildZReportViewModel = () => buildZReportViewModelShared(zReportData, {
+    currency: activeCurrency,
+    businessDate: zReportDate,
+    terminalLabel: currentTerminal?.terminalId || 'All Terminals',
+  });
 
   // ── Z-Report: Excel flat rows ─────────────────────────────────────────────
   const buildZReportExcelSections = () => {
@@ -5872,6 +6155,19 @@ export default function POSSales() {
     const invoiceCount = zSummary.invoiceCount ?? 0;
     const openingCash = fmt(zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0));
     const expectedCash = fmt(openingCash + cashSalesV);
+    // Consolidated Cash Position — additive, informational-only (see buildZReportViewModel).
+    const cashPosition = zSummary.cashPosition || {};
+    const cpOpeningCash = fmt(cashPosition.openingCash ?? openingCash);
+    const cpCashSales = fmt(cashPosition.cashSales ?? cashSalesV);
+    const cpReceiptsTotal = fmt(cashPosition.customerReceiptsTotal ?? 0);
+    const cpAdvancesTotal = fmt(cashPosition.customerAdvancesTotal ?? 0);
+    const cpDropIn = fmt(cashPosition.cashDropIn ?? 0);
+    const cpDropOut = fmt(cashPosition.cashDropOut ?? 0);
+    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
+    const cpNet = fmt(cashPosition.netCashPosition ?? (cpOpeningCash + cpCashSales + cpReceiptsTotal + cpAdvancesTotal + cpDropIn - cpDropOut));
+    const cpReceiptRows = Array.isArray(cashPosition.customerReceiptRows) ? cashPosition.customerReceiptRows : [];
+    const cpAdvanceRows = Array.isArray(cashPosition.customerAdvanceRows) ? cashPosition.customerAdvanceRows : [];
+    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
     const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
     const creditTotal = fmt(creditInvoices.reduce((s, inv) => s + Number(inv.invoiceTotal || 0), 0));
     const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
@@ -5890,6 +6186,18 @@ export default function POSSales() {
       { Section: 'Cash Drawer', Description: 'Opening Cash / Float', Count: '', Amount: openingCash },
       { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
       { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
+      // Consolidated Cash Position — additive, informational only (see buildZReportViewModel).
+      { Section: 'Consolidated Cash Position', Description: 'Opening Cash', Count: '', Amount: cpOpeningCash },
+      { Section: '', Description: 'Cash Sales', Count: '', Amount: cpCashSales },
+      { Section: '', Description: 'Customer Receipts (Cash)', Count: cpReceiptRows.length, Amount: cpReceiptsTotal },
+      { Section: '', Description: 'Customer Advances (Cash)', Count: cpAdvanceRows.length, Amount: cpAdvancesTotal },
+      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cpDropIn },
+      { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
+      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cpDropOut },
+      { Section: '', Description: 'Net Cash Position', Count: '', Amount: cpNet },
+      ...cpReceiptRows.map((r, i) => ({ Section: i === 0 ? 'Customer Receipts Detail' : '', Description: r.customerName || '—', Count: r.receivedBy || '—', Amount: fmt(r.receivedAmount ?? 0) })),
+      ...cpAdvanceRows.map((r, i) => ({ Section: i === 0 ? 'Customer Advances Detail' : '', Description: r.customerName || '—', Count: r.paidBy || '—', Amount: fmt(r.paidAmount ?? 0) })),
+      ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
       { Section: 'VAT / Tax', Description: 'VAT 5% — Taxable Amount', Count: '', Amount: salesExTaxV },
       { Section: '', Description: 'VAT 5% — Tax Amount', Count: '', Amount: totalTaxV },
       { Section: '', Description: 'Total Inc. VAT', Count: '', Amount: totalSalesV },
@@ -5921,240 +6229,19 @@ export default function POSSales() {
   };
 
   // ── X-Report: build A4 view-model for print/PDF ───────────────────────────
-  const buildXReportViewModel = () => {
-    const xSummary = xReportData?.summary || {};
-    const xInvoices = xReportData?.invoices || [];
-    const sess = xReportData?.session || currentSession;
-    const fmt = (n) => `${activeCurrency} ${Number(n).toFixed(2)}`;
-    const openingCashVal = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
-    const cashSalesV = Number(xSummary.cashSales ?? 0);
-    const cardSalesV = Number(xSummary.cardSales ?? 0);
-    const creditSalesV = Number(xSummary.creditSales ?? 0);
-    const bankTransferSalesV = Number(xSummary.bankTransferSales ?? 0);
-    const totalSalesV = Number(xSummary.totalSales ?? 0);
-    const totalTaxV = Number(xSummary.totalTax ?? 0);
-    const salesExTaxV = Number(xSummary.salesAmountExTax ?? 0);
-    const discountV = Number(xSummary.totalDiscount ?? 0);
-    const cashDropIn = Number(xSummary.cashDropIn ?? 0);
-    const cashDropOut = Number(xSummary.cashDropOut ?? 0);
-    const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
-    const expectedCashVal = Number(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
-    const reportDenominations = getReportClosingDenominations();
-    const actualCash = calculateDenominationTotal(reportDenominations);
-    const cashVariance = actualCash - expectedCashVal;
-    const varStatus = actualCash === 0 ? 'Pending Count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
-    const sessId = sess?.id || currentSession?.id;
-    const reportNo = sessId ? `XR-${String(sessId).padStart(9, '0')}` : '—';
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
-
-    const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
-    const refundTotal = Number(xSummary.totalRefunds ?? 0);
-    const totalRefundCount = Number(xSummary.totalRefundCount ?? 0);
-    const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
-    const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
-    const netCardSettle = cardSalesV - cardRefundTotal;
-    const netCardCount = Math.max(0, cardPayCount - cardRefundCount);
-    const cardTypeBreakdown = Array.isArray(xSummary.cardTypeBreakdown) ? xSummary.cardTypeBreakdown : [];
-    const itemsSoldCount = Number(xSummary.totalItemsSold ?? 0);
-    // Detailed void/removal data from the backend audit trail + persisted voided lines.
-    const postedVoids = Array.isArray(xReportData?.voids) ? xReportData.voids : [];
-    const cartRemovals = Array.isArray(xReportData?.cartRemovals) ? xReportData.cartRemovals : [];
-    const cashierRows = Array.isArray(xReportData?.cashiers) ? xReportData.cashiers : [];
-    const totalVoids = Number(xSummary.voidItemCount ?? sess?.totalVoids ?? 0);
-    const totalPaidV = Number(xSummary.totalPaid ?? totalSalesV);
-    const voidAmountV = Number(xSummary.voidAmount ?? 0);
-    const sessInfo = xReportData?.sessionInfo || {};
-    const fmtTs = (t) => {
-      const d = parseUTCDate(t);
-      if (!d) return '—';
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    };
-
-    const fmtDuration = (seconds) => {
-      const total = Math.max(0, Math.floor(Number(seconds) || 0));
-      if (!total) return '0m';
-      const h = Math.floor(total / 3600);
-      const m = Math.floor((total % 3600) / 60);
-      return h > 0 ? `${h}h ${m}m` : `${m}m`;
-    };
-    const durationSeconds = sessInfo.durationSeconds ?? sess?.durationSeconds
-      ?? ((sess?.openedAt && sess?.closedAt)
-        ? Math.max(0, Math.floor((parseUTCDate(sess.closedAt).getTime() - parseUTCDate(sess.openedAt).getTime()) / 1000))
-        : null);
-
-    return {
-      reportTitle: 'X-Report / Session Close Report',
-      note: `Report No: ${reportNo}  |  Cashier: ${sess?.openedBy || '—'}  |  Session: SESS-${String(sessId || 0).padStart(6, '0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0, 10)}`,
-      reportMeta: [
-        { label: 'Report No', value: reportNo },
-        { label: 'Session No', value: sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}` },
-        { label: 'Cashier', value: sessInfo.cashier || sess?.openedBy || '-' },
-        { label: 'Date & Time', value: new Date().toLocaleString() },
-        { label: 'Business Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) },
-        { label: 'Terminal', value: sessInfo.terminalId || sess?.terminalId || '-' },
-      ],
-      kpis: [
-        { label: 'Opening Cash', value: fmt(openingCashVal), hint: 'Float', icon: 'OC' },
-        { label: 'Total Sales', value: fmt(totalSalesV), hint: 'Inc. VAT', icon: 'TS' },
-        { label: 'Cash Sales', value: fmt(cashSalesV), hint: 'Cash payments', icon: 'CS' },
-        { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
-        { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
-        { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
-        { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
-        { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
-        { label: 'Expected Cash', value: fmt(expectedCashVal), hint: 'Opening + cash sales', icon: 'EC' },
-        { label: 'Actual Cash', value: fmt(actualCash), hint: 'Denomination count', icon: 'AC' },
-        { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: varStatus, icon: 'CV' },
-      ],
-      sections: [
-        {
-          title: '0. Session Information', type: 'table',
-          cols: ['Field', 'Value'],
-          rows: [
-            ['Session No.', sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}`],
-            ['Branch', sessInfo.branch || sess?.branchName || '—'],
-            ['Terminal', sessInfo.terminalId || sess?.terminalId || '—'],
-            ['Counter', sessInfo.counter || sess?.counterName || '—'],
-            ['Device', sessInfo.device || '—'],
-            ...(sessInfo.deviceInfo ? [['Device Info', sessInfo.deviceInfo.substring(0, 48)]] : []),
-            ['Shift', sessInfo.shift || '—'],
-            ['Cashier', sessInfo.cashier || sess?.openedBy || '—'],
-            ['Opened At', fmtTs(sessInfo.openedAt || sess?.openedAt)],
-            ['Closed At', fmtTs(sessInfo.closedAt || sess?.closedAt)],
-            ['Duration', fmtDuration(durationSeconds)],
-          ],
-        },
-        {
-          title: '1. Denomination Count', type: 'table',
-          cols: ['Denomination', 'Quantity', 'Total Amount'],
-          rows: denomKeys.map(k => [denomLabels[k], String(reportDenominations[k] || 0), fmt((reportDenominations[k] || 0) * parseFloat(k))]),
-          footer: ['Total Cash Counted', '', fmt(actualCash)],
-        },
-        {
-          title: '2. Cash Drawer Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Opening Cash / Float', fmt(openingCashVal)],
-            ['Cash Sales', fmt(cashSalesV)],
-            ['Cash Drop In', fmt(cashDropIn)],
-            ['Cash Drop Out', fmt(cashDropOut)],
-            ['Expected Cash in Drawer', fmt(expectedCashVal)],
-            ['Actual Cash Counted', fmt(actualCash)],
-          ],
-          footer: ['Cash Variance (' + varStatus + ')', fmt(Math.abs(cashVariance))],
-        },
-        {
-          title: '3. Payment / Tender Summary', type: 'table',
-          cols: ['Payment Mode', 'Count', 'Amount'],
-          rows: [
-            ['Cash', String(xSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
-            ['Card', String(xSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
-            ['Credit', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
-            ...((xSummary.otherSales ?? 0) > 0
-              ? [['Online', String(xSummary.otherInvoiceCount ?? '—'), fmt(xSummary.otherSales)]]
-              : []),
-          ],
-          // Total Collected = actual tender taken across every mode, not invoice count/value.
-          footer: ['Total Collected', String(xSummary.totalTenderCount ?? invoiceCount), fmt(totalPaidV)],
-        },
-        {
-          title: '4. Card / Bank Settlement Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ...cardTypeBreakdown.map(row => [row.cardType, String(row.count ?? 0), fmt(row.amount ?? 0)]),
-            ['Card Sales', String(cardPayCount), fmt(cardSalesV)],
-            ['Card Refunds', String(cardRefundCount), cardRefundTotal > 0 ? `(${fmt(cardRefundTotal)})` : fmt(0)],
-            ['Net Card Settlement', String(netCardCount), fmt(netCardSettle)],
-            ['Card Machine Batch No.', sessInfo.cardBatchNo || xReportCardBatchNo || '—', ''],
-            ['Card Settlement Verified', (sessInfo.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No', ''],
-          ],
-        },
-        {
-          title: '5. Invoice / Transaction Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Total Invoices', String(invoiceCount), fmt(totalSalesV)],
-            ['Cash Invoices', String(xSummary.cashInvoiceCount ?? '—'), fmt(cashSalesV)],
-            ['Card Invoices', String(xSummary.cardInvoiceCount ?? '—'), fmt(cardSalesV)],
-            ['Credit Invoices', String(xSummary.creditInvoiceCount ?? '—'), fmt(creditSalesV)],
-          ],
-        },
-        {
-          title: '6. VAT / Tax Summary', type: 'table',
-          cols: ['Tax Type', 'Taxable Amount', 'Tax Amount', 'Total Amount'],
-          rows: [['VAT 5%', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)]],
-          footer: ['Total', fmt(salesExTaxV), fmt(totalTaxV), fmt(totalSalesV)],
-        },
-        {
-          title: '7. Discount Summary', type: 'table',
-          cols: ['Description', 'Amount'],
-          rows: [
-            ['Bill Level Discount', fmt(xSummary.billDiscount ?? 0)],
-            ['Line Item Discount', fmt(xSummary.lineDiscount ?? 0)],
-          ],
-          footer: ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
-        },
-        {
-          title: '8. Return / Refund Summary', type: 'table',
-          cols: ['Description', 'Count', 'Amount'],
-          rows: [
-            ['Total Refunds', String(totalRefundCount), fmt(refundTotal)],
-            ['Card Refunds', String(cardRefundCount), fmt(cardRefundTotal)],
-          ],
-        },
-        {
-          title: '9. Item Movement Summary', type: 'table',
-          cols: ['Description', 'Quantity', 'Amount'],
-          rows: [['Total Items Sold', String(itemsSoldCount || xSummary.totalItemsSold || 0), fmt(totalSalesV)]],
-        },
-        {
-          // Posted-then-voided: lines rung up on a posted invoice, then voided.
-          // Full audit detail from sales_invoice_items (reason / by / when / serial).
-          title: '10. Voided Items (Posted then Voided)', type: 'table',
-          cols: ['Invoice', 'Item', 'Qty', 'Unit Price', 'Line Total', 'Reason', 'Voided By', 'Time'],
-          rows: postedVoids.length
-            ? postedVoids.map(v => [
-              v.invoiceNumber || '—',
-              `${v.itemName || v.itemCode || '—'}${v.serialNumber ? ` [SN:${v.serialNumber}]` : ''}`,
-              String(v.quantity ?? 0),
-              fmt(Number(v.unitPrice ?? 0)),
-              fmt(Number(v.lineTotal ?? 0)),
-              v.voidReason || '—',
-              v.voidedBy || '—',
-              v.voidedAt ? String(v.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No voided items', '', '', '', '', '', '']],
-          footer: ['Total', '', '', '', fmt(voidAmountV), `${postedVoids.length} item(s)`, '', ''],
-        },
-        {
-          // Removed-from-cart: ITEM_VOIDED audit entries with no posted line —
-          // removed before the sale was ever posted. Never mixed with posted voids.
-          title: '11. Removed From Cart (Never Posted)', type: 'table',
-          cols: ['Item', 'Detail', 'Removed By', 'Terminal', 'Time'],
-          rows: cartRemovals.length
-            ? cartRemovals.map(r => [
-              r.itemCode || '—',
-              r.description || '—',
-              r.voidedBy || '—',
-              r.terminalId || '—',
-              r.voidedAt ? String(r.voidedAt).replace('T', ' ').slice(0, 16) : '—',
-            ])
-            : [['—', 'No cart removals', '', '', '']],
-        },
-        {
-          // Per-cashier collection attribution — supports multi-cashier sessions.
-          title: '12. Cashier Attribution', type: 'table',
-          cols: ['Cashier', 'Collected'],
-          rows: cashierRows.length
-            ? cashierRows.map(c => [c.cashier || '—', fmt(Number(c.collected ?? 0))])
-            : [[sess?.openedBy || '—', fmt(totalPaidV)]],
-          footer: ['Total Collected', fmt(totalPaidV)],
-        },
-      ],
-    };
-  };
+  // Delegates to the shared, pure builder in utils/posReportViewModel.js so the live
+  // POS screen and the back-office "POS Reports" historical viewer render identical
+  // output from identical input — single implementation, never duplicated. Falls back
+  // to currentSession while xReportData hasn't loaded yet (pre-existing behavior).
+  const buildXReportViewModel = () => buildXReportViewModelShared(
+    { ...xReportData, session: xReportData?.session || currentSession },
+    {
+      currency: activeCurrency,
+      liveDenominations: getReportClosingDenominations(),
+      liveCardBatchNo: xReportCardBatchNo,
+      liveCardVerified: xReportCardVerified,
+    }
+  );
 
   // ── X-Report: Excel flat rows ─────────────────────────────────────────────
   const buildXReportExcelRows = () => {
@@ -6186,6 +6273,11 @@ export default function POSSales() {
     const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
     const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
     const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
+    // Consolidated Cash Position — additive, informational-only (see buildXReportViewModel).
+    const cashPosition = xSummary.cashPosition || {};
+    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
+    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
+    const cpNet = fmt(cashPosition.netCashPosition ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
 
     return [
       ...denomKeys.map((k, i) => ({
@@ -6201,6 +6293,15 @@ export default function POSSales() {
       { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
       { Section: '', Description: 'Actual Cash Counted', Count: '', Amount: actualCash },
       { Section: '', Description: 'Cash Variance', Count: '', Amount: variance },
+      { Section: 'Consolidated Cash Position', Description: 'Opening Cash', Count: '', Amount: openingCashVal },
+      { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
+      { Section: '', Description: 'Customer Receipts (Cash)', Count: '', Amount: 'Not available in X-Report' },
+      { Section: '', Description: 'Customer Advances (Cash)', Count: '', Amount: 'Not available in X-Report' },
+      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cashDropIn },
+      { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
+      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cashDropOut },
+      { Section: '', Description: 'Net Cash Position', Count: '', Amount: cpNet },
+      ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
       { Section: 'Payment Tender', Description: 'Cash', Count: xSummary.cashInvoiceCount ?? 0, Amount: cashSalesV },
       { Section: '', Description: 'Card', Count: xSummary.cardInvoiceCount ?? 0, Amount: cardSalesV },
       { Section: '', Description: 'Credit', Count: xSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
@@ -6463,6 +6564,19 @@ export default function POSSales() {
     const zOpeningCash = zSessions.reduce((sum, s) => sum + (s.openingCash ?? 0), 0);
     const zExpectedCash = zOpeningCash + zCashSales;
     const zSessionCount = zSummary.sessionCount ?? zSessions.length;
+    // Consolidated Cash Position — additive, informational only (never feeds zExpectedCash above).
+    const zCashPosition = zSummary.cashPosition || {};
+    const zCpOpeningCash = Number(zCashPosition.openingCash ?? zOpeningCash);
+    const zCpCashSales = Number(zCashPosition.cashSales ?? zCashSales);
+    const zCpReceiptsTotal = Number(zCashPosition.customerReceiptsTotal ?? 0);
+    const zCpAdvancesTotal = Number(zCashPosition.customerAdvancesTotal ?? 0);
+    const zCpDropIn = Number(zCashPosition.cashDropIn ?? 0);
+    const zCpDropOut = Number(zCashPosition.cashDropOut ?? 0);
+    const zCpRefundsSupported = zCashPosition.cashRefundsSupported === true;
+    const zCpNet = Number(zCashPosition.netCashPosition ?? (zCpOpeningCash + zCpCashSales + zCpReceiptsTotal + zCpAdvancesTotal + zCpDropIn - zCpDropOut));
+    const zCpReceiptRows = Array.isArray(zCashPosition.customerReceiptRows) ? zCashPosition.customerReceiptRows : [];
+    const zCpAdvanceRows = Array.isArray(zCashPosition.customerAdvanceRows) ? zCashPosition.customerAdvanceRows : [];
+    const zCpDropRows = Array.isArray(zCashPosition.cashDropRows) ? zCashPosition.cashDropRows : [];
 
     const zrFilterBar = (
       <div className="flex flex-wrap gap-2 items-end bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 shadow-sm">
@@ -6476,7 +6590,7 @@ export default function POSSales() {
           />
         </div>
         <button
-          onClick={() => loadZReport(zReportDate)}
+          onClick={() => { setRangeOverride({ startSessionId: '', endSessionId: '' }); setShowAdvancedRange(false); loadZReport(zReportDate); }}
           disabled={zReportLoading}
           className="mt-auto bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"
         >
@@ -6488,73 +6602,321 @@ export default function POSSales() {
       </div>
     );
 
-    const zrInfoCard = (
+    // Day Close review-screen summary: business date, auto-resolved (or supervisor-
+    // adjusted) first/last session, total sessions, cashiers/counters/terminals,
+    // trading time span, and session statuses — reviewed before Close Day is enabled.
+    const allRangeSessions = [
+      ...((daySummary?.sessions) || []),
+      ...((daySummary?.excludedSessions) || []),
+    ].sort((a, b) => new Date(a.openedAt || 0) - new Date(b.openedAt || 0));
+
+    const sessionOptionLabel = (s) => {
+      const time = s.openedAt ? new Date(s.openedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+      return `${s.sessionNo || ('SESS-' + s.sessionId)} · ${s.cashier || '—'} · ${time} · ${s.status || ''}`;
+    };
+
+    const zrDaySummaryPanel = (
       <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-4 mb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1 text-xs">
-            {[
-              ['Report Date', zReportDate || new Date().toLocaleDateString()],
-              ['Sessions', String(zSessionCount)],
-              ['Report Type', 'Z-Report (End-of-Day)'],
-            ].map(([k, v]) => (
-              <div key={k} className="flex gap-2"><span className="text-gray-500 w-32 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-            ))}
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-[#1E293B] flex items-center gap-2"><Lock className="h-4 w-4 text-[#327F74]" />Day Close Summary</h3>
+          {daySummaryLoading && <span className="text-xs text-gray-400">Recalculating…</span>}
+        </div>
+        {!daySummary ? (
+          <p className="text-xs text-gray-400">Generate the report to resolve the session range for this business date.</p>
+        ) : daySummary.totalSessions === 0 ? (
+          <p className="text-xs text-gray-500">No sessions found for this business date.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs mb-3">
+              {[
+                ['Business Date', daySummary.businessDate],
+                ['First Session', daySummary.startSession ? sessionOptionLabel(daySummary.startSession) : '—'],
+                ['Last Session', daySummary.endSession ? sessionOptionLabel(daySummary.endSession) : '—'],
+                ['Total Sessions', String(daySummary.totalSessions)],
+                ['Cashiers', (daySummary.cashiers || []).join(', ') || '—'],
+                ['Terminals', (daySummary.terminals || []).join(', ') || '—'],
+              ].map(([k, v]) => (
+                <div key={k} className="flex flex-col gap-0.5">
+                  <span className="text-gray-400">{k}</span>
+                  <span className="text-[#1E293B] font-medium truncate" title={String(v)}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-4 text-xs text-gray-500 mb-2">
+              <span>Counters: <span className="text-[#1E293B]">{(daySummary.counters || []).join(', ') || '—'}</span></span>
+              <span>Trading Span: <span className="text-[#1E293B]">
+                {daySummary.tradingStart ? new Date(daySummary.tradingStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                {' – '}
+                {daySummary.tradingEnd ? new Date(daySummary.tradingEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+              </span></span>
+              {daySummary.openSessionCount > 0 && (
+                <span className="text-red-600 font-medium">{daySummary.openSessionCount} session(s) still OPEN</span>
+              )}
+              {daySummary.suspendedSessionCount > 0 && (
+                <span className="text-red-600 font-medium">{daySummary.suspendedSessionCount} session(s) SUSPENDED — resume and close first</span>
+              )}
+            </div>
+            {daySummary.excludedSessionCount > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded p-2 text-xs text-amber-800 flex items-start gap-2 mb-2">
+                <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>{daySummary.excludedSessionCount} eligible session(s) fall outside the selected range and will be excluded from this Day Close.</span>
+              </div>
+            )}
+
+            {/* Advanced: supervisor-only session-range override, collapsed by default */}
+            <div className="border-t border-[#327F74]/10 pt-2 mt-2">
+              <button
+                type="button"
+                onClick={toggleAdvancedRange}
+                className="text-xs text-[#327F74] flex items-center gap-1 hover:underline"
+              >
+                <ChevronRight className={`h-3 w-3 transition-transform ${showAdvancedRange ? 'rotate-90' : ''}`} />
+                Advanced: Adjust Session Range {advancedRangeUnlocked ? '' : '(supervisor PIN required)'}
+              </button>
+              {showAdvancedRange && advancedRangeUnlocked && (
+                <div className="flex flex-wrap items-end gap-3 mt-2">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-gray-500">First Session</label>
+                    <select
+                      value={rangeOverride.startSessionId || ''}
+                      onChange={e => applyRangeOverride({ ...rangeOverride, startSessionId: e.target.value })}
+                      className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-white focus:outline-none"
+                    >
+                      <option value="">Auto (earliest)</option>
+                      {allRangeSessions.map(s => (
+                        <option key={s.sessionId} value={s.sessionId}>{sessionOptionLabel(s)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-gray-500">Last Session</label>
+                    <select
+                      value={rangeOverride.endSessionId || ''}
+                      onChange={e => applyRangeOverride({ ...rangeOverride, endSessionId: e.target.value })}
+                      className="border border-[#327F74]/30 rounded px-2 py-1 text-xs text-[#1E293B] bg-white focus:outline-none"
+                    >
+                      <option value="">Auto (latest)</option>
+                      {allRangeSessions.map(s => (
+                        <option key={s.sessionId} value={s.sessionId}>{sessionOptionLabel(s)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {(rangeOverride.startSessionId || rangeOverride.endSessionId) && (
+                    <button type="button" onClick={resetRangeOverride} className="text-xs text-gray-500 hover:text-[#327F74] underline mb-1">
+                      Reset to automatic
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    );
+
+    const renderZrInfoCard = () => (
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+        {/* Business Overview Card */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-5">
+          <h2 className="text-base font-bold text-[#1E293B] mb-4 border-b border-[#327F74]/10 pb-2">Business Overview</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-5">
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Business Date</span><span className="text-sm font-bold text-[#1E293B]">{zReportDate || new Date().toLocaleDateString()}</span></div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Business Status</span>
+              <div>
+                {zReportData?.isDayClosed ? (
+                  <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center w-fit gap-1"><span className="h-2 w-2 rounded-full bg-gray-400"></span>DAY CLOSED</span>
+                ) : isDayCloseBlocked ? (
+                  <span className="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center w-fit gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500"></span>OPEN</span>
+                ) : (
+                  <span className="bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center w-fit gap-1"><span className="h-2 w-2 rounded-full bg-amber-500"></span>READY FOR DAY CLOSE</span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Generated Time</span><span className="text-sm font-bold text-[#1E293B]">{new Date().toLocaleTimeString()}</span></div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Report Type</span><span className="text-sm font-bold text-[#1E293B]">Consolidated Z-Report</span></div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Branch</span><span className="text-sm font-bold text-[#1E293B] truncate" title={zReportData?.branchName || currentTerminal?.branchName || '—'}>{zReportData?.branchName || currentTerminal?.branchName || '—'}</span></div>
+            <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Session Scope</span><span className="text-sm font-bold text-[#1E293B]">{zSessionCount ? `${zSessionCount} session(s)` : '—'}</span></div>
           </div>
-          <div className="space-y-1 text-xs">
-            {[
-              ['Total Invoices', String(zInvoiceCount)],
-              ['Total Sales', formatCurrencyStr(zTotalSales)],
-              ['Cash Sales', formatCurrencyStr(zCashSales)],
-              ['Card Sales', formatCurrencyStr(zCardSales)],
-            ].map(([k, v]) => (
-              <div key={k} className="flex gap-2"><span className="text-gray-500 w-36 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-            ))}
+        </div>
+
+        {/* Store Operations Card */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-5">
+          <h2 className="text-base font-bold text-[#1E293B] mb-4 border-b border-[#327F74]/10 pb-2">Store Operations</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Sessions</span>
+              <div className="flex flex-wrap gap-2 mt-0.5">
+                <div className="bg-emerald-50 border border-emerald-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-emerald-600 font-bold">OPEN</span><span className="text-xs font-bold text-emerald-700">{typeof daySummary !== 'undefined' && daySummary ? daySummary.openSessionCount || 0 : '—'}</span></div>
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">CLOSED</span><span className="text-xs font-bold text-gray-700">{typeof daySummary !== 'undefined' && daySummary ? daySummary.closedSessionCount ?? zSessionCount : zSessionCount}</span></div>
+                <div className="bg-amber-50 border border-amber-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-amber-600 font-bold">PENDING</span><span className="text-xs font-bold text-amber-700">{typeof daySummary !== 'undefined' && daySummary ? daySummary.suspendedSessionCount || 0 : '—'}</span></div>
+              </div>
+            </div>
+            
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Terminals</span>
+              <div className="flex flex-wrap gap-2 mt-0.5">
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">CONFIGURED</span><span className="text-xs font-bold text-gray-700">—</span></div>
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">ONLINE</span><span className="text-xs font-bold text-gray-700">—</span></div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Cashiers</span><span className="text-sm font-bold text-[#1E293B]">—</span></div>
+              <div className="flex flex-col gap-1"><span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Invoices</span><span className="text-sm font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wide">Exceptions</span>
+              <div className="flex flex-wrap gap-2 mt-0.5">
+                <div className="bg-rose-50 border border-rose-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-rose-600 font-bold">RETURNS</span><span className="text-xs font-bold text-rose-700">{String(zSummary?.salesReturnCount || 0)}</span></div>
+                <div className="bg-gray-50 border border-gray-200 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-gray-500 font-bold">VOIDS</span><span className="text-xs font-bold text-gray-700">—</span></div>
+                <div className="bg-amber-50 border border-amber-100 px-2 py-1 rounded flex items-center gap-1.5"><span className="text-[9px] text-amber-600 font-bold">SUSPENDED</span><span className="text-xs font-bold text-amber-700">—</span></div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     );
 
+    const BusinessAccordionGroup = ({ title, icon, description, sectionCount, defaultOpen = false, summaryContent, children }) => {
+      const [isOpen, setIsOpen] = React.useState(defaultOpen);
+
+      return (
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm mb-6 overflow-hidden transition-all duration-300">
+          <button 
+            onClick={() => setIsOpen(!isOpen)}
+            className="w-full flex flex-col md:flex-row md:items-center justify-between p-5 bg-[#F7F7FA] hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 transition-colors text-left"
+            aria-expanded={isOpen}
+          >
+            <div className="flex items-center gap-4 mb-3 md:mb-0">
+              <div className="h-12 w-12 rounded-lg bg-white border border-[#327F74]/10 flex items-center justify-center text-[#327F74] shadow-sm shrink-0">
+                {icon}
+              </div>
+              <div className="flex flex-col">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-semibold text-[#1E293B] uppercase">{title}</h3>
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5 opacity-90">{description}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-6 self-start md:self-auto ml-16 md:ml-0">
+              {summaryContent && (
+                <div className="hidden lg:flex items-center gap-6 mr-4">
+                  {summaryContent}
+                </div>
+              )}
+              <span className="bg-[#327F74]/10 text-[#327F74] text-[11px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap">{sectionCount} Sections</span>
+              <div className="text-gray-400 shrink-0">
+                {isOpen ? <ChevronDown className="h-6 w-6" /> : <ChevronRight className="h-6 w-6" />}
+              </div>
+            </div>
+          </button>
+          {isOpen && (
+            <div className="p-4 md:p-6 border-t border-[#327F74]/10 bg-white">
+              {children}
+            </div>
+          )}
+        </div>
+      );
+    };
+
     const zrKpiCards = (
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-        {[
-          { label: 'Gross Sales', value: <CurrencyAmount amount={zTotalSales} />, sub: 'Before discounts', icon: <TrendingUp className="h-4 w-4" /> },
-          { label: 'Cash Sales', value: <CurrencyAmount amount={zCashSales} />, sub: 'Cash payments', icon: <Banknote className="h-4 w-4" /> },
-          { label: 'Card Sales', value: <CurrencyAmount amount={zCardSales} />, sub: 'Card payments', icon: <CreditCard className="h-4 w-4" /> },
-          { label: 'VAT Amount', value: <CurrencyAmount amount={zTotalTax} />, sub: '5% VAT', icon: <FileBarChart className="h-4 w-4" /> },
-          { label: 'Expected Cash', value: <CurrencyAmount amount={zExpectedCash} />, sub: 'Opening + cash sales', icon: <Wallet className="h-4 w-4" /> },
-          { label: 'Total Invoices', value: String(zInvoiceCount), sub: `${zSessionCount} session(s)`, icon: <FileText className="h-4 w-4" /> },
-        ].map(k => (
-          <div key={k.label} className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm p-3 flex flex-col gap-1">
-            <div className="flex items-center gap-1 text-[#327F74]">{k.icon}<span className="text-xs text-gray-500">{k.label}</span></div>
-            <div className="text-base font-bold text-[#1E293B]">{k.value}</div>
-            {k.sub && <span className="text-xs text-gray-400">{k.sub}</span>}
+      <div className="lg:sticky lg:top-0 lg:z-20 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8 bg-gray-50/80 backdrop-blur-md py-4 border-b border-[#327F74]/10">
+        {/* GROUP 1: SALES */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <TrendingUp className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">SALES</h2>
           </div>
-        ))}
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Gross Sales</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalSales} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Net Sales</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zSalesExTax} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Invoices</span><span className="text-sm font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+          </div>
+        </div>
+
+        {/* GROUP 2: PAYMENTS */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <CreditCard className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">PAYMENTS</h2>
+          </div>
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Cash</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zCashSales} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Card</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zCardSales} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Credit</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zCreditSales} /></span></div>
+          </div>
+        </div>
+
+        {/* GROUP 3: CASH */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <Wallet className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">CASH</h2>
+          </div>
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Opening Cash</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zOpeningCash} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Expected Cash</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zExpectedCash} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Cash Variance</span><span className="text-sm font-bold text-[#1E293B]">—</span></div>
+          </div>
+        </div>
+
+        {/* GROUP 4: COMPLIANCE */}
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-5 py-5 flex flex-col h-full">
+          <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#327F74]/10">
+            <div className="p-2.5 bg-[#327F74]/10 rounded-lg text-[#327F74]">
+              <Shield className="h-5 w-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-[#1E293B] uppercase">COMPLIANCE</h2>
+          </div>
+          <div className="flex flex-col gap-3 flex-1 justify-end">
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">VAT</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalTax} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Returns</span><span className="text-sm font-bold text-rose-600">{zSummary?.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount amount={0} />}</span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Discount</span><span className="text-sm font-bold text-amber-600">{zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount amount={0} />}</span></div>
+          </div>
+        </div>
       </div>
     );
 
-    const ZRTable = ({ title, icon, cols, rows, footerRow }) => (
-      <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4">
-        <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] rounded-t-lg">
-          <span className="text-[#327F74]">{icon}</span>
-          <span className="text-sm text-[#1E293B]">{title}</span>
+    const ZRTable = ({ title, icon, cols, rows, footerRow, emptyMessage }) => (
+      <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm mb-6 overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#327F74]/10 bg-[#F7F7FA]">
+          <div className="flex items-center gap-2.5">
+            <span className="text-[#327F74]">{icon}</span>
+            <span className="text-sm font-semibold text-[#1E293B] uppercase">{title}</span>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-[#F7F7FA] text-gray-500">
-                {cols.map((c, i) => <th key={i} className={`px-4 py-2 text-left font-medium border-b border-[#327F74]/10 ${i > 0 && cols.length > 2 ? 'text-right' : i === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{c}</th>)}
+            <thead className="sticky top-0 z-10 bg-[#F7F7FA] shadow-sm">
+              <tr className="text-gray-500">
+                {cols.map((c, i) => <th key={i} className={`px-6 py-3.5 text-left font-medium border-b border-[#327F74]/10 whitespace-nowrap ${i > 0 && cols.length > 2 ? 'text-right' : i === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{c}</th>)}
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, ri) => (
-                <tr key={ri} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                  {r.map((cell, ci) => <td key={ci} className={`px-4 py-2 text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+              {rows && rows.length > 0 ? (
+                rows.map((r, ri) => (
+                  <tr key={ri} className="border-b border-gray-50 hover:bg-[#327F74]/5 transition-colors">
+                    {r.map((cell, ci) => <td key={ci} className={`px-6 py-4 text-[#1E293B] ${ri % 2 === 1 ? 'bg-gray-50/30' : ''} ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+                  </tr>
+                ))
+              ) : emptyMessage ? (
+                <tr>
+                  <td colSpan={cols.length} className="px-6 py-8 text-center bg-gray-50/50">
+                    <span className="text-gray-400 font-medium italic">{emptyMessage}</span>
+                  </td>
                 </tr>
-              ))}
+              ) : null}
               {footerRow && (
-                <tr className="bg-[#F7F7FA] border-t border-[#327F74]/20">
-                  {footerRow.map((cell, ci) => <td key={ci} className={`px-4 py-2 font-semibold text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
+                <tr className="bg-[#F7F7FA] border-t-2 border-[#327F74]/20">
+                  {footerRow.map((cell, ci) => <td key={ci} className={`px-6 py-4 font-semibold text-[#1E293B] ${ci > 0 && cols.length > 2 ? 'text-right' : ci === cols.length - 1 && cols.length === 2 ? 'text-right' : ''}`}>{renderAED(cell)}</td>)}
                 </tr>
               )}
             </tbody>
@@ -6563,82 +6925,279 @@ export default function POSSales() {
       </div>
     );
 
-    // End-of-day gate: when the backend reports terminals still owing an X-Report,
-    // show only this blocker (the report body and its actions stay hidden).
+    // End-of-day gate: when the backend reports terminals still owing an X-Report
     const zReportBlocked = Array.isArray(zReportPending) && zReportPending.length > 0;
-    const zrPendingBlocker = (
-      <div className="bg-white border border-red-200 rounded-lg shadow-sm p-6 mb-4">
-        <div className="flex items-center gap-2 mb-2 text-red-600">
-          <Lock className="h-5 w-5" />
-          <h3 className="text-base font-semibold">Z-Report blocked — terminals pending X-Report</h3>
+    
+    // Global Day Close Validation Gate
+    const isXReportsMissing = zReportBlocked;
+    const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
+    const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
+    // A day with no sessions at all has nothing to close — the backend rejects
+    // it outright, so the checklist must not report "ready" for this case.
+    const isNoSessions = !daySummary || daySummary.totalSessions === 0;
+    const isDayCloseBlocked = isXReportsMissing || isOpenSessions || isSuspendedBills || isNoSessions;
+
+    const renderValidationChecklist = () => {
+      const checklist = [
+        { label: 'All Sessions Closed', passed: !isOpenSessions },
+        { label: 'X-Reports Generated', passed: !isXReportsMissing },
+        { label: 'Draft Bills Cleared', passed: !isSuspendedBills },
+        { label: 'Cash Variance Within Limits', passed: true, info: 'Pending financial audit' },
+        { label: 'Business Date Ready', passed: !isDayCloseBlocked }
+      ];
+
+      const allPassed = !isDayCloseBlocked;
+
+      const issues = [];
+      if (isNoSessions) {
+        issues.push({ title: 'No Sessions Found', desc: 'No POS sessions exist for this business date — there is nothing to close.' });
+      }
+      if (typeof daySummary !== 'undefined' && daySummary) {
+        if (daySummary.openSessionCount > 0) {
+          issues.push({ title: 'Open Sessions', desc: `${daySummary.openSessionCount} session(s) are still open and must be closed.` });
+        }
+        if (daySummary.suspendedSessionCount > 0) {
+          issues.push({ title: 'Pending Draft Bills', desc: `${daySummary.suspendedSessionCount} suspended bill(s) found. Clear or void them.` });
+        }
+      }
+      if (zReportBlocked) {
+        issues.push({ title: 'Missing X-Reports', desc: `Some terminals are missing X-Reports.` });
+      }
+
+      return (
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-5 mb-6">
+          <div className="flex items-center justify-between mb-4 border-b border-[#327F74]/10 pb-3">
+            <h2 className="text-base font-bold text-[#1E293B]">Validation Checklist</h2>
+            {allPassed ? (
+              <span className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-[11px] font-bold px-3 py-1 rounded-full tracking-wide uppercase border border-emerald-200">
+                <CheckCircle className="h-3.5 w-3.5" />
+                Ready for Day Close
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 bg-rose-50 text-rose-700 text-[11px] font-bold px-3 py-1 rounded-full tracking-wide uppercase border border-rose-200">
+                <AlertCircle className="h-3.5 w-3.5" />
+                Attention Required
+              </span>
+            )}
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-5">
+            {checklist.map((item, idx) => (
+              <div key={idx} className="flex items-center gap-2.5">
+                {item.passed ? (
+                  <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-rose-500 shrink-0" />
+                )}
+                <span className={`text-[13px] tracking-wide ${item.passed ? 'text-[#1E293B]' : 'text-rose-600 font-bold'}`}>{item.label}</span>
+                {item.info && <span className="text-[10px] text-gray-400 font-medium">({item.info})</span>}
+              </div>
+            ))}
+          </div>
+
+          {!allPassed && issues.length > 0 && (() => {
+            const blockingTerminals = [];
+            
+            // 1. Add all open sessions
+            allRangeSessions.forEach(s => {
+              if (s.status === 'OPEN') {
+                blockingTerminals.push({
+                  terminalId: s.terminalId,
+                  terminalName: s.terminalName || s.terminalId || '—',
+                  counter: s.counterName || '—',
+                  cashier: s.cashier || s.openedBy || '—',
+                  sessionNo: s.sessionNo || (s.sessionId ? `SESS-${s.sessionId}` : '—'),
+                  status: 'OPEN'
+                });
+              }
+            });
+            
+            // 2. Add missing X-reports not already captured by open sessions
+            (zReportPending || []).forEach(t => {
+              if (!blockingTerminals.some(b => String(b.terminalId) === String(t.terminalId))) {
+                // Find the latest session for this terminal (reverse chronological search)
+                const matchingSession = [...allRangeSessions].reverse().find(s => String(s.terminalId) === String(t.terminalId) && s.status === 'CLOSED')
+                                     || [...allRangeSessions].reverse().find(s => String(s.terminalId) === String(t.terminalId));
+                                     
+                blockingTerminals.push({
+                  terminalId: t.terminalId,
+                  terminalName: t.terminalName || matchingSession?.terminalName || t.terminalId || '—',
+                  counter: t.counter || matchingSession?.counterName || '—',
+                  cashier: t.openedBy || matchingSession?.cashier || matchingSession?.openedBy || '—',
+                  sessionNo: matchingSession ? (matchingSession.sessionNo || (matchingSession.sessionId ? `SESS-${matchingSession.sessionId}` : '—')) : '—',
+                  status: 'MISSING X-REPORT'
+                });
+              }
+            });
+
+            return (
+              <div className="bg-rose-50/50 border border-rose-200 rounded-lg p-4 mt-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertCircle className="h-4 w-4 text-rose-600" />
+                  <h3 className="text-[13px] font-bold text-rose-800 uppercase tracking-wide">Required Actions</h3>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {issues.map((issue, idx) => (
+                    <div key={idx} className="flex gap-2.5 bg-white p-3 rounded border border-rose-100">
+                      <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                      <div className="flex flex-col">
+                        <span className="text-[12px] font-bold text-rose-700">{issue.title}</span>
+                        <span className="text-[11px] text-rose-600/80 mt-1 leading-relaxed">{issue.desc}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Restored Day Close Blocking Details Table */}
+                {blockingTerminals.length > 0 && (
+                  <div className="bg-white border border-rose-200 rounded-lg overflow-hidden mt-4 shadow-sm">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="bg-rose-100/50 text-rose-800">
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Counter</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Terminal</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Cashier</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Session No.</th>
+                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-rose-100">
+                        {blockingTerminals.map((bt, i) => (
+                          <tr key={i} className="hover:bg-rose-50/30 transition-colors text-xs">
+                            <td className="px-4 py-2.5 font-medium text-slate-800">{bt.counter}</td>
+                            <td className="px-4 py-2.5 text-slate-600">{bt.terminalName}</td>
+                            <td className="px-4 py-2.5 text-slate-600 flex items-center gap-1.5"><Users className="h-3 w-3 text-slate-400 shrink-0" />{bt.cashier}</td>
+                            <td className="px-4 py-2.5 text-slate-600">{bt.sessionNo}</td>
+                            <td className="px-4 py-2.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                                bt.status === 'OPEN' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-amber-100 text-amber-700 border border-amber-200'
+                              }`}>
+                                {bt.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
-        <p className="text-sm text-gray-600 mb-4">
-          Every active terminal must generate its X-Report before the end-of-day Z-Report can be produced.
-          The following terminal(s) are still open without an X-Report:
-        </p>
-        <div className="border border-red-100 rounded-lg overflow-hidden">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="bg-red-50 text-red-700">
-                <th className="px-4 py-2 text-left font-medium">Terminal</th>
-                <th className="px-4 py-2 text-left font-medium">Counter</th>
-                <th className="px-4 py-2 text-left font-medium">Cashier</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(zReportPending || []).map((t, i) => (
-                <tr key={i} className="border-t border-red-50">
-                  <td className="px-4 py-2 text-[#1E293B]">{t.terminalName || t.terminalId || '—'}</td>
-                  <td className="px-4 py-2 text-[#1E293B]">{t.counter || '—'}</td>
-                  <td className="px-4 py-2 text-[#1E293B]">{t.openedBy || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      );
+    };
+
+    const renderDayCloseProgress = () => {
+      const steps = [
+        'Business Open',
+        'Trading Complete',
+        'Sessions Closed',
+        'Validation Passed',
+        'Financial Review',
+        'Ready For Day Close',
+        'Business Closed'
+      ];
+
+      let activeStepIndex = 0;
+      const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
+      const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
+
+      if (zReportData?.isDayClosed) {
+        activeStepIndex = 6;
+      } else {
+        activeStepIndex = 1;
+        if (!zReportBlocked) {
+          activeStepIndex = 2;
+          if (!isOpenSessions) {
+            activeStepIndex = 3;
+            if (!isSuspendedBills) {
+              activeStepIndex = 4;
+            }
+          }
+        }
+      }
+
+      return (
+        <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm px-6 py-6 mb-6 overflow-x-auto">
+          <div className="flex min-w-[750px] justify-between">
+            {steps.map((step, idx) => {
+              const isCompleted = idx < activeStepIndex;
+              const isActive = idx === activeStepIndex;
+              const isLast = idx === steps.length - 1;
+              return (
+                <div key={idx} className={`relative flex flex-col items-center ${isLast ? '' : 'flex-1'}`}>
+                  {/* Line */}
+                  {!isLast && (
+                    <div className={`absolute top-2.5 left-[50%] w-full h-0.5 ${isCompleted ? 'bg-emerald-500' : 'bg-gray-200'} z-0`}></div>
+                  )}
+                  {/* Step Item */}
+                  <div className="flex flex-col items-center relative z-10">
+                    <div className={`h-5 w-5 rounded-full flex items-center justify-center border-2 mb-2 bg-white transition-colors ${
+                      isCompleted ? 'border-emerald-500 bg-emerald-500 text-white' : 
+                      isActive ? 'border-[#327F74] bg-white text-[#327F74] shadow-sm' : 
+                      'border-gray-200 bg-gray-50'
+                    }`}>
+                      {isCompleted ? <CheckCircle className="h-3 w-3" /> : <div className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-[#327F74]' : 'bg-transparent'}`}></div>}
+                    </div>
+                    <span className={`text-[10px] font-bold uppercase text-center max-w-[100px] whitespace-nowrap leading-none ${
+                      isCompleted ? 'text-emerald-700' : isActive ? 'text-[#1E293B]' : 'text-gray-400'
+                    }`}>
+                      {step}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-        <p className="text-xs text-gray-400 mt-3">
-          Ask each listed terminal to run <span className="font-medium text-[#327F74]">X-Report</span> from its POS dashboard, then generate the Z-Report again.
-        </p>
-      </div>
-    );
+      );
+    };
 
     return (
-      <div className="bg-[#F7F7FA] min-h-full p-6">
+      <div className="bg-[#F7F7FA] min-h-full p-4 lg:p-6">
         {/* Sticky Header */}
         <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start lg:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-1 text-xs text-gray-400 mb-1">
+              <div className="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-gray-400 mb-0.5">
                 <span className="hover:text-[#327F74] cursor-pointer" onClick={() => setCurrentView('dashboard')}>Dashboard</span>
                 <ChevronRight className="h-3 w-3" />
                 <span>POS</span>
                 <ChevronRight className="h-3 w-3" />
-                <span className="text-[#327F74]">Z-Report</span>
+                <span className="text-[#327F74]">Day Close Management</span>
               </div>
-              <h1 className="text-xl text-[#1E293B]">Z-Report / End-of-Day Closing Report</h1>
-              <p className="text-xs text-gray-500 mt-0.5">Consolidated POS closing summary for daily sales, collections, tax, cash drawer, returns, and audit verification.</p>
+              <h1 className="text-2xl font-bold tracking-tight text-[#1E293B]">Day Close Management</h1>
+              <p className="text-xs text-gray-500 mt-1 max-w-2xl">Manage the complete end-of-business-day closing process, review financial summaries, validate sessions and finalize the business date.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-[#327F74]/40 text-[#327F74] text-xs px-2 py-1.5 rounded bg-white focus:outline-none">
-                <option value="a4">A4</option>
-                <option value="80mm">Thermal 80mm</option>
-                <option value="58mm">Thermal 58mm</option>
-              </select>
-              <button onClick={handleZReportPreview} disabled={!zReportData} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Eye className="h-3 w-3" />Preview</button>
-              <button onClick={handleZReportPrint} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to print the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
-              <button onClick={handleZReportExportPDF} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
-              <button onClick={handleZReportExportExcel} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
+            
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1 bg-white border border-[#327F74]/20 p-1 rounded-lg shadow-sm">
+                <select value={reportPrintMode} onChange={e => setReportPrintMode(e.target.value)} title="Print / preview format" className="border border-transparent hover:border-[#327F74]/20 text-[#327F74] font-medium text-xs px-2 py-2 rounded focus:outline-none transition-colors">
+                  <option value="a4">A4</option>
+                  <option value="80mm">Thermal 80mm</option>
+                  <option value="58mm">Thermal 58mm</option>
+                </select>
+                <div className="w-px h-5 bg-gray-200 mx-1"></div>
+                <button onClick={handleZReportPreview} disabled={!zReportData} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><Eye className="h-4 w-4" />Preview</button>
+                <button onClick={handleZReportPrint} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to print the Z-Report.' : undefined} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><Printer className="h-4 w-4" />Print</button>
+                <button onClick={handleZReportExportPDF} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><FileText className="h-4 w-4" />Export PDF</button>
+                <button onClick={handleZReportExportExcel} disabled={!zReportData || !zReportData?.isDayClosed} title={zReportData && !zReportData?.isDayClosed ? 'Close the business day first to export the Z-Report.' : undefined} className="text-[#327F74] font-medium text-xs px-3 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-40 flex items-center gap-1.5 transition-colors"><Download className="h-4 w-4" />Export Excel</button>
+              </div>
+
               <button
                 onClick={() => { if (window.confirm(`Close business day ${zReportDate}? This will finalize all sessions for the day.`)) handleCloseDay(); }}
-                disabled={zReportLoading || !zReportData || zReportData?.isDayClosed}
-                className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
-                <Lock className="h-3 w-3" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
+                disabled={zReportLoading || !zReportData || zReportData?.isDayClosed || isDayCloseBlocked}
+                title={isDayCloseBlocked ? "Resolve all pending actions in the Validation Checklist before closing the day." : undefined}
+                className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed text-[#1E293B] font-bold shadow-sm text-sm px-6 py-2.5 rounded-lg flex items-center gap-2 transition-all">
+                <Lock className="h-4 w-4" />{zReportData?.isDayClosed ? 'Day Closed' : 'Close Day'}
               </button>
             </div>
           </div>
         </div>
 
         {zrFilterBar}
+        {!zReportData?.isDayClosed && zrDaySummaryPanel}
 
         {zReportData?.isDayClosed && (
           <div className="bg-yellow-50 text-yellow-800 p-3 mb-4 rounded border border-yellow-200 flex items-center gap-2 text-sm font-semibold">
@@ -6647,10 +7206,25 @@ export default function POSSales() {
           </div>
         )}
 
-        {zReportBlocked ? zrPendingBlocker : (<>
-          {zrInfoCard}
+        {renderZrInfoCard()}
+        {renderValidationChecklist()}
+        {renderDayCloseProgress()}
+
+        {isDayCloseBlocked ? null : (<>
           {zrKpiCards}
 
+          <BusinessAccordionGroup
+            title="Sales Performance"
+            icon={<TrendingUp className="h-6 w-6" />}
+            description="Sales performance, invoices and revenue"
+            sectionCount={2}
+            defaultOpen={true}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Gross Sales</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalSales} /></span></div>
+              </>
+            }
+          >
           {/* Section 1: Sales Summary */}
           <ZRTable
             title="1. Sales Summary"
@@ -6675,6 +7249,22 @@ export default function POSSales() {
             ]}
           />
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Payments & Cash"
+            icon={<Wallet className="h-6 w-6" />}
+            description="Tenders, cash drawer and bank settlements"
+            sectionCount={5}
+            defaultOpen={false}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Cash</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zCashSales} /></span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Card</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zCardSales} /></span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Tender Count</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+              </>
+            }
+          >
           {/* Section 3: Payment / Tender Summary */}
           <ZRTable
             title="3. Payment / Tender Summary"
@@ -6721,6 +7311,53 @@ export default function POSSales() {
             </div>
           </div>
 
+          {/* Section 4a: Consolidated Cash Position — additive, informational only */}
+          <ZRTable
+            title="4a. Consolidated Cash Position (Informational)"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Description', 'Amount']}
+            rows={[
+              ['Opening Cash', <CurrencyAmount key="z4aoc" amount={zCpOpeningCash} />],
+              ['Cash Sales', <CurrencyAmount key="z4acs" amount={zCpCashSales} />],
+              ['Customer Receipts (Cash)', <CurrencyAmount key="z4acr" amount={zCpReceiptsTotal} />],
+              ['Customer Advances (Cash)', <CurrencyAmount key="z4aca" amount={zCpAdvancesTotal} />],
+              ['Cash Drop In', <CurrencyAmount key="z4adi" amount={zCpDropIn} />],
+              ['Cash Refunds (Cash)', zCpRefundsSupported ? <CurrencyAmount key="z4arf" amount={zCashPosition.cashRefundsTotal ?? 0} /> : <span key="z4arfn" className="text-gray-400 italic">Not available — refund payment mode not tracked</span>],
+              ['Cash Drop Out', zCpDropOut > 0 ? `(${formatCurrencyStr(zCpDropOut)})` : <CurrencyAmount key="z4ado" amount={0} />],
+            ]}
+            footerRow={['Net Cash Position', <span key="z4an" className="font-bold text-[#327F74]"><CurrencyAmount amount={zCpNet} /></span>]}
+          />
+
+          {/* Section 4b: Customer Receipts detail */}
+          <ZRTable
+            title="4b. Customer Receipts"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Sl No', 'Customer Name', 'Received By', 'Received Amount']}
+            rows={zCpReceiptRows.length ? zCpReceiptRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.receivedBy || '—', <CurrencyAmount key={`z4brow-${r.slNo}`} amount={r.receivedAmount ?? 0} />]) : []}
+            emptyMessage="— No customer receipts recorded"
+            footerRow={['', '', 'Total', <CurrencyAmount key="z4bt" amount={zCpReceiptsTotal} />]}
+          />
+
+          {/* Section 4c: Customer Advances detail */}
+          <ZRTable
+            title="4c. Customer Advances"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Sl No', 'Customer Name', 'Paid By', 'Paid Amount']}
+            rows={zCpAdvanceRows.length ? zCpAdvanceRows.map(r => [String(r.slNo ?? ''), r.customerName || '—', r.paidBy || '—', <CurrencyAmount key={`z4crow-${r.slNo}`} amount={r.paidAmount ?? 0} />]) : []}
+            emptyMessage="— No customer advances recorded"
+            footerRow={['', '', 'Total', <CurrencyAmount key="z4ct" amount={zCpAdvancesTotal} />]}
+          />
+
+          {/* Section 4d: Cash Drop / Cash Out detail */}
+          <ZRTable
+            title="4d. Cash Drop / Cash Out"
+            icon={<Banknote className="h-4 w-4" />}
+            cols={['Sl No', 'Type', 'Amount']}
+            rows={zCpDropRows.length ? zCpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', <CurrencyAmount key={`z4drow-${r.slNo}`} amount={r.amount ?? 0} />]) : []}
+            emptyMessage="— No cash drops recorded"
+            footerRow={['', 'Total', <CurrencyAmount key="z4dt" amount={zCpDropIn - zCpDropOut} />]}
+          />
+
           {/* Section 5: Card / Bank Settlement Summary */}
           <ZRTable
             title="5. Card / Bank Settlement Summary"
@@ -6732,6 +7369,22 @@ export default function POSSales() {
             ]}
           />
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Tax & Compliance"
+            icon={<Shield className="h-6 w-6" />}
+            description="VAT, returns, refunds and discounts"
+            sectionCount={3}
+            defaultOpen={false}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">VAT</span><span className="text-[13px] font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalTax} /></span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Returns</span><span className="text-[13px] font-bold text-rose-600">{zSummary?.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount amount={0} />}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Discount</span><span className="text-[13px] font-bold text-amber-600">{zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount amount={0} />}</span></div>
+              </>
+            }
+          >
           {/* Section 6: VAT / Tax Summary */}
           <ZRTable
             title="6. VAT / Tax Summary"
@@ -6775,6 +7428,22 @@ export default function POSSales() {
             ]}
           />
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Productivity"
+            icon={<Users className="h-6 w-6" />}
+            description="Item movement, cashier shifts and credit"
+            sectionCount={4}
+            defaultOpen={false}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Invoices</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Cashiers</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zSessionCount)}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Items</span><span className="text-[13px] font-bold text-[#1E293B]">{String(zSummary?.totalItemsSold ?? 0)}</span></div>
+              </>
+            }
+          >
           {/* Section 9: Item Movement Summary */}
           {(() => {
             const topItems = Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : [];
@@ -6857,7 +7526,8 @@ export default function POSSales() {
                 title="10. Cashier Wise Summary"
                 icon={<Users className="h-4 w-4" />}
                 cols={['Cashier', 'Invoice Count', 'Net Sales', 'Cash', 'Card', 'Credit']}
-                rows={cashierRows.length > 0 ? cashierRows : [['—', '0', <CurrencyAmount key="c10e" amount={0} />, <CurrencyAmount key="c10e2" amount={0} />, <CurrencyAmount key="c10e3" amount={0} />, <CurrencyAmount key="c10e4" amount={0} />]]}
+                rows={cashierRows}
+                emptyMessage="— No cashier activity recorded"
                 footerRow={['Total', String(zInvoiceCount), <CurrencyAmount key="c10tf" amount={zTotalSales} />, <CurrencyAmount key="c10cf" amount={zCashSales} />, <CurrencyAmount key="c10df" amount={zCardSales} />, <CurrencyAmount key="c10rf" amount={zCreditSales} />]}
               />
             );
@@ -6899,30 +7569,68 @@ export default function POSSales() {
             );
           })()}
 
+          </BusinessAccordionGroup>
+
+          <BusinessAccordionGroup
+            title="Day Close"
+            icon={<Lock className="h-6 w-6" />}
+            description="Final declaration, verification and system notes"
+            sectionCount={3}
+            defaultOpen={true}
+            summaryContent={
+              <>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Business Status</span><span className="text-[13px] font-bold text-[#1E293B]">{zReportData?.isDayClosed ? 'CLOSED' : 'OPEN'}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Ready For Close</span><span className="text-[13px] font-bold text-[#1E293B]">{!isDayCloseBlocked ? 'YES' : 'NO'}</span></div>
+                {zReportData?.isDayClosed && <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Z-Report #</span><span className="text-[13px] font-bold text-[#1E293B]">{`ZR-${String(zReportData?.sessions?.[0]?.id ?? '0').padStart(9, '0')}`}</span></div>}
+              </>
+            }
+          >
           {/* Section 13: Final Day Close Summary */}
           {(() => {
             const zId = zReportData?.sessions?.[0]?.id;
             const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
             const totalExpectedCash = zOpeningCash + zCashSales;
             return (
-              <div className="bg-[#1E293B] border border-[#327F74]/40 rounded-lg shadow p-4 mb-4">
-                <div className="flex items-center gap-2 mb-3">
-                  <CheckCircle className="h-4 w-4 text-[#F5C742]" />
-                  <span className="text-sm text-white">13. Final Day Close Summary</span>
-                  <span className="ml-auto text-xs bg-[#F5C742] text-[#1E293B] px-2 py-0.5 rounded">Z-Report #{reportNo}</span>
+              <div className="bg-[#1E293B] border border-[#327F74]/40 rounded-xl shadow-md p-6 mb-6">
+                <div className="flex items-center justify-between mb-5 border-b border-gray-700/50 pb-4">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="h-6 w-6 text-[#F5C742]" />
+                    <span className="text-[16px] font-bold uppercase tracking-wide text-white">Final Day Close Summary</span>
+                  </div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider bg-[#F5C742] text-[#1E293B] px-3 py-1 rounded-full">Z-Report #{reportNo}</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                
+                <div className="flex flex-wrap gap-x-8 gap-y-4 mb-6 border-b border-gray-700/50 pb-5">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Business Date</span>
+                    <span className="text-[13px] font-medium text-white">{zReportDate ? new Date(zReportDate).toLocaleDateString('en-GB') : '—'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Branch</span>
+                    <span className="text-[13px] font-medium text-white">{zReportData?.branchName || 'Main Branch'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Status</span>
+                    <span className="text-[13px] font-medium text-[#F5C742]">{zReportData?.isDayClosed ? 'CLOSED' : 'PENDING'}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Generated</span>
+                    <span className="text-[13px] font-medium text-white">{new Date().toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[
-                    ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]'],
-                    ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400'],
-                    ['Total Collection', <CurrencyAmount key="z13c" amount={zTotalSales} />, 'text-[#F5C742]'],
-                    ['Opening Cash / Float', <CurrencyAmount key="z13d" amount={zOpeningCash} />, 'text-white'],
-                    ['Expected Cash in Drawer', <CurrencyAmount key="z13e" amount={totalExpectedCash} />, 'text-white'],
-                    ['Cash Sales', <CurrencyAmount key="z13f" amount={zCashSales} />, 'text-green-400'],
-                  ].map(([l, v, c]) => (
-                    <div key={l} className="bg-white/5 rounded p-2">
-                      <div className="text-xs text-gray-400">{l}</div>
-                      <div className={`text-sm font-bold ${c}`}>{v}</div>
+                    ['Total Net Sales Inc. VAT', <CurrencyAmount key="z13a" amount={zTotalSales} />, 'text-[#F5C742]', 'bg-[#F5C742]/10 border-[#F5C742]/20'],
+                    ['Total Discount', <CurrencyAmount key="z13b" amount={zTotalDiscount} />, 'text-red-400', 'bg-red-400/10 border-red-400/20'],
+                    ['Total Collection', <CurrencyAmount key="z13c" amount={zTotalSales} />, 'text-[#F5C742]', 'bg-[#F5C742]/10 border-[#F5C742]/20'],
+                    ['Opening Cash / Float', <CurrencyAmount key="z13d" amount={zOpeningCash} />, 'text-white', 'bg-white/5 border-white/10'],
+                    ['Expected Cash in Drawer', <CurrencyAmount key="z13e" amount={totalExpectedCash} />, 'text-white', 'bg-white/5 border-white/10'],
+                    ['Cash Sales', <CurrencyAmount key="z13f" amount={zCashSales} />, 'text-emerald-400', 'bg-emerald-400/10 border-emerald-400/20'],
+                  ].map(([l, v, c, bg]) => (
+                    <div key={l} className={`border rounded-lg p-3 ${bg}`}>
+                      <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">{l}</div>
+                      <div className={`text-[16px] font-bold ${c}`}>{v}</div>
                     </div>
                   ))}
                 </div>
@@ -6931,26 +7639,26 @@ export default function POSSales() {
           })()}
 
           {/* Declaration & Verification */}
-          <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm mb-4 p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Shield className="h-4 w-4 text-[#327F74]" />
-              <span className="text-sm text-[#1E293B]">Declaration &amp; Verification</span>
+          <div className="bg-white border border-[#327F74]/20 rounded-xl shadow-sm mb-6 p-6">
+            <div className="flex items-center gap-2 mb-4 border-b border-[#327F74]/10 pb-3">
+              <Shield className="h-5 w-5 text-[#327F74]" />
+              <span className="text-[14px] font-bold uppercase tracking-wide text-[#1E293B]">Declaration &amp; Verification</span>
             </div>
-            <p className="text-xs text-gray-600 mb-4 bg-[#F7F7FA] rounded p-2 border-l-2 border-[#327F74]">
+            <p className="text-[13px] text-gray-600 mb-6 bg-[#F7F7FA] rounded-lg p-4 border-l-4 border-[#327F74] leading-relaxed">
               I confirm that the above sales, collections, returns, and cash drawer details have been verified and closed for the selected business date / shift.
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               <div>
-                <label className="text-xs text-gray-500">Cashier Signature</label>
-                <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+                <label className="text-[11px] font-bold uppercase tracking-wide text-gray-500 block mb-2">Cashier Signature</label>
+                <div className="border border-[#327F74]/30 rounded-lg h-24 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400 border-dashed">Sign here</div>
               </div>
               <div>
-                <label className="text-xs text-gray-500">Supervisor / Manager Signature</label>
-                <div className="mt-1 border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Sign here</div>
+                <label className="text-[11px] font-bold uppercase tracking-wide text-gray-500 block mb-2">Supervisor / Manager Signature</label>
+                <div className="border border-[#327F74]/30 rounded-lg h-24 bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400 border-dashed">Sign here</div>
               </div>
               <div>
-                <label className="text-xs text-gray-500">Closing Remarks</label>
-                <textarea className="mt-1 w-full border border-[#327F74]/30 rounded h-12 bg-[#F7F7FA] text-xs p-1.5 text-[#1E293B] resize-none focus:outline-none focus:ring-1 focus:ring-[#327F74]" placeholder="Enter remarks..." />
+                <label className="text-[11px] font-bold uppercase tracking-wide text-gray-500 block mb-2">Closing Remarks</label>
+                <textarea className="w-full border border-[#327F74]/30 rounded-lg h-24 bg-[#F7F7FA] text-[13px] p-3 text-[#1E293B] resize-none focus:outline-none focus:ring-2 focus:ring-[#327F74]/50 transition-shadow" placeholder="Enter remarks..." />
               </div>
             </div>
           </div>
@@ -6969,6 +7677,7 @@ export default function POSSales() {
               <li>Z-Report number is auto-generated and stored for audit based on session ID.</li>
             </ul>
           </div>
+          </BusinessAccordionGroup>
         </>)}
       </div>
     );
@@ -6996,6 +7705,12 @@ export default function POSSales() {
     const creditSales = xSummary.creditSales ?? 0;
     const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
     const expectedCashVal = xSummary.expectedCash ?? (openingCashVal + cashSales + cashDropIn - cashDropOut);
+    // Consolidated Cash Position — additive, informational only (never feeds expectedCashVal above).
+    // X-Report never includes Customer Receipts/Advances (back-office vouchers, no session linkage yet).
+    const xCashPosition = xSummary.cashPosition || {};
+    const xCpDropRows = Array.isArray(xCashPosition.cashDropRows) ? xCashPosition.cashDropRows : [];
+    const xCpRefundsSupported = xCashPosition.cashRefundsSupported === true;
+    const xCpNet = xCashPosition.netCashPosition ?? (openingCashVal + cashSales + cashDropIn - cashDropOut);
 
     const cashVariance = actualCash - expectedCashVal;
     const isBalanced = actualCash === 0 || Math.abs(cashVariance) < 0.01;
@@ -7056,6 +7771,7 @@ export default function POSSales() {
               <button onClick={handleXReportExportPDF} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><FileText className="h-3 w-3" />Export PDF</button>
               <button onClick={handleXReportExportExcel} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
               <button onClick={handleXReportPrint} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to print the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print</button>
+              <button onClick={() => { setShowXReportHistory(true); searchXReportHistory(); }} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><Calendar className="h-3 w-3" />History</button>
               <button onClick={loadXReport} disabled={xReportLoading} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
                 {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
               </button>
@@ -7083,6 +7799,13 @@ export default function POSSales() {
             );
           })()}
         </div>
+
+        {viewingHistoricalXReport && (
+          <div className="mx-6 mt-3 flex items-center justify-between gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+            <span className="text-xs text-amber-700 flex items-center gap-1"><Calendar className="h-3 w-3" />Viewing a historical session's X-Report (read-only)</span>
+            <button onClick={returnToCurrentSessionXReport} className="text-xs text-amber-800 font-semibold hover:underline">Back to Current Session</button>
+          </div>
+        )}
 
         <div className="p-6 flex-1">
           {/* Filter / Session Info Bar */}
@@ -7231,6 +7954,35 @@ export default function POSSales() {
                   ['Expected Cash in Drawer', <span key="ec" className="font-bold text-[#327F74]"><CurrencyAmount amount={expectedCashVal} /></span>],
                 ]}
                 highlightLast
+              />
+
+              {/* Section 2a: Consolidated Cash Position — additive, informational only */}
+              <XRTable
+                title="2a. Consolidated Cash Position (Informational)"
+                icon={<Banknote className="h-4 w-4" />}
+                cols={['Description', 'Amount']}
+                rows={[
+                  ['Opening Cash', <CurrencyAmount key="xcpoc" amount={openingCashVal} />],
+                  ['Cash Sales', <CurrencyAmount key="xcpcs" amount={cashSales} />],
+                  ['Customer Receipts (Cash)', <span key="xcpcrn" className="text-gray-400 italic">Not available in X-Report</span>],
+                  ['Customer Advances (Cash)', <span key="xcpcan" className="text-gray-400 italic">Not available in X-Report</span>],
+                  ['Cash Drop In', <CurrencyAmount key="xcpdi" amount={cashDropIn} />],
+                  ['Cash Refunds (Cash)', xCpRefundsSupported ? <CurrencyAmount key="xcprf" amount={xCashPosition.cashRefundsTotal ?? 0} /> : <span key="xcprfn" className="text-gray-400 italic">Not available — refund payment mode not tracked</span>],
+                  ['Cash Drop Out', cashDropOut > 0 ? `(${formatCurrencyStr(cashDropOut)})` : <CurrencyAmount key="xcpdo" amount={0} />],
+                ]}
+                footerRow={['Net Cash Position', <span key="xcpn" className="font-bold text-[#327F74]"><CurrencyAmount amount={xCpNet} /></span>]}
+                highlightLast
+              />
+
+              {/* Section 2b: Cash Drop / Cash Out detail */}
+              <XRTable
+                title="2b. Cash Drop / Cash Out"
+                icon={<Banknote className="h-4 w-4" />}
+                cols={['Sl No', 'Type', 'Amount']}
+                rows={xCpDropRows.length
+                  ? xCpDropRows.map(r => [String(r.slNo ?? ''), r.type || '—', <CurrencyAmount key={`xcpdrow-${r.slNo}`} amount={r.amount ?? 0} />])
+                  : [['—', 'No cash drops recorded', <CurrencyAmount key="xcpdempty" amount={0} />]]}
+                footerRow={['', 'Total', <CurrencyAmount key="xcpdt" amount={cashDropIn - cashDropOut} />]}
               />
 
               {/* Section 3: Cash Variance Summary */}
@@ -7635,6 +8387,64 @@ export default function POSSales() {
             </button>
           </div>
         </div>
+
+        {/* ─── X-REPORT HISTORY PICKER ─── */}
+        {showXReportHistory && (
+          <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/70 backdrop-blur-sm p-2 sm:p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl border border-slate-100 max-h-[90vh] flex flex-col">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                <h3 className="text-base font-bold text-[#1E293B] flex items-center gap-2"><Calendar className="h-4 w-4 text-[#327F74]" />X-Report History</h3>
+                <button onClick={() => setShowXReportHistory(false)} className="text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
+              </div>
+              <div className="p-5 space-y-3 overflow-y-auto">
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">From</label>
+                    <input type="date" value={xHistoryDateFrom} onChange={e => setXHistoryDateFrom(e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1.5 text-xs" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">To</label>
+                    <input type="date" value={xHistoryDateTo} onChange={e => setXHistoryDateTo(e.target.value)}
+                      className="border border-gray-300 rounded px-2 py-1.5 text-xs" />
+                  </div>
+                  <button onClick={searchXReportHistory} disabled={xHistoryLoading}
+                    className="bg-[#327F74] hover:bg-[#286660] text-white text-xs px-4 py-2 rounded flex items-center gap-1 disabled:opacity-50">
+                    <Search className="h-3 w-3" />{xHistoryLoading ? 'Searching…' : 'Search'}
+                  </button>
+                </div>
+                <div className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+                  {xHistoryResults.length === 0 && !xHistoryLoading && (
+                    <p className="text-xs text-slate-400 text-center py-6">No closed sessions found in this date range.</p>
+                  )}
+                  {xHistoryResults.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => loadHistoricalXReport(s.id)}
+                      className="w-full text-left px-4 py-3 hover:bg-slate-50 flex items-center gap-3 transition-all"
+                    >
+                      <div className="w-9 h-9 bg-[#327F74]/10 text-[#327F74] rounded-lg flex items-center justify-center shrink-0">
+                        <FileBarChart className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-800 truncate">
+                          {s.counterName || 'Counter'} · {s.terminalName || s.terminalId}
+                        </p>
+                        <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                          <Users className="h-3 w-3" />{s.openedBy}
+                          <span className="text-slate-300">•</span>
+                          <Clock className="h-3 w-3" />{s.closedAt ? new Date(s.closedAt).toLocaleString() : (s.openedAt ? new Date(s.openedAt).toLocaleDateString() : '—')}
+                        </p>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -7892,7 +8702,21 @@ export default function POSSales() {
     }
   }, [quickProductForm, loadPosProducts, addToInvoice, showFeedback]);
 
+  const handleCheckout = useCallback(() => {
+    const grandWithShip = (currentInvoice?.total || 0) + (Number(shippingCharge) || 0);
+    const balanceDue = activeLayawayId && activeLayawayDeposit > 0
+      ? Math.max(0, grandWithShip - activeLayawayDeposit)
+      : grandWithShip;
+    setCheckoutPhase('payment'); 
+    setShowPaymentDialog(true);
+    setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
+    setCheckoutKeypadVisible(false); 
+    setCheckoutKeypadMode('numeric'); 
+    setCheckoutKeypadTarget('tender');
+  }, [currentInvoice, shippingCharge, activeLayawayId, activeLayawayDeposit]);
+
   const touchScreenProps = {
+    handleCheckout,
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
     showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
     setCurrentView, currentSession, sessionId, posSettings,
@@ -7908,7 +8732,7 @@ export default function POSSales() {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
-    addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
+    addToInvoice, createInvoiceLine, updateInvoiceLine, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
@@ -8148,10 +8972,270 @@ export default function POSSales() {
         </div>
       )}
 
+      {/* ─── PREVIOUS BUSINESS DATE STILL OPEN (BLOCKS POS ENTRY) ─── */}
+      {openSessionsBlock && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            <div className="bg-gradient-to-r from-amber-500 to-orange-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
+                <AlertTriangle className="h-7 w-7 sm:h-10 sm:w-10 text-white" />
+              </div>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">Previous Business Day Not Closed</h2>
+              <p className="text-white/80 text-xs sm:text-sm font-medium">
+                Business date {openSessionsBlock.currentBusinessDate} still has open session(s) past operating hours.
+              </p>
+            </div>
+            <div className="p-4 sm:p-8 space-y-3 sm:space-y-4">
+              <p className="text-xs sm:text-sm text-slate-600">
+                POS entry is blocked until a supervisor runs Day Close for the session(s) below.
+              </p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {(openSessionsBlock.openSessions || []).map((s) => (
+                  <button
+                    key={s.sessionId}
+                    type="button"
+                    onClick={() => {
+                      // Deep-link a supervisor to the terminal that owns this session.
+                      localStorage.setItem(
+                        `billbull:pos:terminal_id:${openSessionsBlock.branchId || sessionStorage.getItem('activeBranchId') || 'default'}`,
+                        s.terminalId
+                      );
+                      window.location.reload();
+                    }}
+                    className="w-full text-left bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-2xl p-3 sm:p-4 flex items-center gap-3 shadow-sm transition-all"
+                  >
+                    <div className="w-10 h-10 bg-amber-100 border border-amber-200 text-amber-800 rounded-xl flex items-center justify-center shrink-0">
+                      <MapPin className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-bold text-slate-800 truncate">
+                        {s.counterName || 'Counter'} · {s.terminalName || s.terminalId}
+                      </p>
+                      <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
+                        <Users className="h-3 w-3 shrink-0" />{s.openedBy}
+                        <span className="text-slate-300">•</span>
+                        <Clock className="h-3 w-3 shrink-0" />
+                        {s.openedAt ? new Date(s.openedAt).toLocaleString() : '—'}
+                      </p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenSessionsBlock(null)}
+                className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-500 font-semibold text-xs hover:bg-slate-50 hover:text-slate-700 transition-all"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── SESSION ROAMING DISCOVERY DIALOG (Phase 11) ─── */}
+      {discoveryResponse && (() => {
+        const dr = discoveryResponse;
+        const isOwner = dr.status === 'OWNER_SESSION';
+        const isConflict = dr.status === 'CONFLICT';
+        const isMultiple = dr.status === 'MULTIPLE_OWNER_SESSIONS';
+        const canTransfer = isOwner && dr.transferAuthorization && dr.transferAuthorization !== 'DENIED';
+        const needsSupervisor = dr.transferAuthorization === 'SUPERVISOR_REQUIRED';
+        const isDenied = isOwner && dr.transferAuthorization === 'DENIED';
+        return (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
+          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
+            {/* ── Header ── */}
+            <div className={`p-5 sm:p-8 text-center relative rounded-t-2xl sm:rounded-t-3xl ${
+              isConflict || isMultiple
+                ? 'bg-gradient-to-r from-red-600 to-rose-600 text-white'
+                : 'bg-[#F5C742] text-slate-900'
+            }`}>
+              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/30 shadow-inner">
+                {isConflict || isMultiple
+                  ? <AlertTriangle className="h-7 w-7 sm:h-10 sm:w-10 text-white" />
+                  : <ArrowRightCircle className="h-7 w-7 sm:h-10 sm:w-10 text-slate-900" />
+                }
+              </div>
+              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">
+                {isOwner && 'Active Session Found'}
+                {isConflict && 'Session Conflict'}
+                {isMultiple && 'Multiple Sessions Detected'}
+              </h2>
+              <p className={`text-xs sm:text-sm font-medium ${isConflict || isMultiple ? 'text-white/80' : 'text-slate-800'}`}>
+                {isOwner && 'You have an open session on another terminal'}
+                {isConflict && 'Both this terminal and your account have active sessions'}
+                {isMultiple && 'Manual resolution required'}
+              </p>
+            </div>
+
+            <div className="p-4 sm:p-8 space-y-4 sm:space-y-5">
+              {/* ── Backend message ── */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 text-sm text-slate-700">
+                {dr.message}
+              </div>
+
+              {/* ── OWNER_SESSION details ── */}
+              {isOwner && (
+                <div className="space-y-3">
+                  <div className="bg-blue-50 border border-blue-200/80 rounded-2xl p-4 sm:p-5">
+                    <div className="flex items-center gap-2 text-blue-800 font-bold text-sm mb-2">
+                      <Info className="h-4 w-4 text-blue-600 shrink-0" />
+                      <span>Your Active Session</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-slate-500 font-medium">Session ID</span>
+                        <p className="text-slate-800 font-bold">#{dr.ownerSessionId}</p>
+                      </div>
+                      <div>
+                        <span className="text-slate-500 font-medium">Terminal</span>
+                        <p className="text-slate-800 font-bold">{dr.ownerSessionTerminalId || '—'}</p>
+                      </div>
+                      {dr.ownerSessionBranchId && (
+                        <div>
+                          <span className="text-slate-500 font-medium">Branch</span>
+                          <p className="text-slate-800 font-bold">{branches?.find(b => b.id === dr.ownerSessionBranchId)?.name || dr.ownerSessionBranchId}</p>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-slate-500 font-medium">Transfer</span>
+                        <p className={`font-bold ${canTransfer ? 'text-emerald-700' : isDenied ? 'text-red-600' : 'text-amber-600'}`}>
+                          {canTransfer && !needsSupervisor && '✓ Available'}
+                          {canTransfer && needsSupervisor && '🔒 Supervisor Required'}
+                          {isDenied && '✗ Not Available'}
+                          {!dr.transferAuthorization && '—'}
+                        </p>
+                      </div>
+                    </div>
+                    {dr.transferMessage && (
+                      <p className="text-xs text-slate-500 mt-2 leading-relaxed">{dr.transferMessage}</p>
+                    )}
+                  </div>
+
+                  {/* Denied explanation */}
+                  {isDenied && dr.transferReasonCode && (
+                    <div className="bg-red-50 border border-red-200/80 rounded-2xl p-4 text-xs text-red-700">
+                      <div className="flex items-center gap-2 font-bold text-sm mb-1">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        <span>Transfer Not Possible</span>
+                      </div>
+                      {dr.transferReasonCode === 'DESTINATION_TERMINAL_OCCUPIED' && 'This terminal already has an active session owned by another user. That session must be closed before a transfer.'}
+                      {dr.transferReasonCode === 'SAME_TERMINAL_NOT_APPLICABLE' && 'Your session is already on this terminal.'}
+                      {dr.transferReasonCode === 'DESTINATION_TERMINAL_NOT_FOUND' && 'The destination terminal could not be found.'}
+                      {!['DESTINATION_TERMINAL_OCCUPIED', 'SAME_TERMINAL_NOT_APPLICABLE', 'DESTINATION_TERMINAL_NOT_FOUND'].includes(dr.transferReasonCode) && (dr.transferMessage || 'The transfer policy does not allow this operation.')}
+                    </div>
+                  )}
+
+                  {/* Supervisor PIN input when required */}
+                  {canTransfer && needsSupervisor && (
+                    <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 sm:p-5 space-y-3">
+                      <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                        <Shield className="h-5 w-5 text-amber-600 shrink-0" />
+                        <span>Supervisor Authorization Required</span>
+                      </div>
+                      <p className="text-xs text-amber-700 leading-relaxed">
+                        This transfer requires supervisor approval. Enter the supervisor PIN to proceed.
+                      </p>
+                      <input
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={10}
+                        value={discoverySupervisorPin}
+                        onChange={(e) => { setDiscoverySupervisorPin(e.target.value); setDiscoveryError(null); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !discoveryBusy) handleSessionTransfer(); }}
+                        placeholder="Supervisor PIN"
+                        className={`w-full border rounded-xl px-4 py-2.5 sm:py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 ${
+                          discoveryError ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-white'
+                        }`}
+                        autoFocus
+                        disabled={discoveryBusy}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── CONFLICT details ── */}
+              {isConflict && (
+                <div className="space-y-3">
+                  <div className="bg-red-50 border border-red-200/80 rounded-2xl p-4 sm:p-5">
+                    <div className="flex items-center gap-2 text-red-800 font-bold text-sm mb-2">
+                      <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />
+                      <span>Two Active Sessions</span>
+                    </div>
+                    <div className="space-y-2 text-xs">
+                      <div className="bg-white/70 rounded-xl p-3 border border-red-100">
+                        <span className="text-slate-500 font-medium">This Terminal's Session</span>
+                        <p className="text-slate-800 font-bold">#{dr.terminalSessionId} — opened by {dr.terminalSessionOpenedBy || 'unknown'}</p>
+                      </div>
+                      <div className="bg-white/70 rounded-xl p-3 border border-red-100">
+                        <span className="text-slate-500 font-medium">Your Session Elsewhere</span>
+                        <p className="text-slate-800 font-bold">#{dr.ownerSessionId} — terminal {dr.ownerSessionTerminalId || '—'}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Both sessions must be resolved manually. Contact a supervisor to close or transfer the conflicting sessions.
+                  </p>
+                </div>
+              )}
+
+              {/* ── MULTIPLE_OWNER_SESSIONS details ── */}
+              {isMultiple && (
+                <div className="bg-amber-50 border border-amber-200/80 rounded-2xl p-4 sm:p-5">
+                  <div className="flex items-center gap-2 text-amber-800 font-bold text-sm mb-2">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <span>{dr.ownerSessionCount || 'Multiple'} Open Sessions</span>
+                  </div>
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    Your account owns multiple active POS sessions. The system cannot determine which session to use.
+                    A supervisor must close the extra sessions from Console before you can start or transfer a session.
+                  </p>
+                </div>
+              )}
+
+              {/* ── Error message ── */}
+              {discoveryError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs text-red-700 font-semibold flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {discoveryError}
+                </div>
+              )}
+
+              {/* ── Action buttons ── */}
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handleDiscoveryDismiss}
+                  disabled={discoveryBusy}
+                  className="flex-1 py-3 sm:py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Cancel
+                </button>
+                {canTransfer && (
+                  <button
+                    type="button"
+                    onClick={handleSessionTransfer}
+                    disabled={discoveryBusy || (needsSupervisor && !discoverySupervisorPin.trim())}
+                    className="flex-1 py-3 sm:py-3.5 rounded-2xl bg-[#F5C742] hover:bg-[#e3b83c] text-slate-900 font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ArrowRightCircle className="h-4 w-4" />
+                    {discoveryBusy ? 'Transferring…' : 'Transfer Session Here'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
       {/* Render current view */}
       {currentView === 'dashboard' && renderDashboard()}
       {currentView === 'console' && <POSConsole {...consoleProps} />}
-      {currentView === 'touch-screen' && <POSTouchScreen {...touchScreenProps} />}
+      {currentView === 'touch-screen' && (posTemplate === 'compact' ? <TradePOSTouchScreen {...touchScreenProps} /> : <POSTouchScreen {...touchScreenProps} />)}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
       {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal}
@@ -8604,7 +9688,7 @@ export default function POSSales() {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden">
                 {/* Header */}
-                <div className="bg-gradient-to-b from-[#327F74] to-[#256660] px-6 pt-8 pb-6 text-center">
+                <div className="bg-gradient-to-b from-[#F5C742] to-[#E5B532] px-6 pt-8 pb-6 text-center">
                   <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3">
                     <CheckCircle className="h-9 w-9 text-white" />
                   </div>
@@ -8623,9 +9707,9 @@ export default function POSSales() {
                     already confirmed; this only reflects that the receipt is being
                     sent to the printer. Disappears once printing/finalize completes. */}
                 {checkoutFinalizing && (
-                  <div className="bg-[#327F74]/5 border-b border-[#327F74]/15 px-6 py-2.5 flex items-center justify-center gap-2">
-                    <div className="w-3.5 h-3.5 border-2 border-[#327F74]/40 border-t-[#327F74] rounded-full animate-spin" />
-                    <span className="text-[11px] font-bold text-[#327F74]">Printing receipt…</span>
+                  <div className="bg-[#F5C742]/10 border-b border-[#F5C742]/25 px-6 py-2.5 flex items-center justify-center gap-2">
+                    <div className="w-3.5 h-3.5 border-2 border-[#F5C742]/50 border-t-[#B8942E] rounded-full animate-spin" />
+                    <span className="text-[11px] font-bold text-[#B8942E]">Printing receipt…</span>
                   </div>
                 )}
                 {/* Change Due alert (only if change is > 0) */}
@@ -8747,7 +9831,7 @@ export default function POSSales() {
                     </button>
                   </div>
                   <button type="button" onClick={closeComplete}
-                    className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#256660] text-white font-black text-sm transition-colors flex items-center justify-center gap-2">
+                    className="w-full py-3 rounded-xl bg-[#F5C742] hover:bg-[#E5B532] text-white font-black text-sm transition-colors flex items-center justify-center gap-2">
                     <ArrowRightCircle className="h-5 w-5" />New Sale
                   </button>
                   <p className="text-center text-[10px] text-gray-400">Scan next item to start a new sale automatically</p>
@@ -8782,33 +9866,102 @@ export default function POSSales() {
           return next;
         };
 
-        // Mixed-payment fields (mixed-cash / mixed-card) auto-balance each other:
-        // whichever field the cashier edits — via keyboard or the on-screen keypad —
-        // is the "driving" amount, and the other field is recomputed as the
-        // remaining balance (bill total − driving amount) so the two always sum to
-        // the due amount without manual math.
-        const applyMixedAmount = (isCash, rawValue) => {
+        // Mixed-payment fields (mixed-cash / mixed-card / mixed-advance) auto-balance each other.
+        const applyMixedAmount = (field, rawValue) => {
           const next = sanitizeAmountInput(rawValue);
           const drivingNum = parseFloat(next) || 0;
-          const remaining = Math.max(0, effectiveDue - drivingNum).toFixed(2);
-          if (isCash) { setMixedCashAmount(next); setMixedCardAmount(remaining); }
-          else { setMixedCardAmount(next); setMixedCashAmount(remaining); }
+          if (field === 'cash') {
+            setMixedCashAmount(next);
+            const advNum = parseFloat(mixedAdvanceAmount) || 0;
+            const remaining = Math.max(0, effectiveDue - drivingNum - advNum).toFixed(2);
+            setMixedCardAmount(remaining);
+          } else if (field === 'card') {
+            setMixedCardAmount(next);
+            const advNum = parseFloat(mixedAdvanceAmount) || 0;
+            const remaining = Math.max(0, effectiveDue - drivingNum - advNum).toFixed(2);
+            setMixedCashAmount(remaining);
+          } else if (field === 'advance') {
+            const avail = customerAdvanceSummary?.availableAdvanceBalance || 0;
+            const finalNum = drivingNum > avail ? avail : drivingNum;
+            const validNext = drivingNum > avail ? String(avail.toFixed(2)) : next;
+            setMixedAdvanceAmount(validNext);
+            const cashNum = parseFloat(mixedCashAmount) || 0;
+            const remaining = Math.max(0, effectiveDue - finalNum - cashNum).toFixed(2);
+            setMixedCardAmount(remaining);
+          }
+        };
+
+        // ── Multi-card split (Card payment mode) ──────────────────────────────
+        // Splitting a Card payment across N cards reuses the same "sum of legs
+        // must equal the amount due" idea as the Cash/Card Mixed split above,
+        // generalized to N rows instead of a fixed 2-way complement.
+        const cardLegsTotal = checkoutCardLegs.reduce((sum, leg) => sum + (parseFloat(leg.amount) || 0), 0);
+        const cardLegsRemaining = Math.max(0, effectiveDue - cardLegsTotal);
+        const cardLegsValid = checkoutCardLegs.length > 0
+          && checkoutCardLegs.every(leg => !!leg.cardType && (parseFloat(leg.amount) || 0) > 0)
+          && Math.abs(cardLegsTotal - effectiveDue) < 0.01;
+        const cardLegDuplicateRefs = (() => {
+          const seen = new Set();
+          const dupes = new Set();
+          checkoutCardLegs.forEach(leg => {
+            const ref = (leg.reference || '').trim().toLowerCase();
+            if (!ref) return;
+            if (seen.has(ref)) dupes.add(ref); else seen.add(ref);
+          });
+          return dupes;
+        })();
+
+        const startCardSplit = () => {
+          setCheckoutCardLegs([
+            { id: 1, cardType: checkoutCardType || '', amount: effectiveDue > 0 ? effectiveDue.toFixed(2) : '', reference: checkoutCardRef || '' },
+            { id: 2, cardType: '', amount: '', reference: '' },
+          ]);
+        };
+        const addCardLeg = () => {
+          setCheckoutCardLegs(prev => {
+            const nextId = (prev.reduce((max, l) => Math.max(max, l.id), 0) || 0) + 1;
+            const remaining = Math.max(0, effectiveDue - prev.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0));
+            return [...prev, { id: nextId, cardType: '', amount: remaining > 0 ? remaining.toFixed(2) : '', reference: '' }];
+          });
+        };
+        const removeCardLeg = (id) => {
+          setCheckoutCardLegs(prev => {
+            const next = prev.filter(l => l.id !== id);
+            // Dropping back to a single row collapses back to plain single-card mode
+            // (legacy checkoutCardType/checkoutCardRef fields) rather than a 1-row split.
+            if (next.length <= 1) return [];
+            return next;
+          });
+        };
+        const updateCardLeg = (id, field, rawValue) => {
+          setCheckoutCardLegs(prev => prev.map(l => {
+            if (l.id !== id) return l;
+            if (field === 'amount') return { ...l, amount: sanitizeAmountInput(rawValue) };
+            return { ...l, [field]: rawValue };
+          }));
+        };
+        const fillRemainingOnLeg = (id) => {
+          setCheckoutCardLegs(prev => {
+            const others = prev.filter(l => l.id !== id).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            const remaining = Math.max(0, effectiveDue - others);
+            return prev.map(l => l.id === id ? { ...l, amount: remaining.toFixed(2) } : l);
+          });
         };
 
         // On-screen keypad handler (touch terminals). Physical-keyboard typing is
         // wired directly on each <input>'s onChange via sanitizeAmountInput /
         // applyMixedAmount so both input methods work on the same POS screen.
         const handleKpad = (key) => {
-          if (checkoutKeypadTarget === 'mixed-cash' || checkoutKeypadTarget === 'mixed-card') {
-            const isCash = checkoutKeypadTarget === 'mixed-cash';
-            const cur = isCash ? mixedCashAmount : mixedCardAmount;
+          if (checkoutKeypadTarget === 'mixed-cash' || checkoutKeypadTarget === 'mixed-card' || checkoutKeypadTarget === 'mixed-advance') {
+            const field = checkoutKeypadTarget === 'mixed-cash' ? 'cash' : checkoutKeypadTarget === 'mixed-card' ? 'card' : 'advance';
+            const cur = field === 'cash' ? mixedCashAmount : field === 'card' ? mixedCardAmount : mixedAdvanceAmount;
             let next = cur;
             if (key === 'C') next = '';
             else if (key === '⌫') next = cur.slice(0, -1);
             else if (key === '.' && cur.includes('.')) { /* noop */ }
             else if (key === 'EXACT') next = effectiveDue > 0 ? String(effectiveDue.toFixed(2)) : '';
             else next = cur + key;
-            applyMixedAmount(isCash, next);
+            applyMixedAmount(field, next);
             return;
           }
 
@@ -8824,8 +9977,9 @@ export default function POSSales() {
         const tenderedNum = parseFloat(tenderedAmount) || 0;
         const mixedCashNum = parseFloat(mixedCashAmount) || 0;
         const mixedCardNum = parseFloat(mixedCardAmount) || 0;
+        const mixedAdvanceNum = parseFloat(mixedAdvanceAmount) || 0;
         const change = tenderedNum - effectiveDue;
-        const mixedDiff = Math.abs(mixedCashNum + mixedCardNum - effectiveDue);
+        const mixedDiff = Math.abs(mixedCashNum + mixedCardNum + mixedAdvanceNum - effectiveDue);
 
         // Partial receipt against a Credit sale — amount collected now is capped at
         // the bill total; whatever's left posts to the customer's credit balance.
@@ -8839,9 +9993,10 @@ export default function POSSales() {
 
         const canSettle =
           (checkoutPayMode === 'cash' && tenderedNum >= effectiveDue) ||
-          (checkoutPayMode === 'card' && !!checkoutCardType) ||
+          (checkoutPayMode === 'card' && (checkoutCardLegs.length === 0 ? !!checkoutCardType : (cardLegsValid && cardLegDuplicateRefs.size === 0))) ||
           (checkoutPayMode === 'credit' && !!checkoutCreditCustomer && creditReceivedModeReady) ||
-          (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && !!mixedCardType) ||
+          (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && (mixedCardNum === 0 || !!mixedCardType)) ||
+          (checkoutPayMode === 'advance' && customerAdvanceSummary?.availableAdvanceBalance >= effectiveDue) ||
           (checkoutPayMode === 'online' && !!checkoutOnlineBankAccountId);
 
         const numKeys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '⌫'];
@@ -8879,23 +10034,23 @@ export default function POSSales() {
             <div className="flex-1 flex flex-col bg-[#F7F7FA] overflow-hidden min-h-0">
 
               {/* Right header */}
-              <div className="bg-[#1E293B] px-3 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="bg-[#F5C742] px-3 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
                 <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#F5C742] flex items-center justify-center">
-                    <CreditCard className="h-5 w-5 text-[#1E293B]" />
+                  <div className="w-9 h-9 rounded-xl bg-[#1E293B] flex items-center justify-center">
+                    <CreditCard className="h-5 w-5 text-[#F5C742]" />
                   </div>
                   <div>
                     <p className="text-white font-bold text-base leading-none">Checkout</p>
-                    <p className="text-gray-400 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''}{invoiceNo ? ` · ${invoiceNo}` : ''}</p>
+                    <p className="text-[#1E293B]/60 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''}{invoiceNo ? ` · ${invoiceNo}` : ''}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="text-right">
-                    <p className="text-gray-400 text-[10px]">{depositAmt > 0 ? 'Balance Due' : 'Total Amount'}</p>
-                    <p className="text-[#F5C742] font-black text-2xl leading-none"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
+                    <p className="text-[#1E293B]/60 text-[10px]">{depositAmt > 0 ? 'Balance Due' : 'Total Amount'}</p>
+                    <p className="text-white font-black text-2xl leading-none"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
                   </div>
-                  <button type="button" onClick={() => setShowPaymentDialog(false)} className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors">
-                    <X className="h-5 w-5 text-white" />
+                  <button type="button" onClick={() => setShowPaymentDialog(false)} className="w-9 h-9 rounded-xl bg-black/10 hover:bg-black/20 flex items-center justify-center transition-colors">
+                    <X className="h-5 w-5 text-[#1E293B]" />
                   </button>
                 </div>
               </div>
@@ -8946,6 +10101,7 @@ export default function POSSales() {
                         ['credit', 'Credit', Users, '#9333ea'],
                         ['mixed', 'Mixed', Wallet, '#ea580c'],
                         ['online', 'Online', Landmark, '#0891b2'],
+                        ['advance', 'Advance', Coins, '#F5C742'],
                       ]).map(([id, label, Icon, color]) => (
                         <button key={id} type="button" onClick={() => { setCheckoutPayMode(id); setCheckoutKeypadTarget(id === 'mixed' ? 'mixed-cash' : id === 'card' ? 'ref' : 'tender'); }}
                           className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all ${checkoutPayMode === id ? 'border-[#F5C742] bg-[#F5C742]/10' : 'border-gray-200 hover:border-[#F5C742]/50 bg-gray-50'}`}>
@@ -9024,7 +10180,7 @@ export default function POSSales() {
                   )}
 
                   {/* ── Card section ── */}
-                  {checkoutPayMode === 'card' && (
+                  {checkoutPayMode === 'card' && checkoutCardLegs.length === 0 && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
                       <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment</p>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
@@ -9052,6 +10208,75 @@ export default function POSSales() {
                         />
                       </div>
                       {!checkoutCardType && <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a card type to proceed</span></div>}
+                      <button type="button" onClick={startCardSplit}
+                        className="w-full py-2 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:border-[#F5C742] hover:text-[#1E293B] transition-all">
+                        + Split across multiple cards
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ── Card section: multi-card split ── */}
+                  {checkoutPayMode === 'card' && checkoutCardLegs.length > 0 && (
+                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment — Split</p>
+                        <button type="button" onClick={() => setCheckoutCardLegs([])}
+                          className="text-[10px] font-bold text-gray-400 hover:text-gray-600 underline">Use single card</button>
+                      </div>
+                      {checkoutCardLegs.map((leg, idx) => (
+                        <div key={leg.id} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-gray-500 uppercase">Card {idx + 1}</span>
+                            <button type="button" onClick={() => removeCardLeg(leg.id)}
+                              className="text-gray-400 hover:text-red-500 transition-colors" aria-label={`Remove card ${idx + 1}`}>
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <select value={leg.cardType} onChange={e => updateCardLeg(leg.id, 'cardType', e.target.value)}
+                              className="rounded-lg border border-gray-200 bg-white px-2 py-2 text-xs font-bold text-gray-700 outline-none focus:border-[#F5C742]">
+                              <option value="">Card type…</option>
+                              {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => <option key={ct} value={ct}>{ct}</option>)}
+                            </select>
+                            <div className="flex items-center rounded-lg border border-gray-200 bg-white px-2 py-1">
+                              <span className="text-[10px] font-bold text-gray-400 mr-1"><DirhamSymbol /></span>
+                              <input type="text" inputMode="decimal" autoComplete="off" value={leg.amount}
+                                placeholder="0.00"
+                                onFocus={() => setCheckoutKeypadVisible(false)}
+                                onChange={e => updateCardLeg(leg.id, 'amount', e.target.value)}
+                                className="w-full text-sm font-bold text-gray-800 outline-none bg-transparent" />
+                              <button type="button" onClick={() => fillRemainingOnLeg(leg.id)}
+                                className="text-[9px] font-bold text-[#F5C742] uppercase shrink-0 ml-1">Fill</button>
+                            </div>
+                          </div>
+                          <input type="text" autoComplete="off" value={leg.reference}
+                            placeholder="Reference no. (optional)"
+                            onChange={e => updateCardLeg(leg.id, 'reference', e.target.value)}
+                            className={`w-full rounded-lg border px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-[#F5C742] ${
+                              leg.reference && cardLegDuplicateRefs.has(leg.reference.trim().toLowerCase()) ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'
+                            }`} />
+                        </div>
+                      ))}
+                      <button type="button" onClick={addCardLeg}
+                        className="w-full py-2 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:border-[#F5C742] hover:text-[#1E293B] transition-all">
+                        + Add Another Card
+                      </button>
+                      <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${cardLegsRemaining < 0.01 ? 'bg-green-50 border-2 border-green-200' : 'bg-[#F5C742]/10 border-2 border-[#F5C742]'}`}>
+                        <span className="text-xs font-bold text-gray-500 uppercase">Remaining Balance</span>
+                        <span className="text-xl font-black text-[#1E293B]"><CurrencyAmount amount={cardLegsRemaining} /></span>
+                      </div>
+                      {cardLegDuplicateRefs.size > 0 && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
+                          <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
+                          <span className="text-xs text-red-700">Duplicate reference number across cards.</span>
+                        </div>
+                      )}
+                      {!cardLegsValid && cardLegDuplicateRefs.size === 0 && (
+                        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+                          <span className="text-xs text-amber-700">Every card needs a type and amount, and the total must equal the amount due.</span>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -9228,11 +10453,11 @@ export default function POSSales() {
                   {/* ── Mixed section ── */}
                   {checkoutPayMode === 'mixed' && (
                     <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment — Cash + Card</p>
-                      <p className="text-[10px] text-gray-400 -mt-1">Enter one amount — the balance is applied to the other mode automatically.</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment</p>
+                      <p className="text-[10px] text-gray-400 -mt-1">Enter amounts — the balance is applied to the card mode automatically.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Cash Amount{checkoutKeypadTarget === 'mixed-card' && mixedCashAmount ? ' (balance)' : ''}</label>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Cash</label>
                           <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-cash' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
                             <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
                             <input
@@ -9242,13 +10467,30 @@ export default function POSSales() {
                               value={mixedCashAmount}
                               placeholder="0.00"
                               onFocus={() => { setCheckoutKeypadTarget('mixed-cash'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                              onChange={e => applyMixedAmount(true, e.target.value)}
+                              onChange={e => applyMixedAmount('cash', e.target.value)}
                               className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
                             />
                           </label>
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Card Amount{checkoutKeypadTarget === 'mixed-cash' && mixedCardAmount ? ' (balance)' : ''}</label>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase truncate">Advance {customerAdvanceSummary ? `(Max ${customerAdvanceSummary.availableAdvanceBalance.toFixed(2)})` : ''}</label>
+                          <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-advance' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
+                            <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              value={mixedAdvanceAmount}
+                              placeholder="0.00"
+                              onFocus={() => { setCheckoutKeypadTarget('mixed-advance'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
+                              onChange={e => applyMixedAmount('advance', e.target.value)}
+                              disabled={!customerAdvanceSummary || customerAdvanceSummary.availableAdvanceBalance <= 0}
+                              className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none disabled:opacity-50"
+                            />
+                          </label>
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase">Card{mixedCardAmount ? ' (bal)' : ''}</label>
                           <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-card' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
                             <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
                             <input
@@ -9258,7 +10500,7 @@ export default function POSSales() {
                               value={mixedCardAmount}
                               placeholder="0.00"
                               onFocus={() => { setCheckoutKeypadTarget('mixed-card'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                              onChange={e => applyMixedAmount(false, e.target.value)}
+                              onChange={e => applyMixedAmount('card', e.target.value)}
                               className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
                             />
                           </label>
@@ -9272,7 +10514,7 @@ export default function POSSales() {
                           </button>
                         ))}
                       </div>
-                      {mixedCashAmount && mixedCardAmount && (
+                      {(mixedCashAmount || mixedCardAmount || mixedAdvanceAmount) && (
                         <div className={`flex justify-between items-center px-4 py-2.5 rounded-xl border-2 ${mixedDiff < 0.01 ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
                           <span className={`text-sm font-bold ${mixedDiff < 0.01 ? 'text-green-700' : 'text-red-600'}`}>{mixedDiff < 0.01 ? '✓ Amounts Balanced' : <>Difference: <DirhamSymbol /> {mixedDiff.toFixed(2)}</>}</span>
                           <span className="text-xs text-gray-500">Total: <DirhamSymbol /> {effectiveDue.toFixed(2)}</span>
@@ -9328,6 +10570,35 @@ export default function POSSales() {
                     </div>
                   )}
 
+                  {/* ── Advance section ── */}
+                  {checkoutPayMode === 'advance' && (
+                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Advance Payment</p>
+                      {!customerAdvanceSummary && selectedCustomerData?.id === 'walk-in' ? (
+                        <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-300 rounded-xl">
+                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-bold text-amber-800">Customer Required</p>
+                            <p className="text-[10px] text-amber-700">Advance payment requires a registered customer account.</p>
+                          </div>
+                        </div>
+                      ) : customerAdvanceSummary?.availableAdvanceBalance >= effectiveDue ? (
+                        <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between">
+                           <span className="text-xs font-bold text-gray-500 uppercase">Available Advance</span>
+                           <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={customerAdvanceSummary.availableAdvanceBalance} /></span>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-300 rounded-xl">
+                          <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-xs font-bold text-red-800">Insufficient Advance Balance</p>
+                            <p className="text-[10px] text-red-700">Available: {customerAdvanceSummary?.availableAdvanceBalance ? customerAdvanceSummary.availableAdvanceBalance.toFixed(2) : '0.00'}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* ── On-Demand Keypad ── */}
                   {checkoutKeypadVisible && (
                     <div className="bg-white rounded-2xl border-2 border-[#F5C742]/50 p-4 shadow-md">
@@ -9339,7 +10610,8 @@ export default function POSSales() {
                             {checkoutKeypadTarget === 'tender' ? 'Cash Tendered'
                               : checkoutKeypadTarget === 'mixed-cash' ? 'Cash Amount'
                                 : checkoutKeypadTarget === 'mixed-card' ? 'Card Amount'
-                                  : 'Reference / Text'}
+                                  : checkoutKeypadTarget === 'mixed-advance' ? 'Advance Amount'
+                                    : 'Reference / Text'}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -9479,7 +10751,7 @@ export default function POSSales() {
                     <p className="text-[9px] text-gray-500 uppercase font-bold">Paid</p>
                     <p className={`text-base font-black ${canSettle ? 'text-green-700' : 'text-gray-400'}`}>
                       <DirhamSymbol /> {checkoutPayMode === 'cash' ? (tenderedNum > 0 ? tenderedNum.toFixed(2) : '0.00')
-                        : checkoutPayMode === 'mixed' ? (mixedCashNum + mixedCardNum).toFixed(2)
+                        : checkoutPayMode === 'mixed' ? (mixedCashNum + mixedCardNum + mixedAdvanceNum).toFixed(2)
                           : canSettle ? effectiveDue.toFixed(2) : '0.00'}
                     </p>
                   </div>
@@ -9506,7 +10778,7 @@ export default function POSSales() {
                 )}
                 {/* Action buttons */}
                 <div className="flex gap-2 sm:gap-3">
-                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
+                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedAdvanceAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
                     className="flex-none px-3 sm:px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
@@ -9657,6 +10929,25 @@ export default function POSSales() {
                 className="w-full h-11 px-4 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40"
               />
             </div>
+
+            {/* Category (Phase 2 — optional unless the branch requires it) */}
+            {(cashDropCategories.length > 0 || cashDropCategoryRequired) && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">
+                  Category{cashDropCategoryRequired ? ' *' : ' (optional)'}
+                </label>
+                <select
+                  value={cashDropCategoryId}
+                  onChange={e => setCashDropCategoryId(e.target.value)}
+                  className="w-full h-11 pl-4 pr-10 text-sm font-medium text-[#1E293B] border border-gray-200 rounded-xl bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40 cursor-pointer"
+                >
+                  <option value="">{cashDropCategoryRequired ? 'Select a category...' : 'Uncategorized'}</option>
+                  {cashDropCategories.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Description */}
             <div className="space-y-1.5">
@@ -9841,6 +11132,47 @@ export default function POSSales() {
               className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
             >
               Close
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Session Range Exclusion Confirmation — the selected/auto-resolved range
+          leaves eligible sessions out of this Day Close; require explicit
+          acknowledgement before resubmitting with acknowledgeExclusions=true. */}
+      <Dialog open={!!rangeExclusionConfirm} onOpenChange={(open) => { if (!open) setRangeExclusionConfirm(null); }}>
+        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
+          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-50">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#1E293B]">Sessions Outside Selected Range</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{rangeExclusionConfirm?.message}</p>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 py-5 space-y-2 max-h-[50vh] overflow-y-auto">
+            {(rangeExclusionConfirm?.excludedSessions || []).map((s) => (
+              <div key={s.sessionId} className="flex items-center justify-between px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs">
+                <span className="text-[#1E293B] font-medium">{s.sessionNo || `SESS-${s.sessionId}`} · {s.cashier || '—'}</span>
+                <span className="text-gray-500">{s.status}</span>
+              </div>
+            ))}
+          </div>
+          <div className="px-6 pb-6 flex items-center justify-end gap-3">
+            <button
+              onClick={() => setRangeExclusionConfirm(null)}
+              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => handleCloseDay(true)}
+              className="h-10 px-5 text-sm font-medium text-[#1E293B] bg-[#F5C742] hover:bg-[#e6b838] rounded-xl transition-colors"
+            >
+              Close Day Anyway
             </button>
           </div>
         </DialogContent>
@@ -10218,37 +11550,37 @@ export default function POSSales() {
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowReprintModal(false)} />
             <div className="relative ml-auto w-full max-w-6xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
               {/* Modal Header */}
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
+              <div className="bg-white border-b border-[#F5C742]/20 px-5 py-3 flex items-start justify-between shrink-0">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Printer className="h-5 w-5 text-[#327F74]" />
+                    <Printer className="h-5 w-5 text-[#F5C742]" />
                     <span className="text-base font-semibold text-[#1E293B]">Reprint Previous Invoices</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-0.5">View and reprint previously generated POS invoices.</p>
-                  <p className="text-xs text-[#327F74] mt-0.5">Showing invoices for: {reprintFilterDateFrom}{reprintFilterDateTo !== reprintFilterDateFrom ? ` → ${reprintFilterDateTo}` : ''}</p>
+                  <p className="text-xs text-[#F5C742] mt-0.5">Showing invoices for: {reprintFilterDateFrom}{reprintFilterDateTo !== reprintFilterDateFrom ? ` → ${reprintFilterDateTo}` : ''}</p>
                 </div>
                 <button onClick={() => setShowReprintModal(false)} className="text-gray-400 hover:text-gray-600 p-1"><X className="h-5 w-5" /></button>
               </div>
 
               {/* Filter Bar */}
-              <div className="bg-white border-b border-[#327F74]/10 px-5 py-3 shrink-0">
+              <div className="bg-white border-b border-[#F5C742]/10 px-5 py-3 shrink-0">
                 <div className="flex flex-wrap gap-2 items-end">
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date From</label><input type="date" value={reprintFilterDateFrom} onChange={e => setReprintFilterDateFrom(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date To</label><input type="date" value={reprintFilterDateTo} onChange={e => setReprintFilterDateTo(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Invoice No.</label><input value={reprintFilterInvoiceNo} onChange={e => setReprintFilterInvoiceNo(e.target.value)} placeholder="SI-POS-..." className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Customer</label><input value={reprintFilterCustomer} onChange={e => setReprintFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Cashier</label><input value={reprintFilterCashier} onChange={e => setReprintFilterCashier(e.target.value)} placeholder="Cashier" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date From</label><input type="date" value={reprintFilterDateFrom} onChange={e => setReprintFilterDateFrom(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Date To</label><input type="date" value={reprintFilterDateTo} onChange={e => setReprintFilterDateTo(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Invoice No.</label><input value={reprintFilterInvoiceNo} onChange={e => setReprintFilterInvoiceNo(e.target.value)} placeholder="SI-POS-..." className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Customer</label><input value={reprintFilterCustomer} onChange={e => setReprintFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
+                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Cashier</label><input value={reprintFilterCashier} onChange={e => setReprintFilterCashier(e.target.value)} placeholder="Cashier" className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Payment Mode</label>
-                    <select value={reprintFilterPayMode} onChange={e => setReprintFilterPayMode(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                    <select value={reprintFilterPayMode} onChange={e => setReprintFilterPayMode(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]">
                       {['All', 'Cash', 'Card', 'Mixed', 'Credit'].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Status</label>
-                    <select value={reprintFilterStatus} onChange={e => setReprintFilterStatus(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
+                    <select value={reprintFilterStatus} onChange={e => setReprintFilterStatus(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]">
                       {['All', 'Completed', 'Returned', 'Cancelled', 'Reprinted'].map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
-                  <button onClick={fetchReprintInvoices} disabled={reprintLoading} className="mt-auto bg-[#327F74] hover:bg-[#286660] disabled:opacity-60 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />{reprintLoading ? 'Loading…' : 'Search'}</button>
+                  <button onClick={fetchReprintInvoices} disabled={reprintLoading} className="mt-auto bg-[#F5C742] hover:bg-[#E5B532] disabled:opacity-60 text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />{reprintLoading ? 'Loading…' : 'Search'}</button>
                   <button onClick={() => { setReprintFilterInvoiceNo(''); setReprintFilterCustomer(''); setReprintFilterCashier(''); setReprintFilterPayMode('All'); setReprintFilterStatus('All'); }} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
                 </div>
                 {reprintError && <p className="text-xs text-red-500 mt-1">{reprintError}</p>}
@@ -10257,10 +11589,10 @@ export default function POSSales() {
               {/* Main body: list + preview */}
               <div className="flex flex-col lg:flex-row flex-1 min-h-0">
                 {/* Invoice List */}
-                <div className={`flex flex-col w-full min-h-0 ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#327F74]/10 overflow-hidden`}>
+                <div className={`flex flex-col w-full min-h-0 ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#F5C742]/10 overflow-hidden`}>
                   <div className="px-4 py-2 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
                     <span className="text-xs text-gray-500">{filtered.length} invoice{filtered.length !== 1 ? 's' : ''} found</span>
-                    <span className="text-xs text-[#327F74]">Latest first</span>
+                    <span className="text-xs text-[#F5C742]">Latest first</span>
                   </div>
                   <div className="overflow-auto flex-1">
                     {reprintLoading ? (
@@ -10277,7 +11609,7 @@ export default function POSSales() {
                       <div className="overflow-x-auto">
                       <table className="w-full min-w-[820px] text-xs">
                         <thead className="sticky top-0 bg-[#F7F7FA] z-10">
-                          <tr className="text-gray-500 border-b border-[#327F74]/10">
+                          <tr className="text-gray-500 border-b border-[#F5C742]/10">
                             {['Invoice No.', 'Date & Time', 'Customer', 'Cashier', 'Terminal', 'Pay Mode', 'Items', 'Amount', 'Status', 'Action'].map((h, i) => (
                               <th key={i} className={`px-3 py-2 text-left font-medium whitespace-nowrap ${i >= 6 ? 'text-right' : ''} ${i === 9 ? 'text-center' : ''}`}>{h}</th>
                             ))}
@@ -10301,7 +11633,7 @@ export default function POSSales() {
                               <td className="px-3 py-2 text-right"><span className={`text-[10px] rounded px-1.5 py-0.5 ${statusColor(inv.status)}`}>{inv.status}</span></td>
                               <td className="px-3 py-2 text-center">
                                 <div className="flex items-center justify-center gap-1">
-                                  <button onClick={e => { e.stopPropagation(); setReprintSelectedInvoice(inv.id); }} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-2 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
+                                  <button onClick={e => { e.stopPropagation(); setReprintSelectedInvoice(inv.id); }} className="border border-[#F5C742]/30 text-[#F5C742] text-[10px] px-2 py-0.5 rounded hover:bg-[#F5C742]/5">View</button>
                                   <button onClick={e => { e.stopPropagation(); setReprintSelectedInvoice(inv.id); setReprintConfirmOpen(true); }}
                                     disabled={inv.status === 'Cancelled'}
                                     className={`text-[10px] px-2 py-0.5 rounded flex items-center gap-0.5 ${inv.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
@@ -10321,7 +11653,7 @@ export default function POSSales() {
                 {/* Receipt Preview Panel */}
                 {selected && (
                   <div className="w-full lg:w-[45%] flex flex-col overflow-hidden min-h-0 bg-white">
-                    <div className="px-4 py-2.5 border-b border-[#327F74]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
+                    <div className="px-4 py-2.5 border-b border-[#F5C742]/10 bg-[#F7F7FA] flex items-center justify-between shrink-0">
                       <span className="text-xs font-semibold text-[#1E293B]">Receipt Preview — {selected.id}</span>
                       <button onClick={() => setReprintSelectedInvoice(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
                     </div>
@@ -10381,15 +11713,15 @@ export default function POSSales() {
                         )}
                       </div>
                       {/* Audit Info */}
-                      <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
-                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#327F74]" />Invoice Info</p>
+                      <div className="mt-3 bg-[#F7F7FA] border border-[#F5C742]/20 rounded p-3 space-y-1 text-xs">
+                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#F5C742]" />Invoice Info</p>
                         {[['Invoice No.', selected.id], ['Date', selected.date || ''], ['Customer', selected.customer], ['Cashier', selected.cashier], ['Terminal', selected.terminal]].map(([k, v]) => (
                           <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
                         ))}
                       </div>
                       {/* Audit / Reprint History */}
-                      <div className="mt-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded p-3 space-y-1 text-xs">
-                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#327F74]" />Audit / Reprint History</p>
+                      <div className="mt-3 bg-[#F7F7FA] border border-[#F5C742]/20 rounded p-3 space-y-1 text-xs">
+                        <p className="font-semibold text-[#1E293B] mb-1 flex items-center gap-1"><Info className="h-3.5 w-3.5 text-[#F5C742]" />Audit / Reprint History</p>
                         {[
                           ['Original Printed By', selected.cashier || '—'],
                           ['Original Printed Time', (() => { const raw = selected._raw?.createdAt; return raw ? new Date(raw).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'; })()],
@@ -10402,13 +11734,13 @@ export default function POSSales() {
                       </div>
                     </div>
                     {/* Print Actions */}
-                    <div className="border-t border-[#327F74]/10 p-3 bg-white flex items-center gap-2 shrink-0 flex-wrap">
+                    <div className="border-t border-[#F5C742]/10 p-3 bg-white flex items-center gap-2 shrink-0 flex-wrap">
                       <button onClick={() => { setReprintPrintMode('thermal'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
                         <Printer className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'thermal' ? 'Printing…' : 'Print Thermal Receipt'}
                       </button>
                       <button onClick={() => { setReprintPrintMode('a4'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
-                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-[#327F74]/40 text-[#327F74] hover:bg-[#327F74]/5'}`}>
+                        className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-[#F5C742]/40 text-[#F5C742] hover:bg-[#F5C742]/5'}`}>
                         <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'a4' ? 'Printing…' : 'Print A4 Invoice'}
                       </button>
                       <button onClick={() => { setReprintPrintMode('pdf'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
@@ -10426,7 +11758,7 @@ export default function POSSales() {
               </div>
 
               {/* Modal Footer */}
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-2.5 flex items-center gap-2 shrink-0">
+              <div className="bg-white border-t border-[#F5C742]/10 px-5 py-2.5 flex items-center gap-2 shrink-0">
                 <div className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 rounded px-2 py-1 border border-amber-200">
                   <Info className="h-3 w-3 shrink-0" />Reprint does not create a new invoice. Every reprint is recorded in the audit log.
                 </div>
@@ -13425,9 +14757,30 @@ export default function POSSales() {
             </div>
 
             <div className="p-4 border-t border-gray-100">
-              <Button onClick={() => setShowPOSConfig(false)} className="w-full bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold">
+              <Button
+                disabled={settingsSaving}
+                onClick={async () => {
+                  setSettingsSaving(true);
+                  try {
+                    const saved = await savePosSettings({
+                      ...(posSettings || {}),
+                      defaultLayout: posTemplate,
+                      layoutHideCategoryPanel: hideCategoriesPanel,
+                      layoutHideItemsPanel: hideItemsPanel,
+                      layoutHiddenPanelButtons: [...hiddenPanelButtons].join(','),
+                    });
+                    setPosSettings(saved);
+                  } catch (e) {
+                    console.warn('POS layout save failed', e);
+                  } finally {
+                    setSettingsSaving(false);
+                    setShowPOSConfig(false);
+                  }
+                }}
+                className="w-full bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-60 text-[#1E293B] font-semibold"
+              >
                 <CheckCircle className="h-4 w-4 mr-2" />
-                Apply & Close
+                {settingsSaving ? 'Saving…' : 'Apply & Close'}
               </Button>
             </div>
           </div>
@@ -14026,6 +15379,31 @@ export default function POSSales() {
           </div>
         );
       })()}
+
+      {/* Phase 12 - Session Transferred/Invalidated Overlay */}
+      {sessionInvalidated && (
+        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 text-center animate-in fade-in zoom-in duration-300">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Lock className="h-8 w-8 text-red-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-3">Session No Longer Available</h2>
+            <p className="text-gray-600 mb-8 leading-relaxed">
+              {sessionInvalidReason || 'Your active POS session has been transferred to another terminal or closed remotely. This terminal can no longer continue using that session.'}
+            </p>
+            <button
+              onClick={() => {
+                setSessionInvalidated(false);
+                setSessionInvalidReason(null);
+                setCurrentView('dashboard');
+              }}
+              className="w-full py-3.5 px-4 bg-gray-900 hover:bg-gray-800 text-white font-semibold rounded-xl transition-colors focus:ring-4 focus:ring-gray-200"
+            >
+              Return to Dashboard
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

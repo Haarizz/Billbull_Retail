@@ -100,30 +100,40 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         Double findOutstandingBalanceByCustomerCode(
                         @org.springframework.data.repository.query.Param("customerCode") String customerCode);
 
+        @Query("SELECT MAX(s.invoiceDate) FROM SalesInvoice s WHERE s.customerCode = :customerCode "
+                        + "AND s.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED")
+        java.time.LocalDate findLastPurchaseDateByCustomerCode(
+                        @org.springframework.data.repository.query.Param("customerCode") String customerCode);
+
         @Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', s.invoiceTotal, CAST(0 AS big_decimal), CAST(s.status AS string)) "
                         +
                         "FROM SalesInvoice s WHERE s.customerCode = :customerCode AND s.invoiceDate BETWEEN :startDate AND :endDate AND s.status <> 'CANCELLED'")
         List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String customerCode,
                         java.time.LocalDate startDate, java.time.LocalDate endDate);
 
-        @Query("SELECT new com.billbull.backend.sales.invoice.PriceHistoryDTO(s.invoiceDate, s.invoiceNumber, s.customerName, i.price) "
-                        +
-                        "FROM SalesInvoiceItem i JOIN i.salesInvoice s " +
-                        "WHERE i.itemCode = :itemCode AND s.status = com.billbull.backend.sales.invoice.SalesInvoiceStatus.POSTED "
-                        +
-                        "ORDER BY s.invoiceDate DESC, s.id DESC")
-        List<PriceHistoryDTO> findPriceHistoryByItemCode(String itemCode,
-                        org.springframework.data.domain.Pageable pageable);
-
-        @Query("SELECT new com.billbull.backend.sales.invoice.PriceHistoryDTO(s.invoiceDate, s.invoiceNumber, s.customerName, i.price) "
+        @Query("SELECT new com.billbull.backend.sales.invoice.PriceHistoryDTO(s.invoiceDate, s.invoiceNumber, s.customerName, i.quantity, i.price) "
                         +
                         "FROM SalesInvoiceItem i JOIN i.salesInvoice s " +
                         "WHERE i.itemCode = :itemCode AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT, com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) "
-                        + "AND (:customerCode IS NULL OR :customerCode = '' OR s.customerCode = :customerCode) "
+                        + "AND s.customerCode = :customerCode "
                         + "AND (s.branchId = :branchId OR s.branchId IS NULL) "
                         +
                         "ORDER BY s.invoiceDate DESC, s.id DESC")
-        List<PriceHistoryDTO> findPriceHistoryByItemCodeAndBranchScope(
+        List<PriceHistoryDTO> findCustomerPriceHistory(
+                        @Param("itemCode") String itemCode,
+                        @Param("customerCode") String customerCode,
+                        @Param("branchId") Long branchId,
+                        org.springframework.data.domain.Pageable pageable);
+
+        @Query("SELECT new com.billbull.backend.sales.invoice.PriceHistoryDTO(s.invoiceDate, s.invoiceNumber, s.customerName, i.quantity, i.price) "
+                        +
+                        "FROM SalesInvoiceItem i JOIN i.salesInvoice s " +
+                        "WHERE i.itemCode = :itemCode AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT, com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) "
+                        + "AND (:customerCode IS NULL OR :customerCode = '' OR s.customerCode <> :customerCode) "
+                        + "AND (s.branchId = :branchId OR s.branchId IS NULL) "
+                        +
+                        "ORDER BY s.invoiceDate DESC, s.id DESC")
+        List<PriceHistoryDTO> findRecentSalesExcludingCustomer(
                         @Param("itemCode") String itemCode,
                         @Param("customerCode") String customerCode,
                         @Param("branchId") Long branchId,

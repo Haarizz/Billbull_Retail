@@ -1245,6 +1245,57 @@ public class PostingEngineService {
         }
 
         // =========================================================
+        // POS ADMINISTRATION > TRANSACTION CORRECTIONS (Phase 4)
+        // =========================================================
+        //
+        // Every transaction correction (receipt amount, payment mode, advance re-allocation,
+        // cash-movement category) reduces to the same shape once you look past the labels: swap
+        // which two accounts a fixed amount moves between. No existing reversal method covers
+        // every combination the review calls for (e.g. reverseAndRepostReceiptVoucher nets a
+        // delta against whatever the *current* settlement account is, which is wrong once
+        // payment mode itself is what changed; no reversal at all exists for
+        // createJournalFromAdvanceApplication). Rather than duplicate the two-line entry pattern
+        // once per correction type, this exposes the pattern itself as one small, additive,
+        // idempotent primitive — same createBaseEntry/addLine/post/findDuplicate machinery as
+        // every other method in this file, not a second posting engine. Callers (pos.admin.
+        // PosTransactionCorrectionService) always pass the ORIGINAL snapshot's resolved accounts
+        // for the reversal half and the CORRECTED snapshot's for the repost half — never the
+        // live, possibly-already-changed entity — so a correction always mirrors exactly what
+        // was actually posted, not what the record currently says.
+
+        /** Public settlement-account resolution for a payment mode — exposed so Phase 4
+         *  corrections resolve the exact same account a normal receipt posting would, without
+         *  duplicating the CASH/CARD/BANK mapping. */
+        public String resolveSettlementAccountCode(String paymentMode) {
+                return resolveIncomingPaymentAccount(paymentMode).code;
+        }
+
+        public String resolveSettlementAccountName(String paymentMode) {
+                return resolveIncomingPaymentAccount(paymentMode).name;
+        }
+
+        /**
+         * Generic idempotent two-line Dr/Cr journal entry — the reversal or repost half of a
+         * Phase 4 transaction correction. {@code ref} must be unique per correction + direction
+         * (e.g. {@code "TXNCORR-REV-{correctionId}"} / {@code "TXNCORR-APPLY-{correctionId}"})
+         * so re-invoking is a safe no-op via {@link #findDuplicate}.
+         */
+        @Transactional
+        public JournalEntry postCorrectionEntry(String ref, String narration, String txType,
+                        com.billbull.backend.settings.branch.Branch branch, LocalDate date,
+                        String debitAccountName, String debitAccountCode,
+                        String creditAccountName, String creditAccountCode,
+                        BigDecimal amount) {
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref, narration, txType, branch);
+                addLine(entry, debitAccountName, debitAccountCode, narration, amount, BigDecimal.ZERO);
+                addLine(entry, creditAccountName, creditAccountCode, narration, BigDecimal.ZERO, amount);
+                return post(entry);
+        }
+
+        // =========================================================
         // PAYROLL — Salary JV, Salary Advance, WPS (PDF §13 / Phase 6)
         // =========================================================
 
@@ -2587,6 +2638,29 @@ public class PostingEngineService {
                         String description,
                         LocalDate date,
                         com.billbull.backend.settings.branch.Branch branch) {
+                return createJournalFromCashMovement(movementId, movementType, amount, description, date, branch, null, null);
+        }
+
+        /**
+         * Cash Movement Categories (Phase 2, §7/§9): when a category carries an optional GL
+         * account mapping, {@code overrideAccountCode}/{@code overrideAccountName} name the
+         * account to use for the non-cash leg instead of the default Petty Cash/General
+         * Expense accounts — the cash-side leg (ACC_CASH) is never overridden. Passing null for
+         * both reproduces the original two-account behaviour exactly (the 6-arg overload above
+         * delegates here with nulls), so this is purely additive — no existing caller's
+         * postings change. This does not replace {@code PostingRule} resolution; it is the one
+         * explicit override point the architectural review calls for, nothing more.
+         */
+        @Transactional
+        public JournalEntry createJournalFromCashMovement(
+                        Long movementId,
+                        String movementType,
+                        BigDecimal amount,
+                        String description,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch,
+                        String overrideAccountCode,
+                        String overrideAccountName) {
 
                 String ref = TX_CASH_MOVEMENT + "-" + movementId;
                 { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
@@ -2600,14 +2674,98 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(),
                         ref, narration, TX_CASH_MOVEMENT, branch);
 
+                boolean hasOverride = overrideAccountCode != null && !overrideAccountCode.isBlank();
                 if ("DROP_IN".equals(movementType)) {
-                        // Cash transferred from safe/petty cash float into the POS till
-                        addLine(entry, "Cash in Hand", ACC_CASH,       narration, amount,          BigDecimal.ZERO);
-                        addLine(entry, "Petty Cash",   ACC_PETTY_CASH, narration, BigDecimal.ZERO, amount);
+                        String code = hasOverride ? overrideAccountCode : ACC_PETTY_CASH;
+                        String name = hasOverride ? overrideAccountName : "Petty Cash";
+                        // Cash transferred from safe/petty cash float (or category account) into the POS till
+                        addLine(entry, "Cash in Hand", ACC_CASH, narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, name,            code,    narration, BigDecimal.ZERO, amount);
                 } else {
-                        // Petty expense paid out of the POS till
-                        addLine(entry, "General Expense", ACC_EXPENSE_GENERAL, narration, amount,          BigDecimal.ZERO);
-                        addLine(entry, "Cash in Hand",    ACC_CASH,            narration, BigDecimal.ZERO, amount);
+                        String code = hasOverride ? overrideAccountCode : ACC_EXPENSE_GENERAL;
+                        String name = hasOverride ? overrideAccountName : "General Expense";
+                        // Expense paid out of the POS till, against the category's account (or the default)
+                        addLine(entry, name,            code,    narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "Cash in Hand", ACC_CASH, narration, BigDecimal.ZERO, amount);
+                }
+
+                return post(entry);
+        }
+
+        /**
+         * Reverses the GL journal for a voided POS cash movement (Cash Drop / Outs Management
+         * §5). Never deletes or mutates the original {@code CMD-{movementId}} entry — posts a
+         * new journal with debit/credit swapped, mirroring {@code JournalEntryService.
+         * voidJournalVoucher}'s reversal pattern. Idempotent per movement (reference
+         * "VOID-CMD-{movementId}"); no-ops if the original was never posted (e.g. amount was
+         * zero/negative and createJournalFromCashMovement returned null).
+         *
+         * @param movementId   PK of the voided PosCashMovement row
+         * @param movementType "DROP_IN" or "DROP_OUT" (of the original movement)
+         * @param amount       original positive amount
+         * @param description  original free-text narration
+         * @param date         effective date for the reversal (today, not the original date)
+         * @param branch       branch dimension
+         */
+        @Transactional
+        public JournalEntry reverseJournalFromCashMovementVoid(
+                        Long movementId,
+                        String movementType,
+                        BigDecimal amount,
+                        String description,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                return reverseJournalFromCashMovementVoid(movementId, movementType, amount, description, date, branch, null, null);
+        }
+
+        /**
+         * Cash Movement Categories (Phase 2, §9): {@code postedAccountCode}/{@code
+         * postedAccountName} should be the exact values denormalized onto the {@code
+         * PosCashMovement} row at creation time ({@code PosSessionService#addCashMovement}),
+         * not re-resolved from the category's *current* GL mapping — the reversal must mirror
+         * exactly what was originally posted even if the category's mapping (or the category
+         * itself) has since changed. Null reproduces the original default-account behaviour.
+         */
+        @Transactional
+        public JournalEntry reverseJournalFromCashMovementVoid(
+                        Long movementId,
+                        String movementType,
+                        BigDecimal amount,
+                        String description,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch,
+                        String postedAccountCode,
+                        String postedAccountName) {
+
+                String originalRef = TX_CASH_MOVEMENT + "-" + movementId;
+                if (findDuplicate(originalRef) == null) return null; // nothing was ever posted
+
+                String ref = "VOID-" + originalRef;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String baseNarration = description != null && !description.isBlank()
+                        ? description
+                        : ("DROP_IN".equals(movementType) ? "Cash Drop In" : "Cash Out");
+                String narration = "Void reversal of " + originalRef + ": " + baseNarration;
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(),
+                        ref, narration, TX_CASH_MOVEMENT, branch);
+
+                boolean hasOverride = postedAccountCode != null && !postedAccountCode.isBlank();
+                if ("DROP_IN".equals(movementType)) {
+                        String code = hasOverride ? postedAccountCode : ACC_PETTY_CASH;
+                        String name = hasOverride ? postedAccountName : "Petty Cash";
+                        // Swap the original DROP_IN lines: Cr Cash in Hand / Dr the posted account
+                        addLine(entry, name,           code,     narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, "Cash in Hand", ACC_CASH, narration, BigDecimal.ZERO, amount);
+                } else {
+                        String code = hasOverride ? postedAccountCode : ACC_EXPENSE_GENERAL;
+                        String name = hasOverride ? postedAccountName : "General Expense";
+                        // Swap the original DROP_OUT lines: Cr the posted account / Dr Cash in Hand
+                        addLine(entry, "Cash in Hand", ACC_CASH, narration, amount,          BigDecimal.ZERO);
+                        addLine(entry, name,           code,     narration, BigDecimal.ZERO, amount);
                 }
 
                 return post(entry);

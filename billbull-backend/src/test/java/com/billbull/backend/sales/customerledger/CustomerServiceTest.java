@@ -32,6 +32,10 @@ class CustomerServiceTest {
     private SalesInvoiceRepository salesInvoiceRepo;
     @Mock
     private OpeningInvoiceRepository openingInvoiceRepository;
+    @Mock
+    private jakarta.persistence.EntityManager entityManager;
+    @Mock
+    private com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     private CustomerService service;
 
@@ -41,6 +45,12 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(service, "repository", repository);
         ReflectionTestUtils.setField(service, "salesInvoiceRepo", salesInvoiceRepo);
         ReflectionTestUtils.setField(service, "openingInvoiceRepository", openingInvoiceRepository);
+        ReflectionTestUtils.setField(service, "entityManager", entityManager);
+        ReflectionTestUtils.setField(service, "effectiveCorrectionViewService", effectiveCorrectionViewService);
+        
+        org.mockito.Mockito.lenient().when(effectiveCorrectionViewService.resolveOverlays(
+                any(), org.mockito.ArgumentMatchers.anyList(), any()
+        )).thenAnswer(inv -> inv.getArgument(1));
     }
 
     /** Empty aggregate rows so getAllCustomers exercises the getOrDefault(ZERO) balance path. */

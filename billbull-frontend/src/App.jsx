@@ -78,6 +78,7 @@ import FinancialsPrintEmailTemplates from "./pages/Financials/FinancialsPrintEma
 import PrintEmailTemplates from "./pages/Sales/PrintEmailTemplates";
 import SalesSettings from "./pages/Sales/SalesSettings";
 import POSSales from "./pages/Sales/POSSales";
+import CashMovements from "./pages/Sales/CashMovements";
 import PurchasePrintEmailTemplates from "./pages/Purchase/PurchasePrintEmailTemplates";
 import StockTaking from "./pages/Inventory/StockTaking/StockTaking";
 import InventoryReports from "./pages/Inventory/Reports/InventoryReports.tsx";
@@ -88,6 +89,7 @@ import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
 import BranchOutlets from "./pages/Enterprise/BranchOutlets";
 import DataManagement from "./pages/Enterprise/DataManagement";
+import PosAdministration from "./pages/Enterprise/PosAdministration";
 import SalesSummaryReport from "./pages/Sales/Reports/SalesSummaryReport";
 import VendorsPurchasesReports from "./pages/Purchase/Reports/VendorsPurchasesReports.tsx";
 import Notifications from "./pages/Notifications/Notifications";
@@ -465,6 +467,15 @@ function App() {
                       }
                     />
 
+                    <Route
+                      path="/sales/cash-movements"
+                      element={
+                        <ResourceGuard module="permissions.pos.cashmovement.view">
+                          <CashMovements />
+                        </ResourceGuard>
+                      }
+                    />
+
 
                     <Route
                       path="/finance/ledger"
@@ -696,6 +707,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <DataManagement />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/enterprise/pos-admin"
+                      element={
+                        <ResourceGuard module="pos.admin">
+                          <PosAdministration />
                         </ResourceGuard>
                       }
                     />

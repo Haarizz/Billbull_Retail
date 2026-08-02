@@ -124,6 +124,18 @@ public class PosTerminal extends BaseEntity {
     @Column(name = "archive_context_json", columnDefinition = "TEXT")
     private String archiveContextJson;
 
+    // Session Roaming Phase 1 (schema foundation only) — support columns for the future LOCKED
+    // status (Phase 6). Unused/unreachable this phase: PosTerminalStatus has no LOCKED value yet
+    // and nothing sets these fields.
+    @Column(name = "locked_reason", length = 255)
+    private String lockedReason;
+
+    @Column(name = "locked_at")
+    private LocalDateTime lockedAt;
+
+    @Column(name = "locked_session_id")
+    private Long lockedSessionId;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -212,4 +224,13 @@ public class PosTerminal extends BaseEntity {
 
     public String getArchiveContextJson() { return archiveContextJson; }
     public void setArchiveContextJson(String archiveContextJson) { this.archiveContextJson = archiveContextJson; }
+
+    public String getLockedReason() { return lockedReason; }
+    public void setLockedReason(String lockedReason) { this.lockedReason = lockedReason; }
+
+    public LocalDateTime getLockedAt() { return lockedAt; }
+    public void setLockedAt(LocalDateTime lockedAt) { this.lockedAt = lockedAt; }
+
+    public Long getLockedSessionId() { return lockedSessionId; }
+    public void setLockedSessionId(Long lockedSessionId) { this.lockedSessionId = lockedSessionId; }
 }

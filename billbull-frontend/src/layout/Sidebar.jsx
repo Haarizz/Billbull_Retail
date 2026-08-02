@@ -177,6 +177,7 @@ const Sidebar = ({ children }) => {
         { path: "/sales/deliverynote",  label: "Delivery Note",         module: "sales.delivery", icon: <Truck size={14} /> },
         { path: "/sales/return",        label: "Sales Return",          module: "sales.return",   icon: <Undo2 size={14} /> },
         { path: "/sales/pos",           label: "POS Sales",             module: "sales.pos",      icon: <Receipt size={14} /> },
+        { path: "/sales/cash-movements",label: "Cash Drop / Outs",      module: "permissions.pos.cashmovement.view", icon: <Banknote size={14} /> },
         { path: "/sales/payment",       label: "Payments",              module: "sales.payment",  icon: <CreditCard size={14} /> },
         { path: "/sales/templates",     label: "Print & Email Templates",module: "sales.templates",icon: <Printer size={14} /> },
         { path: "/sales/reports",        label: "Reports",              module: "sales.reports",  icon: <PieChart size={14} /> },
@@ -268,6 +269,7 @@ const Sidebar = ({ children }) => {
         { path: "/enterprise/branches",        label: "Branch / Outlets",  module: "userManagement.setup", icon: <Building2 size={14} /> },
         { path: "/enterprise/administration",  label: "Administration",    module: "userManagement.role",  icon: <ShieldCheck size={14} /> },
         { path: "/enterprise/data-management", label: "Data Management",   module: "userManagement.setup", icon: <FileSpreadsheet size={14} /> },
+        { path: "/enterprise/pos-admin",       label: "POS Administration",module: "pos.admin",             icon: <ShieldCheck size={14} /> },
       ],
     },
     {
@@ -803,7 +805,17 @@ const Sidebar = ({ children }) => {
                 return !item.roles || (primaryRole && item.roles.includes(primaryRole));
               }
               // ── HORIZONTAL ACCESS ──
-              // canView(module) is the single source of truth once loaded
+              // canView(module) is the single source of truth once loaded. Dropdown groups are
+              // additionally visible when the user can view ANY of their child items, even
+              // without the group's own umbrella module (e.g. a BRANCH_ADMIN/SUPERVISOR/
+              // ACCOUNTANT holding pos.admin.* but not userManagement can still reach Enterprise
+              // Console). This is generic across every dropdown group — no group/child is
+              // special-cased — and only ever reveals a group that has at least one already
+              // individually-permitted child; the per-child `canView(sub.module)` check below
+              // still governs exactly which items render inside it.
+              if (item.isDropdown && Array.isArray(item.subItems)) {
+                return canView(item.module) || item.subItems.some(sub => !sub.module || canView(sub.module));
+              }
               return canView(item.module);
             })
             .map((item, index) => {

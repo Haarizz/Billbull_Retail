@@ -42,10 +42,30 @@ class SalesInvoiceAdvanceAutoApplyTest {
     private final com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService =
             mock(com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService.class);
 
-    private final AdvanceApplicationService advanceApplicationService =
-            new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService);
+    private final com.billbull.backend.pos.session.PosSessionService posSessionService =
+            mock(com.billbull.backend.pos.session.PosSessionService.class);
 
-    private final SalesInvoiceService service = newServiceWithMockedDeps(advanceApplicationService);
+    private final jakarta.persistence.EntityManager entityManager = mock(jakarta.persistence.EntityManager.class);
+    private final com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService =
+            mock(com.billbull.backend.pos.admin.EffectiveCorrectionViewService.class);
+
+    private final AdvanceApplicationService advanceApplicationService;
+
+    private final SalesInvoiceService service;
+
+    public SalesInvoiceAdvanceAutoApplyTest() {
+        org.mockito.Mockito.lenient().when(effectiveCorrectionViewService.resolveOverlays(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(i -> i.getArgument(1));
+
+        advanceApplicationService = new AdvanceApplicationService(
+                applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService,
+                entityManager, effectiveCorrectionViewService);
+
+        service = newServiceWithMockedDeps(advanceApplicationService);
+    }
 
     private ReceiptVoucher advance(Long id, String customerCode, BigDecimal amount) {
         ReceiptVoucher rv = new ReceiptVoucher();

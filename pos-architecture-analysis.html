@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BillBull POS Architecture Analysis</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1b1f24;
+  --muted: #5b6470;
+  --border: #e2e5e9;
+  --code-bg: #f3f4f6;
+  --accent: #b45309;
+  --table-head: #f7f5f0;
+  --link: #9a4d0a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #e6e8eb;
+    --muted: #9aa3ad;
+    --border: #2a2e35;
+    --code-bg: #1d2025;
+    --accent: #f0b866;
+    --table-head: #1d2025;
+    --link: #f0b866;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --fg: #e6e8eb; --muted: #9aa3ad; --border: #2a2e35;
+  --code-bg: #1d2025; --accent: #f0b866; --table-head: #1d2025; --link: #f0b866;
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --fg: #1b1f24; --muted: #5b6470; --border: #e2e5e9;
+  --code-bg: #f3f4f6; --accent: #b45309; --table-head: #f7f5f0; --link: #9a4d0a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  display: flex;
+}
+#toc {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  flex: 0 0 300px;
+  padding: 24px 18px;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+#toc a {
+  display: block;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 0;
+  border-radius: 4px;
+}
+#toc a:hover { color: var(--accent); }
+#toc .toc-title {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+#toc .toc-l1 { font-weight: 600; color: var(--fg); margin-top: 10px; }
+#toc .toc-l2 { padding-left: 14px; }
+#toc .toc-l3 { padding-left: 28px; font-size: 12px; }
+main {
+  flex: 1 1 auto;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 40px 48px 120px;
+  min-width: 0;
+}
+h1, h2, h3, h4 { scroll-margin-top: 20px; line-height: 1.3; }
+h1 { font-size: 1.9em; border-bottom: 2px solid var(--accent); padding-bottom: 10px; }
+h2 { font-size: 1.5em; margin-top: 2.4em; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 1.2em; margin-top: 1.8em; color: var(--accent); }
+h4 { font-size: 1.02em; margin-top: 1.4em; }
+p { color: var(--fg); }
+strong { color: var(--fg); }
+a { color: var(--link); }
+code {
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: 0.85em; }
+.mermaid {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.table-wrap { overflow-x: auto; margin: 1em 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--table-head); font-weight: 600; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.25em 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+@media (max-width: 900px) {
+  body { flex-direction: column; }
+  #toc { position: static; height: auto; flex: none; border-right: none; border-bottom: 1px solid var(--border); }
+  main { padding: 24px; }
+}
+</style>
+</head>
+<body>
+<nav id="toc">
+<div class="toc-title">Contents</div>
+<a class="toc-l1" href="#billbull-pos-terminal-counter-session-architecture-analysis-as-built">BillBull POS — Terminal / Counter / Session Architecture Analysis (As-Built)</a>
+<a class="toc-l2" href="#1-executive-summary">1. Executive Summary</a>
+<a class="toc-l2" href="#2-domain-model">2. Domain Model</a>
+<a class="toc-l3" href="#21-entity-reference">2.1 Entity reference</a>
+<a class="toc-l3" href="#22-er-style-relationship-summary">2.2 ER-style relationship summary</a>
+<a class="toc-l2" href="#3-terminal-concept">3. Terminal Concept</a>
+<a class="toc-l2" href="#4-counter-concept">4. Counter Concept</a>
+<a class="toc-l2" href="#5-session-concept">5. Session Concept</a>
+<a class="toc-l2" href="#6-session-state-machine">6. Session State Machine</a>
+<a class="toc-l2" href="#7-login-flow">7. Login Flow</a>
+<a class="toc-l2" href="#8-pos-startup-flow">8. POS Startup Flow</a>
+<a class="toc-l2" href="#9-terminal-validation-logic">9. Terminal Validation Logic</a>
+<a class="toc-l2" href="#10-counter-validation-logic">10. Counter Validation Logic</a>
+<a class="toc-l2" href="#11-session-validation-logic">11. Session Validation Logic</a>
+<a class="toc-l2" href="#12-database-analysis">12. Database Analysis</a>
+<a class="toc-l2" href="#13-backend-architecture">13. Backend Architecture</a>
+<a class="toc-l3" href="#131-package-map">13.1 Package map</a>
+<a class="toc-l3" href="#132-dependency-graph-informal">13.2 Dependency graph (informal)</a>
+<a class="toc-l2" href="#14-api-analysis">14. API Analysis</a>
+<a class="toc-l3" href="#terminal-apiposterminals-posterminalcontroller">Terminal (`/api/pos/terminals`, `PosTerminalController`)</a>
+<a class="toc-l3" href="#counter-apiposcounters-poscountercontroller">Counter (`/api/pos/counters`, `PosCounterController`)</a>
+<a class="toc-l3" href="#session-apipossessions-possessioncontroller">Session (`/api/pos/sessions`, `PosSessionController`)</a>
+<a class="toc-l3" href="#cash-movements-apiposcash-movements-poscashmovementcontroller">Cash movements (`/api/pos/cash-movements`, `PosCashMovementController`)</a>
+<a class="toc-l3" href="#checkout-apiposcheckout-poscheckoutcontroller">Checkout (`/api/pos/checkout`, `PosCheckoutController`)</a>
+<a class="toc-l3" href="#device-apiposdevices-posdevicecontroller">Device (`/api/pos/devices`, `PosDeviceController`)</a>
+<a class="toc-l2" href="#15-frontend-analysis">15. Frontend Analysis</a>
+<a class="toc-l3" href="#151-component-hierarchy">15.1 Component hierarchy</a>
+<a class="toc-l3" href="#152-state-management">15.2 State management</a>
+<a class="toc-l3" href="#153-hooks">15.3 Hooks</a>
+<a class="toc-l3" href="#154-routing">15.4 Routing</a>
+<a class="toc-l3" href="#155-srcapi-surface">15.5 `src/api/` surface</a>
+<a class="toc-l3" href="#156-trade-pos-branch-work-featureposclient">15.6 Trade POS branch work (`feature/posclient`)</a>
+<a class="toc-l2" href="#16-business-rules">16. Business Rules</a>
+<a class="toc-l2" href="#17-reporting-flow">17. Reporting Flow</a>
+<a class="toc-l2" href="#18-hardware-integration">18. Hardware Integration</a>
+<a class="toc-l2" href="#19-current-problems-observations-only-not-recommendations">19. Current Problems (Observations Only — Not Recommendations)</a>
+<a class="toc-l2" href="#20-end-to-end-business-flow-as-observed">20. End-to-End Business Flow (As Observed)</a>
+<a class="toc-l2" href="#21-sequence-diagrams">21. Sequence Diagrams</a>
+<a class="toc-l3" href="#211-login-terminal-registration">21.1 Login / Terminal Registration</a>
+<a class="toc-l3" href="#212-open-session">21.2 Open Session</a>
+<a class="toc-l3" href="#213-create-sale-checkout">21.3 Create Sale (Checkout)</a>
+<a class="toc-l3" href="#214-payment-receipt-printing">21.4 Payment / Receipt Printing</a>
+<a class="toc-l3" href="#215-session-close">21.5 Session Close</a>
+<a class="toc-l3" href="#216-day-close">21.6 Day Close</a>
+<a class="toc-l2" href="#appendix-file-by-file-reference-condensed">Appendix: File-by-file reference (condensed)</a>
+</nav>
+<main>
+<h1 id="billbull-pos-terminal-counter-session-architecture-analysis-as-built">BillBull POS — Terminal / Counter / Session Architecture Analysis (As-Built)</h1>
+<p><strong>Scope</strong>: This document describes the *existing* implementation only, derived from the codebase at <code>c:\Users\hp\Desktop\Billbull_Retail</code> on branch <code>feature/posclient</code>. No redesign, no recommendations. Every claim is grounded in a file reference; where behavior is ambiguous or unread, this is stated explicitly rather than guessed.</p>
+<p><strong>Primary sources</strong>: <code>billbull-backend/src/main/java/com/billbull/backend/pos/**</code>, <code>billbull-backend/src/main/resources/db/migration/V*.sql</code>, <code>billbull-frontend/src/pages/Sales/POSSales.jsx</code> and <code>src/pages/Sales/POS/**</code>, <code>src/api/pos*.js</code>.</p>
+<hr>
+<h2 id="1-executive-summary">1. Executive Summary</h2>
+<p>The POS subsystem is a package-by-feature Spring Boot module (<code>pos/<strong></code>, 12+ subpackages) backing a single React mega-component (<code>POSSales.jsx</code>, ~14.5k lines) that owns nearly all client-side POS state. There is </strong>no dedicated POS login** — POS reuses the app-wide JWT login and instead performs *terminal registration* as its own bootstrap step, keyed off a browser-generated device fingerprint, not a user action. A <strong>Terminal</strong> is a per-branch, per-device registration record (roughly "this browser/device on this branch"), a <strong>Counter</strong> is a lightweight named billing point terminals can be assigned to (optionally carrying a default cash drawer/printer), and a <strong>Session</strong> (<code>PosSession</code>) is the cashier shift ledger — one row per open/close, exactly one OPEN session allowed per terminal at the database level. Sessions roll up into a daily <strong>Day Close</strong> (<code>PosDayClose</code>, one per branch per business date), gated by every terminal having produced an X-Report first. GL posting is real (via <code>PostingEngineService</code>) for session close and cash movements, but is deliberately non-blocking (wrapped in try/catch) for session close. Concurrency safety for "one open session per terminal" rests on a DB partial unique index plus an application-level atomic compare-and-swap on <code>pos_terminals.current_open_session_id</code> — not JPA optimistic locking (<code>@Version</code> is unused anywhere in <code>pos/**</code>).</p>
+<hr>
+<h2 id="2-domain-model">2. Domain Model</h2>
+<h3 id="21-entity-reference">2.1 Entity reference</h3>
+<p>All POS entities live under <code>com.billbull.backend.pos.*</code>. Per <code>common.BaseEntity</code> (<code>common/BaseEntity.java:41-43</code>), the primary-key strategy is <strong><code>@Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id</code></strong> — a plain auto-increment <code>Long</code>. This corrects an assumption in CLAUDE.md's UuidV7 mention: POS entities do <strong>not</strong> use UUIDv7; that generator exists elsewhere in the codebase but is not used here. <code>PosDayClose</code>, <code>PosAuditLog</code>, and <code>PosLayawayItem</code> do not extend <code>BaseEntity</code> at all — they declare their own identity <code>@Id</code>.</p>
+<h4 id="posterminal-posterminalposterminaljava-table-posterminals">PosTerminal (<code>pos/terminal/PosTerminal.java</code>, table <code>pos_terminals</code>)</h4>
+<ul>
+<li><strong>Purpose</strong>: registration record for a physical/browser device operating POS at a branch — "this device, on this branch, currently at this counter."</li>
+<li><strong>PK</strong>: <code>id</code> (BaseEntity, Long identity).</li>
+<li><strong>Key fields</strong>: <code>branchId</code>/<code>branchName</code>, <code>terminalId</code> (unique business identifier, format <code>T001-XXXX</code>), <code>terminalName</code>, <code>counterName</code> (legacy string) + <code>counterId</code> (FK → <code>pos_counters.id</code>), <code>deviceFingerprint</code>, <code>deviceInfo</code>, <code>operatingSystem</code>, <code>browser</code>, <code>ipAddress</code>, <code>isMainPos</code> (single-flag "primary" terminal per branch, app-enforced not DB-enforced), <code>lastSeenAt</code>/<code>lastHeartbeatAt</code>, <code>registeredBy</code>, <code>status</code> (<code>PosTerminalStatus</code>), <code>registrationStatus</code> (raw string PENDING/APPROVED/REJECTED), <code>currentOpenSessionId</code> (the session-lock column), <code>hardwareProfileId</code>+<code>assignedProfileVersion</code>, archive fields (<code>archivedAt</code>, <code>archiveReason</code>), decommission fields (<code>decommissionedAt</code>, <code>decommissionReason</code> — no restore path), auto-archive lifecycle fields (<code>staleAt</code>, <code>staleWarningSentAt</code>, <code>lastActivityAt</code>, <code>autoArchiveExempt</code>, <code>archiveContextJson</code> TEXT).</li>
+<li><strong>FKs</strong>: <code>counterId</code> → <code>pos_counters</code>; <code>branchId</code> is a loose <code>Long</code>, not a JPA relationship (resolved manually via <code>BranchRepository</code>/<code>BranchAccessService</code>).</li>
+<li><strong>Status enum</strong> (<code>PosTerminalStatus</code>): <code>NEW, PENDING_REGISTRATION, ACTIVE, IDLE, OFFLINE, INACTIVE, MAINTENANCE, BLOCKED, STALE, DECOMMISSIONED, ARCHIVED</code>.</li>
+<li><strong>Constraints</strong>: unique composite index on <code>(device_fingerprint, branch_id)</code> (<code>V47__pos_terminal_device_branch_composite_unique.sql</code>, replacing an earlier global-unique on <code>device_fingerprint</code> alone) — terminal device identity is scoped <strong>per branch</strong>; <code>terminal_id</code> itself is also unique.</li>
+<li><strong>Lifecycle</strong>: <code>NEW/PENDING_REGISTRATION → ACTIVE ⇄ IDLE ⇄ OFFLINE → STALE → ARCHIVED</code>, with side branches to <code>BLOCKED</code>/<code>MAINTENANCE</code> and a terminal <code>DECOMMISSIONED</code> (permanent, no restore).</li>
+</ul>
+<h4 id="poscounter-poscounterposcounterjava-table-poscounters">PosCounter (<code>pos/counter/PosCounter.java</code>, table <code>pos_counters</code>)</h4>
+<ul>
+<li><strong>Purpose</strong>: a named billing point/lane a terminal can be assigned to; carries defaults (drawer, printer) but is not itself hardware.</li>
+<li><strong>PK</strong>: <code>id</code> (BaseEntity).</li>
+<li><strong>Key fields</strong>: <code>branchId</code>/<code>branchName</code>, <code>counterCode</code> (unique per branch, <code>CTR-NNN</code>), <code>counterName</code>, <code>description</code>, <code>status</code> (<code>PosCounterStatus</code>: ACTIVE/INACTIVE/MAINTENANCE), <code>defaultCashDrawer</code>, <code>defaultReceiptPrinter</code>, <code>displayOrder</code>.</li>
+<li><strong>Constraints</strong>: unique composite <code>(branch_id, counter_code)</code>.</li>
+<li><strong>Lifecycle</strong>: soft-delete only (<code>isActive=false</code> + status→INACTIVE); deactivation/deletion blocked (409) while any terminal still references the counter, via <code>terminalRepo.countByCounterIdAndStatusIn</code>/<code>countByCounterId</code>.</li>
+</ul>
+<h4 id="possession-possessionpossessionjava-table-possessions">PosSession (<code>pos/session/PosSession.java</code>, table <code>pos_sessions</code>)</h4>
+<ul>
+<li><strong>Purpose</strong>: one cashier shift — the ledger of a terminal being "open for business" from open to close, with running sales/cash totals.</li>
+<li><strong>PK</strong>: <code>id</code> (BaseEntity).</li>
+<li><strong>Key fields</strong>: <code>branchId</code>/<code>branchName</code>, <code>terminalId</code> (string) + <code>terminalPk</code> (FK → <code>pos_terminals.id</code>), <code>counterName</code>+<code>counterId</code>, <code>openedBy</code>/<code>closedBy</code> (raw usernames) + display-name shadow columns, <code>sessionDate</code>, <code>openedAt</code>/<code>closedAt</code>, <code>durationSeconds</code>, <code>lastActivityAt</code>, <code>idleTimeoutMinutes</code>, <code>sessionTimeoutAt</code>, <code>dayCloseId</code> (FK → <code>pos_day_closes</code>), <code>status</code> (<code>PosSessionStatus</code>), <code>openingCash</code>/<code>closingCash</code>/<code>expectedCash</code>/<code>cashDifference</code> (BigDecimal 15,2), per-tender totals (<code>totalSales</code>, <code>totalCashSales</code>, <code>totalCardSales</code>, <code>totalCreditSales</code>, <code>totalMixedSales</code>, <code>totalOnlineSales</code>, <code>totalRefunds</code>), <code>totalVoids</code>, <code>invoiceCount</code>, X-Report fields (<code>xReportPrinted</code>, <code>xReportGeneratedAt/By</code>+displayName), Z-Report fields (<code>zReportPrinted</code>, <code>zReportJson</code> — immutable snapshot), <code>closingDenominationsJson</code>, card-settlement fields (<code>cardBatchNo</code>, <code>cardSettlementVerified</code>, <code>cardClosingCash</code>, <code>cardDifference</code>), closing signatory/remarks fields.</li>
+<li><strong>Relationships</strong>: <code>@OneToMany(mappedBy="posSession", cascade=ALL, orphanRemoval=true, LAZY)</code> → <code>List&lt;PosCashMovement&gt;</code>.</li>
+<li><strong>Status enum</strong> (<code>PosSessionStatus</code>): <code>OPEN, CLOSED, SUSPENDED</code>.</li>
+<li><strong>Constraints</strong>: index <code>idx_pos_sess_lookup (branch_id, terminal_id, status)</code>; <strong>DB partial unique index</strong> <code>uq_pos_session_terminal_open ON pos_sessions(terminal_id) WHERE status='OPEN'</code> (created in <code>V13__pos_safety_fixes.sql</code>, later superseded conceptually by a <code>terminal_pk</code>-keyed compare-and-swap on the terminal row itself — see §10 for the exact mechanism, which is application-level, not this index directly).</li>
+<li><strong>Lifecycle</strong>: <code>OPEN ⇄ SUSPENDED → CLOSED</code> (terminal). No re-open from CLOSED.</li>
+</ul>
+<h4 id="poscashmovement-possessionposcashmovementjava-table-poscashmovements">PosCashMovement (<code>pos/session/PosCashMovement.java</code>, table <code>pos_cash_movements</code>)</h4>
+<ul>
+<li><strong>Purpose</strong>: a single cash drop-in/drop-out event during a session (safe drops, till top-ups, petty cash, etc.).</li>
+<li><strong>PK</strong>: <code>id</code> (BaseEntity).</li>
+<li><strong>Key fields</strong>: <code>@ManyToOne(LAZY) posSession</code> (<code>@JsonIgnore</code>), <code>movementType</code> (<code>PosCashMovementType</code>: DROP_IN/DROP_OUT), <code>amount</code>, <code>description</code>, <code>performedBy</code>/<code>performedAt</code>, <code>reference</code>, <code>status</code> (<code>PosCashMovementStatus</code>: ACTIVE/VOIDED), <code>voidReason</code>/<code>voidedBy</code>/<code>voidedAt</code>, <code>editedBy</code>/<code>editedAt</code>/<code>editCount</code>, <code>originalDescription</code>/<code>originalReference</code> (first-edit snapshot), denormalized <code>businessDate</code>/<code>branchId</code>, <code>categoryId</code> (FK → <code>PosCashMovementCategory</code>, optional), <code>postedAccountCode</code>/<code>postedAccountName</code> (denormalized GL leg — resolved once at creation so a later void reversal always mirrors the original posting even if the category's account mapping later changes).</li>
+<li><strong>Lifecycle</strong>: created → (optionally edited, description/reference only) → (optionally voided). Amount/type/session are structurally immutable post-creation. Locked entirely once the owning session's business day has a <code>PosDayClose</code> (<code>dayCloseId != null</code>).</li>
+</ul>
+<h4 id="posdevice-posdeviceposdevicejava-table-posdevices">PosDevice (<code>pos/device/PosDevice.java</code>, table <code>pos_devices</code>)</h4>
+<ul>
+<li><strong>Purpose</strong>: shared parent row for all hardware types (printer/scanner/cash drawer/card terminal/customer display/scale/generic) — the Device Manager's unifying record.</li>
+<li><strong>Key fields</strong>: <code>deviceCode</code> (unique), <code>deviceName</code>, <code>branchId</code>/<code>branchName</code>, <code>counterName</code>, <code>deviceType</code> (<code>PosDeviceType</code>), <code>terminalId</code>, <code>status</code> (<code>PosDeviceStatus</code>: admin-controlled axis — NEW/ACTIVE/INACTIVE/MAINTENANCE/DISABLED/DECOMMISSIONED), <code>runtimeHealth</code> (<code>PosDeviceRuntimeHealth</code>: system-observed axis — UNKNOWN/ONLINE/OFFLINE/BUSY/DISCONNECTED/ERROR/PAPER_OUT/COVER_OPEN), <code>lastHeartbeat</code>, <code>notes</code>.</li>
+<li>Note the deliberate two-axis design: <code>status</code> (what an admin set) is independent of <code>runtimeHealth</code> (what the last heartbeat observed).</li>
+</ul>
+<h4 id="user-useruserjava-table-users">User (<code>user/User.java</code>, table <code>users</code>)</h4>
+<ul>
+<li>Relevant fields for POS: <code>username</code> (unique — the raw identity string stored in <code>PosSession.openedBy/closedBy</code> and <code>PosCashMovement.performedBy</code>, never resolved to a FK), <code>fullName</code>, <code>linkedEmployee</code> (<code>@OneToOne</code> → <code>hr.employees.Employee</code>), <code>branch</code> (<code>@ManyToOne</code>, default landing branch), <code>additionalBranches</code> (<code>@ManyToMany</code>), <code>roles</code>/<code>primaryRole</code>. <code>getResolvedDisplayName()</code> (prefers linked Employee name → <code>fullName</code> → <code>username</code>) is what populates the <code>*DisplayName</code> shadow columns on <code>PosSession</code>/<code>PosDayClose</code>.</li>
+</ul>
+<h4 id="branch-settingsbranchbranchjava-table-branches">Branch (<code>settings/branch/Branch.java</code>, table <code>branches</code>)</h4>
+<ul>
+<li>Own <code>@Id GenerationType.IDENTITY</code> (not <code>BaseEntity</code>). Fields: <code>name</code>, <code>code</code>, address, <code>trnNumber</code> (ZATCA), bank fields, <code>sortOrder</code>, <code>isDefault</code>, <code>isHeadquarters</code>, <code>type</code>, <code>@ManyToOne(LAZY) defaultWarehouse</code> → <code>Warehouse</code>. Every POS entity's <code>branchId</code> is a loose FK, not a JPA relationship.</li>
+</ul>
+<h4 id="warehouse-inventorywarehousewarehousejava-table-warehouses">Warehouse (<code>inventory/warehouse/Warehouse.java</code>, table <code>warehouses</code>)</h4>
+<ul>
+<li>Extends <code>BaseEntity</code>. <code>name</code>, <code>type</code>, <code>address</code>, <code>status</code>, <code>capacity</code>, <code>utilization</code>, <code>@ManyToOne(LAZY) branch</code>. Not directly referenced by POS terminal/counter/session entities — stock deduction on checkout flows through <code>StockMovement</code>/<code>DeliveryNoteService</code> using the branch's <code>defaultWarehouse</code>, per CLAUDE.md's stock-movement-as-source-of-truth convention.</li>
+</ul>
+<h4 id="no-posshift-entity">No PosShift entity</h4>
+<p>Grep across <code>pos/**</code> found no <code>PosShift</code> class. "Shift" as a concept is represented entirely by <code>PosSession</code>.</p>
+<h4 id="cash-register-printer-mapping-tables">Cash Register / Printer / mapping tables</h4>
+<p>There is no single "Cash Register" entity — its role is split across <code>PosCashDrawer</code> (physical drawer hardware, <code>pos/cashdrawer/PosCashDrawer.java</code>, table <code>pos_cash_drawers</code>: <code>deviceCode</code> unique, <code>deviceId</code> FK → <code>PosDevice</code>, <code>branchId</code>, <code>terminalId</code>, <code>attachedPrinterId</code> <strong>mandatory</strong> — the drawer has no standalone connection, its kick command rides the attached printer's ESC/POS cable — <code>status</code>, <code>lastKickAt</code>/<code>lastKickResult</code>) and <code>PosSession</code>'s cash fields (the accounting register). <code>PosPrinter</code> (<code>pos/printer/PosPrinter.java</code>, table <code>pos_printers</code>) is the printer device record: <code>deviceCode</code> unique, <code>deviceId</code> FK → <code>PosDevice</code>, <code>deviceType</code> (RECEIPT_PRINTER/KITCHEN_PRINTER/LABEL_PRINTER), <code>connectionType</code> (USB/NETWORK_IP/BLUETOOTH/WINDOWS_QUEUE/ZEBRA_BROWSER_PRINT), <code>systemPrinterName</code>, <code>deviceIdentifier</code>, <code>ipAddress</code>/<code>portNumber</code>, <code>printTemplate</code>, <code>defaultPrinter</code>, <code>status</code>, <code>runtimeStatus</code>. <code>PosHardwareProfileDevice</code> (table <code>pos_hardware_profile_device</code>, unique <code>(hardware_profile_id, role)</code>) is the actual mapping table binding role-tagged devices (e.g. "receipt printer", "kitchen printer") into a <code>PosHardwareProfile</code>, which is in turn assigned to terminals.</p>
+<h3 id="22-er-style-relationship-summary">2.2 ER-style relationship summary</h3>
+<pre><code class="lang-">Branch 1───* PosTerminal (loose branchId FK)
+Branch 1───* PosCounter (loose branchId FK)
+Branch 1───* PosSession (loose branchId FK)
+Branch 1───default Warehouse
+
+PosCounter 1───* PosTerminal (counterId FK, nullable — terminal may be unassigned)
+PosTerminal 1───0..1 OPEN PosSession (currentOpenSessionId lock column on PosTerminal;
+                                       terminalPk FK on PosSession — bidirectional pointer pair)
+PosTerminal *───0..1 PosHardwareProfile (hardwareProfileId)
+PosHardwareProfile 1───* PosHardwareProfileDevice ───* PosDevice (role-tagged binding)
+
+PosSession 1───* PosCashMovement (posSession FK, cascade ALL + orphanRemoval)
+PosSession *───1 User (openedBy/closedBy — raw username string, not a JPA FK)
+PosSession *───0..1 PosDayClose (dayCloseId FK, set only once the day is closed)
+
+PosDayClose 1 per (branchId, closeDate) — references startSessionId/endSessionId (audit-only, not JPA FK)
+
+PosDevice (parent) 1───0..1 PosPrinter / PosScanner / PosCashDrawer (deviceId FK, per-type child row)
+PosCashDrawer *───1 PosPrinter (attachedPrinterId — mandatory, drawer kicks via the printer cable)</code></pre>
+<p>Everything hangs off <code>branchId</code> as a loose integer FK rather than a JPA <code>@ManyToOne</code> to <code>Branch</code> — a consistent pattern across the whole POS package, resolved manually in services via <code>BranchRepository</code>/<code>BranchAccessService</code> rather than through entity graph traversal.</p>
+<hr>
+<h2 id="3-terminal-concept">3. Terminal Concept</h2>
+<p><strong>What it represents</strong>: a per-branch registration of a physical device/browser session running the POS UI — closer to "this machine, at this branch" than to a business concept like "checkout lane" (that's the Counter's job). It is <strong>logical + device-bound</strong>: identity is a client-generated <code>deviceFingerprint</code> (stored in <code>localStorage['billbull:pos:device_fingerprint']</code> on the frontend) plus a server-issued <code>terminalId</code> string, not a physical asset tag.</p>
+<ul>
+<li><strong>Creation flow</strong>: no admin "create terminal" form exists. Terminals self-register the first time <code>POSSales.jsx</code> mounts, via <code>registerTerminalAndResumeSession()</code> → <code>POST /api/pos/terminals/register</code> (<code>PosTerminalController</code>, endpoint intentionally <strong>not</strong> permission-gated — any authenticated user can trigger it, since it's device self-service). <code>PosTerminalService.registerOrRefresh</code> looks up by <code>terminalId</code> first, falling back to the <code>(deviceFingerprint, branchId)</code> composite unique lookup. New terminals are capped by <code>PosSettings.maxTerminalsPerBranch</code> (default 5, ARCHIVED+DECOMMISSIONED excluded from the count) and, if <code>PosSettings.requireTerminalApproval</code> is set, start in <code>PENDING_REGISTRATION</code> rather than <code>ACTIVE</code>.</li>
+<li><strong>Assignment flow</strong>: <code>assignCounter(terminalId, counterId)</code> — 404 if counter missing — sets <code>PosTerminal.counterId</code>; done from <code>POSConsole.jsx</code>'s terminals tab (live UI) or the orphaned standalone <code>POSTerminals.jsx</code> page (not routed anywhere — see §14).</li>
+<li><strong>Activation/Deactivation</strong>: <code>approve</code>/<code>reject</code> only from <code>PENDING_REGISTRATION</code>; <code>archive</code>/<code>decommission</code> blocked (409) while <code>currentOpenSessionId != null</code> — a terminal with an open session cannot be archived or decommissioned. Decommission has no restore path (documented as permanent in code). <code>restore</code> only from <code>ARCHIVED</code>, re-validated against the terminal-limit.</li>
+<li><strong>Authentication</strong>: none, beyond the ambient JWT of whichever authenticated user's browser is registering. There is no separate terminal credential/token — see §6.</li>
+</ul>
+<p><strong>Answers</strong>:</p>
+<ul>
+<li><strong>Can multiple users use one terminal?</strong> Yes, sequentially — a terminal's <code>currentOpenSessionId</code> ties it to one session (and thus one <code>openedBy</code> user) at a time, but different shifts/users can each open a session against the same terminal over time. <code>reassignSessionOwner</code>/<code>supervisorTakeover</code> also let a session's owning user change mid-shift.</li>
+<li><strong>Can one user use multiple terminals?</strong> Yes — nothing in the schema restricts a user to one terminal; <code>PosSessionService.getActiveSession</code> only checks that a given terminal's open session belongs to the requesting user, not the reverse.</li>
+<li><strong>Can one terminal belong to multiple counters?</strong> No — <code>counterId</code> is a single nullable FK on <code>PosTerminal</code> (one counter at a time, reassignable).</li>
+<li><strong>Can terminals move between branches?</strong> Not observed as a supported flow — <code>(deviceFingerprint, branchId)</code> is the composite identity, so the same device fingerprint registering under a different branch creates (or resolves to) a *different* <code>PosTerminal</code> row rather than moving the existing one.</li>
+</ul>
+<hr>
+<h2 id="4-counter-concept">4. Counter Concept</h2>
+<p>A Counter is a <strong>logical workstation / named billing point</strong> — not itself a piece of hardware, not a physical fixed asset record. It carries *default* device references (<code>defaultCashDrawer</code>, <code>defaultReceiptPrinter</code>) as plain strings, but actual hardware binding happens through <code>PosHardwareProfile</code>/<code>PosDevice</code>, assigned to the *terminal*, not the counter.</p>
+<ul>
+<li><strong>Creation</strong>: <code>PosCounterService.create</code> — auto-generates a <code>CTR-NNN</code> code if omitted; 409 if <code>(branchId, counterCode)</code> already exists.</li>
+<li><strong>Editing</strong>: <code>update</code> — standard field mutation.</li>
+<li><strong>Assignment</strong>: counters are assigned *to* terminals (<code>PosTerminal.counterId</code>), not the reverse — a counter doesn't hold a list of its terminals as a first-class relationship, it's discoverable only by querying terminals with that <code>counterId</code>.</li>
+<li><strong>Removal</strong>: soft-delete (<code>isActive=false</code>, status→INACTIVE); blocked with 409 if any terminal still references it.</li>
+</ul>
+<p><strong>Relationships</strong>:</p>
+<ul>
+<li><strong>Branch</strong>: loose <code>branchId</code> FK, counter codes unique per branch.</li>
+<li><strong>Terminal</strong>: one counter can have many terminals pointed at it (<code>counterId</code> FK on <code>PosTerminal</code>); a terminal has at most one counter.</li>
+<li><strong>Session</strong>: no direct FK — <code>PosSession.counterName</code>/<code>counterId</code> are copied from the terminal at session-open time (denormalized snapshot, not a live join).</li>
+<li><strong>User</strong>: none.</li>
+<li><strong>Printer / Cash Drawer</strong>: only as free-text default strings (<code>defaultReceiptPrinter</code>, <code>defaultCashDrawer</code>) on the counter — not FK relationships to <code>PosPrinter</code>/<code>PosCashDrawer</code> rows. Actual device binding is via <code>PosHardwareProfile</code> on the terminal.</li>
+<li><strong>Warehouse</strong>: none observed.</li>
+</ul>
+<p>The <code>PosCounterController</code> has <strong>no RBAC/module-permission gating</strong> at all beyond <code>isAuthenticated()</code> — notably weaker than the terminal controller, which is permission-gated action-by-action.</p>
+<hr>
+<h2 id="5-session-concept">5. Session Concept</h2>
+<p><code>PosSession</code> (<code>pos/session/PosSession.java</code>, service <code>pos/session/PosSessionService.java</code>, 2098 lines) is the cashier-shift ledger.</p>
+<ul>
+<li><strong>How a session starts</strong>: <code>PosSessionService.openSession(terminalId, counterName, openingCash)</code>. Resolves branch via <code>BranchAccessService</code>, resolves current business date via <code>PosBusinessDateService</code>. Guards, in order: (1) 403 if the business day is already closed; (2) 409 <code>PREVIOUS_DAY_SESSION_OPEN: ...</code> if any unclosed session exists from a prior business date for that branch (a machine-readable prefix the frontend parses to offer "go close that session" instead of generically retrying); (3) 409 if an OPEN session already exists for branch+terminal under a *different* cashier ("Terminal is already in use by active cashier: ..."), or hands the existing session back if it's the same user. A new <code>PosSession</code> row is inserted (status OPEN, zeroed totals, idle/max-duration timeouts pulled from <code>PosSettings</code>), then the terminal lock is claimed atomically (<code>terminalRepository.setOpenSession</code>, a native <code>UPDATE ... WHERE current_open_session_id IS NULL</code>); if that update affects 0 rows (lost the race), the just-inserted session row is deleted and a 409 is thrown.</li>
+<li><strong>How a session closes</strong>: <code>closeSession(...)</code> (4 overloads). Rejects if already CLOSED, or if status is neither OPEN nor SUSPENDED. <code>expectedCash</code> is computed via the shared <code>computeExpectedCash()</code> helper = <code>openingCash + tenderCash + cashDropIn - cashDropOut</code>. If <code>|closingCash - expectedCash| &gt; PosSettings.cashVarianceThreshold</code> and the caller hasn't set <code>supervisorApproved</code>, a 422 is thrown requiring supervisor sign-off. On success: status→CLOSED, <code>closedBy/At</code>, <code>durationSeconds</code> set; card reconciliation is recomputed server-side (never trusts a client-sent boolean); X-Report is auto-stamped if never explicitly generated; an immutable Z-Report JSON snapshot is built and stored; the terminal lock is released via a matching atomic <code>clearOpenSession</code>; GL posting (<code>PostingEngineService.createJournalFromSessionClose</code>) is attempted but wrapped in try/catch so a GL failure never blocks the close.</li>
+<li><strong>States</strong>: <code>OPEN ⇄ SUSPENDED → CLOSED</code> (<code>suspendSession</code>/<code>resumeSession</code>, each validating the current state before transition; no re-open from CLOSED).</li>
+<li><strong>Opening balance</strong>: <code>openingCash</code>, computed client-side from a fixed AED denomination breakdown (see §14) and passed in on open.</li>
+<li><strong>Closing balance / cash counting</strong>: <code>closingCash</code> from the same denomination-count UI at close; <code>closingDenominationsJson</code> persists the breakdown server-side.</li>
+<li><strong>Expected cash / variance</strong>: <code>expectedCash</code> (server-computed, see above) vs. <code>closingCash</code> (counted) → <code>cashDifference</code>; the variance-threshold supervisor gate is the only hard validation tied to the count.</li>
+<li><strong>Reports</strong>: <code>generateXReport</code>/<code>getXReport</code> (per-session, idempotent first-call stamp + immutable snapshot persistence via <code>PosXReportSnapshot</code>), <code>getZReport</code>/<code>generateDynamicZReport</code> (per-branch-per-date, aggregates sessions), <code>closeDay</code> (Day Close, the actual finalize-the-day transaction).</li>
+<li><strong>Associations</strong>: <code>openedBy</code>/<code>closedBy</code> (User, by raw username), <code>terminalId</code>+<code>terminalPk</code> (PosTerminal), <code>counterName</code>+<code>counterId</code> (PosCounter, denormalized snapshot at open), <code>branchId</code> (Branch). No direct Warehouse association — inventory effects flow through <code>StockMovement</code> at checkout, independent of the session record.</li>
+</ul>
+<hr>
+<h2 id="6-session-state-machine">6. Session State Machine</h2>
+<div class="mermaid">
+stateDiagram-v2
+    [*] --> TerminalRegistered: POST /api/pos/terminals/register
+    TerminalRegistered --> SessionOpen: POST /api/pos/sessions/open\n(guards: day not closed,\nno prior-day unclosed session,\nterminal lock CAS)
+    SessionOpen --> SessionSuspended: POST /{id}/suspend\n(idle timeout OR manual)
+    SessionSuspended --> SessionOpen: POST /{id}/resume\nOR supervisor-takeover
+    SessionOpen --> SessionOpen: Sales (checkout), Payments,\nRefunds, Cash Movements\n(recordInvoiceOnSession /\naddCashMovement)
+    SessionOpen --> XReportGenerated: POST /{id}/x-report/generate\n(idempotent, required before\nZ-Report eligibility)
+    SessionSuspended --> SessionClosed: close (also valid from SUSPENDED)
+    SessionOpen --> SessionClosed: POST /{id}/close\n(variance gate: 422 if over\nthreshold w/o supervisorApproved)
+    SessionClosed --> [*]: terminal lock released\n(clearOpenSession)
+    SessionClosed --> DayClosed: POST /close-day\n(all sessions for branch+date\nmust be CLOSED, all must have\nX-Report, sales+cash\nreconciliation must balance)
+    DayClosed --> [*]: business date advanced +1
+</div>
+<p><strong>Failure paths observed in code</strong>:</p>
+<ul>
+<li>Open blocked: business day already closed (403); unclosed prior-day session exists (409, <code>PREVIOUS_DAY_SESSION_OPEN:</code> prefix); terminal already occupied by another cashier (409); lost the terminal-lock CAS race (409, session row rolled back).</li>
+<li>Close blocked: already CLOSED (400); status neither OPEN nor SUSPENDED (400); variance over threshold without supervisor approval (422).</li>
+<li>Suspend/resume blocked: wrong starting state (400 in each case).</li>
+<li>Day close blocked: already closed for that branch+date (409); any OPEN session exists date-wide (400); any SUSPENDED session exists (400); resolved session range empty (400); range excludes sessions without acknowledgement (<code>SessionRangeExclusionException</code>); DRAFT invoices in range (400); PENDING/FAILED payments in range (400); sales reconciliation mismatch &gt;0.05 (<code>ReconciliationException("SALES", ...)</code>); cash reconciliation mismatch &gt;0.05 (<code>ReconciliationException("CASH", ...)</code>).</li>
+<li>Terminal-side failure paths that block session flow indirectly: terminal ARCHIVED/BLOCKED/DECOMMISSIONED/MAINTENANCE rejects registration/heartbeat (403, <code>"Terminal is {STATUS}"</code>), which prevents ever reaching Session Open.</li>
+</ul>
+<hr>
+<h2 id="7-login-flow">7. Login Flow</h2>
+<p><strong>There is no POS-specific login screen.</strong> POS reuses the app-wide login (<code>src/auth/login.jsx</code>) — JWT stored in <code>sessionStorage.token</code>, attached as <code>Authorization: Bearer</code> by <code>axiosConfig.js</code>'s request interceptor. Route: <code>/sales/pos</code> → <code>&lt;ResourceGuard module="sales.invoice"&gt;&lt;POSSales /&gt;&lt;/ResourceGuard&gt;</code> (<code>src/App.jsx:461-468</code>).</p>
+<p>What actually happens on entering POS is <strong>terminal registration + session resume</strong>, traced in <code>POSSales.jsx</code>:</p>
+<div class="mermaid">
+sequenceDiagram
+    participant U as User Browser
+    participant FE as POSSales.jsx
+    participant BE as PosTerminalController
+    participant SVC as PosSessionService
+
+    U->>FE: navigate to /sales/pos (already JWT-authenticated app-wide)
+    FE->>FE: read/create deviceFingerprint (localStorage)
+    FE->>FE: read cached terminalId for this branch (localStorage)
+    FE->>BE: POST /api/pos/terminals/register {terminalId, deviceFingerprint, deviceInfo}
+    alt terminal blocked/archived/decommissioned/maintenance
+        BE-->>FE: 403 "Terminal is {STATUS}"
+        FE->>FE: setTerminalRegistrationError, block UI
+    else success
+        BE-->>FE: terminal record (ACTIVE or PENDING_REGISTRATION)
+        FE->>FE: cache terminal.terminalId in localStorage
+        FE->>SVC: GET /api/pos/sessions/active?terminalId=
+        SVC-->>FE: existing OPEN session (if any) or null
+        FE->>SVC: GET /api/pos/sessions/day-status?terminalId=
+        SVC-->>FE: prior-day-open-session block info (if any)
+        FE->>FE: render dashboard / Start Session dialog
+    end
+</div>
+<p>No explicit role/branch/warehouse/counter *picker* UI exists in this flow — branch comes from the app-wide <code>BranchContext</code> branch selector (mirrored to <code>sessionStorage.activeBranchId</code>, sent as an <code>X-Branch-Id</code> header), and the counter comes from whatever counter is already assigned to the terminal server-side. Re-registration is triggered by the <code>window</code> event <code>billbull:branch-changed</code> fired by <code>BranchContext</code> when the user switches branches.</p>
+<hr>
+<h2 id="8-pos-startup-flow">8. POS Startup Flow</h2>
+<p>All in one "POS initialization" <code>useEffect</code> in <code>POSSales.jsx</code> (~lines 1880-2056), gated by <code>posInitLoading</code>:</p>
+<ol>
+<li><code>getPosSettings()</code> → merged into ~80 template-designer fields (<code>tplXxx</code>, <code>t2XxxShow*</code>).</li>
+<li><code>getBranchTaxConfiguration()</code> / per-branch variant → tax-inclusive flag, default VAT rate.</li>
+<li><code>registerTerminalAndResumeSession()</code> → terminal registration, active-session resume, day-status check (§7).</li>
+</ol>
+<p>Independent, separately-triggered effects:</p>
+<ul>
+<li><strong>Departments</strong>: <code>getDepartments()</code> → <code>posDepartments</code>.</li>
+<li><strong>Customers</strong>: <code>loadPosCustomers</code> → <code>getAllCustomers</code>/<code>searchCustomersAllFields</code>.</li>
+<li><strong>Products</strong>: <code>loadPosProducts</code> (paginated, <code>AbortController</code>-guarded) + <code>loadMorePosProducts</code> (infinite scroll).</li>
+<li><strong>Printer config</strong>: <code>getPosPrinters({branchId})</code> (inside <code>POSConsole.jsx</code> devices tab), resolved per-context via <code>resolvePrinterForContext</code> (<code>localPrintAgent.js</code>).</li>
+<li><strong>Scanner config</strong>: persisted to/from <code>localStorage['billbull:pos:scanner:{branchId}:{terminalId}']</code>; consumed by a raw <code>keydown</code> listener in <code>POSTouchScreen.jsx</code> implementing keyboard-wedge barcode capture — there is no dedicated scanner-hardware runtime utility.</li>
+<li><strong>Cash drawer</strong>: <code>posCashDrawerApi.js</code> manages only the device *record*; the actual kick command is bundled into the ESC/POS receipt payload sent via <code>localPrintAgent.js</code> at print time, not a standalone call.</li>
+<li><strong>X-Report</strong>: <code>loadXReport</code> fires when <code>currentView==='x-report'</code> or when dashboarded with an active session and no cached report.</li>
+<li><strong>Held sales</strong>: <code>loadHeldSales</code>, part of the <code>syncPosData</code> umbrella refresh (also re-runs customers/products/X-report after checkout or session close).</li>
+<li><strong>Business day / pending items</strong>: <code>getPosDayStatus</code> (§7) and <code>getDeliveryOrders(branchId)</code> for the Delivery Settle feature.</li>
+<li><strong>Heartbeat</strong>: <code>useHeartbeat(terminalId)</code> — <code>POST</code> heartbeat every 60s, failures swallowed silently.</li>
+<li><strong>Idle timeout</strong>: <code>useIdleTimeout({timeoutMs, sessionId, onIdle})</code> — locks the terminal UI on inactivity, and independently touches <code>touchSessionActivity(sessionId)</code> every 30s to keep the backend's idle clock in sync regardless of whether the idle threshold has been hit.</li>
+</ul>
+<p><strong>Payment methods, taxes</strong>: taxes loaded via <code>getBranchTaxConfiguration</code>; no separate "payment methods" load call was identified in this pass (payment method list appears to be a fixed set handled in checkout UI, not fetched — not fully confirmed, flagged as unread).</p>
+<hr>
+<h2 id="9-terminal-validation-logic">9. Terminal Validation Logic</h2>
+<p>From <code>PosTerminalService</code>:</p>
+<ul>
+<li>Terminal status must not be BLOCKED/MAINTENANCE/DECOMMISSIONED/ARCHIVED to <strong>register</strong> (403, <code>"Terminal is {STATUS}"</code>).</li>
+<li>Terminal status must not be ARCHIVED/DECOMMISSIONED/BLOCKED to <strong>heartbeat</strong> (MAINTENANCE deliberately excluded here so a mid-shift maintenance flag doesn't sever an already-open session's heartbeat).</li>
+<li>New-terminal registration enforces <code>PosSettings.maxTerminalsPerBranch</code> (default 5, ARCHIVED+DECOMMISSIONED excluded from the count).</li>
+<li>If <code>PosSettings.requireTerminalApproval</code>, new terminals start <code>PENDING_REGISTRATION</code> (not usable until <code>approve</code>).</li>
+<li><code>approve</code>/<code>reject</code> only valid from <code>PENDING_REGISTRATION</code> (else 400).</li>
+<li><code>archive</code>/<code>decommission</code> blocked (409) while <code>currentOpenSessionId != null</code> — duplicate-session prevention indirectly, since you can't archive out from under an active shift.</li>
+<li><code>restore</code> only from ARCHIVED, re-checks the terminal limit.</li>
+<li>Device identity resolved by <code>(deviceFingerprint, branchId)</code> composite unique lookup, then by <code>terminalId</code> — this is the closest thing to "device validation."</li>
+<li>Registration has a documented retry-once pattern for <code>DataIntegrityViolationException</code> (handles React StrictMode double-mount races) — a concurrency safeguard, not a business validation.</li>
+<li><strong>Permission checks</strong>: <code>PosTerminalController</code> uses <code>ModulePermissionService</code> gating per action-key (<code>permissions.pos.terminal.&lt;action&gt;</code>) for every admin action (rename/assign-counter/set-main/approve/reject/archive/restore/decommission/block/unblock/keep-active/set-auto-archive-exempt); <code>register</code>/<code>heartbeat</code> are deliberately left ungated (device self-service).</li>
+<li><strong>Concurrent login prevention</strong>: not really "login" — enforced instead as "one open session per terminal" (see §10) rather than a terminal-level login lock.</li>
+</ul>
+<hr>
+<h2 id="10-counter-validation-logic">10. Counter Validation Logic</h2>
+<p>From <code>PosCounterService</code>:</p>
+<ul>
+<li>Counter code uniqueness per branch — 409 on duplicate <code>(branchId, counterCode)</code>.</li>
+<li>Setting status to INACTIVE/MAINTENANCE blocked (409) if any terminal is still assigned with an active status (<code>countByCounterIdAndStatusIn &gt; 0</code>).</li>
+<li>Delete blocked (409) if any terminal references the counter at all (<code>countByCounterId &gt; 0</code>).</li>
+<li>No wrong-branch/wrong-warehouse/wrong-terminal checks were found beyond the composite unique code constraint — counters aren't validated against a warehouse at all (no relationship exists).</li>
+<li>No "existing session" check on the counter itself (sessions don't hold a live counter FK to check against — see §4).</li>
+<li><code>PosCounterController</code> has <strong>no RBAC/permission gating</strong>, unlike terminal — flagged for §18 (Current Problems, observation only).</li>
+</ul>
+<hr>
+<h2 id="11-session-validation-logic">11. Session Validation Logic</h2>
+<p>From <code>PosSessionService</code> (full breakdown in §5/§6):</p>
+<ul>
+<li>Session already open (for same terminal, different user) → 409.</li>
+<li>Business day already closed → 403 on open.</li>
+<li>Prior-day unclosed session exists → 409 <code>PREVIOUS_DAY_SESSION_OPEN:</code>.</li>
+<li>Different terminal/counter: not independently re-validated per call — <code>getActiveSession</code> checks the requesting terminal matches; a 409 is thrown if the terminal is "locked by active cashier" (different user) or registered under a different branch.</li>
+<li>Cash mismatch: variance-threshold supervisor-approval gate at close (422 without approval).</li>
+<li>Draft invoices / pending or failed payments: checked at <strong>Day Close</strong> time (<code>closeDay</code>), not at session close — 400 if any exist in the resolved session range.</li>
+<li>X-Report pending: gates Z-Report eligibility (<code>generateDynamicZReport</code> computes <code>pendingTerminals</code>); <code>assertXReportPrintable</code> throws 409 unless the session is CLOSED.</li>
+<li>Z-Report pending: <code>assertZReportPrintable</code> throws 409 unless a <code>PosDayClose</code> row exists for that branch+date.</li>
+<li>Sales/cash reconciliation: at Day Close, computed totals vs. persisted session totals must match within 0.05 tolerance, else <code>ReconciliationException</code>.</li>
+<li>No independent "session already closed" check beyond the close-guard itself (already covered in state-machine failure paths, §6).</li>
+</ul>
+<hr>
+<h2 id="12-database-analysis">12. Database Analysis</h2>
+<p>Migrations touching <code>pos_*</code> tables (chronological, <code>src/main/resources/db/migration/</code>), from the entity/DB research pass:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Migration</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td>V3</td><td>Adds <code>idx_pos_sess_lookup (branch_id, terminal_id, status)</code> on <code>pos_sessions</code></td></tr>
+<tr><td>V13</td><td>Adds <code>pos_checkout_key</code> (+ unique partial index, checkout idempotency) and <code>deposit_journal_id</code> to sales-invoice tables; creates <code>uq_pos_session_terminal_open</code> unique index on <code>pos_sessions(terminal_id) WHERE status='OPEN'</code></td></tr>
+<tr><td>V14</td><td>Creates <code>pos_audit_log</code> + 3 indexes</td></tr>
+<tr><td>V16</td><td>Creates <code>pos_devices</code>, <code>pos_layaway_payments</code> + indexes</td></tr>
+<tr><td>V18</td><td>Creates <code>pos_printers</code> + indexes</td></tr>
+<tr><td>V21</td><td>Alters <code>pos_sessions</code> (delivery-person columns)</td></tr>
+<tr><td>V22</td><td>Alters <code>pos_devices</code>, <code>pos_printers</code> (device_id link); creates <code>pos_device_event_log</code></td></tr>
+<tr><td>V23</td><td>Creates <code>pos_print_jobs</code> + indexes</td></tr>
+<tr><td>V24</td><td>Creates <code>pos_device_health_snapshot</code>, <code>pos_discovered_device</code></td></tr>
+<tr><td>V25</td><td>Creates <code>pos_hardware_profile</code>, <code>pos_hardware_profile_device</code>; alters <code>pos_terminals</code> (hardware_profile_id)</td></tr>
+<tr><td>V26</td><td>Alters <code>pos_hardware_profile</code>, <code>pos_terminals</code> (version columns)</td></tr>
+<tr><td>V27</td><td>Creates <code>pos_scanners</code>, <code>pos_cash_drawers</code></td></tr>
+<tr><td>V28</td><td>Drops/recreates <code>pos_terminals_status_check</code> CHECK constraint</td></tr>
+<tr><td>V33</td><td>Alters <code>pos_sessions</code> (card-settlement columns)</td></tr>
+<tr><td>V40</td><td>Adds <code>stale_at</code>, <code>stale_warning_sent_at</code>, <code>last_activity_at</code>, <code>auto_archive_exempt</code>, <code>archive_context_json</code> to <code>pos_terminals</code>; auto-archive config to <code>pos_settings</code></td></tr>
+<tr><td>V41</td><td>Creates <code>pos_stock_reservations</code> (POS inventory reservation)</td></tr>
+<tr><td>V47</td><td>Replaces global-unique <code>pos_terminals(device_fingerprint)</code> with composite unique <code>(device_fingerprint, branch_id)</code></td></tr>
+<tr><td>V48</td><td>Adds <code>decommissioned_at</code>, <code>decommission_reason</code> to <code>pos_terminals</code></td></tr>
+<tr><td>V49</td><td>Adds <code>tax_inclusive</code> to <code>pos_layaways</code></td></tr>
+<tr><td>V50</td><td>Creates <code>pos_business_dates</code> (unique per branch); operating-hours columns on <code>pos_settings</code></td></tr>
+<tr><td>V51</td><td>Adds <code>day_close_id</code> to <code>pos_sessions</code>; <code>start_session_id</code>/<code>end_session_id</code> to <code>pos_day_closes</code></td></tr>
+<tr><td>V52</td><td>Creates <code>pos_cash_movements</code> (if not existing) + void/edit/business-date/branch ledger columns</td></tr>
+<tr><td>V53</td><td>Formalizes <code>pos_day_closes</code> (explicit CREATE TABLE, unique <code>(branch_id, close_date)</code>); creates <code>pos_x_report_snapshots</code> (unique report_number), <code>pos_report_sequences</code> (unique <code>(report_type, branch_id, business_date)</code>)</td></tr>
+<tr><td>V54</td><td>Adds <code>*_display_name</code> columns to <code>pos_sessions</code>, <code>pos_x_report_snapshots</code>, <code>pos_day_closes</code></td></tr>
+<tr><td>V55</td><td>Creates <code>pos_correction_requests</code> (unique request_number)</td></tr>
+<tr><td>V56</td><td>Creates <code>pos_cash_movement_categories</code> (unique code); adds <code>category_id</code>/<code>posted_account_code</code>/<code>posted_account_name</code> to <code>pos_cash_movements</code>; <code>require_cash_movement_category</code> to <code>pos_settings</code></td></tr>
+<tr><td>V57</td><td>Creates <code>pos_session_denomination_corrections</code> (unique per correction_request_id)</td></tr>
+<tr><td>V58</td><td>Creates <code>pos_transaction_corrections</code> (unique per correction_request_id)</td></tr>
+</tbody></table></div>
+<p>V13, V21, V33, V40, V48-V50, V52-V58 use idempotent guards (<code>to_regclass</code>/<code>IF NOT EXISTS</code>), consistent with the repo's Flyway convention. No stored procedures/views were identified in this pass beyond the one runtime-created index below.</p>
+<p><strong>Runtime DDL (not a migration)</strong>: <code>PosSessionIndexInitializer</code> (<code>@EventListener(ApplicationReadyEvent.class)</code>) idempotently creates a partial unique index <code>uix_one_open_session_per_terminal ON pos_sessions(terminal_pk) WHERE status='OPEN'</code> at application startup rather than via Flyway — worth noting as an unusual pattern (schema-affecting DDL outside the migration pipeline).</p>
+<p><strong>Locking mechanisms found</strong>:</p>
+<ul>
+<li><code>@Lock(LockModeType.PESSIMISTIC_WRITE)</code> — exactly one hit in the whole POS tree, <code>PosReportSequenceRepository</code>, used by <code>PosReportNumberService</code> for atomic XR-/ZR- number sequence generation.</li>
+<li>No <code>@Version</code> (optimistic locking) anywhere under <code>pos/**</code>.</li>
+<li>No <code>synchronized</code> blocks anywhere under <code>pos/**</code>.</li>
+<li><code>closeDay</code>'s comment claims to "lock branch to prevent concurrent closes," but the actual call is a plain <code>branchRepository.findById(branchId)</code> — <strong>not</strong> a pessimistic lock. The real protection against a double Day Close race is the DB unique constraint <code>uk_pos_day_close_branch_date</code> on <code>pos_day_closes(branch_id, close_date)</code>. This is a documented discrepancy between comment and code, reported as an observation (§18), not a redesign point.</li>
+</ul>
+<hr>
+<h2 id="13-backend-architecture">13. Backend Architecture</h2>
+<h3 id="131-package-map">13.1 Package map</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Package</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><code>pos/terminal</code></td><td><code>PosTerminal</code>, <code>PosTerminalStatus</code>, <code>PosTerminalController</code>, <code>PosTerminalService</code>, <code>PosTerminalLifecycleService</code>, <code>PosTerminalActivityService</code>, <code>PosTerminalAutoArchiveJob</code>, <code>PosTerminalScheduler</code>, <code>PosTerminalRepository</code></td></tr>
+<tr><td><code>pos/counter</code></td><td><code>PosCounter</code>, <code>PosCounterStatus</code>, <code>PosCounterController</code>, <code>PosCounterService</code>, <code>PosCounterBackfillRunner</code>, <code>PosCounterRepository</code></td></tr>
+<tr><td><code>pos/session</code></td><td><code>PosSession</code>, <code>PosSessionStatus</code>, <code>PosCashMovement</code>, <code>PosCashMovementType/Status</code>, <code>PosSessionController</code>, <code>PosSessionService</code>, <code>PosSessionScheduler</code>, <code>PosSessionIndexInitializer</code>, <code>PosCashMovementController</code>, <code>PosCashMovementService</code>, <code>PosCashMovementResponse</code>, repositories</td></tr>
+<tr><td><code>pos/device</code></td><td><code>PosDevice</code>, <code>PosDeviceType/Status/RuntimeHealth</code>, <code>PosDeviceController</code>, <code>PosDeviceRepository</code></td></tr>
+<tr><td><code>pos/devicemanager</code></td><td><code>DeviceManager</code>, <code>DiscoveryService</code>, <code>HealthService</code>, <code>PosDeviceHealthSweepJob</code>, <code>HardwareProfileService</code>, <code>HardwareProfileAssignmentEngine</code>, <code>PosConfigurationChangedEvent/Listener</code>, <code>DashboardRefreshSignal</code>, <code>DeviceDashboardService</code>, <code>DeviceManagerController</code>, <code>HardwareProfileController</code>, <code>PosPrinterDeviceBackfillSeeder</code>, entities <code>PosDiscoveredDevice</code>, <code>PosHardwareProfile</code>, <code>PosHardwareProfileDevice</code>, <code>PosDeviceEventLog</code>, <code>PosDeviceHealthSnapshot</code></td></tr>
+<tr><td><code>pos/cashdrawer</code></td><td><code>PosCashDrawer</code>, <code>PosCashDrawerStatus/KickResult</code>, controller/service/repo</td></tr>
+<tr><td><code>pos/printer</code></td><td><code>PosPrinter</code>, related enums, controller/service/repo</td></tr>
+<tr><td><code>pos/printjob</code></td><td><code>PosPrintJob</code>, enums, <code>PosPrintJobTimeoutSweepJob</code>, controller/service/repo</td></tr>
+<tr><td><code>pos/scanner</code></td><td><code>PosScanner</code>, enums, controller/service/repo</td></tr>
+<tr><td><code>pos/dayclose</code></td><td><code>PosDayClose</code> — <strong>no dedicated service/controller</strong>; all Day Close logic lives in <code>PosSessionService</code>/<code>PosSessionController</code></td></tr>
+<tr><td><code>pos/held</code></td><td><code>PosHeldSale</code>, controller/service/repo</td></tr>
+<tr><td><code>pos/layaway</code></td><td><code>PosLayaway</code>, <code>PosLayawayItem</code>, <code>PosLayawayPayment</code>, enums, controller/service/repo</td></tr>
+<tr><td><code>pos/settings</code></td><td><code>PosSettings</code>, controller/service/repo</td></tr>
+<tr><td><code>pos/checkout</code></td><td><code>PosCheckoutController</code> (no separate service class — logic lives in the controller), request DTOs</td></tr>
+<tr><td><code>pos/audit</code></td><td><code>PosAuditLog</code>, <code>PosAuditAction</code>, <code>PosAuditService</code></td></tr>
+<tr><td><code>pos/search</code></td><td><code>PosSearchService</code>, <code>PosLookupService</code> (not read in full this pass)</td></tr>
+<tr><td><code>pos/receipt</code></td><td><code>ZatcaQrGenerator</code></td></tr>
+<tr><td><code>pos/businessdate</code></td><td><code>PosBusinessDateService</code> and business-date entity (not read in full)</td></tr>
+<tr><td><code>pos/admin</code></td><td>correction-request workflow (<code>PosCashMovementCategory</code>, correction entities — not read in full)</td></tr>
+<tr><td><code>pos/reports</code></td><td><code>PosReportsService</code>, <code>PosReportNumberService</code>, <code>PosXReportSnapshot</code>, <code>PosReportSequence</code>/<code>PosReportSequenceRepository</code></td></tr>
+</tbody></table></div>
+<h3 id="132-dependency-graph-informal">13.2 Dependency graph (informal)</h3>
+<pre><code class="lang-">PosCheckoutController ──&gt; SalesInvoiceService (financials posting) ──&gt; PostingEngineService
+                       └─&gt; PosSessionService.recordInvoiceOnSession (atomic totals UPDATE)
+
+PosSessionService ──&gt; PostingEngineService (session close, cash movement)
+                  ──&gt; PosTerminalRepository (atomic lock CAS)
+                  ──&gt; PosBusinessDateService (business date resolution/advance)
+                  ──&gt; PosXReportSnapshotRepository / PosReportNumberService (report snapshots)
+                  ──&gt; PosCashMovementCategoryService (category resolution)
+                  ──&gt; PosAuditService (audit trail)
+
+PosCashMovementService ──&gt; PosSessionService.addCashMovement (single source of validation/GL/audit)
+                        ──&gt; PostingEngineService (void reversal)
+
+PosTerminalService ──&gt; PosTerminalRepository, PosSettingsRepository (limits/approval config)
+PosTerminalLifecycleService ──&gt; PosSessionRepository, SalesInvoiceRepository (archive-context snapshot)
+HardwareProfileAssignmentEngine ──&gt; PosDevice/PosHardwareProfile/PosHardwareProfileDevice repos
+                                 ──&gt; publishes PosConfigurationChangedEvent</code></pre>
+<p>No circular package dependencies were flagged in this pass; <code>pos/session</code> is the clear hub, with almost every other POS subpackage's write path eventually routing through <code>PosSessionService</code> (checkout → recordInvoiceOnSession; cash movements → addCashMovement; day close → closeSession + closeDay).</p>
+<hr>
+<h2 id="14-api-analysis">14. API Analysis</h2>
+<h3 id="terminal-apiposterminals-posterminalcontroller">Terminal (<code>/api/pos/terminals</code>, <code>PosTerminalController</code>)</h3>
+<p><code>POST /register</code> (ungated), <code>POST /{terminalId}/heartbeat</code> (ungated), <code>POST /{id}/approve</code>, <code>POST /{id}/reject</code>, <code>POST /{id}/archive</code>, <code>POST /{id}/restore</code>, <code>POST /{id}/decommission</code>, <code>POST /{id}/keep-active</code>, <code>POST /{id}/archive-now</code>, <code>PUT /{id}/auto-archive-exempt</code>, <code>POST /{id}/assign-counter</code>, <code>GET /branch/{branchId}</code>, <code>GET /branch/{branchId}/all</code>, <code>GET /branch/{branchId}/pending</code>, <code>PUT /{terminalId}/rename</code>, <code>PUT /{terminalId}/status</code>, <code>PUT /{terminalId}/set-main</code> — all <code>@PreAuthorize("isAuthenticated()")</code> at the Spring layer, with <code>ModulePermissionService</code>-based per-action gating (<code>permissions.pos.terminal.&lt;action&gt;</code>) inside the method body for every admin action.</p>
+<h3 id="counter-apiposcounters-poscountercontroller">Counter (<code>/api/pos/counters</code>, <code>PosCounterController</code>)</h3>
+<p><code>GET /</code>, <code>GET /active</code>, <code>GET /{id}</code>, <code>POST</code> (create), <code>PUT /{id}</code> (update), <code>PATCH /{id}/status</code>, <code>DELETE /{id}</code> — all <code>isAuthenticated()</code> only, <strong>no module-permission gating</strong>.</p>
+<h3 id="session-apipossessions-possessioncontroller">Session (<code>/api/pos/sessions</code>, <code>PosSessionController</code>)</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Method</th><th>URL</th><th>Auth</th></tr></thead>
+<tbody>
+<tr><td>POST</td><td><code>/open</code></td><td>isAuthenticated</td></tr>
+<tr><td>GET</td><td><code>/active</code></td><td>isAuthenticated</td></tr>
+<tr><td>GET</td><td><code>/{id}</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/close</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/cash-movement</code></td><td>isAuthenticated</td></tr>
+<tr><td>GET</td><td><code>/{id}/x-report</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/x-report/generate</code></td><td>isAuthenticated</td></tr>
+<tr><td>GET</td><td><code>/z-report</code></td><td>isAuthenticated</td></tr>
+<tr><td>GET</td><td><code>/day-close/summary</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/x-report/print-check</code></td><td>isAuthenticated</td></tr>
+<tr><td>GET</td><td><code>/z-report/print-check</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/close-day</code></td><td><strong><code>hasAnyAuthority('SUPERVISOR','MANAGER','ADMIN','ROLE_SUPERVISOR','ROLE_MANAGER','ROLE_ADMIN')</code></strong> — the only hardcoded-role POS endpoint found</td></tr>
+<tr><td>GET</td><td><code>/day-status</code></td><td>isAuthenticated</td></tr>
+<tr><td>GET</td><td><code>/history</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/suspend</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/resume</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/supervisor-takeover</code></td><td>isAuthenticated</td></tr>
+<tr><td>POST</td><td><code>/{id}/touch-activity</code></td><td>isAuthenticated</td></tr>
+</tbody></table></div>
+<h3 id="cash-movements-apiposcash-movements-poscashmovementcontroller">Cash movements (<code>/api/pos/cash-movements</code>, <code>PosCashMovementController</code>)</h3>
+<p><code>GET /</code> (list — <code>viewall</code> perm for cross-session, else <code>view</code> perm + mandatory <code>sessionId</code>), <code>GET /{id}</code>, <code>POST /</code> (create), <code>PUT /{id}</code> (edit), <code>POST /{id}/void</code>. Gated via <code>permissions.pos.cashmovement.{create,view,viewall,edit,void}</code>.</p>
+<h3 id="checkout-apiposcheckout-poscheckoutcontroller">Checkout (<code>/api/pos/checkout</code>, <code>PosCheckoutController</code>)</h3>
+<p><code>POST /api/pos/checkout</code> (idempotent via <code>checkoutKey</code>), <code>GET /invoices/lookup</code>, <code>GET /invoices</code>, <code>GET /invoices/{id}/receipt</code>, <code>GET /invoices/{id}/reprint</code>, <code>GET /deliveries</code>, <code>POST /deliveries/{id}/settle</code> — all <code>isAuthenticated()</code> only except an inline price-override permission check (<code>pos_price_override</code>) for below-minimum-price lines.</p>
+<h3 id="device-apiposdevices-posdevicecontroller">Device (<code>/api/pos/devices</code>, <code>PosDeviceController</code>)</h3>
+<p>Create/update/delete-type endpoints require <code>hasAuthority('POS_SETTINGS')</code>; other endpoints <code>isAuthenticated()</code>.</p>
+<p>Error model across all POS controllers: <code>ResponseStatusException</code> (400/403/404/409/422/500) thrown from services, plus two domain-specific exceptions (<code>SessionRangeExclusionException</code>, <code>exception.ReconciliationException</code>) for Day Close's exclusion/reconciliation cases. No controller-level try/catch was found — presumably resolved by <code>exception.GlobalExceptionHandler</code>.</p>
+<hr>
+<h2 id="15-frontend-analysis">15. Frontend Analysis</h2>
+<h3 id="151-component-hierarchy">15.1 Component hierarchy</h3>
+<pre><code class="lang-">POSSales.jsx (mega-component, owns nearly all state)
+ ├─ POS/POSTouchScreen.jsx           (Cart Focus checkout screen — legacy/default template)
+ ├─ POS/TradePOS/TradePOSTouchScreen.jsx  (compact template, feature/posclient work)
+ │    └─ TradePOS/components/{ui,layout,cart,catalog}/**
+ ├─ POS/POSConsole.jsx               (admin console: layout/behavior/devices/templates/terminals&amp;counters tabs)
+ │    ├─ POSCounters.jsx             (imported directly — Counter CRUD)
+ │    └─ [terminal admin inline in the 'terminals' console tab, NOT via POSTerminals.jsx]
+ ├─ POS/CustomerPicker.jsx, CustomerView.jsx
+ ├─ POS/DeviceDashboardPanel.jsx
+ ├─ POS/POSCurrency.jsx
+ ├─ POS/POSPrintPreview.jsx
+ ├─ components/pos/SupervisorTakeoverDialog.jsx
+ ├─ components/pos/TerminalStatusBadge.jsx
+ └─ components/POS/ItemEntry/**          (separate, capital-POS directory — used by TradePOSTouchScreen)</code></pre>
+<p><code>POSTerminals.jsx</code> (<code>src/pages/Sales/POSTerminals.jsx</code>) is a fully-built standalone terminal-management page but is <strong>not routed or imported anywhere</strong> — <code>POSConsole.jsx</code> implements its own inline terminal admin UI instead. This is a dead/orphaned file, noted as an observation in §18.</p>
+<h3 id="152-state-management">15.2 State management</h3>
+<p>No Redux, no dedicated <code>PosContext</code>. All POS state is local <code>useState</code> in <code>POSSales.jsx</code>, passed down as props. Cross-cutting app state comes from <code>BranchContext</code> (active branch, <code>X-Branch-Id</code> header, <code>billbull:branch-changed</code> event), <code>CompanyContext</code> (currency), <code>PermissionContext</code> (<code>usePermissions()</code> — <code>canView/canCreate/canEdit/canDelete/canAction</code>).</p>
+<h3 id="153-hooks">15.3 Hooks</h3>
+<ul>
+<li><code>useHeartbeat(terminalId)</code> — 60s heartbeat POST, failures swallowed.</li>
+<li><code>useIdleTimeout({timeoutMs, sessionId, onIdle})</code> — idle-lock trigger + independent 30s <code>touchSessionActivity</code> ping.</li>
+<li><code>usePermission</code>/<code>usePrintDocument</code>/<code>useShortcuts</code> — <strong>not used anywhere in the POS code path</strong> (confirmed via grep); POS uses <code>usePermissions()</code> from context directly and its own bespoke print pipeline (<code>printGenerator.js</code>, <code>localPrintAgent.js</code>, <code>escPosReceipt.js</code>) instead of the shared hooks.</li>
+</ul>
+<h3 id="154-routing">15.4 Routing</h3>
+<p><code>/sales/pos</code> → <code>ResourceGuard module="sales.invoice"</code> → <code>POSSales</code>. <code>/sales/cash-movements</code> → <code>ResourceGuard module="permissions.pos.cashmovement.view"</code> → <code>CashMovements</code>. Enterprise POS admin/audit screens (<code>PosAdministration</code>, <code>PosCashMovementCategories</code>, <code>PosCorrectionAnalytics/AuditView/Dashboard/History</code>, <code>PosSessionDenominationCorrections</code>, <code>PosTransactionCorrections</code>) are routed separately, each behind its own <code>ResourceGuard</code>. <strong>Terminal and Counter management have no dedicated routes</strong> — both are reached only as embedded panels inside <code>POSConsole.jsx</code>, itself a <code>currentView</code> state inside <code>POSSales.jsx</code>, not a URL.</p>
+<h3 id="155-srcapi-surface">15.5 <code>src/api/</code> surface</h3>
+<p><code>posApi.js</code> (terminals, settings, sessions, invoices, X/Z reports, scan resolve, checkout, layaways, held sales, credit balance, batch check, customer history, delivery orders), <code>counterApi.js</code>, <code>posCashMovementApi.js</code>, <code>posCashMovementCategoryApi.js</code>, <code>posPrinterApi.js</code>, <code>posScannerApi.js</code>, <code>posCashDrawerApi.js</code>, <code>posPrintJobApi.js</code>, <code>posDeviceDashboardApi.js</code>, <code>posHardwareProfileApi.js</code>, <code>posAdminApi.js</code>/<code>posAdminReportingApi.js</code>/<code>posTransactionCorrectionApi.js</code>/<code>posSessionDenominationCorrectionApi.js</code>, <code>posReportsApi.js</code>.</p>
+<h3 id="156-trade-pos-branch-work-featureposclient">15.6 Trade POS branch work (<code>feature/posclient</code>)</h3>
+<p>Three commits, purely additive presentational layer, no new routes:</p>
+<ul>
+<li><code>06e199b</code> — UI primitives (<code>TradeButton</code>, <code>TradeCard</code>, <code>TradeBadge</code>, <code>TradeInput</code>, <code>TradeDivider</code>, <code>TradeEmptyState</code>, <code>TradeSkeleton</code>, <code>TradeSummaryCard</code>).</li>
+<li><code>0bb14c3</code> — <code>TradePOSTouchScreen.jsx</code> + layout shell (<code>TradeHeader</code>, <code>TradeMainCanvas</code>); wired via <code>posTemplate === 'compact'</code> inside <code>POSSales.jsx</code> to swap in for <code>POSTouchScreen</code>.</li>
+<li><code>1e787e0</code> — cart/catalog component set matching Figma (<code>TradeCartPanel</code>, <code>TradeCartList</code>, <code>TradeInvoiceRow</code>, <code>TradeSummary</code>, <code>TradeSearchBar</code>, <code>TradeCategoryFilter</code>, <code>TradeProductGrid</code>, <code>TradeProductCard</code>).</li>
+</ul>
+<hr>
+<h2 id="16-business-rules">16. Business Rules</h2>
+<ul>
+<li><strong>One session per terminal at a time</strong> — enforced at both DB (partial unique index) and application (atomic CAS) level. Not "one session per user" or "one session per counter" directly — those are derived effects of the terminal-level rule plus the terminal→counter assignment.</li>
+<li><strong>Shared terminals</strong>: yes, sequentially across shifts/users (see §3).</li>
+<li><strong>Shared counters</strong>: yes, across multiple terminals (<code>counterId</code> FK is many-to-one from terminal to counter).</li>
+<li><strong>Multiple cash drawers</strong>: schema allows many <code>PosCashDrawer</code> rows per branch/terminal; each must have exactly one <code>attachedPrinterId</code> (mandatory FK).</li>
+<li><strong>Multiple printers</strong>: yes, <code>PosPrinter</code> rows are independent, role-tagged via <code>PosHardwareProfileDevice</code> when bound through a hardware profile.</li>
+<li><strong>Branch restrictions</strong>: pervasive — nearly every POS entity carries a <code>branchId</code>; terminal device identity, counter codes, day close, business date are all branch-scoped.</li>
+<li><strong>Warehouse restrictions</strong>: not directly modeled at the POS terminal/counter/session level; inventory effects resolve through the branch's default warehouse at checkout time (stock movement layer), not through a POS-entity FK.</li>
+<li><strong>Role restrictions</strong>: minimal at the endpoint layer — only Day Close (<code>close-day</code>) hardcodes SUPERVISOR/MANAGER/ADMIN roles; everything else uses fine-grained <code>ModulePermissionService</code> permission keys or plain <code>isAuthenticated()</code> (Counter controller has none at all).</li>
+<li><strong>Business day restrictions</strong>: session open blocked if the business day is already closed; a prior-day unclosed session blocks new-day session opening; Day Close requires zero OPEN/SUSPENDED sessions and complete X-Reports across the branch for that date; the business date advances by exactly one day on successful Day Close (never jumps to "now").</li>
+</ul>
+<hr>
+<h2 id="17-reporting-flow">17. Reporting Flow</h2>
+<ul>
+<li><strong>X-Report</strong>: per-session. Data source is the session's own accumulated fields (<code>totalCashSales</code> etc., populated via the atomic <code>incrementSessionTotals</code> UPDATE on every checkout) plus a computed <code>expectedCash</code>. First call to <code>generateXReport</code> stamps <code>xReportGeneratedAt/By</code> and persists an immutable <code>PosXReportSnapshot</code> row; subsequent calls just re-read. Print is hard-gated (<code>assertXReportPrintable</code>, 409 unless session is CLOSED) though the on-screen preview is available while the session is still open.</li>
+<li><strong>Z-Report / Day Close</strong>: per-branch-per-business-date. <code>getZReport</code> returns the persisted <code>PosDayClose.zReportJson</code> snapshot if the day is already closed, otherwise dynamically builds one (<code>generateDynamicZReport</code>) and reports <code>eligible=false</code> with a <code>pendingTerminals</code> list if any terminal hasn't generated its X-Report yet. <code>closeDay</code> is the actual finalize transaction — see §6/§11 for its full validation set (reconciliation, exclusions, draft invoices, pending payments).</li>
+<li><strong>Session Report / history</strong>: <code>getSessionHistory</code>/<code>GET /history</code> — paginated browse for X-Report reprint/review, filterable by branch/date/terminal/status.</li>
+<li><strong>Cash Report</strong>: derived from <code>PosCashMovement</code> rows (<code>sumAmountByMovementTypeForSessionIds</code>), folded into both the X-Report's cash-position section and the session's <code>expectedCash</code> computation.</li>
+<li><strong>Sales Summary</strong>: <code>buildCashierWiseSummary</code>, <code>buildTopSellingItems</code>, <code>buildReturnsSummary</code>/<code>buildSessionReturnsSummary</code> — private helpers inside <code>PosSessionService</code> feeding both X and Z reports.</li>
+<li><strong>Dependencies</strong>: strict session → terminal → branch chain; Day Close additionally depends on all terminals in the branch having completed X-Reports, and on the resolved session range across the whole branch (not just one terminal).</li>
+<li><strong>Locking</strong>: no explicit pessimistic lock for Day Close despite the code comment claiming one (§12) — actual double-close protection is the DB unique constraint on <code>(branch_id, close_date)</code>.</li>
+</ul>
+<hr>
+<h2 id="18-hardware-integration">18. Hardware Integration</h2>
+<p>Ownership, from the entity FKs:</p>
+<ul>
+<li><strong>Printer</strong> (<code>PosPrinter</code>) — belongs to a <code>PosDevice</code> (parent), optionally role-bound into a <code>PosHardwareProfile</code> which is assigned to a <strong>Terminal</strong> (<code>PosTerminal.hardwareProfileId</code>). Also has a legacy direct <code>terminalId</code> field on <code>PosDevice</code> itself, predating the hardware-profile model (both models coexist — additive, not migrated away).</li>
+<li><strong>Scanner</strong> (<code>PosScanner</code>) — explicitly documented in code as a "lightweight, registration-only" entity: editing it has zero runtime effect. Runtime scanning is pure client-side keyboard-wedge capture in <code>POSTouchScreen.jsx</code>, unrelated to the DB row beyond bookkeeping.</li>
+<li><strong>Cash Drawer</strong> (<code>PosCashDrawer</code>) — belongs to a <code>PosDevice</code>, and mandatorily to a <strong>Printer</strong> (<code>attachedPrinterId</code>) since the kick command physically rides the printer's cable — not independently addressable hardware in this system.</li>
+<li><strong>Customer Display / Payment Terminal / Weighing Scale</strong>: <code>PosDeviceType</code> enum includes <code>CARD_TERMINAL</code>, <code>CUSTOMER_DISPLAY</code>, <code>SCALE</code> as recognized types, but no dedicated child-entity classes (unlike printer/scanner/drawer) were found for these — they appear to exist only as generic <code>PosDevice</code> rows without specialized behavior, flagged as unconfirmed/unread rather than asserted absent.</li>
+<li><strong>Belongs-to summary</strong>: printers/scanners/drawers belong to <code>PosDevice</code> (branch+optionally terminal); hardware *profiles* (bundles of role-tagged devices) belong to a terminal; a counter only carries free-text default-device strings, no FK relationship to actual device rows.</li>
+</ul>
+<hr>
+<h2 id="19-current-problems-observations-only-not-recommendations">19. Current Problems (Observations Only — Not Recommendations)</h2>
+<ul>
+<li><strong><code>PosCounterController</code> has no permission gating</strong> (<code>isAuthenticated()</code> only), inconsistent with <code>PosTerminalController</code>'s per-action <code>ModulePermissionService</code> gating for a structurally similar admin surface.</li>
+<li><strong><code>POSTerminals.jsx</code> is dead code</strong> — a fully-built, permission-aware terminal admin page that is never routed or imported; <code>POSConsole.jsx</code> reimplements equivalent terminal-admin UI inline instead, meaning the same logic/UI exists in two places with only one reachable.</li>
+<li><strong>Two POS component directories differing only by case</strong> — <code>src/components/pos/</code> (lowercase, <code>SupervisorTakeoverDialog</code>/<code>TerminalStatusBadge</code>) and <code>src/components/POS/ItemEntry/</code> (capital) — both exist side by side, relying on Windows' case-insensitive filesystem; this would break on a case-sensitive filesystem (Linux CI/deploy) if not already handled by exact-case imports.</li>
+<li><strong><code>closeDay</code>'s "lock branch" comment doesn't match the code</strong> — it performs a plain <code>findById</code>, not a pessimistic lock; actual concurrency protection for double-Day-Close is an unrelated DB unique constraint. The comment could mislead a future maintainer into assuming a stronger guarantee exists than actually does.</li>
+<li><strong>No optimistic locking (<code>@Version</code>) anywhere in <code>pos/</strong></code>** — all concurrency safety is via targeted atomic native UPDATEs or DB unique constraints, which works for the specific races handled (session-open CAS, activity-touch, totals-increment) but means any *other* concurrent read-modify-write path on these entities (if one is ever added) would have no such protection by default.</li>
+<li><strong><code>PosSessionService</code> is 2098 lines</strong> covering session lifecycle, cash movements, X-Report, Z-Report, and Day Close in one class — a large surface area with many private helper methods, which the request explicitly asked not to be redesigned but is worth naming as a size/cohesion observation.</li>
+<li><strong>Terminal identity via device fingerprint is heuristic, not cryptographic</strong> — collision or fingerprint-reset behavior (e.g. clearing browser storage) was not traced in this pass; the registration flow's fallback to <code>terminalId</code> string lookup versus fresh <code>(deviceFingerprint, branchId)</code> lookup could, in principle, create duplicate logical terminals if localStorage is cleared — not confirmed as an actual bug in this pass, flagged as worth checking if terminal proliferation is ever observed operationally.</li>
+<li><strong>Payment-methods loading in POS startup was not conclusively located</strong> — flagged as unread/unconfirmed in §8 rather than asserted.</li>
+<li><strong><code>pos/search</code>, <code>pos/receipt</code>, <code>pos/businessdate</code>, <code>pos/admin</code>, <code>pos/reports</code> internals were not read line-by-line</strong> in this pass (confirmed to exist and their table/migration footprint verified, but full method-level behavior wasn't traced) — a follow-up pass would be needed before those areas could be redesigned with confidence.</li>
+</ul>
+<hr>
+<h2 id="20-end-to-end-business-flow-as-observed">20. End-to-End Business Flow (As Observed)</h2>
+<pre><code class="lang-">Branch exists (pre-existing, not created via POS flow)
+   ↓
+Counter created (PosCounterService.create) — optional, terminal can start unassigned
+   ↓
+Terminal self-registers on first POS page load (device fingerprint + branch)
+   → PENDING_REGISTRATION (if approval required) → admin approve → ACTIVE
+   → or straight to ACTIVE if approval not required
+   ↓
+[Optional] Terminal assigned to a Counter (assignCounter)
+[Optional] Hardware Profile assigned to Terminal (HardwareProfileAssignmentEngine)
+   ↓
+User already authenticated app-wide (JWT) — no separate POS login
+   ↓
+Open Session (denomination-counted opening cash)
+   — blocked if business day closed or a prior-day session is unclosed
+   — terminal lock acquired atomically
+   ↓
+Sales (checkout) → recordInvoiceOnSession (atomic totals increment)
+Cash Movements (drop-in/drop-out) → addCashMovement (GL posted)
+Held Sales (suspend cart, not session) / Layaways (partial payment plans)
+Refunds / Sales Returns (feed buildReturnsSummary)
+   ↓
+Suspend Session (idle timeout or manual) ⇄ Resume / Supervisor Takeover
+   ↓
+X-Report generated (per session, required before day-wide Z-Report eligibility)
+   ↓
+Close Session (denomination-counted closing cash, variance gate, GL posting,
+               immutable Z-Report snapshot built, terminal lock released)
+   ↓
+[repeat Open→Close across all terminals/cashiers active that business date]
+   ↓
+Day Close (role-gated: SUPERVISOR/MANAGER/ADMIN)
+   — requires zero OPEN/SUSPENDED sessions branch-wide for the date
+   — requires every session to have an X-Report
+   — requires zero draft invoices / pending-failed payments in range
+   — requires sales and cash reconciliation within 0.05 tolerance
+   ↓
+PosDayClose persisted (report_number ZR-...), business date advances +1 day
+   ↓
+Next Business Day — cycle repeats; a terminal whose prior session wasn't closed
+   in time blocks new session opens until resolved (PREVIOUS_DAY_SESSION_OPEN)</code></pre>
+<hr>
+<h2 id="21-sequence-diagrams">21. Sequence Diagrams</h2>
+<h3 id="211-login-terminal-registration">21.1 Login / Terminal Registration</h3>
+<p>See §7 — already rendered above.</p>
+<h3 id="212-open-session">21.2 Open Session</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant FE as POSSales.jsx
+    participant C as PosSessionController
+    participant S as PosSessionService
+    participant TR as PosTerminalRepository
+    participant DB as pos_sessions / pos_terminals
+
+    FE->>C: POST /api/pos/sessions/open {terminalId, counterName, openingCash}
+    C->>S: openSession(...)
+    S->>S: resolve branch, business date
+    alt business day closed
+        S-->>C: 403
+    else prior-day unclosed session exists
+        S-->>C: 409 PREVIOUS_DAY_SESSION_OPEN:...
+    else terminal already occupied by other cashier
+        S-->>C: 409 "Terminal is already in use..."
+    else
+        S->>DB: INSERT pos_sessions (status=OPEN)
+        S->>TR: setOpenSession(terminalPk, sessionId)\nnative UPDATE ... WHERE current_open_session_id IS NULL
+        alt 0 rows updated (lost race)
+            S->>DB: DELETE the just-inserted session
+            S-->>C: 409 "Terminal is already occupied..."
+        else success
+            S-->>C: 200 session
+        end
+    end
+    C-->>FE: response
+</div>
+<h3 id="213-create-sale-checkout">21.3 Create Sale (Checkout)</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant FE as POSTouchScreen.jsx
+    participant CC as PosCheckoutController
+    participant INV as SalesInvoiceService
+    participant PE as PostingEngineService
+    participant SS as PosSessionService
+
+    FE->>CC: POST /api/pos/checkout {checkoutKey, items, cardLegs, sessionId,...}
+    CC->>CC: dedup by checkoutKey (idempotency)
+    CC->>CC: validate card legs, price-override permission
+    CC->>INV: create DRAFT SalesInvoice
+    CC->>INV: updateStatus (PAID/PARTIALLY_PAID/CONFIRMED)
+    INV->>INV: FEFO/batch reservation, auto-DN, stock deduction
+    INV->>PE: post GL invoice entry
+    CC->>INV: recordPayment (per tender leg) / applyAvailableAdvances
+    CC->>SS: recordInvoiceOnSession(sessionId, invoice)
+    SS->>SS: atomic incrementSessionTotals UPDATE
+    CC-->>FE: 200 invoice + receipt data
+</div>
+<h3 id="214-payment-receipt-printing">21.4 Payment / Receipt Printing</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant FE as POSSales.jsx
+    participant PA as localPrintAgent.js
+    participant Agent as pos-print-agent (local HTTP)
+    participant BE as backend (PosPrintJob)
+
+    FE->>BE: createPrintJob (audit/queue record)
+    FE->>PA: sendEscPosReceiptToConfiguredPrinter(payload)
+    alt USB/Bluetooth/Windows-queue printer
+        PA->>Agent: POST /print/escpos (base64 ESC/POS bytes)
+        Agent-->>PA: result + SHA-256 integrity check
+    else Network/IP printer
+        FE->>BE: printPosPrinterEscPos (backend opens raw socket to printer IP)
+    end
+    PA->>BE: dispatchPrintJob / reportPrintJobResult (best-effort bookkeeping)
+    alt ESC/POS rejected by driver
+        PA->>Agent: fallback POST /print/receipt (text/GDI)
+        Agent-->>PA: fallbackUsed:"text"
+    end
+</div>
+<h3 id="215-session-close">21.5 Session Close</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant FE as POSSales.jsx
+    participant C as PosSessionController
+    participant S as PosSessionService
+    participant PE as PostingEngineService
+    participant TR as PosTerminalRepository
+
+    FE->>C: POST /{id}/close {closingCash, denominations, cardSettlement,...}
+    C->>S: closeSession(...)
+    S->>S: compute expectedCash, variance
+    alt variance > threshold and not supervisorApproved
+        S-->>C: 422 requires supervisor approval
+    else
+        S->>S: set status=CLOSED, build zReportJson snapshot
+        S->>TR: clearOpenSession(terminalPk, sessionId)
+        S->>PE: createJournalFromSessionClose (try/catch, non-blocking)
+        S-->>C: 200 closed session
+    end
+    C-->>FE: response
+    FE->>FE: navigate to X-Report view, auto-print once
+</div>
+<h3 id="216-day-close">21.6 Day Close</h3>
+<div class="mermaid">
+sequenceDiagram
+    participant FE as POSSales.jsx (supervisor)
+    participant C as PosSessionController
+    participant S as PosSessionService
+
+    FE->>C: POST /close-day {branchId, date, startSessionId?, endSessionId?, acknowledgeExclusions?}
+    Note over C: role-gated: SUPERVISOR/MANAGER/ADMIN
+    C->>S: closeDay(...)
+    S->>S: already closed for branch+date? -> 409
+    S->>S: resolve session range
+    S->>S: any OPEN/SUSPENDED session date-wide? -> 400
+    S->>S: range excludes sessions & not acknowledged? -> SessionRangeExclusionException
+    S->>S: draft invoices / pending-failed payments? -> 400
+    S->>S: sales reconciliation within 0.05? else ReconciliationException("SALES")
+    S->>S: cash reconciliation within 0.05? else ReconciliationException("CASH")
+    S->>S: persist PosDayClose (ZR-... number), stamp dayCloseId on sessions
+    S->>S: advance business date +1 day
+    S-->>C: 200 day-close summary
+    C-->>FE: response
+</div>
+<hr>
+<h2 id="appendix-file-by-file-reference-condensed">Appendix: File-by-file reference (condensed)</h2>
+<p><strong>Backend</strong> — <code>billbull-backend/src/main/java/com/billbull/backend/pos/</code>: <code>terminal/{PosTerminal,PosTerminalStatus,PosTerminalController,PosTerminalService,PosTerminalLifecycleService,PosTerminalActivityService,PosTerminalAutoArchiveJob,PosTerminalScheduler,PosTerminalRepository}.java</code> <code>counter/{PosCounter,PosCounterStatus,PosCounterController,PosCounterService,PosCounterBackfillRunner,PosCounterRepository}.java</code> <code>session/{PosSession,PosSessionStatus,PosCashMovement,PosCashMovementType,PosCashMovementStatus,PosSessionController,PosSessionService,PosSessionScheduler,PosSessionIndexInitializer,PosCashMovementController,PosCashMovementService,PosCashMovementResponse,PosSessionRepository,PosCashMovementRepository}.java</code> <code>device/{PosDevice,PosDeviceType,PosDeviceStatus,PosDeviceRuntimeHealth,PosDeviceController,PosDeviceRepository}.java</code> <code>devicemanager/<strong></code> (DeviceManager, DiscoveryService, HealthService, PosDeviceHealthSweepJob, HardwareProfileService, HardwareProfileAssignmentEngine, PosConfigurationChangedEvent/Listener, DashboardRefreshSignal, DeviceDashboardService, DeviceManagerController, HardwareProfileController, PosPrinterDeviceBackfillSeeder, PosDiscoveredDevice, PosHardwareProfile, PosHardwareProfileDevice, PosDeviceEventLog, PosDeviceHealthSnapshot) <code>cashdrawer/</strong></code>, <code>printer/<strong></code>, <code>printjob/</strong></code>, <code>scanner/<strong></code>, <code>dayclose/PosDayClose.java</code>, <code>held/</strong></code>, <code>layaway/<strong></code>, <code>settings/</strong></code>, <code>checkout/{PosCheckoutController, PosCheckoutRequest DTOs}.java</code>, <code>audit/{PosAuditLog,PosAuditAction,PosAuditService}.java</code>, <code>search/<strong></code>, <code>receipt/ZatcaQrGenerator.java</code>, <code>businessdate/</strong></code>, <code>admin/<strong></code>, <code>reports/</strong></code>.</p>
+<p><strong>Migrations</strong>: <code>billbull-backend/src/main/resources/db/migration/{V3,V13,V14,V16,V18,V21,V22,V23,V24,V25,V26,V27,V28,V33,V40,V41,V47,V48,V49,V50,V51,V52,V53,V54,V55,V56,V57,V58}__*.sql</code>.</p>
+<p><strong>Frontend</strong> — <code>billbull-frontend/src/</code>: <code>pages/Sales/POSSales.jsx</code>; <code>pages/Sales/POS/{POSTouchScreen,POSConsole,CustomerPicker,CustomerView,DeviceDashboardPanel,POSCurrency,POSPrintPreview,posConstants,posUtils,posPrintUtils}.jsx/js</code>; <code>pages/Sales/POS/TradePOS/<strong></code>; <code>pages/Sales/POS/receiptTemplates/</strong></code>; <code>pages/Sales/POSTerminals.jsx</code> (orphaned); <code>pages/Sales/POSCounters.jsx</code>; <code>pages/Enterprise/Pos*.jsx</code>; <code>components/pos/{SupervisorTakeoverDialog,TerminalStatusBadge}.jsx</code>; <code>components/POS/ItemEntry/**</code>; <code>context/{BranchContext,CompanyContext,PermissionContext}.jsx</code>; <code>hooks/{useHeartbeat,useIdleTimeout}.js</code>; <code>api/{posApi,counterApi,posCashMovementApi,posCashMovementCategoryApi,posPrinterApi,posScannerApi,posCashDrawerApi,posPrintJobApi,posDeviceDashboardApi,posHardwareProfileApi,posAdminApi,posAdminReportingApi,posTransactionCorrectionApi,posSessionDenominationCorrectionApi,posReportsApi}.js</code>; <code>utils/{localPrintAgent,escPosReceipt,printGenerator}.js</code>.</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  function currentTheme() {
+    var attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark' || attr === 'light') return attr;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad: true, theme: currentTheme() === 'dark' ? 'dark' : 'default' });
+  }
+</script>
+</body>
+</html>

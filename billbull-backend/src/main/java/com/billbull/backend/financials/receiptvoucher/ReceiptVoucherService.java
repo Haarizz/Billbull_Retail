@@ -20,8 +20,11 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import jakarta.persistence.EntityManager;
 import jakarta.annotation.PostConstruct;
 
+import com.billbull.backend.pos.admin.CorrectionTargetType;
+import com.billbull.backend.pos.admin.EffectiveCorrectionViewService;
 import com.billbull.backend.financials.audit.FinancialAuditService;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.sales.customerledger.Customer;
@@ -49,6 +52,8 @@ public class ReceiptVoucherService {
     private final BranchAccessService branchAccessService;
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
+    private final EntityManager entityManager;
+    private final EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     public ReceiptVoucherService(
             ReceiptVoucherRepository repository,
@@ -60,6 +65,8 @@ public class ReceiptVoucherService {
             BranchAccessService branchAccessService,
             com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository,
+            EntityManager entityManager,
+            EffectiveCorrectionViewService effectiveCorrectionViewService,
             @Value("${file.upload-dir:uploads/receipts}") String uploadDir) {
         this.repository = repository;
         this.postingEngineService = postingEngineService;
@@ -70,6 +77,8 @@ public class ReceiptVoucherService {
         this.branchAccessService = branchAccessService;
         this.ownershipAccessService = ownershipAccessService;
         this.advanceApplicationRepository = advanceApplicationRepository;
+        this.entityManager = entityManager;
+        this.effectiveCorrectionViewService = effectiveCorrectionViewService;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
 
         try {
@@ -90,8 +99,11 @@ public class ReceiptVoucherService {
                 ReceiptVoucher::getDate,
                 ReceiptVoucher::getVoucherId,
                 ReceiptVoucher::getId);
-        receipts.forEach(ReceiptVoucher::snapshotBranchFields);
-        return receipts;
+        receipts.forEach(rv -> {
+            rv.snapshotBranchFields();
+            entityManager.detach(rv);
+        });
+        return effectiveCorrectionViewService.resolveOverlays(CorrectionTargetType.RECEIPT_VOUCHER, receipts, ReceiptVoucher::getId);
     }
 
     @Transactional(readOnly = true)
@@ -100,7 +112,8 @@ public class ReceiptVoucherService {
                 .orElseThrow(() -> new RuntimeException("Receipt not found with id " + id));
         ownershipAccessService.assertCanAccessRecord(rv.getCreatedByUserId(), "Receipt Voucher");
         rv.snapshotBranchFields();
-        return rv;
+        entityManager.detach(rv);
+        return effectiveCorrectionViewService.resolveOverlay(CorrectionTargetType.RECEIPT_VOUCHER, rv.getId(), rv);
     }
 
     /**

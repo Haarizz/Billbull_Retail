@@ -11,6 +11,8 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.settings.branch.BranchRepository;
+import com.billbull.backend.pos.admin.CorrectionTargetType;
+import com.billbull.backend.pos.admin.EffectiveCorrectionViewService;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -51,6 +53,9 @@ public class CustomerService {
 
     @Autowired
     private EntityManager entityManager;
+
+    @Autowired
+    private EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     // =========================
     // GET ALL CUSTOMERS
@@ -226,8 +231,14 @@ public class CustomerService {
         for (OpeningInvoice invoice : invoices) {
             if (invoice.getId() == null) continue;
             BigDecimal seed = resolveOriginalOpeningBalance(invoice);
-            BigDecimal totalPaid = receiptVoucherRepository.findByOpeningInvoiceId(invoice.getId())
-                    .stream()
+            
+            List<com.billbull.backend.financials.receiptvoucher.ReceiptVoucher> receipts = receiptVoucherRepository.findByOpeningInvoiceId(invoice.getId());
+            receipts.forEach(entityManager::detach);
+            receipts = effectiveCorrectionViewService.resolveOverlays(
+                    CorrectionTargetType.RECEIPT_VOUCHER, receipts,
+                    com.billbull.backend.financials.receiptvoucher.ReceiptVoucher::getId);
+            
+            BigDecimal totalPaid = receipts.stream()
                     .filter(r -> r.getAmount() != null && isCompletedReceiptStatus(r.getStatus()))
                     .map(r -> r.getAmount())
                     .reduce(BigDecimal.ZERO, BigDecimal::add);

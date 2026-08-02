@@ -26,3 +26,35 @@ export const applyAdvanceAgainstOutstanding = async ({ customerCode, advanceRece
     const res = await api.post(`${BASE_PATH}/apply-against-outstanding`, { customerCode, advanceReceiptId });
     return res.data;
 };
+
+export const getAdvanceSummary = async (customerCode) => {
+    const res = await api.get(`${BASE_PATH}/customer/${encodeURIComponent(customerCode)}/summary`);
+    return res.data;
+};
+
+export const getAdvanceHistory = async (customerCode, filter) => {
+    const res = await api.get(`${BASE_PATH}/customer/${encodeURIComponent(customerCode)}/history`, {
+        params: filter && filter !== 'All' ? { filter } : {}
+    });
+    return res.data;
+};
+
+export const receiveAdvance = async ({ customerCode, amount, paymentMode, reference, terminalId }) => {
+    const res = await api.post(`${BASE_PATH}/receive`, {
+        customerCode,
+        amount,
+        paymentMode,
+        reference,
+        terminalId
+    });
+    return res.data;
+};
+
+export const refundAdvance = async ({ advanceReceiptId, amount, paymentMode }) => {
+    const res = await api.post(`${BASE_PATH}/refund`, {
+        advanceReceiptId,
+        amount,
+        paymentMode
+    });
+    return res.data;
+};

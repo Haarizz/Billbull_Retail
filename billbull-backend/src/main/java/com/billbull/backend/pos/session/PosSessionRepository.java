@@ -14,6 +14,14 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     Optional<PosSession> findByBranchIdAndTerminalIdAndStatus(Long branchId, String terminalId, PosSessionStatus status);
 
+    // Session Roaming Phase 2 (backend plumbing) — not called by any production flow yet. Reserved
+    // for the future user-first session resolution (see PosSessionResolutionStrategy); existing
+    // lookups above remain terminal-first and unchanged.
+    List<PosSession> findByOwnerUserIdAndStatus(Long ownerUserId, PosSessionStatus status);
+    
+    List<PosSession> findByOwnerUserIdAndBranchIdAndStatus(Long ownerUserId, Long branchId, PosSessionStatus status);
+
+
     Optional<PosSession> findByTerminalIdAndStatus(String terminalId, PosSessionStatus status);
 
     Optional<PosSession> findByTerminalPkAndStatus(Long terminalPk, PosSessionStatus status);
@@ -25,6 +33,9 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
     List<PosSession> findByBranchIdAndStatusOrderByOpenedAtDesc(Long branchId, PosSessionStatus status);
 
     List<PosSession> findByBranchIdAndSessionDateOrderByOpenedAtDesc(Long branchId, LocalDate sessionDate);
+
+    // Date-range browsing for the Session/X-Report history picker.
+    List<PosSession> findByBranchIdAndSessionDateBetweenOrderByOpenedAtDesc(Long branchId, LocalDate from, LocalDate to);
 
     @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND s.sessionDate = :date AND s.status = 'OPEN'")
     List<PosSession> findOpenSessionsByBranchAndDate(@Param("branchId") Long branchId, @Param("date") LocalDate date);

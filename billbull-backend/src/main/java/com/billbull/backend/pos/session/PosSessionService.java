@@ -1,14 +1,22 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
+import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
+import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.audit.PosAuditAction;
 import com.billbull.backend.pos.audit.PosAuditLog;
 import com.billbull.backend.pos.audit.PosAuditLogRepository;
+import com.billbull.backend.pos.admin.PosCashMovementCategory;
+import com.billbull.backend.pos.admin.PosCashMovementCategoryService;
+import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
 import com.billbull.backend.pos.terminal.PosTerminal;
 import com.billbull.backend.pos.terminal.PosTerminalActivityService;
+import com.billbull.backend.pos.terminal.PosTerminalHostingService;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
@@ -24,8 +32,12 @@ import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import com.billbull.backend.pos.dayclose.PosDayClose;
 import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
+import com.billbull.backend.pos.reports.PosReportNumberService;
+import com.billbull.backend.pos.reports.PosXReportSnapshot;
+import com.billbull.backend.pos.reports.PosXReportSnapshotRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.payment.PaymentStatus;
+import com.billbull.backend.user.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -37,9 +49,14 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 @Service
@@ -59,6 +76,22 @@ public class PosSessionService {
     private final PosDayCloseRepository dayCloseRepository;
     private final ObjectMapper objectMapper;
     private final PosTerminalActivityService terminalActivityService;
+    private final PosBusinessDateService businessDateService;
+    private final PosCashMovementRepository cashMovementRepository;
+    private final ReceiptVoucherRepository receiptVoucherRepository;
+    private final PosXReportSnapshotRepository xReportSnapshotRepository;
+    private final PosReportNumberService reportNumberService;
+    private final UserRepository userRepository;
+    private final PosCashMovementCategoryService cashMovementCategoryService;
+    private final PosSessionResolutionStrategy sessionResolutionStrategy;
+    private final PosSessionOwnershipService sessionOwnershipService;
+    private final PosTerminalHostingService terminalHostingService;
+    private final PosSessionDiscoveryService sessionDiscoveryService;
+    private final PosSessionTransferService sessionTransferService;
+    private final PosSessionTransferLogRepository transferLogRepository;
+    private final PosSessionTransferPolicy sessionTransferPolicy;
+    private final jakarta.persistence.EntityManager entityManager;
+    private final com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -81,7 +114,23 @@ public class PosSessionService {
                              SalesReturnRepository returnRepository,
                              PosDayCloseRepository dayCloseRepository,
                              ObjectMapper objectMapper,
-                             PosTerminalActivityService terminalActivityService) {
+                             PosTerminalActivityService terminalActivityService,
+                             PosBusinessDateService businessDateService,
+                             PosCashMovementRepository cashMovementRepository,
+                             ReceiptVoucherRepository receiptVoucherRepository,
+                             PosXReportSnapshotRepository xReportSnapshotRepository,
+                             PosReportNumberService reportNumberService,
+                             UserRepository userRepository,
+                             PosCashMovementCategoryService cashMovementCategoryService,
+                             PosSessionResolutionStrategy sessionResolutionStrategy,
+                             PosSessionOwnershipService sessionOwnershipService,
+                             PosTerminalHostingService terminalHostingService,
+                             PosSessionDiscoveryService sessionDiscoveryService,
+                             PosSessionTransferService sessionTransferService,
+                             PosSessionTransferLogRepository transferLogRepository,
+                             PosSessionTransferPolicy sessionTransferPolicy,
+                             jakarta.persistence.EntityManager entityManager,
+                             com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -96,6 +145,22 @@ public class PosSessionService {
         this.dayCloseRepository = dayCloseRepository;
         this.objectMapper = objectMapper;
         this.terminalActivityService = terminalActivityService;
+        this.businessDateService = businessDateService;
+        this.cashMovementRepository = cashMovementRepository;
+        this.receiptVoucherRepository = receiptVoucherRepository;
+        this.xReportSnapshotRepository = xReportSnapshotRepository;
+        this.reportNumberService = reportNumberService;
+        this.userRepository = userRepository;
+        this.cashMovementCategoryService = cashMovementCategoryService;
+        this.sessionResolutionStrategy = sessionResolutionStrategy;
+        this.sessionOwnershipService = sessionOwnershipService;
+        this.terminalHostingService = terminalHostingService;
+        this.sessionDiscoveryService = sessionDiscoveryService;
+        this.sessionTransferService = sessionTransferService;
+        this.transferLogRepository = transferLogRepository;
+        this.sessionTransferPolicy = sessionTransferPolicy;
+        this.entityManager = entityManager;
+        this.effectiveCorrectionViewService = effectiveCorrectionViewService;
     }
 
     private String currentUser() {
@@ -103,9 +168,32 @@ public class PosSessionService {
         return auth != null ? auth.getName() : "system";
     }
 
-    private static BigDecimal sumCashMovements(PosSession session, String movementType) {
+    /** Display-only resolution of a username to the employee's full name, via
+     *  User.getResolvedDisplayName() (Employee first+last name -> User.fullName -> username).
+     *  Never used for identity/ownership/locking/audit — those keep using the raw username.
+     *  Called only at write-time (session open/close, X-Report generation, Day Close) so
+     *  reports never re-resolve names on later reads. */
+    private String resolveDisplayName(String username) {
+        if (username == null || username.isBlank()) return username;
+        return userRepository.findByUsername(username)
+                .map(com.billbull.backend.user.User::getResolvedDisplayName)
+                .orElse(username);
+    }
+
+    /** ACTIVE-only sum — voided movements never contribute to Expected Cash or any other
+     *  reconciliation/report total (see Cash Drop / Outs Management §8). */
+    private static BigDecimal sumCashMovements(PosSession session, PosCashMovementType movementType) {
         return session.getCashMovements().stream()
                 .filter(m -> movementType.equals(m.getMovementType()))
+                .filter(m -> m.getStatus() == null || m.getStatus() == PosCashMovementStatus.ACTIVE)
+                .map(m -> nz(m.getAmount()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+    
+    private BigDecimal sumCashMovements(List<PosCashMovement> movements, PosCashMovementType movementType) {
+        return movements.stream()
+                .filter(m -> movementType.equals(m.getMovementType()))
+                .filter(m -> m.getStatus() == null || m.getStatus() == PosCashMovementStatus.ACTIVE)
                 .map(m -> nz(m.getAmount()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
@@ -117,20 +205,52 @@ public class PosSessionService {
         return nz(session.getOpeningCash()).add(tenderCash).add(cashDropIn).subtract(cashDropOut);
     }
 
+    /** SUM(amount) grouped by movementType (DROP_IN / DROP_OUT) across a set of sessions.
+     *  Now fetches entities, detaches them, resolves overlays, and sums in-memory to ensure
+     *  corrections are accurately reflected. */
+    private Map<String, BigDecimal> sumCashMovementsByType(List<Long> sessionIds) {
+        Map<String, BigDecimal> totals = new java.util.HashMap<>();
+        if (sessionIds == null || sessionIds.isEmpty()) return totals;
+        
+        List<PosCashMovement> movements = cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds);
+        if (!movements.isEmpty()) {
+            movements.forEach(entityManager::detach);
+            movements = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, movements, PosCashMovement::getId);
+        }
+        
+        // ACTIVE only — voided drops/outs are excluded from every reconciliation/report total.
+        for (PosCashMovement m : movements) {
+            if (m.getStatus() != null && m.getStatus() != PosCashMovementStatus.ACTIVE) continue;
+            String type = m.getMovementType().name();
+            BigDecimal amount = nz(m.getAmount());
+            totals.merge(type, amount, BigDecimal::add);
+        }
+        return totals;
+    }
+
+    /** Free-text payment-mode check for "cash only" filtering on back-office vouchers
+     *  (ReceiptVoucher.paymentMode has no enum) — same "contains cash" convention as
+     *  {@link #tenderBucket} / {@code recordInvoiceOnSession}. */
+    private static boolean isCashMode(String paymentMode) {
+        return paymentMode != null && paymentMode.toLowerCase(java.util.Locale.ROOT).contains("cash");
+    }
+
     @Transactional
     public PosSession openSession(String terminalId, String counterName, BigDecimal openingCash) {
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
         Long branchId = branch.getId();
+        LocalDate businessDate = businessDateService.getCurrentBusinessDate(branchId);
 
         // 0. Verify day is not already closed
-        if (dayCloseRepository.existsByBranchIdAndCloseDate(branchId, LocalDate.now())) {
+        if (businessDateService.isDateClosed(branchId, businessDate)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
         }
 
         // 0b. Guard against silently rolling into a new day while a prior day's session is
         // still open/suspended (BBQA-5.3-013): surface it as a distinct, machine-readable
         // status so the frontend can prompt the user to close it instead of just failing.
-        List<PosSession> stale = repo.findUnclosedSessionsBeforeDate(branchId, LocalDate.now());
+        List<PosSession> stale = repo.findUnclosedSessionsBeforeDate(branchId, businessDate);
         if (!stale.isEmpty()) {
             PosSession oldest = stale.get(0);
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -139,11 +259,29 @@ public class PosSessionService {
                             + ". Close the previous day's session before starting a new one.");
         }
 
-        // Resolve terminal entity for the DB-level lock
-        PosTerminal terminal = terminalRepository.findByTerminalId(terminalId).orElse(null);
+        // Session Roaming Phase 7 — controlled discovery. NO_SESSION/TERMINAL_SESSION/SAME_SESSION
+        // fall through to the pre-existing terminal-first duplicate check below, unchanged;
+        // OWNER_SESSION/CONFLICT/MULTIPLE_OWNER_SESSIONS are surfaced as a structured response
+        // instead of silently opening a second concurrent session for the same owner. Nothing is
+        // moved, hosted, or transferred here — this only reports what discovery found.
+        Long ownerUserId = sessionOwnershipService.currentPrincipalUserId();
+        PosSessionDiscoveryResult discovery = sessionDiscoveryService.discover(branchId, terminalId, ownerUserId);
+        switch (discovery.status()) {
+            case OWNER_SESSION -> throw new PosSessionDiscoveryBlockedException(
+                    PosSessionDiscoveryResponse.ownerSessionElsewhere(discovery.ownerSession().orElseThrow(),
+                            evaluateTransferToTerminal(discovery.ownerSession().orElseThrow(), terminalId)));
+            case CONFLICT -> throw new PosSessionDiscoveryBlockedException(
+                    PosSessionDiscoveryResponse.conflict(
+                            discovery.terminalSession().orElseThrow(), discovery.ownerSession().orElseThrow(),
+                            evaluateTransferToTerminal(discovery.ownerSession().orElseThrow(), terminalId)));
+            case MULTIPLE_OWNER_SESSIONS -> throw new PosSessionDiscoveryBlockedException(
+                    PosSessionDiscoveryResponse.multipleOwnerSessions(discovery.ownerSessionCount()));
+            default -> { /* NO_SESSION, TERMINAL_SESSION, SAME_SESSION: continue existing flow below */ }
+        }
 
         // App-level duplicate check: if same user returns to their own session, hand it back
-        Optional<PosSession> existing = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
+        // (terminal-first resolution — same terminalSession discovery already looked up above).
+        Optional<PosSession> existing = discovery.terminalSession();
         if (existing.isPresent()) {
             if (!currentUser().equals(existing.get().getOpenedBy())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
@@ -161,7 +299,9 @@ public class PosSessionService {
         session.setTerminalId(terminalId);
         session.setCounterName(counterName);
         session.setOpenedBy(currentUser());
-        session.setSessionDate(LocalDate.now());
+        session.setOpenedByDisplayName(resolveDisplayName(session.getOpenedBy()));
+        session.setOwnerUserId(ownerUserId);
+        session.setSessionDate(businessDate);
         session.setOpenedAt(now);
         session.setLastActivityAt(now);
         session.setDurationSeconds(null);
@@ -174,6 +314,9 @@ public class PosSessionService {
         session.setTotalMixedSales(BigDecimal.ZERO);
         session.setInvoiceCount(0);
 
+        // Resolve terminal entity for the DB-level lock (terminal-first hosting lookup —
+        // same terminalRepository.findByTerminalId call PosTerminalHostingService wraps).
+        PosTerminal terminal = terminalHostingService.resolveHostingTerminal(session).orElse(null);
         if (terminal != null) {
             session.setTerminalPk(terminal.getId());
             if (terminal.getCounterId() != null) session.setCounterId(terminal.getCounterId());
@@ -195,6 +338,9 @@ public class PosSessionService {
             }
         }
 
+        // Hosting history: this terminal becomes the session's host from open onward.
+        terminalHostingService.ensureHostingSegment(saved, terminal);
+
         auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
         terminalActivityService.recordActivity(saved.getTerminalId(), "SESSION_OPEN");
         return saved;
@@ -211,9 +357,10 @@ public class PosSessionService {
             return;
         }
         Branch branch = branchAccessService.getRequiredCurrentUserBranch();
-        repo.findByBranchIdAndTerminalIdAndStatus(branch.getId(), terminalId, PosSessionStatus.OPEN)
+        sessionResolutionStrategy.resolveByTerminal(branch.getId(), terminalId)
                 .ifPresent(session -> {
                     session.setOpenedBy(newOwnerUsername);
+                    session.setOpenedByDisplayName(resolveDisplayName(newOwnerUsername));
                     repo.save(session);
                 });
     }
@@ -223,7 +370,7 @@ public class PosSessionService {
         if (terminalId != null && !terminalId.isBlank()) {
             Branch branch = branchAccessService.getRequiredCurrentUserBranch();
             Long branchId = branch.getId();
-            Optional<PosSession> sessionOpt = repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN);
+            Optional<PosSession> sessionOpt = sessionResolutionStrategy.resolveByTerminal(branchId, terminalId);
             if (sessionOpt.isPresent()) {
                 PosSession session = sessionOpt.get();
                 if (!currentUser().equals(session.getOpenedBy())) {
@@ -283,9 +430,10 @@ public class PosSessionService {
         // Expected cash uses the same actual-tender-collected formula as getXReport(), so the
         // Close Session modal and the X-Report page never diverge (both compute it here).
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
-        TenderTotals tender = aggregateTender(invoices);
-        BigDecimal cashDropIn = sumCashMovements(session, "DROP_IN");
-        BigDecimal cashDropOut = sumCashMovements(session, "DROP_OUT");
+        List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(sessionId);
+        TenderTotals tender = aggregateTender(invoices, advances);
+        BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
+        BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
         BigDecimal expectedCash = computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
         BigDecimal actualClosing = closingCash != null ? closingCash : BigDecimal.ZERO;
         BigDecimal variance = actualClosing.subtract(expectedCash).abs();
@@ -306,6 +454,7 @@ public class PosSessionService {
 
         LocalDateTime closeTime = LocalDateTime.now();
         session.setClosedBy(currentUser());
+        session.setClosedByDisplayName(resolveDisplayName(session.getClosedBy()));
         session.setClosedAt(closeTime);
         if (session.getOpenedAt() != null) {
             session.setDurationSeconds(Math.max(0, ChronoUnit.SECONDS.between(session.getOpenedAt(), closeTime)));
@@ -339,6 +488,7 @@ public class PosSessionService {
         if (session.getXReportGeneratedAt() == null) {
             session.setXReportGeneratedAt(closeTime);
             session.setXReportGeneratedBy(currentUser());
+            session.setXReportGeneratedByDisplayName(resolveDisplayName(session.getXReportGeneratedBy()));
         }
         session.setXReportPrinted(true);
 
@@ -352,6 +502,9 @@ public class PosSessionService {
         if (closed.getTerminalPk() != null) {
             terminalRepository.clearOpenSession(closed.getTerminalPk(), closed.getId());
         }
+
+        // Hosting history: the session is no longer hosted anywhere once closed.
+        terminalHostingService.endOpenHostingSegment(closed.getId());
 
         // §3.7 Session-close GL: transfer closing cash count to bank (daily pickup)
         try {
@@ -399,7 +552,14 @@ public class PosSessionService {
         }
         session.setStatus(PosSessionStatus.OPEN);
         session.setLastActivityAt(LocalDateTime.now());
-        return repo.save(session);
+        PosSession resumed = repo.save(session);
+
+        // Hosting history: resuming on the same terminal must not duplicate the open segment;
+        // ensureHostingSegment is a no-op when the segment already points at this terminal.
+        PosTerminal terminal = terminalHostingService.resolveHostingTerminal(resumed).orElse(null);
+        terminalHostingService.ensureHostingSegment(resumed, terminal);
+
+        return resumed;
     }
 
     /**
@@ -430,8 +590,127 @@ public class PosSessionService {
         session.setLastActivityAt(LocalDateTime.now());
         PosSession updated = repo.save(session);
 
+        // Hosting history: takeover happens on the same terminal, so this is a no-op when a
+        // segment is already open there; it only opens one if none existed (e.g. legacy session).
+        PosTerminal terminal = terminalHostingService.resolveHostingTerminal(updated).orElse(null);
+        terminalHostingService.ensureHostingSegment(updated, terminal);
+
         auditService.logSessionOpened(updated.getId(), updated.getTerminalId(), updated.getBranchId());
         return updated;
+    }
+
+    /**
+     * Session Roaming Phase 8 — explicit, operator-confirmed transfer of a session's hosting
+     * to another terminal. Ownership ({@code ownerUserId}/{@code openedBy}) is never touched;
+     * only the physical terminal hosting the session changes. All validation, the atomic
+     * terminal-lock hand-off, the hosting-history update, and the transfer-log write happen
+     * inside {@link PosSessionTransferService#transfer} — this method only resolves the
+     * initiating user, optionally verifies a supervisor PIN, and shapes the response.
+     *
+     * <p>Supervisor authorization is optional today (Phase 9 may make it mandatory for certain
+     * destinations/roles): if {@code supervisorPin} is blank, the transfer proceeds as an
+     * operator-confirmed move with {@code supervisorAuthorized=false}; if provided, it is
+     * verified against the session's branch {@link PosSettings#getSupervisorPin()} the same
+     * way {@link #supervisorTakeover} does, and a mismatch is rejected outright.
+     */
+    @Transactional
+    public PosSessionTransferResponse transferSession(Long sessionId, String destinationTerminalId,
+                                                        String reason, String supervisorPin) {
+        PosSession before = getById(sessionId);
+        Long sourceTerminalPk = before.getTerminalPk();
+        boolean supervisorAuthorized = verifySupervisorPinIfProvided(before, supervisorPin);
+
+        // Session Roaming Phase 9 — evaluate the transfer policy before attempting the move.
+        // PosSessionTransferService#transfer stays business-operation only: it never decides
+        // whether supervisor authorization is required, only whether an already-authorized
+        // move can physically happen.
+        PosTerminal destination = terminalRepository.findByTerminalId(destinationTerminalId).orElse(null);
+        PosSessionTransferDecision decision = sessionTransferPolicy.evaluate(before, destination);
+        if (decision.isDenied()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, decision.getMessage());
+        }
+        if (decision.isSupervisorRequired() && !supervisorAuthorized) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Supervisor authorization required: " + decision.getMessage());
+        }
+
+        Long initiatedByUserId = sessionOwnershipService.currentPrincipalUserId();
+
+        PosSession moved = sessionTransferService.transfer(sessionId, destinationTerminalId,
+                initiatedByUserId, supervisorAuthorized);
+
+        PosSessionTransferLog logEntry = transferLogRepository.findBySessionIdOrderByCreatedAtDesc(sessionId)
+                .stream().findFirst().orElse(null);
+        String sourceTerminalId = sourceTerminalPk != null
+                ? terminalRepository.findById(sourceTerminalPk).map(PosTerminal::getTerminalId).orElse(null)
+                : null;
+
+        return PosSessionTransferResponse.of(moved, sourceTerminalId, logEntry, reason, decision);
+    }
+
+    /** Session Roaming Phase 9 — read-only preview of what {@link #transferSession} would decide
+     *  if the caller chose to transfer {@code ownerSession} onto {@code destinationTerminalId}.
+     *  Used only to enrich the discovery response; never invoked from the transfer path itself
+     *  (which re-evaluates the policy against the live destination lookup there). */
+    private PosSessionTransferDecision evaluateTransferToTerminal(PosSession ownerSession, String destinationTerminalId) {
+        PosTerminal destination = terminalRepository.findByTerminalId(destinationTerminalId).orElse(null);
+        return sessionTransferPolicy.evaluate(ownerSession, destination);
+    }
+
+    /** Blank/absent PIN: no supervisor authorization asserted (returns false, transfer still
+     *  allowed as an operator-confirmed move). Non-blank PIN: verified against the session's
+     *  branch supervisor PIN (BCrypt) exactly like {@link #supervisorTakeover}; a mismatch
+     *  throws 403 rather than silently downgrading to unauthorized. */
+    private boolean verifySupervisorPinIfProvided(PosSession session, String supervisorPin) {
+        if (supervisorPin == null || supervisorPin.isBlank()) {
+            return false;
+        }
+        if (session.getBranchId() == null) {
+            return false;
+        }
+        PosSettings settings = posSettingsRepository.findByBranchId(session.getBranchId()).orElse(null);
+        if (settings == null || !settings.isSupervisorPinSet()) {
+            return false;
+        }
+        org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder encoder =
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
+        if (!encoder.matches(supervisorPin, settings.getSupervisorPin())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Invalid supervisor PIN.");
+        }
+        return true;
+    }
+
+    /** Date-range session history for the X-Report history picker (reprint/browse a past
+     *  closed session). Filters implemented now: date range (required) + optional
+     *  terminalId/status. Counter/cashier filtering deliberately deferred — not indexed
+     *  today and not needed by the confirmed use case. Reuses the existing
+     *  {@code util.PaginationUtil}/{@code PageResponse} pattern rather than a bespoke list. */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.util.PageResponse<PosSessionHistoryItem> getSessionHistory(
+            Long branchId, LocalDate dateFrom, LocalDate dateTo, String terminalId, String status,
+            int page, int size) {
+        List<PosSession> sessions = repo.findByBranchIdAndSessionDateBetweenOrderByOpenedAtDesc(branchId, dateFrom, dateTo);
+        List<PosSessionHistoryItem> items = sessions.stream()
+                .filter(s -> terminalId == null || terminalId.isBlank() || terminalId.equals(s.getTerminalId()))
+                .map(s -> new PosSessionHistoryItem(
+                        s.getId(),
+                        s.getTerminalId(),
+                        resolveTerminalName(s.getTerminalId()),
+                        s.getCounterName(),
+                        s.getOpenedBy(),
+                        s.getOpenedAt(),
+                        s.getClosedAt(),
+                        s.getStatus() != null ? s.getStatus().name() : null,
+                        s.getTotalSales(),
+                        s.getInvoiceCount()))
+                .toList();
+        return com.billbull.backend.util.PaginationUtil.paginate(items, page, size, null, status);
+    }
+
+    private String resolveTerminalName(String terminalId) {
+        if (terminalId == null || terminalId.isBlank()) return null;
+        return terminalRepository.findByTerminalId(terminalId)
+                .map(com.billbull.backend.pos.terminal.PosTerminal::getTerminalName).orElse(null);
     }
 
     /** Touch lastActivityAt — called by the sales/payment path to reset the idle clock. */
@@ -464,22 +743,88 @@ public class PosSessionService {
 
     @Transactional
     public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount, String description) {
+        return addCashMovement(sessionId, movementType, amount, description, null);
+    }
+
+    /** {@code reference} is optional free-text (e.g. a supervisor-assigned drop slip
+     *  number) — kept separate from description per the Cash Drop / Outs data model. */
+    public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount,
+                                            String description, String reference) {
+        return addCashMovement(sessionId, movementType, amount, description, reference, null);
+    }
+
+    /**
+     * Cash Movement Categories (Phase 2, § POS Integration): {@code categoryId} is optional
+     * unless the owning branch's {@code PosSettings.requireCashMovementCategory} toggle is on,
+     * in which case it's mandatory for every NEW movement — never retroactive, existing rows
+     * are untouched regardless of when the toggle flips. When a category is supplied its
+     * movement-type compatibility is validated (a DROP_IN-only category cannot be used on a
+     * DROP_OUT, per §7) and, if it carries an optional GL account override, that account is
+     * resolved once here and denormalized onto the movement (never re-resolved later) so a
+     * future void reversal mirrors the exact original posting even if the category's mapping
+     * changes afterward.
+     */
+    @Transactional
+    public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount,
+                                            String description, String reference, Long categoryId) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add cash movement to a closed session.");
         }
 
+        PosCashMovementType type;
+        try {
+            type = PosCashMovementType.valueOf(movementType);
+        } catch (IllegalArgumentException | NullPointerException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid movement type: " + movementType);
+        }
+
+        PosCashMovementCategory category = null;
+        if (categoryId != null) {
+            category = cashMovementCategoryService.getActiveEntityOrThrow(categoryId);
+            cashMovementCategoryService.assertCompatible(category, type);
+            if (category.isNotesRequired() && (description == null || description.isBlank())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Category \"" + category.getName() + "\" requires a description/notes.");
+            }
+        } else if (isCashMovementCategoryRequired(session.getBranchId())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A cash movement category is required. Select one before saving.");
+        }
+
         PosCashMovement movement = new PosCashMovement();
         movement.setPosSession(session);
-        movement.setMovementType(movementType);
+        movement.setMovementType(type);
         movement.setAmount(amount);
         movement.setDescription(description);
+        movement.setReference(reference);
         movement.setPerformedBy(currentUser());
+        movement.setPerformedByUserId(sessionOwnershipService.currentPrincipalUserId());
         movement.setPerformedAt(LocalDateTime.now());
+        movement.setStatus(PosCashMovementStatus.ACTIVE);
+        movement.setBusinessDate(session.getSessionDate());
+        movement.setBranchId(session.getBranchId());
+        movement.setCategoryId(categoryId);
+
+        // Resolve the non-cash GL leg once, at creation — denormalized so a later void
+        // reversal always mirrors exactly what was posted (§9), regardless of any later change
+        // to the category's mapping.
+        String accountCode = type == PosCashMovementType.DROP_IN
+                ? PostingEngineService.ACC_PETTY_CASH : PostingEngineService.ACC_EXPENSE_GENERAL;
+        String accountName = type == PosCashMovementType.DROP_IN ? "Petty Cash" : "General Expense";
+        Account glOverride = cashMovementCategoryService.resolveGlAccount(category);
+        if (glOverride != null) {
+            accountCode = glOverride.getCode();
+            accountName = glOverride.getName();
+        }
+        movement.setPostedAccountCode(accountCode);
+        movement.setPostedAccountName(accountName);
+
         session.getCashMovements().add(movement);
         repo.save(session);
 
-        // Post GL journal: DROP_IN → Dr Cash / Cr Petty Cash; DROP_OUT → Dr Expense / Cr Cash
+        // Post GL journal: DROP_IN → Dr Cash / Cr Petty Cash (or category account);
+        // DROP_OUT → Dr Expense (or category account) / Cr Cash
         Branch branch = session.getBranchId() != null
                 ? branchRepository.findById(session.getBranchId()).orElse(null)
                 : null;
@@ -489,11 +834,22 @@ public class PosSessionService {
                 amount,
                 description,
                 session.getSessionDate(),
-                branch);
+                branch,
+                accountCode,
+                accountName);
 
         terminalActivityService.recordActivity(session.getTerminalId(), movementType);
+        auditService.logCashMovement(sessionId, session.getTerminalId(), session.getBranchId(), movementType, amount.toPlainString());
 
         return movement;
+    }
+
+    private boolean isCashMovementCategoryRequired(Long branchId) {
+        if (branchId == null) return false;
+        return posSettingsRepository.findByBranchId(branchId)
+                .map(PosSettings::getRequireCashMovementCategory)
+                .map(Boolean.TRUE::equals)
+                .orElse(false);
     }
 
     @Transactional
@@ -542,17 +898,59 @@ public class PosSessionService {
      *  the first time it is called on an OPEN session (idempotent), then returns the same
      *  payload as {@link #getXReport}. This stamp is what the end-of-day Z-Report gate
      *  checks — the read-only {@link #getXReport} preview (used on the dashboard) never
-     *  marks completion. */
+     *  marks completion.
+     *
+     *  The same first-time-only gate also persists an immutable {@link PosXReportSnapshot}
+     *  (POS Reports module — back-office historical X-Report browser), so exactly one
+     *  snapshot exists per session, taken at the moment the shift's X-Report was actually
+     *  generated. A session that closes without ever having its X-Report explicitly run
+     *  (see {@link #closeSession}, which only stamps the timestamp) has no snapshot row —
+     *  there is no "report" to have persisted, matching prior behavior for that case. */
     @Transactional
     public Map<String, Object> generateXReport(Long sessionId) {
         PosSession session = getById(sessionId);
         if (session.getStatus() == PosSessionStatus.OPEN && session.getXReportGeneratedAt() == null) {
-            session.setXReportGeneratedAt(LocalDateTime.now());
-            session.setXReportGeneratedBy(currentUser());
+            LocalDateTime generatedAt = LocalDateTime.now();
+            String generatedBy = currentUser();
+            String generatedByDisplayName = resolveDisplayName(generatedBy);
+            session.setXReportGeneratedAt(generatedAt);
+            session.setXReportGeneratedBy(generatedBy);
+            session.setXReportGeneratedByDisplayName(generatedByDisplayName);
             session.setXReportPrinted(true);
             repo.save(session);
+
+            Map<String, Object> report = getXReport(sessionId);
+            String reportNumber = reportNumberService.nextReportNumber("XR", session.getBranchId(), session.getSessionDate());
+            report.put("reportNumber", reportNumber);
+            persistXReportSnapshot(session, report, reportNumber, generatedAt, generatedBy, generatedByDisplayName);
+            return report;
         }
         return getXReport(sessionId);
+    }
+
+    private void persistXReportSnapshot(PosSession session, Map<String, Object> report, String reportNumber,
+                                         LocalDateTime generatedAt, String generatedBy, String generatedByDisplayName) {
+        try {
+            PosXReportSnapshot snapshot = new PosXReportSnapshot();
+            snapshot.setReportNumber(reportNumber);
+            snapshot.setSessionId(session.getId());
+            snapshot.setBranchId(session.getBranchId());
+            snapshot.setBranchName(session.getBranchName());
+            snapshot.setTerminalId(session.getTerminalId());
+            snapshot.setCounterId(session.getCounterId());
+            snapshot.setCounterName(session.getCounterName());
+            snapshot.setCashierName(session.getOpenedBy());
+            snapshot.setCashierDisplayName(session.getOpenedByDisplayName() != null
+                    ? session.getOpenedByDisplayName() : resolveDisplayName(session.getOpenedBy()));
+            snapshot.setBusinessDate(session.getSessionDate());
+            snapshot.setGeneratedBy(generatedBy);
+            snapshot.setGeneratedByDisplayName(generatedByDisplayName);
+            snapshot.setGeneratedAt(generatedAt);
+            snapshot.setReportJson(objectMapper.writeValueAsString(report));
+            xReportSnapshotRepository.save(snapshot);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to persist X-Report snapshot");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -561,12 +959,25 @@ public class PosSessionService {
         // Fetch invoices WITH items in one query — the report streams items for sums
         // and per-line void detail, so a plain fetch would trigger N+1 lazy loads.
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
+        List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(sessionId);
+        if (!advances.isEmpty()) {
+            advances.forEach(entityManager::detach);
+            advances = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
+        }
 
-        BigDecimal cashDropIn = sumCashMovements(session, "DROP_IN");
-        BigDecimal cashDropOut = sumCashMovements(session, "DROP_OUT");
+        List<PosCashMovement> cashMovements = new java.util.ArrayList<>(session.getCashMovements());
+        if (!cashMovements.isEmpty()) {
+            cashMovements.forEach(entityManager::detach);
+            cashMovements = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, cashMovements, PosCashMovement::getId);
+        }
+
+        BigDecimal cashDropIn = sumCashMovements(cashMovements, PosCashMovementType.DROP_IN);
+        BigDecimal cashDropOut = sumCashMovements(cashMovements, PosCashMovementType.DROP_OUT);
 
         // Actual tender collected (not invoice value) for this single session.
-        TenderTotals tender = aggregateTender(invoices);
+        TenderTotals tender = aggregateTender(invoices, advances);
         // Actual tender refunded (paymentType = MADE) for this session, bucketed the same way.
         TenderTotals refunds = aggregateRefunds(invoices);
 
@@ -578,6 +989,12 @@ public class PosSessionService {
         summary.put("cashDropOut", cashDropOut);
         // Same formula as closeSession() — single source of truth for Expected Cash.
         summary.put("expectedCash", computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut));
+
+        // Consolidated Cash Position — additive, informational only, never feeds the
+        // Expected Cash figure above. Customer Receipts/Advances are back-office vouchers
+        // with no session linkage yet, so they're omitted here (Z-Report only).
+        summary.put("cashPosition", buildCashPosition(session.getBranchId(), session.getSessionDate(),
+                List.of(sessionId), session.getOpeningCash(), tender.cash, cashDropIn, cashDropOut, false));
 
         // Card refund attribution — sourced from actual refund Payment rows for this
         // session's invoices, not the generic (and unrelated) item-void counter.
@@ -653,8 +1070,163 @@ public class PosSessionService {
         }
     }
 
+    // ── Day Close session-range resolution (ARCHFIX: single source of truth) ──────
+    //
+    // Resolved once per operation (Z-Report preview, Day Close summary, or the
+    // actual closeDay transaction) and reused throughout — closeDay, the dynamic
+    // Z-Report, its validations, and its reconciliation all operate on the exact
+    // same session list, eliminating the prior divergence between the open-session
+    // check (queried allSessions) and the report aggregation (queried CLOSED-only,
+    // separately). "First"/"last" session is by openedAt ascending order (falling
+    // back to id for a stable tiebreak when timestamps are equal or null).
+
+    /** Immutable snapshot of a business date's session range resolution. */
+    private static final class ResolvedSessionRange {
+        final Long branchId;
+        final LocalDate date;
+        /** Every session for branchId+date, any status, ascending by openedAt/id. */
+        final List<PosSession> allSessionsForDate;
+        /** The subset between (and including) startSession and endSession. */
+        final List<PosSession> resolvedSessions;
+        final PosSession startSession;
+        final PosSession endSession;
+        /** Sessions for the date that fall outside the resolved range. */
+        final List<PosSession> excludedSessions;
+
+        ResolvedSessionRange(Long branchId, LocalDate date, List<PosSession> allSessionsForDate,
+                              List<PosSession> resolvedSessions, PosSession startSession, PosSession endSession,
+                              List<PosSession> excludedSessions) {
+            this.branchId = branchId;
+            this.date = date;
+            this.allSessionsForDate = allSessionsForDate;
+            this.resolvedSessions = resolvedSessions;
+            this.startSession = startSession;
+            this.endSession = endSession;
+            this.excludedSessions = excludedSessions;
+        }
+    }
+
+    /**
+     * Resolves the session range for a business date. With no override, the range is
+     * the entire date (first session -> last session by openedAt), matching the
+     * pre-existing "every session is included automatically" behavior. With an
+     * explicit startSessionId/endSessionId (supervisor override), the range narrows
+     * to the sessions between those two boundaries (inclusive), and everything else
+     * for the date is reported as excluded rather than silently dropped.
+     */
+    private ResolvedSessionRange resolveSessionRange(Long branchId, LocalDate date, Long startSessionId, Long endSessionId) {
+        List<PosSession> ascending = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date).stream()
+                .sorted(Comparator
+                        .comparing(PosSession::getOpenedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(PosSession::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+
+        if (ascending.isEmpty()) {
+            return new ResolvedSessionRange(branchId, date, ascending, List.of(), null, null, List.of());
+        }
+
+        ascending.forEach(entityManager::detach);
+        ascending = effectiveCorrectionViewService.resolveOverlays(
+                com.billbull.backend.pos.admin.CorrectionTargetType.POS_SESSION, ascending, PosSession::getId);
+
+        PosSession startSession = startSessionId != null
+                ? resolveBoundarySession(startSessionId, branchId, date, "Start")
+                : ascending.get(0);
+        PosSession endSession = endSessionId != null
+                ? resolveBoundarySession(endSessionId, branchId, date, "End")
+                : ascending.get(ascending.size() - 1);
+
+        int startIdx = indexOfSession(ascending, startSession.getId());
+        int endIdx = indexOfSession(ascending, endSession.getId());
+        if (startIdx < 0 || endIdx < 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Session range could not be resolved for business date " + date + " — please refresh and retry.");
+        }
+        if (startIdx > endIdx) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Start session must occur before End session.");
+        }
+
+        List<PosSession> resolved = new ArrayList<>(ascending.subList(startIdx, endIdx + 1));
+        List<PosSession> excluded = new ArrayList<>();
+        excluded.addAll(ascending.subList(0, startIdx));
+        excluded.addAll(ascending.subList(endIdx + 1, ascending.size()));
+
+        return new ResolvedSessionRange(branchId, date, ascending, resolved, startSession, endSession, excluded);
+    }
+
+    private PosSession resolveBoundarySession(Long sessionId, Long branchId, LocalDate date, String label) {
+        PosSession session = getById(sessionId);
+        if (!Objects.equals(session.getBranchId(), branchId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    label + " session " + sessionId + " does not belong to branch " + branchId + ".");
+        }
+        if (!Objects.equals(session.getSessionDate(), date)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    label + " session " + sessionId + " does not belong to business date " + date + ".");
+        }
+        return session;
+    }
+
+    private static int indexOfSession(List<PosSession> sessions, Long id) {
+        for (int i = 0; i < sessions.size(); i++) {
+            if (id.equals(sessions.get(i).getId())) return i;
+        }
+        return -1;
+    }
+
+    /** Read-only preview of the resolved Day Close session range — backs the Day
+     *  Close screen's summary panel (business date, first/last session, cashiers,
+     *  counters, terminals, trading time span, session status, exclusion warnings)
+     *  shown before the supervisor confirms. */
+    @Transactional(readOnly = true)
+    public Map<String, Object> getDayCloseSummary(Long branchId, LocalDate date, Long startSessionId, Long endSessionId) {
+        ResolvedSessionRange range = resolveSessionRange(branchId, date, startSessionId, endSessionId);
+        return buildDayCloseSummary(range);
+    }
+
+    private Map<String, Object> buildDayCloseSummary(ResolvedSessionRange range) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("branchId", range.branchId);
+        result.put("businessDate", range.date.toString());
+        result.put("startSessionId", range.startSession != null ? range.startSession.getId() : null);
+        result.put("endSessionId", range.endSession != null ? range.endSession.getId() : null);
+        result.put("startSession", range.startSession != null ? buildSessionInfo(range.startSession) : null);
+        result.put("endSession", range.endSession != null ? buildSessionInfo(range.endSession) : null);
+        result.put("totalSessions", range.resolvedSessions.size());
+        result.put("cashiers", range.resolvedSessions.stream().map(PosSession::getOpenedBy)
+                .filter(Objects::nonNull).distinct().toList());
+        result.put("counters", range.resolvedSessions.stream().map(PosSession::getCounterName)
+                .filter(Objects::nonNull).distinct().toList());
+        result.put("terminals", range.resolvedSessions.stream().map(PosSession::getTerminalId)
+                .filter(Objects::nonNull).distinct().toList());
+        result.put("tradingStart", range.resolvedSessions.stream().map(PosSession::getOpenedAt)
+                .filter(Objects::nonNull).min(Comparator.naturalOrder())
+                .map(t -> t.atZone(ZoneId.systemDefault())).orElse(null));
+        result.put("tradingEnd", range.resolvedSessions.stream()
+                .map(s -> s.getClosedAt() != null ? s.getClosedAt() : s.getOpenedAt())
+                .filter(Objects::nonNull).max(Comparator.naturalOrder())
+                .map(t -> t.atZone(ZoneId.systemDefault())).orElse(null));
+        result.put("sessions", range.resolvedSessions.stream().map(this::buildSessionInfo).toList());
+
+        long openCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
+        long suspendedCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.SUSPENDED).count();
+        result.put("openSessionCount", openCount);
+        result.put("suspendedSessionCount", suspendedCount);
+        result.put("readyToClose", openCount == 0 && suspendedCount == 0 && !range.resolvedSessions.isEmpty());
+
+        result.put("excludedSessionCount", range.excludedSessions.size());
+        result.put("excludedSessions", range.excludedSessions.stream().map(this::buildSessionInfo).toList());
+        return result;
+    }
+
+    /** Backward-compatible overload — resolves the full-date range automatically. */
     @Transactional(readOnly = true)
     public Map<String, Object> getZReport(Long branchId, LocalDate date) {
+        return getZReport(branchId, date, null, null);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getZReport(Long branchId, LocalDate date, Long startSessionId, Long endSessionId) {
         // 1. Check if day is already closed
         Optional<PosDayClose> dayClose = dayCloseRepository.findByBranchIdAndCloseDate(branchId, date);
         if (dayClose.isPresent()) {
@@ -667,21 +1239,28 @@ public class PosSessionService {
                 throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to parse Z-Report snapshot", e);
             }
         }
-        
-        return generateDynamicZReport(branchId, date);
+
+        ResolvedSessionRange range = resolveSessionRange(branchId, date, startSessionId, endSessionId);
+        return generateDynamicZReport(range);
     }
-    
-    private Map<String, Object> generateDynamicZReport(Long branchId, LocalDate date) {
+
+    private Map<String, Object> generateDynamicZReport(ResolvedSessionRange range) {
+        Long branchId = range.branchId;
+        LocalDate date = range.date;
         // End-of-day gate: every terminal that is still OPEN for this branch+date must
         // have generated its X-Report before the consolidated Z-Report can be produced.
         // Any open session without an X-Report stamp is reported as a pending terminal.
-        List<PosSession> openSessions = repo.findOpenSessionsByBranchAndDate(branchId, date);
+        // Scoped to the whole business date (not just the resolved range) — a pending
+        // terminal outside a supervisor-narrowed range still owes its X-Report.
+        List<PosSession> openSessions = range.allSessionsForDate.stream()
+                .filter(s -> s.getStatus() == PosSessionStatus.OPEN)
+                .toList();
         List<Map<String, Object>> pendingTerminals = new java.util.ArrayList<>();
         for (PosSession s : openSessions) {
             if (s.getXReportGeneratedAt() != null) continue;
             String terminalName = null;
             if (s.getTerminalId() != null && !s.getTerminalId().isBlank()) {
-                terminalName = terminalRepository.findByTerminalId(s.getTerminalId())
+                terminalName = terminalHostingService.resolveHostingTerminal(s)
                         .map(PosTerminal::getTerminalName).orElse(null);
             }
             Map<String, Object> p = new java.util.LinkedHashMap<>();
@@ -694,7 +1273,7 @@ public class PosSessionService {
         }
         boolean eligible = pendingTerminals.isEmpty();
 
-        List<PosSession> sessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date).stream()
+        List<PosSession> sessions = range.resolvedSessions.stream()
                 .filter(s -> s.getStatus() == PosSessionStatus.CLOSED)
                 .toList();
         List<Long> sessionIds = sessions.stream().map(PosSession::getId).toList();
@@ -704,7 +1283,14 @@ public class PosSessionService {
                     .filter(inv -> inv.getStatus() != SalesInvoiceStatus.CANCELLED && inv.getStatus() != SalesInvoiceStatus.DRAFT)
                     .toList();
 
-        TenderTotals tender = aggregateTender(invoices);
+        List<ReceiptVoucher> advances = sessionIds.isEmpty() ? List.of() : receiptVoucherRepository.findByPosSessionIdIn(sessionIds);
+        if (!advances.isEmpty()) {
+            advances.forEach(entityManager::detach);
+            advances = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
+        }
+
+        TenderTotals tender = aggregateTender(invoices, advances);
         // Actual tender refunded (paymentType = MADE) across the day's invoices — same
         // source and shape as the X-Report's "Returns" KPI, so the two reports agree.
         TenderTotals refunds = aggregateRefunds(invoices);
@@ -747,12 +1333,25 @@ public class PosSessionService {
         int totalItemsSold = (Integer) summary.getOrDefault("totalItemsSold", 0);
         summary.put("netQuantitySold", Math.max(0, totalItemsSold - returns.totalQtyReturned));
 
+        // Consolidated Cash Position — additive, informational only; never feeds the
+        // per-session Expected Cash figure or the Day Close reconciliation above. Cash
+        // Drop/Out totals sourced via one grouped query across the resolved session set
+        // (no cashDropIn/cashDropOut existed in the Z-Report summary before this).
+        Map<String, BigDecimal> cashMovementTotals = sumCashMovementsByType(sessionIds);
+        BigDecimal cashDropIn = cashMovementTotals.getOrDefault("DROP_IN", BigDecimal.ZERO);
+        BigDecimal cashDropOut = cashMovementTotals.getOrDefault("DROP_OUT", BigDecimal.ZERO);
+        summary.put("cashPosition", buildCashPosition(branchId, date, sessionIds,
+                openingCash, tender.cash, cashDropIn, cashDropOut, true));
+
         Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("eligible", eligible);
         result.put("pendingTerminals", pendingTerminals);
         result.put("sessions", sessions);
         result.put("invoices", invoices);
         result.put("date", date.toString());
+        result.put("startSessionId", range.startSession != null ? range.startSession.getId() : null);
+        result.put("endSessionId", range.endSession != null ? range.endSession.getId() : null);
+        result.put("excludedSessionCount", range.excludedSessions.size());
         result.put("summary", summary);
         result.put("tender", tender.byBucket);
         result.put("tenderLines", tender.lines);
@@ -766,37 +1365,78 @@ public class PosSessionService {
         // (mixed Cash+Card) payments to both buckets instead of the session's running
         // totalCashSales/totalCardSales counters, which never see "mixed" sales at all
         // (recordInvoiceOnSession buckets mixed payments into totalMixedSales only).
-        result.put("cashierWiseSummary", buildCashierWiseSummary(invoices, sessions));
+        result.put("cashierWiseSummary", buildCashierWiseSummary(invoices, advances, sessions));
         result.put("isDayClosed", false);
         return result;
     }
     
+    /** Backward-compatible overload — resolves the full-date range automatically and
+     *  fails closed on any exclusion (there can be none without an override). */
     @Transactional
     public Map<String, Object> closeDay(Long branchId, LocalDate date) {
+        return closeDay(branchId, date, null, null, false);
+    }
+
+    @Transactional
+    public Map<String, Object> closeDay(Long branchId, LocalDate date, Long startSessionId, Long endSessionId,
+                                        boolean acknowledgeExclusions) {
         // 1. Check lock/duplicate
         if (dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Business day has already been closed.");
         }
-        
+
         // 2. Lock branch to prevent concurrent closes for the same branch
         Branch branch = branchRepository.findById(branchId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Branch not found"));
-            
-        // 3. Validations
-        List<PosSession> allSessions = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date);
-        long openCount = allSessions.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
+
+        // 3. Resolve the session range ONCE (server-side, never trusting a
+        // client-cached range) and reuse it for every validation, the report
+        // aggregation, and the reconciliation below — see ResolvedSessionRange.
+        ResolvedSessionRange range = resolveSessionRange(branchId, date, startSessionId, endSessionId);
+
+        // Global blockers scoped to the WHOLE business date, not just the resolved
+        // range: an OPEN or SUSPENDED session left outside a narrowed range would
+        // still block the next business date from opening (findUnclosedSessionsBeforeDate),
+        // so it must block Day Close here regardless of range selection.
+        long openCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
         if (openCount > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: " + openCount + " POS sessions are still open.");
         }
-        
-        // Check for pending/failed payments for the date's invoices
-        List<Long> sessionIds = allSessions.stream().map(PosSession::getId).toList();
+        long suspendedCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.SUSPENDED).count();
+        if (suspendedCount > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot close day: " + suspendedCount + " POS session(s) are suspended. Resume and close them before proceeding.");
+        }
+        if (range.resolvedSessions.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: no sessions found for this business date.");
+        }
+        // Every session inside the resolved range is guaranteed CLOSED at this point —
+        // the two checks above already forbid OPEN/SUSPENDED anywhere on the date, and
+        // those are the only other statuses.
+
+        // Narrowed range excludes otherwise-eligible sessions for the date: block
+        // unless the caller has explicitly confirmed (never silently drop sales/cash
+        // from the audit trail).
+        if (!range.excludedSessions.isEmpty() && !acknowledgeExclusions) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("excludedSessionCount", range.excludedSessions.size());
+            details.put("excludedSessions", range.excludedSessions.stream().map(this::buildSessionInfo).toList());
+            throw new com.billbull.backend.exception.SessionRangeExclusionException(
+                    "The selected session range excludes " + range.excludedSessions.size()
+                            + " session(s) for business date " + date + ". Confirm to proceed.",
+                    details);
+        }
+
+        List<PosSession> sessionsInRange = range.resolvedSessions;
+
+        // Check for pending/failed payments for the resolved range's invoices
+        List<Long> sessionIds = sessionsInRange.stream().map(PosSession::getId).toList();
         List<SalesInvoice> invoices = sessionIds.isEmpty() ? List.of() : invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(branchId, sessionIds);
         long draftInvoices = invoices.stream().filter(i -> i.getStatus() == SalesInvoiceStatus.DRAFT).count();
         if (draftInvoices > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: " + draftInvoices + " Draft invoices exist.");
         }
-        
+
         List<String> invoiceNumbers = invoices.stream().map(SalesInvoice::getInvoiceNumber).toList();
         if (!invoiceNumbers.isEmpty()) {
             List<Payment> payments = paymentRepository.findTenderForInvoices(invoiceNumbers);
@@ -805,10 +1445,10 @@ public class PosSessionService {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot close day: Pending or failed payment transactions found.");
             }
         }
-        
-        // 4. Generate dynamic report
-        Map<String, Object> report = generateDynamicZReport(branchId, date);
-        
+
+        // 4. Generate dynamic report from the same resolved range
+        Map<String, Object> report = generateDynamicZReport(range);
+
         // 5. Cash Reconciliation Validation
         @SuppressWarnings("unchecked")
         Map<String, Object> summary = (Map<String, Object>) report.get("summary");
@@ -848,13 +1488,20 @@ public class PosSessionService {
         }
 
         BigDecimal openingCash = (BigDecimal) summary.getOrDefault("openingCash", BigDecimal.ZERO);
-        // Cash paid in/out is recorded in sessions.
-        BigDecimal cashPaidIn = allSessions.stream().map(s -> sumCashMovements(s, "PAY_IN")).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal cashPaidOut = allSessions.stream().map(s -> sumCashMovements(s, "PAY_OUT")).reduce(BigDecimal.ZERO, BigDecimal::add);
+        // BUGFIX: this used to filter on movement types "PAY_IN"/"PAY_OUT", which no code
+        // path ever writes (the only types ever recorded are DROP_IN/DROP_OUT — see
+        // PosCashMovement/addCashMovement) — so cashPaidIn/cashPaidOut were always zero,
+        // silently omitting every cash drop from this check and risking a false "CASH
+        // reconciliation failed" on any day that had drawer drops. Also replaces the prior
+        // per-session stream (each triggering a lazy load of PosSession.cashMovements, i.e.
+        // one query per session) with a single grouped aggregate query.
+        Map<String, BigDecimal> cashMovementTotals = sumCashMovementsByType(sessionIds);
+        BigDecimal cashPaidIn = cashMovementTotals.getOrDefault("DROP_IN", BigDecimal.ZERO);
+        BigDecimal cashPaidOut = cashMovementTotals.getOrDefault("DROP_OUT", BigDecimal.ZERO);
         BigDecimal expectedCashComputed = openingCash.add(cashSales).add(cashPaidIn).subtract(cashPaidOut);
 
         // Let's compute actual expected cash from sessions directly
-        BigDecimal expectedCashSessions = allSessions.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal expectedCashSessions = sessionsInRange.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal cashVariance = expectedCashComputed.subtract(expectedCashSessions);
         if (cashVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
             Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
@@ -878,11 +1525,15 @@ public class PosSessionService {
         dayClose.setBranchId(branchId);
         dayClose.setCloseDate(date);
         dayClose.setClosedBy(currentUser());
+        dayClose.setClosedByDisplayName(resolveDisplayName(dayClose.getClosedBy()));
         dayClose.setClosedAt(LocalDateTime.now());
         dayClose.setBranchName(branch.getName());
         dayClose.setBranchCode(branch.getCode());
         dayClose.setReportVersion("1.0");
-        
+        String zReportNumber = reportNumberService.nextReportNumber("ZR", branchId, date);
+        dayClose.setReportNumber(zReportNumber);
+        report.put("reportNumber", zReportNumber);
+
         dayClose.setGrossSales((BigDecimal) summary.getOrDefault("grossSales", BigDecimal.ZERO));
         dayClose.setNetSales((BigDecimal) summary.getOrDefault("netSalesExTax", BigDecimal.ZERO));
         dayClose.setTotalDiscount((BigDecimal) summary.getOrDefault("totalDiscount", BigDecimal.ZERO));
@@ -894,15 +1545,29 @@ public class PosSessionService {
         dayClose.setExpectedCash(expectedCashSessions);
         dayClose.setTotalInvoices((Integer) summary.getOrDefault("invoiceCount", 0));
         dayClose.setTotalSessions((Integer) summary.getOrDefault("sessionCount", 0));
-        
+        dayClose.setStartSessionId(range.startSession != null ? range.startSession.getId() : null);
+        dayClose.setEndSessionId(range.endSession != null ? range.endSession.getId() : null);
+
         try {
             dayClose.setzReportJson(objectMapper.writeValueAsString(report));
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to serialize Z-Report");
         }
-        
-        dayCloseRepository.save(dayClose);
-        
+
+        PosDayClose savedDayClose = dayCloseRepository.save(dayClose);
+
+        // Stamp membership on every included session so it's directly queryable
+        // (PosSession.dayCloseId) instead of only reconstructable by parsing the
+        // day close's zReportJson snapshot.
+        for (PosSession s : sessionsInRange) {
+            s.setDayCloseId(savedDayClose.getId());
+        }
+        repo.saveAll(sessionsInRange);
+
+        // Advance the business date by exactly one day — never to LocalDate.now() (see
+        // PosBusinessDateService for why: a late catch-up close must not skip a date).
+        businessDateService.advanceBusinessDate(branchId, currentUser());
+
         return report;
     }
 
@@ -966,6 +1631,154 @@ public class PosSessionService {
         return rs;
     }
 
+    // ── Consolidated Cash Position (additive — never feeds Expected Cash in Drawer) ───
+    //
+    // A second, purely informational cash summary alongside the existing till-count
+    // reconciliation (computeExpectedCash/PosSession.expectedCash), which must stay
+    // untouched — see the architecture review. This section widens the picture to
+    // include back-office cash movements that never sit in the physical drawer
+    // (Customer Receipts, Customer Advances) and, where the data actually supports it,
+    // cash-only Cash Drop/Cash Out detail sourced via a single batch query.
+    //
+    // Cash Refunds/Returns are deliberately NOT included: SalesReturn has no
+    // payment-mode field today, so a "cash refund" total cannot be computed without
+    // misclassifying every refund (cash+card+other) as cash. cashRefundsSupported=false
+    // flags this to the caller/frontend rather than silently reporting a wrong number.
+
+    private static final class ReceiptsAndAdvances {
+        BigDecimal receiptsTotal = BigDecimal.ZERO;
+        BigDecimal advancesTotal = BigDecimal.ZERO;
+        final List<Map<String, Object>> receiptRows = new java.util.ArrayList<>();
+        final List<Map<String, Object>> advanceRows = new java.util.ArrayList<>();
+    }
+
+    /** Customer Receipts (ReceiptPurpose CASH_SALE/AGAINST_INVOICE) and Customer Advances
+     *  (ReceiptPurpose ADVANCE_RECEIVED), cash-only, for a branch + business date. These
+     *  are general back-office accounting vouchers with no PosSession/terminal/cashier
+     *  link today, so — per the architecture review — they are only ever branch+date
+     *  scoped (Z-Report), never session-scoped (X-Report). */
+    private ReceiptsAndAdvances buildReceiptsAndAdvances(Long branchId, LocalDate date) {
+        ReceiptsAndAdvances result = new ReceiptsAndAdvances();
+        if (branchId == null || date == null) return result;
+        int slReceipt = 1;
+        int slAdvance = 1;
+
+        List<ReceiptVoucher> receipts = new java.util.ArrayList<>();
+        receipts.addAll(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(branchId, date, ReceiptPurpose.CASH_SALE));
+        receipts.addAll(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(branchId, date, ReceiptPurpose.AGAINST_INVOICE));
+        if (!receipts.isEmpty()) {
+            receipts.forEach(entityManager::detach);
+            receipts = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, receipts, ReceiptVoucher::getId);
+        }
+        
+        for (ReceiptVoucher rv : receipts) {
+            if (!isCashMode(rv.getPaymentMode())) continue;
+            BigDecimal amount = nz(rv.getAmount());
+            result.receiptsTotal = result.receiptsTotal.add(amount);
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("slNo", slReceipt++);
+            row.put("customerName", rv.getMemberName());
+            row.put("receivedBy", rv.getCreatedBy());
+            row.put("receivedAmount", amount);
+            result.receiptRows.add(row);
+        }
+
+        List<ReceiptVoucher> advances = receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(
+                branchId, date, ReceiptPurpose.ADVANCE_RECEIVED);
+        if (!advances.isEmpty()) {
+            advances.forEach(entityManager::detach);
+            advances = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
+        }
+        for (ReceiptVoucher rv : advances) {
+            if (!isCashMode(rv.getPaymentMode())) continue;
+            BigDecimal amount = nz(rv.getAmount());
+            result.advancesTotal = result.advancesTotal.add(amount);
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("slNo", slAdvance++);
+            row.put("customerName", rv.getMemberName());
+            row.put("paidBy", rv.getCreatedBy());
+            row.put("paidAmount", amount);
+            result.advanceRows.add(row);
+        }
+        return result;
+    }
+
+    /** Builds the "Consolidated Cash Position" additive summary block. {@code
+     *  includeBackOfficeReceipts} gates Customer Receipts/Advances — true only for
+     *  Z-Report (branch + business date scoped); X-Report omits them until POS-session
+     *  linkage exists for ReceiptVoucher (see architecture review §3). Cash Drop/Cash Out
+     *  detail is always included since PosCashMovement is already session-scoped. */
+    private Map<String, Object> buildCashPosition(Long branchId, LocalDate date, List<Long> sessionIds,
+                                                   BigDecimal openingCash, BigDecimal cashSales,
+                                                   BigDecimal cashDropIn, BigDecimal cashDropOut,
+                                                   boolean includeBackOfficeReceipts) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+
+        List<PosCashMovement> movements = (sessionIds == null || sessionIds.isEmpty())
+                ? List.of()
+                : cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds);
+        if (!movements.isEmpty()) {
+            movements.forEach(entityManager::detach);
+            movements = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, movements, PosCashMovement::getId);
+        }
+        List<Map<String, Object>> cashDropRows = new java.util.ArrayList<>();
+        int sl = 1;
+        for (PosCashMovement m : movements) {
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("slNo", sl++);
+            row.put("type", m.getMovementType());
+            row.put("amount", nz(m.getAmount()));
+            row.put("description", m.getDescription());
+            row.put("performedBy", m.getPerformedBy());
+            row.put("performedAt", m.getPerformedAt());
+            // Detail view always shows voided rows (with reason) for auditability — only the
+            // summed cashDropIn/cashDropOut totals passed into this method exclude them.
+            row.put("status", m.getStatus());
+            row.put("voidReason", m.getVoidReason());
+            cashDropRows.add(row);
+        }
+        result.put("cashDropRows", cashDropRows);
+        result.put("cashDropTotal", cashDropIn.subtract(cashDropOut));
+
+        BigDecimal customerReceiptsTotal = BigDecimal.ZERO;
+        BigDecimal customerAdvancesTotal = BigDecimal.ZERO;
+        List<Map<String, Object>> receiptRows = List.of();
+        List<Map<String, Object>> advanceRows = List.of();
+        if (includeBackOfficeReceipts) {
+            ReceiptsAndAdvances ra = buildReceiptsAndAdvances(branchId, date);
+            customerReceiptsTotal = ra.receiptsTotal;
+            customerAdvancesTotal = ra.advancesTotal;
+            receiptRows = ra.receiptRows;
+            advanceRows = ra.advanceRows;
+        }
+        result.put("customerReceiptRows", receiptRows);
+        result.put("customerReceiptsTotal", customerReceiptsTotal);
+        result.put("customerAdvanceRows", advanceRows);
+        result.put("customerAdvancesTotal", customerAdvancesTotal);
+
+        // Cash Refunds — not implemented: SalesReturn carries no payment-mode field, so a
+        // cash-only refund total cannot be computed correctly today (see architecture
+        // review §5). Flagged explicitly rather than misreporting the blended total.
+        result.put("cashRefundsSupported", false);
+        result.put("cashRefundsTotal", BigDecimal.ZERO);
+
+        BigDecimal netCashPosition = nz(openingCash)
+                .add(cashSales)
+                .add(customerReceiptsTotal)
+                .add(customerAdvancesTotal)
+                .add(cashDropIn)
+                .subtract(cashDropOut);
+        result.put("openingCash", nz(openingCash));
+        result.put("cashSales", cashSales);
+        result.put("cashDropIn", cashDropIn);
+        result.put("cashDropOut", cashDropOut);
+        result.put("netCashPosition", netCashPosition);
+        return result;
+    }
+
     /** Top-selling items by quantity across the given invoices (non-voided lines only). */
     private List<Map<String, Object>> buildTopSellingItems(List<SalesInvoice> invoices, int limit) {
         Map<String, Integer> qty = new java.util.LinkedHashMap<>();
@@ -1000,7 +1813,7 @@ public class PosSessionService {
     }
 // ... existing code ...
 
-    private List<Map<String, Object>> buildCashierWiseSummary(List<SalesInvoice> invoices, List<PosSession> sessions) {
+    private List<Map<String, Object>> buildCashierWiseSummary(List<SalesInvoice> invoices, List<ReceiptVoucher> advances, List<PosSession> sessions) {
         Map<Long, String> cashierBySessionId = new java.util.HashMap<>();
         for (PosSession s : sessions) {
             cashierBySessionId.put(s.getId(), s.getOpenedBy() != null ? s.getOpenedBy() : "—");
@@ -1013,14 +1826,27 @@ public class PosSessionService {
                     : "—";
             byCashier.computeIfAbsent(cashier, k -> new java.util.ArrayList<>()).add(inv);
         }
+        Map<String, List<ReceiptVoucher>> advByCashier = new java.util.LinkedHashMap<>();
+        for (ReceiptVoucher adv : advances) {
+            String cashier = adv.getPosSessionId() != null
+                    ? cashierBySessionId.getOrDefault(adv.getPosSessionId(), "—")
+                    : "—";
+            advByCashier.computeIfAbsent(cashier, k -> new java.util.ArrayList<>()).add(adv);
+        }
+        
+        java.util.Set<String> allCashiers = new java.util.HashSet<>(byCashier.keySet());
+        allCashiers.addAll(advByCashier.keySet());
+        
         List<Map<String, Object>> rows = new java.util.ArrayList<>();
-        for (Map.Entry<String, List<SalesInvoice>> e : byCashier.entrySet()) {
-            List<SalesInvoice> cashierInvoices = e.getValue();
-            TenderTotals t = aggregateTender(cashierInvoices);
+        for (String cashier : allCashiers) {
+            List<SalesInvoice> cashierInvoices = byCashier.getOrDefault(cashier, new java.util.ArrayList<>());
+            List<ReceiptVoucher> cashierAdvances = advByCashier.getOrDefault(cashier, new java.util.ArrayList<>());
+            TenderTotals t = aggregateTender(cashierInvoices, cashierAdvances);
             BigDecimal netSales = cashierInvoices.stream()
                     .map(i -> nz(i.getInvoiceTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
             Map<String, Object> row = new java.util.LinkedHashMap<>();
-            row.put("cashier", e.getKey());
+            row.put("cashier", cashier);
+            row.put("cashierDisplayName", "—".equals(cashier) ? cashier : resolveDisplayName(cashier));
             row.put("invoiceCount", cashierInvoices.size());
             row.put("netSales", netSales);
             row.put("cash", t.byBucket.getOrDefault("cash", BigDecimal.ZERO));
@@ -1041,7 +1867,7 @@ public class PosSessionService {
         Map<String, Object> info = new java.util.LinkedHashMap<>();
         String deviceName = null, deviceInfo = null, terminalName = null;
         if (s.getTerminalId() != null && !s.getTerminalId().isBlank()) {
-            PosTerminal term = terminalRepository.findByTerminalId(s.getTerminalId()).orElse(null);
+            PosTerminal term = terminalHostingService.resolveHostingTerminal(s).orElse(null);
             if (term != null) {
                 terminalName = term.getTerminalName();
                 deviceName = term.getTerminalName() != null ? term.getTerminalName() : term.getTerminalId();
@@ -1049,11 +1875,17 @@ public class PosSessionService {
             }
         }
         info.put("sessionNo", s.getId() != null ? "SESS-" + String.format("%06d", s.getId()) : null);
+        info.put("sessionId", s.getId());
+        info.put("status", s.getStatus() != null ? s.getStatus().name() : null);
         info.put("terminalId", s.getTerminalId());
         info.put("terminalName", terminalName);
         info.put("counter", s.getCounterName());
         info.put("cashier", s.getOpenedBy());
+        info.put("cashierDisplayName", s.getOpenedByDisplayName() != null
+                ? s.getOpenedByDisplayName() : resolveDisplayName(s.getOpenedBy()));
         info.put("closedBy", s.getClosedBy());
+        info.put("closedByDisplayName", s.getClosedByDisplayName() != null
+                ? s.getClosedByDisplayName() : resolveDisplayName(s.getClosedBy()));
         info.put("branch", s.getBranchName());
         info.put("device", deviceName != null ? deviceName : s.getTerminalId());
         info.put("deviceInfo", deviceInfo);
@@ -1063,7 +1895,7 @@ public class PosSessionService {
         info.put("durationSeconds", s.getDurationSeconds());
         info.put("openingCash", nz(s.getOpeningCash()));
         info.put("closingCash", nz(s.getClosingCash()));
-        info.put("closingDenominationsJson", s.getClosingDenominationsJson());
+        info.put("closingDenominationsJson", effectiveClosingDenominationsJson(s));
         info.put("cardBatchNo", s.getCardBatchNo());
         info.put("cardSettlementVerified", Boolean.TRUE.equals(s.getCardSettlementVerified()));
         info.put("cardClosingCash", nz(s.getCardClosingCash()));
@@ -1073,6 +1905,27 @@ public class PosSessionService {
         info.put("closingRemarks", s.getClosingRemarks());
         info.put("varianceRemarks", s.getNotes());
         return info;
+    }
+
+    /** Overlays an applied denomination correction (Enterprise Console > POS Administration)
+     *  onto the session's closing count, mirroring how receipts/advances/cash movements are
+     *  already overlaid elsewhere in this class via {@link #effectiveCorrectionViewService}.
+     *  Falls back to the raw {@code closingDenominationsJson} for open sessions or when no
+     *  correction has been applied — denomination corrections only ever target CLOSED sessions. */
+    private String effectiveClosingDenominationsJson(PosSession s) {
+        if (s.getId() == null || s.getStatus() != PosSessionStatus.CLOSED) {
+            return s.getClosingDenominationsJson();
+        }
+        Map<String, Object> effective = effectiveCorrectionViewService.getEffectiveView(
+                com.billbull.backend.pos.admin.CorrectionTargetType.POS_SESSION, s.getId());
+        if (!Boolean.TRUE.equals(effective.get("corrected"))) {
+            return s.getClosingDenominationsJson();
+        }
+        try {
+            return objectMapper.writeValueAsString(effective.get("effective"));
+        } catch (Exception e) {
+            return s.getClosingDenominationsJson();
+        }
     }
 
     /** Maps a session-open time to a human shift label. */
@@ -1132,14 +1985,16 @@ public class PosSessionService {
     }
 
     /** Aggregates actual RECEIVED tender for the given invoices from sales_payments.
-     *  This is the authoritative "Total Paid" — per-leg payment rows, not invoice value. */
-    private TenderTotals aggregateTender(List<SalesInvoice> invoices) {
+     *  This is the authoritative "Total Paid" — per-leg payment rows, not invoice value.
+     *  Also includes Customer Advances received during the session. */
+    private TenderTotals aggregateTender(List<SalesInvoice> invoices, List<ReceiptVoucher> advances) {
         TenderTotals t = new TenderTotals();
         List<String> numbers = invoices.stream()
                 .map(SalesInvoice::getInvoiceNumber)
                 .filter(n -> n != null && !n.isBlank())
                 .toList();
-        if (numbers.isEmpty()) return t;
+        
+        if (!numbers.isEmpty()) {
 
         for (Object[] row : paymentRepository.sumTenderByModeForInvoices(numbers)) {
             String rawMode = (String) row[0];
@@ -1170,6 +2025,40 @@ public class PosSessionService {
             line.put("date", p.getPaymentDate());
             t.lines.add(line);
         }
+        }
+        
+        if (advances != null) {
+            for (ReceiptVoucher p : advances) {
+                if (!ReceiptPurpose.ADVANCE_RECEIVED.equals(p.getPurpose())) continue;
+                String rawMode = p.getPaymentMode();
+                BigDecimal amount = p.getAmount() != null ? p.getAmount() : BigDecimal.ZERO;
+                String bucket = tenderBucket(rawMode);
+                t.byBucket.merge(bucket, amount, BigDecimal::add);
+                t.countByBucket.merge(bucket, 1L, Long::sum);
+                t.total = t.total.add(amount);
+                
+                if ("cash".equals(bucket)) t.cash = t.cash.add(amount);
+                else if ("card".equals(bucket)) {
+                    t.card = t.card.add(amount);
+                    String cardType = cardTypeLabel(rawMode);
+                    t.cardByType.merge(cardType, amount, BigDecimal::add);
+                    t.cardCountByType.merge(cardType, 1L, Long::sum);
+                }
+                else if ("credit".equals(bucket)) t.credit = t.credit.add(amount);
+                
+                Map<String, Object> line = new java.util.LinkedHashMap<>();
+                line.put("paymentNumber", p.getVoucherId());
+                line.put("invoiceNumber", "ADVANCE");
+                line.put("mode", p.getPaymentMode());
+                line.put("bucket", bucket);
+                line.put("amount", amount);
+                line.put("reference", p.getReference());
+                line.put("cashier", p.getPreparedBy());
+                line.put("date", p.getDate() != null ? p.getDate().atStartOfDay() : null);
+                t.lines.add(line);
+            }
+        }
+        
         return t;
     }
 
@@ -1354,6 +2243,7 @@ public class PosSessionService {
         for (Map.Entry<String, BigDecimal> e : collected.entrySet()) {
             Map<String, Object> row = new java.util.LinkedHashMap<>();
             row.put("cashier", e.getKey());
+            row.put("cashierDisplayName", "—".equals(e.getKey()) ? e.getKey() : resolveDisplayName(e.getKey()));
             row.put("collected", e.getValue());
             out.add(row);
         }

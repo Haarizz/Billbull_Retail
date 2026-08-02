@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BillBull POS Architecture Analysis</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --fg: #1b1f24;
+  --muted: #5b6470;
+  --border: #e2e5e9;
+  --code-bg: #f3f4f6;
+  --accent: #b45309;
+  --table-head: #f7f5f0;
+  --link: #9a4d0a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --fg: #e6e8eb;
+    --muted: #9aa3ad;
+    --border: #2a2e35;
+    --code-bg: #1d2025;
+    --accent: #f0b866;
+    --table-head: #1d2025;
+    --link: #f0b866;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --fg: #e6e8eb; --muted: #9aa3ad; --border: #2a2e35;
+  --code-bg: #1d2025; --accent: #f0b866; --table-head: #1d2025; --link: #f0b866;
+}
+:root[data-theme="light"] {
+  --bg: #ffffff; --fg: #1b1f24; --muted: #5b6470; --border: #e2e5e9;
+  --code-bg: #f3f4f6; --accent: #b45309; --table-head: #f7f5f0; --link: #9a4d0a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  display: flex;
+}
+#toc {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  flex: 0 0 300px;
+  padding: 24px 18px;
+  border-right: 1px solid var(--border);
+  font-size: 13px;
+}
+#toc a {
+  display: block;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 3px 0;
+  border-radius: 4px;
+}
+#toc a:hover { color: var(--accent); }
+#toc .toc-title {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+#toc .toc-l1 { font-weight: 600; color: var(--fg); margin-top: 10px; }
+#toc .toc-l2 { padding-left: 14px; }
+#toc .toc-l3 { padding-left: 28px; font-size: 12px; }
+main {
+  flex: 1 1 auto;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 40px 48px 120px;
+  min-width: 0;
+}
+h1, h2, h3, h4 { scroll-margin-top: 20px; line-height: 1.3; }
+h1 { font-size: 1.9em; border-bottom: 2px solid var(--accent); padding-bottom: 10px; }
+h2 { font-size: 1.5em; margin-top: 2.4em; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+h3 { font-size: 1.2em; margin-top: 1.8em; color: var(--accent); }
+h4 { font-size: 1.02em; margin-top: 1.4em; }
+p { color: var(--fg); }
+strong { color: var(--fg); }
+a { color: var(--link); }
+code {
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, monospace;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; font-size: 0.85em; }
+.mermaid {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.table-wrap { overflow-x: auto; margin: 1em 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--table-head); font-weight: 600; }
+ul, ol { padding-left: 1.4em; }
+li { margin: 0.25em 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+@media (max-width: 900px) {
+  body { flex-direction: column; }
+  #toc { position: static; height: auto; flex: none; border-right: none; border-bottom: 1px solid var(--border); }
+  main { padding: 24px; }
+}
+</style>
+</head>
+<body>
+<nav id="toc">
+<div class="toc-title">Contents</div>
+<a class="toc-l1" href="#billbull-pos-session-roaming-implementation-roadmap">BillBull POS — Session Roaming Implementation Roadmap</a>
+<a class="toc-l2" href="#phase-1-schema-foundation">Phase 1 — Schema Foundation</a>
+<a class="toc-l3" href="#1-objective">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-2-backend-readwrite-plumbing-for-new-schema">Phase 2 — Backend Read/Write Plumbing for New Schema</a>
+<a class="toc-l3" href="#1-objective-1">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-1">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-1">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-1">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-1">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-1">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-1">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-1">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-1">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-3-ownership-backfill">Phase 3 — Ownership Backfill</a>
+<a class="toc-l3" href="#1-objective-2">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-2">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-2">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-2">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-2">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-2">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-2">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-2">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-2">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-4-session-resolution-service-shadow-mode">Phase 4 — Session Resolution Service (Shadow Mode)</a>
+<a class="toc-l3" href="#1-objective-3">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-3">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-3">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-3">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-3">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-3">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-3">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-3">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-3">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-5-shadow-mode-validation-metrics">Phase 5 — Shadow-Mode Validation &amp; Metrics</a>
+<a class="toc-l3" href="#1-objective-4">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-4">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-4">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-4">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-4">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-4">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-4">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-4">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-4">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-6-terminal-locked-status-lockunlock-backend">Phase 6 — Terminal LOCKED Status &amp; Lock/Unlock Backend</a>
+<a class="toc-l3" href="#1-objective-5">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-5">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-5">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-5">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-5">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-5">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-5">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-5">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-5">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-7-session-transfer-service-backend-feature-flagged-off">Phase 7 — Session Transfer Service (Backend, Feature-Flagged Off)</a>
+<a class="toc-l3" href="#1-objective-6">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-6">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-6">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-6">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-6">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-6">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-6">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-6">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-6">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-8-transfer-ui-pilot-branch-enablement">Phase 8 — Transfer UI &amp; Pilot Branch Enablement</a>
+<a class="toc-l3" href="#1-objective-7">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-7">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-7">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-7">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-7">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-7">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-7">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-7">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-7">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-9-frontend-cutover-to-user-first-resolution-all-branches">Phase 9 — Frontend Cutover to User-First Resolution (All Branches)</a>
+<a class="toc-l3" href="#1-objective-8">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-8">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-8">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-8">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-8">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-8">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-8">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-8">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-8">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-10-suspend-releases-terminal-behavior-change">Phase 10 — Suspend-Releases-Terminal Behavior Change</a>
+<a class="toc-l3" href="#1-objective-9">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-9">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-9">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-9">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-9">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-9">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-9">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-9">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-9">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-11-z-report-eligibility-redefinition">Phase 11 — Z-Report Eligibility Redefinition</a>
+<a class="toc-l3" href="#1-objective-10">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-10">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-10">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-10">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-10">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-10">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-10">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-10">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-10">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-12-terminalcounter-summary-rebuild">Phase 12 — Terminal/Counter Summary Rebuild</a>
+<a class="toc-l3" href="#1-objective-11">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-11">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-11">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-11">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-11">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-11">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-11">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-11">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-11">9. Definition of Done</a>
+<a class="toc-l2" href="#phase-13-legacy-field-demotion-index-retirement-optional-deferred">Phase 13 — Legacy Field Demotion &amp; Index Retirement (Optional, Deferred)</a>
+<a class="toc-l3" href="#1-objective-12">1. Objective</a>
+<a class="toc-l3" href="#2-components-affected-12">2. Components Affected</a>
+<a class="toc-l3" href="#3-filesmodules-likely-to-change-12">3. Files/Modules Likely to Change</a>
+<a class="toc-l3" href="#4-database-migration-required-12">4. Database Migration Required</a>
+<a class="toc-l3" href="#5-backward-compatibility-considerations-12">5. Backward Compatibility Considerations</a>
+<a class="toc-l3" href="#6-risks-12">6. Risks</a>
+<a class="toc-l3" href="#7-testing-strategy-12">7. Testing Strategy</a>
+<a class="toc-l3" href="#8-rollback-strategy-12">8. Rollback Strategy</a>
+<a class="toc-l3" href="#9-definition-of-done-12">9. Definition of Done</a>
+</nav>
+<main>
+<h1 id="billbull-pos-session-roaming-implementation-roadmap">BillBull POS — Session Roaming Implementation Roadmap</h1>
+<p><strong>Status</strong>: Engineering implementation plan, derived from the approved <code>pos-session-roaming-architecture-blueprint.html</code>. This document does not revisit or alter any architectural decision or business rule from that blueprint — it converts the blueprint's six macro-phases (Chapter 14) into sprint-sized engineering phases, each independently deployable, each rollback-safe, none of them breaking existing POS functionality for any customer at any point in the rollout.</p>
+<p><strong>How to read this document</strong>: each phase below maps to one of the blueprint's six macro-phases (noted in the phase header). Phases are sized to be completable and independently shippable within roughly one sprint by a small backend/frontend pair, though team velocity will vary. No phase depends on a *later* phase; every phase depends only on phases before it.</p>
+<p><strong>Roadmap overview</strong></p>
+<div class="table-wrap"><table>
+<thead><tr><th>#</th><th>Phase</th><th>Macro-phase (blueprint Ch.14)</th><th>Deployable alone</th><th>User-visible change</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Schema foundation — new columns &amp; tables</td><td>1 — Foundation</td><td>Yes</td><td>None</td></tr>
+<tr><td>2</td><td>Backend read/write plumbing for new schema</td><td>1 — Foundation</td><td>Yes</td><td>None</td></tr>
+<tr><td>3</td><td>Ownership backfill job</td><td>1 — Foundation</td><td>Yes</td><td>None</td></tr>
+<tr><td>4</td><td>Session Resolution Service (shadow mode)</td><td>2 — Parallel resolution</td><td>Yes</td><td>None</td></tr>
+<tr><td>5</td><td>Shadow-mode validation &amp; metrics</td><td>2 — Parallel resolution</td><td>Yes</td><td>None</td></tr>
+<tr><td>6</td><td>Terminal LOCKED status &amp; lock/unlock backend</td><td>3 — Transfer capability</td><td>Yes</td><td>None (status exists, unreachable)</td></tr>
+<tr><td>7</td><td>Session Transfer Service (backend, flagged off)</td><td>3 — Transfer capability</td><td>Yes</td><td>None (flag off)</td></tr>
+<tr><td>8</td><td>Transfer UI + pilot branch enablement</td><td>3 — Transfer capability</td><td>Yes</td><td>Yes, pilot branch only</td></tr>
+<tr><td>9</td><td>Frontend cutover to user-first resolution (all branches)</td><td>4 — Cutover</td><td>Yes</td><td>Yes, all branches</td></tr>
+<tr><td>10</td><td>Suspend-releases-terminal behavior change</td><td>4 — Cutover</td><td>Yes</td><td>Yes</td></tr>
+<tr><td>11</td><td>Z-Report eligibility redefinition</td><td>5 — Reporting alignment</td><td>Yes</td><td>Yes (reporting only)</td></tr>
+<tr><td>12</td><td>Terminal/Counter Summary rebuild</td><td>5 — Reporting alignment</td><td>Yes</td><td>Yes (reporting only)</td></tr>
+<tr><td>13</td><td>Legacy field demotion &amp; index retirement (optional)</td><td>6 — Cleanup</td><td>Yes</td><td>None</td></tr>
+</tbody></table></div>
+<hr>
+<h2 id="phase-1-schema-foundation">Phase 1 — Schema Foundation</h2>
+<h3 id="1-objective">1. Objective</h3>
+<p>Introduce every new database structure the redesign needs, purely additively, with no application code yet reading or writing to it in a way that affects behavior.</p>
+<h3 id="2-components-affected">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: none behaviorally — JPA entity classes are extended with new nullable fields/associations, unused by any service yet.</li>
+<li><strong>Frontend</strong>: not affected.</li>
+<li><strong>Database</strong>: yes — this phase is entirely a database change.</li>
+<li><strong>APIs</strong>: not affected.</li>
+<li><strong>Services</strong>: not affected.</li>
+<li><strong>Reports</strong>: not affected.</li>
+<li><strong>Security</strong>: not affected.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change">3. Files/Modules Likely to Change</h3>
+<ul>
+<li>New Flyway migration file(s) under <code>billbull-backend/src/main/resources/db/migration/</code>.</li>
+<li><code>pos/session/PosSession.java</code> — add nullable <code>ownerUserId</code> field, nullable current-hosting refresh timestamp.</li>
+<li><code>pos/session/PosCashMovement.java</code> — add nullable <code>performedByUserId</code> field.</li>
+<li><code>pos/terminal/PosTerminal.java</code> — add fields to support the future <code>LOCKED</code> status (<code>lockedReason</code>, <code>lockedAt</code>, <code>lockedSessionId</code>), unused this phase.</li>
+<li>New entity classes: <code>PosSessionTerminalHistory</code> (new package or under <code>pos/session/</code>), <code>PosSessionTransferLog</code> (new package or under <code>pos/session/</code> or a new <code>pos/transfer/</code>).</li>
+<li>New repositories for the two new entities.</li>
+</ul>
+<h3 id="4-database-migration-required">4. Database Migration Required</h3>
+<p>Yes. New Flyway migration(s):</p>
+<ul>
+<li><code>ALTER TABLE pos_sessions ADD COLUMN owner_user_id BIGINT NULL</code> (no FK constraint enforced yet, or a nullable FK — team's choice, but must not be <code>NOT NULL</code>).</li>
+<li><code>ALTER TABLE pos_cash_movements ADD COLUMN performed_by_user_id BIGINT NULL</code>.</li>
+<li><code>ALTER TABLE pos_terminals ADD COLUMN locked_reason VARCHAR NULL, locked_at TIMESTAMP NULL, locked_session_id BIGINT NULL</code>.</li>
+<li><code>CREATE TABLE pos_session_terminal_history (...)</code> — session_id, terminal_id, counter_id/counter_name snapshot, started_at, ended_at (nullable while segment is open).</li>
+<li><code>CREATE TABLE pos_session_transfer_log (...)</code> — session_id, from_terminal_id, to_terminal_id, initiated_by_user_id, supervisor_authorized boolean, created_at.</li>
+</ul>
+<p>All statements idempotent-guarded (<code>to_regclass</code>/<code>IF NOT EXISTS</code>), consistent with the repo's existing migration convention (per CLAUDE.md).</p>
+<h3 id="5-backward-compatibility-considerations">5. Backward Compatibility Considerations</h3>
+<p>Fully additive — every new column is nullable, every new table is unpopulated at first. No existing query, report, or API response shape changes. <code>ddl-auto=update</code> and Flyway continue to coexist per the existing project convention; this phase adds nothing that conflicts with that.</p>
+<h3 id="6-risks">6. Risks</h3>
+<ul>
+<li>Low. The only real risk is a migration failing to apply cleanly against a tenant database with unexpected existing state (e.g., a column name collision) — mitigated by the idempotent-guard convention already standard in this codebase.</li>
+<li>Migration runtime on large <code>pos_sessions</code>/<code>pos_cash_movements</code> tables adding nullable columns is a fast metadata-only operation in PostgreSQL (no table rewrite for a nullable column with no default), so no downtime risk.</li>
+</ul>
+<h3 id="7-testing-strategy">7. Testing Strategy</h3>
+<ul>
+<li>Migration applies cleanly on a fresh database and on a copy of an existing tenant database (staging).</li>
+<li>Existing full backend test suite (<code>mvn -o test</code>) passes unchanged — no existing test should reference these new fields, so this is purely a regression check that nothing broke.</li>
+<li>Manual verification: existing POS flows (open/close session, checkout, X/Z-report) exercised end-to-end on a staging environment post-migration, confirming zero behavioral difference from pre-migration.</li>
+</ul>
+<h3 id="8-rollback-strategy">8. Rollback Strategy</h3>
+<p>Drop the new columns/tables via a follow-up migration, or simply leave them in place unused (since nothing reads them yet, leaving them is lower-risk than a reverse migration). Rollback of the *application* deploy (reverting the JPA entity changes) is a standard code rollback with no data implications, since Hibernate will simply stop mapping the new fields.</p>
+<h3 id="9-definition-of-done">9. Definition of Done</h3>
+<ul>
+<li>Migration applied successfully to all tenant databases (per the multi-tenant profile list in CLAUDE.md).</li>
+<li>New entity classes and repositories merged, unused by any service.</li>
+<li>Full existing test suite green.</li>
+<li>No change observed in any existing POS screen or report during staging verification.</li>
+</ul>
+<hr>
+<h2 id="phase-2-backend-readwrite-plumbing-for-new-schema">Phase 2 — Backend Read/Write Plumbing for New Schema</h2>
+<h3 id="1-objective-1">1. Objective</h3>
+<p>Give the backend the ability to write to the new tables/columns introduced in Phase 1, still without any existing behavior depending on them — this phase proves the plumbing works in isolation before Phase 3's backfill and Phase 4's shadow logic build on top of it.</p>
+<h3 id="2-components-affected-1">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — new repository methods, no service-level behavior change.</li>
+<li><strong>Frontend</strong>: not affected.</li>
+<li><strong>Database</strong>: no new migration (reuses Phase 1's schema).</li>
+<li><strong>APIs</strong>: not affected — no new endpoints exposed yet.</li>
+<li><strong>Services</strong>: a small, isolated new internal-only service (or repository-level helper) capable of writing a <code>PosSessionTerminalHistory</code> row and a <code>PosSessionTransferLog</code> row — invoked by nothing in production code yet, exercised only by tests.</li>
+<li><strong>Reports</strong>: not affected.</li>
+<li><strong>Security</strong>: not affected.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-1">3. Files/Modules Likely to Change</h3>
+<ul>
+<li><code>pos/session/PosSessionTerminalHistoryRepository.java</code> (new), <code>pos/session/PosSessionTransferLogRepository.java</code> (new) — query methods needed later (find open segment for a session, find history for a session).</li>
+<li>Small internal helper/service class encapsulating "open a new history segment" / "close the current history segment" write operations, unit-tested in isolation.</li>
+</ul>
+<h3 id="4-database-migration-required-1">4. Database Migration Required</h3>
+<p>None (Phase 1 covered schema).</p>
+<h3 id="5-backward-compatibility-considerations-1">5. Backward Compatibility Considerations</h3>
+<p>None — no existing code path is touched.</p>
+<h3 id="6-risks-1">6. Risks</h3>
+<p>Minimal — isolated, untriggered code. The only risk is scope creep (accidentally wiring this into a live path early) — explicitly out of scope for this phase.</p>
+<h3 id="7-testing-strategy-1">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests for the new repository methods and helper service, following the existing Mockito-based test convention (<code>@ExtendWith(MockitoExtension.class)</code>, builder-method fixtures per CLAUDE.md's testing conventions).</li>
+<li>No integration/end-to-end testing needed yet, since nothing in the running application calls this code.</li>
+</ul>
+<h3 id="8-rollback-strategy-1">8. Rollback Strategy</h3>
+<p>Trivial — revert the code change; nothing else in the system references it.</p>
+<h3 id="9-definition-of-done-1">9. Definition of Done</h3>
+<ul>
+<li>New repositories and helper service merged with unit test coverage.</li>
+<li>Code review confirms nothing production-facing invokes these new classes yet.</li>
+</ul>
+<hr>
+<h2 id="phase-3-ownership-backfill">Phase 3 — Ownership Backfill</h2>
+<h3 id="1-objective-2">1. Objective</h3>
+<p>Populate <code>pos_sessions.owner_user_id</code> and <code>pos_cash_movements.performed_by_user_id</code> for all historical and ongoing rows, so that by the time Phase 4's resolution logic needs a reliable <code>ownerUserId</code>, it is already populated for every session, not just new ones going forward.</p>
+<h3 id="2-components-affected-2">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — a one-time (or idempotent, safely re-runnable) backfill job.</li>
+<li><strong>Frontend</strong>: not affected.</li>
+<li><strong>Database</strong>: data-only change (UPDATE statements via the backfill job), no new schema.</li>
+<li><strong>APIs</strong>: not affected.</li>
+<li><strong>Services</strong>: new backfill job/runner, modeled after the existing <code>PosCounterBackfillRunner</code> (<code>ApplicationRunner</code>) pattern already used in this codebase for an analogous prior backfill.</li>
+<li><strong>Reports</strong>: not affected.</li>
+<li><strong>Security</strong>: not affected.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-2">3. Files/Modules Likely to Change</h3>
+<ul>
+<li>New <code>PosSessionOwnershipBackfillRunner.java</code> (or similar), following the existing <code>pos/counter/PosCounterBackfillRunner.java</code> pattern (idempotent <code>ApplicationRunner</code>, safe to run on every startup, no-ops once complete).</li>
+<li>Resolves <code>PosSession.openedBy</code> (username string) → <code>users.id</code> via the existing user-lookup mechanism already used by <code>resolveDisplayName</code> in <code>PosSessionService</code>.</li>
+<li>Same for <code>PosCashMovement.performedBy</code>.</li>
+</ul>
+<h3 id="4-database-migration-required-2">4. Database Migration Required</h3>
+<p>No schema migration — this is a data backfill executed by application code at startup (matching the existing <code>PosCounterBackfillRunner</code> precedent, not a Flyway <code>UPDATE</code> script), so it can safely handle username-resolution edge cases (renamed/deactivated users) in Java rather than brittle SQL.</p>
+<h3 id="5-backward-compatibility-considerations-2">5. Backward Compatibility Considerations</h3>
+<p>Fully additive — <code>openedBy</code>/<code>performedBy</code> string columns are untouched and remain authoritative for any code that still reads them (all existing code, at this point in the rollout). Rows that fail to resolve cleanly (e.g., a username with no matching current user) are left with a null <code>owner_user_id</code> and logged for manual follow-up — never blocking, per the blueprint's explicit risk mitigation (Chapter 15).</p>
+<h3 id="6-risks-2">6. Risks</h3>
+<ul>
+<li>A username that no longer resolves to exactly one user (renamed, deactivated, or ambiguous) leaves <code>owner_user_id</code> null for that historical session — acceptable and expected, called out explicitly in the blueprint. Mitigation: log every unresolved row for manual/administrative follow-up; do not fail the backfill run over it.</li>
+<li>Backfill running against a very large <code>pos_sessions</code> table taking longer than expected on first boot. Mitigation: batch the backfill (process in chunks, following the same idempotent-and-resumable pattern as <code>PosCounterBackfillRunner</code>), and make it safe to run across multiple application restarts if it doesn't finish in one.</li>
+</ul>
+<h3 id="7-testing-strategy-2">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests for the username→userId resolution logic, including the ambiguous/unresolvable case.</li>
+<li>Staging run against a full copy of a real tenant database, verifying resolution rate (expect near-100% for active users, with any gaps manually reviewed before sign-off).</li>
+<li>Confirm re-running the backfill after it has already completed is a safe no-op (idempotency check).</li>
+</ul>
+<h3 id="8-rollback-strategy-2">8. Rollback Strategy</h3>
+<p>Set <code>owner_user_id</code>/<code>performed_by_user_id</code> back to null (or simply stop running the backfill runner) — since nothing yet depends on these columns being populated, this is a zero-risk rollback.</p>
+<h3 id="9-definition-of-done-2">9. Definition of Done</h3>
+<ul>
+<li>Backfill runner merged and verified idempotent.</li>
+<li>Staging backfill run completed with resolution rate reviewed and any gaps documented.</li>
+<li>Full existing test suite green; no behavior change observed anywhere.</li>
+</ul>
+<hr>
+<h2 id="phase-4-session-resolution-service-shadow-mode">Phase 4 — Session Resolution Service (Shadow Mode)</h2>
+<h3 id="1-objective-3">1. Objective</h3>
+<p>Ship the new user-first Session Resolution Service described in Chapter 12 of the blueprint, but running only in <strong>shadow mode</strong> — computing its answer on every relevant request and logging it for comparison, without any caller (frontend or backend) acting on its output yet.</p>
+<h3 id="2-components-affected-3">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — new service class, invoked internally alongside (not instead of) the existing terminal-first lookup.</li>
+<li><strong>Frontend</strong>: not affected — no frontend change in this phase.</li>
+<li><strong>Database</strong>: no new migration.</li>
+<li><strong>APIs</strong>: no new externally-facing endpoint yet (or, if exposed, explicitly marked internal/unused-by-clients — see Definition of Done).</li>
+<li><strong>Services</strong>: new <code>PosSessionResolutionService</code> (design per blueprint Chapter 12), consuming <code>owner_user_id</code> (Phase 1-3) to answer "does this user have an active session in this branch, and where is it hosted."</li>
+<li><strong>Reports</strong>: not affected.</li>
+<li><strong>Security</strong>: relies on <code>OwnershipContextHolder.currentUserId()</code> (already present and wired app-wide per the architecture audit) — no new security surface introduced, only a new consumer of an existing one.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-3">3. Files/Modules Likely to Change</h3>
+<ul>
+<li>New <code>pos/session/PosSessionResolutionService.java</code>.</li>
+<li><code>pos/session/PosSessionRepository.java</code> — new query method(s): find active (OPEN/SUSPENDED) session by <code>ownerUserId</code> + <code>branchId</code>.</li>
+<li><code>pos/session/PosSessionController.java</code> — existing <code>GET /sessions/active</code> endpoint internally calls the new service in parallel with the legacy terminal-first lookup (Phase 4's shadow logging only compares results; the endpoint's actual response is still driven by the legacy path this phase).</li>
+<li>New structured logging/metrics emission comparing legacy vs. new resolution outcomes (Phase 5 consumes this).</li>
+</ul>
+<h3 id="4-database-migration-required-3">4. Database Migration Required</h3>
+<p>None.</p>
+<h3 id="5-backward-compatibility-considerations-3">5. Backward Compatibility Considerations</h3>
+<p>The externally-visible behavior of every existing endpoint is unchanged in this phase — the new service's output is logged, never returned to a caller or acted upon. This is the phase most explicitly designed (per blueprint Chapter 14) to carry zero user-facing risk while still exercising the new logic against real production traffic patterns.</p>
+<h3 id="6-risks-3">6. Risks</h3>
+<ul>
+<li>Performance: running two resolution paths per request (legacy + shadow) doubles the query load for this one lookup. Mitigation: the shadow call is read-only and can be run asynchronously/best-effort (e.g., logged but not required to complete before the response returns), and this is a low-frequency call (once per POS session-check, not per-request-hot-path) — flagged as low risk but explicitly tested for latency impact.</li>
+<li>False mismatches between legacy and shadow logic due to genuinely-expected differences (e.g., a session backfilled with a null <code>owner_user_id</code> from Phase 3) rather than real bugs. Mitigation: Phase 5's analysis explicitly accounts for and filters out known-expected gaps before treating a mismatch as a real signal.</li>
+</ul>
+<h3 id="7-testing-strategy-3">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests for <code>PosSessionResolutionService</code> covering every branch of its decision tree (hosted-here, hosted-elsewhere, suspended-unhosted, none) using fixture sessions.</li>
+<li>Staging: run against synthetic multi-session, multi-terminal scenarios (including sessions with a null <code>owner_user_id</code>, to confirm graceful "no match" behavior rather than an error).</li>
+<li>Latency/load testing to confirm the shadow call does not measurably slow down the existing <code>GET /sessions/active</code> response time in production-scale traffic.</li>
+</ul>
+<h3 id="8-rollback-strategy-3">8. Rollback Strategy</h3>
+<p>Disable the shadow-call invocation (config flag or simple code removal) — since it is a pure side-effect (logging), removing it has zero data or behavioral consequence.</p>
+<h3 id="9-definition-of-done-3">9. Definition of Done</h3>
+<ul>
+<li><code>PosSessionResolutionService</code> merged, unit-tested across all decision branches.</li>
+<li>Shadow logging live in production for at least one full business-day cycle across a representative sample of branches.</li>
+<li>Latency impact confirmed negligible.</li>
+<li>No change in any existing endpoint's actual response.</li>
+</ul>
+<hr>
+<h2 id="phase-5-shadow-mode-validation-metrics">Phase 5 — Shadow-Mode Validation &amp; Metrics</h2>
+<h3 id="1-objective-4">1. Objective</h3>
+<p>Build confidence, using real production data gathered by Phase 4, that the new user-first resolution logic agrees with the legacy terminal-first logic in every case where they *should* agree (i.e., every session that has never been transferred, which — before Phase 8 ships — is every session). This is the gating checkpoint before Phase 6 introduces any new user-facing capability.</p>
+<h3 id="2-components-affected-4">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — a lightweight comparison/metrics job or dashboard query, consuming Phase 4's shadow logs.</li>
+<li><strong>Frontend</strong>: not affected.</li>
+<li><strong>Database</strong>: none, or an optional small metrics/discrepancy table if the team prefers persisted tracking over log-scraping (implementation detail, not architecturally required).</li>
+<li><strong>APIs</strong>: not affected.</li>
+<li><strong>Services</strong>: a comparison utility (could be as simple as a scheduled report over existing logs, or a dedicated small service — sizing left to the implementing team, since the blueprint does not mandate a specific mechanism here).</li>
+<li><strong>Reports</strong>: an internal-only engineering report (discrepancy count/rate), not a customer-facing report.</li>
+<li><strong>Security</strong>: not affected.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-4">3. Files/Modules Likely to Change</h3>
+<ul>
+<li>Depends on chosen mechanism — likely a small analysis script/scheduled job reading Phase 4's structured logs, or a lightweight new repository query if a persisted discrepancy table is used.</li>
+</ul>
+<h3 id="4-database-migration-required-4">4. Database Migration Required</h3>
+<p>None, unless the team opts for a persisted discrepancy-tracking table (optional, additive if so).</p>
+<h3 id="5-backward-compatibility-considerations-4">5. Backward Compatibility Considerations</h3>
+<p>None — this phase is purely observational tooling.</p>
+<h3 id="6-risks-4">6. Risks</h3>
+<ul>
+<li>The main risk this phase exists to *retire*, not create: if discrepancies are found, this is exactly the safe, low-stakes place to find and fix them, before Phase 6 makes the new logic load-bearing for any real user action.</li>
+</ul>
+<h3 id="7-testing-strategy-4">7. Testing Strategy</h3>
+<ul>
+<li>Review discrepancy reports daily during an initial observation window (team-determined length, e.g., one to two full weeks spanning multiple Day-Close cycles) across all branches.</li>
+<li>Any discrepancy is root-caused and either (a) confirmed as an expected/explainable gap (e.g., an unresolved backfill row) or (b) fixed in the resolution service before proceeding.</li>
+</ul>
+<h3 id="8-rollback-strategy-4">8. Rollback Strategy</h3>
+<p>Not applicable in the traditional sense — this phase produces no deployable artifact beyond the observation tooling from Phase 4, which is already independently rollback-safe.</p>
+<h3 id="9-definition-of-done-4">9. Definition of Done</h3>
+<ul>
+<li>Zero unexplained discrepancies between legacy and shadow resolution across a full observation window.</li>
+<li>Explicit written sign-off (even informal — a documented go/no-go decision) that the Session Resolution Service is trusted to become load-bearing in the next phase.</li>
+</ul>
+<hr>
+<h2 id="phase-6-terminal-locked-status-lockunlock-backend">Phase 6 — Terminal LOCKED Status &amp; Lock/Unlock Backend</h2>
+<h3 id="1-objective-5">1. Objective</h3>
+<p>Introduce the <code>LOCKED</code> terminal status and its supporting lock/unlock backend logic (Chapter 5 and Chapter 10 of the blueprint), reachable only by new, not-yet-wired-in code paths — no existing flow can cause a terminal to become <code>LOCKED</code> yet.</p>
+<h3 id="2-components-affected-5">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — status enum extension, new service methods.</li>
+<li><strong>Frontend</strong>: not affected yet (the Locked-screen UI ships in Phase 8).</li>
+<li><strong>Database</strong>: none new (Phase 1 already added the supporting columns).</li>
+<li><strong>APIs</strong>: new endpoint(s) for unlock-acknowledgment and supervisor force-unlock, unused by any client yet.</li>
+<li><strong>Services</strong>: <code>PosTerminalService</code>/a new <code>PosTerminalLockService</code> gains lock/unlock methods; existing status-transition validation (<code>PosTerminalStatus</code> enum handling in <code>PosTerminalService</code>/<code>PosTerminalController</code>) is extended to recognize <code>LOCKED</code> as a valid state.</li>
+<li><strong>Reports</strong>: not affected.</li>
+<li><strong>Security</strong>: new authorization rule — self-service unlock requires the requester to be the same user whose session vacated the terminal; supervisor force-unlock requires the same supervisor-auth mechanism already used for takeover (<code>PosSettingsController.verify-pin</code>/<code>supervisor-auth</code>).</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-5">3. Files/Modules Likely to Change</h3>
+<ul>
+<li><code>pos/terminal/PosTerminalStatus.java</code> — add <code>LOCKED</code> to the existing enum (<code>NEW, PENDING_REGISTRATION, ACTIVE, IDLE, OFFLINE, INACTIVE, MAINTENANCE, BLOCKED, STALE, DECOMMISSIONED, ARCHIVED</code>).</li>
+<li><code>pos/terminal/PosTerminalService.java</code> — new <code>lock(terminalId, sessionId, reason)</code> / <code>unlock(terminalId, actingUserId)</code> / <code>forceUnlock(terminalId, supervisorAuth)</code> methods.</li>
+<li><code>pos/terminal/PosTerminalController.java</code> — new endpoints, e.g. <code>POST /{terminalId}/acknowledge-lock</code>, <code>POST /{terminalId}/force-unlock</code>.</li>
+<li><code>pos/terminal/PosTerminalService.java</code> archive/decommission guards updated per blueprint Chapter 5's table (guard condition extended to also consider <code>LOCKED</code>), but still unreachable via any real flow this phase since nothing produces a <code>LOCKED</code> terminal yet outside of tests.</li>
+<li><code>PosTerminalLifecycleService.java</code> — confirm <code>LOCKED</code> terminals are handled sensibly by the existing auto-archive sweep (a <code>LOCKED</code>-but-vacated terminal should likely be eligible for the same staleness consideration as <code>OFFLINE</code>, per the team's judgment — flagged for explicit decision during implementation, not pre-decided by the architecture blueprint).</li>
+</ul>
+<h3 id="4-database-migration-required-5">4. Database Migration Required</h3>
+<p>None new (columns added in Phase 1; this phase only adds a new permitted value to an existing string/enum-backed status column, which requires no schema change in this codebase's existing <code>PosTerminalStatus</code> implementation pattern — confirm no DB-level CHECK constraint on <code>pos_terminals.status</code> needs updating, since one exists per <code>V28__pos_terminal_status_offline_fix.sql</code>; if so, an additive migration to widen that CHECK constraint is required here).</p>
+<h3 id="5-backward-compatibility-considerations-5">5. Backward Compatibility Considerations</h3>
+<p>No existing terminal can transition into <code>LOCKED</code> through any currently-reachable code path in this phase — it is purely new capability, dormant until Phase 8 wires the Transfer Service (Phase 7) into a real user flow. Existing terminal status handling (heartbeat, archive, decommission) continues to behave identically for every terminal that never enters the new state.</p>
+<h3 id="6-risks-5">6. Risks</h3>
+<ul>
+<li>If a DB-level CHECK constraint on <code>pos_terminals.status</code> exists (per <code>V28</code>) and is not updated, any attempt to persist <code>LOCKED</code> fails at the database layer rather than gracefully — mitigation: explicitly verify and widen this constraint as part of this phase's migration, and cover it with a dedicated test that persists a <code>LOCKED</code> terminal end-to-end.</li>
+<li>Scope risk: it's tempting to wire the lock trigger in early — explicitly out of scope for this phase, deferred to Phase 7/8, to keep this phase's blast radius to "new dormant capability only."</li>
+</ul>
+<h3 id="7-testing-strategy-5">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests for the new status-transition logic, including the CHECK-constraint-safe persistence test above.</li>
+<li>Unit tests for the unlock authorization rules (self-service vs. supervisor).</li>
+<li>Regression: full existing terminal lifecycle test suite (<code>PosSessionServiceTest</code>, terminal-related tests per CLAUDE.md's test conventions) remains green.</li>
+</ul>
+<h3 id="8-rollback-strategy-5">8. Rollback Strategy</h3>
+<p>Revert the enum addition and new endpoints; since no terminal can reach <code>LOCKED</code> yet, there is no data to reconcile — a pure code rollback.</p>
+<h3 id="9-definition-of-done-5">9. Definition of Done</h3>
+<ul>
+<li><code>LOCKED</code> status persists and round-trips correctly, including through any DB CHECK constraint.</li>
+<li>Unlock endpoints merged and unit-tested, unused by any client.</li>
+<li>Full existing test suite green.</li>
+</ul>
+<hr>
+<h2 id="phase-7-session-transfer-service-backend-feature-flagged-off">Phase 7 — Session Transfer Service (Backend, Feature-Flagged Off)</h2>
+<h3 id="1-objective-6">1. Objective</h3>
+<p>Ship the complete, atomic Session Transfer Service (Chapter 7 of the blueprint) end-to-end on the backend, gated behind a feature flag defaulting to off across all branches — the capability exists and is fully testable, but cannot be triggered in production yet.</p>
+<h3 id="2-components-affected-6">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — this is the single largest backend change in the roadmap.</li>
+<li><strong>Frontend</strong>: not affected yet (Phase 8 ships the UI).</li>
+<li><strong>Database</strong>: no new schema (Phase 1 covered it); this phase is the first to actually write to <code>pos_session_terminal_history</code> and <code>pos_session_transfer_log</code> from a real (flagged) code path.</li>
+<li><strong>APIs</strong>: new endpoint, e.g. <code>POST /sessions/{id}/transfer</code>, flagged off (returns not-yet-available, or is simply unreachable from any client until Phase 8).</li>
+<li><strong>Services</strong>: new <code>PosSessionTransferService</code>, composing the atomic detach/attach/history/audit transaction exactly as specified in the blueprint's sequence diagram.</li>
+<li><strong>Reports</strong>: not affected yet (Phase 12 consumes the new history data).</li>
+<li><strong>Security</strong>: new authorization checks — same-owner transfer requires only normal auth; different-owner transfer requires supervisor authorization, reusing the existing takeover credential-check mechanism (<code>PosSettingsController</code>).</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-6">3. Files/Modules Likely to Change</h3>
+<ul>
+<li>New <code>pos/session/PosSessionTransferService.java</code> (or a new <code>pos/transfer/</code> package) — the atomic transaction described in blueprint Chapter 7: re-verify session state, acquire transfer guard, detach source (lock it via Phase 6's lock method), close/open history segments (Phase 2's plumbing), attach target, refresh session's denormalized terminal/counter fields, write the transfer log row, release the guard.</li>
+<li><code>pos/session/PosSessionController.java</code> — new <code>POST /{id}/transfer</code> endpoint, behind a feature flag (e.g., <code>PosSettings</code>-level or a global config flag — team's choice of flag mechanism).</li>
+<li><code>pos/session/PosSessionRepository.java</code> — the atomic compare-and-swap query for the transfer guard, modeled directly on the existing <code>setOpenSession</code>/<code>clearOpenSession</code> pattern in <code>PosTerminalRepository.java</code>.</li>
+<li><code>pos/terminal/PosTerminalActivityService.java</code> — confirmed (per the dependency audit) to key its six call sites purely on <code>terminalId</code>; no change required here, since once the Transfer Service keeps a session's <code>terminalId</code> field live (this phase), these call sites automatically become correct without modification.</li>
+</ul>
+<h3 id="4-database-migration-required-6">4. Database Migration Required</h3>
+<p>None new — reuses Phase 1's schema exclusively.</p>
+<h3 id="5-backward-compatibility-considerations-6">5. Backward Compatibility Considerations</h3>
+<p>With the feature flag off, this endpoint is entirely inert in production — zero behavioral difference for any existing customer. This is the phase where the architecture's core new capability first becomes real, and the flag is the explicit safety valve the blueprint calls for (Chapter 14, Phase 3).</p>
+<h3 id="6-risks-6">6. Risks</h3>
+<ul>
+<li>This is the highest-complexity single phase in the roadmap — the atomic transaction has several moving parts (lock, history, audit, denormalized-field refresh) that must all commit or all roll back together. Mitigation: exhaustive unit and integration testing of every failure branch in Chapter 7's "every scenario" list (re-verification failure, concurrent transfer race, mid-flight network drop) before this phase is considered done — even though the flag keeps it off in production, it must be *correct*, not just *dormant*, before Phase 8 turns it on.</li>
+<li>Race condition between a transfer and a concurrent close/suspend of the same session (explicitly called out in blueprint Chapter 10/15). Mitigation: the re-verification step inside the atomic transaction, tested explicitly with a concurrent-modification integration test.</li>
+</ul>
+<h3 id="7-testing-strategy-6">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests for every branch of the transfer transaction, including forced-failure injection at each step to confirm full rollback.</li>
+<li>Integration tests simulating concurrent transfer attempts for the same session (two threads/requests racing) to confirm exactly one succeeds and the loser receives a clean, actionable failure.</li>
+<li>Integration test simulating a transfer racing a concurrent <code>closeSession</code>/<code>suspendSession</code> call, confirming the transfer cleanly fails rather than committing against stale state.</li>
+<li>Manual QA on a staging environment with the flag enabled for a test branch only, exercising the full transfer flow via direct API calls (Postman/equivalent) since no UI exists yet.</li>
+</ul>
+<h3 id="8-rollback-strategy-6">8. Rollback Strategy</h3>
+<p>The feature flag is the primary rollback mechanism — disabling it immediately returns the system to Phase 6's behavior with zero data-cleanup required, since a disabled flag means the endpoint was never reachable. A full code rollback (reverting the service/endpoint) remains available as a secondary option and is equally safe, since nothing else depends on this service yet.</p>
+<h3 id="9-definition-of-done-6">9. Definition of Done</h3>
+<ul>
+<li><code>PosSessionTransferService</code> merged with full unit/integration coverage of every scenario in blueprint Chapter 7.</li>
+<li>Concurrency tests (racing transfers, transfer-vs-close) passing.</li>
+<li>Manually verified end-to-end via direct API calls against a staging branch with the flag enabled.</li>
+<li>Flag remains off in every production branch at the close of this phase.</li>
+</ul>
+<hr>
+<h2 id="phase-8-transfer-ui-pilot-branch-enablement">Phase 8 — Transfer UI &amp; Pilot Branch Enablement</h2>
+<h3 id="1-objective-7">1. Objective</h3>
+<p>Ship the frontend Transfer Confirmation and Locked-screen experiences (blueprint Chapter 13), and enable the feature flag from Phase 7 for a single pilot branch — this is the first phase where any real cashier can experience session roaming.</p>
+<h3 id="2-components-affected-7">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: minor — flag enablement configuration for the pilot branch only; the <code>LOCKED</code>-notice field added to the heartbeat response (per blueprint Chapter 13: "the heartbeat response simply gains a 'you are now LOCKED' field").</li>
+<li><strong>Frontend</strong>: yes — the primary work of this phase.</li>
+<li><strong>Database</strong>: none new.</li>
+<li><strong>APIs</strong>: <code>POST /terminals/{terminalId}/heartbeat</code> response shape gains an optional new field (additive, non-breaking for any client not yet reading it); the transfer endpoint from Phase 7 becomes reachable for the pilot branch.</li>
+<li><strong>Services</strong>: none new beyond Phase 6/7.</li>
+<li><strong>Reports</strong>: not affected.</li>
+<li><strong>Security</strong>: the existing supervisor-auth challenge (already implemented) is reused verbatim in the Transfer Confirmation dialog for the supervisor-initiated case — no new security code, only new UI wiring to an existing mechanism.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-7">3. Files/Modules Likely to Change</h3>
+<ul>
+<li><code>billbull-frontend/src/pages/Sales/POSSales.jsx</code> — new state/handlers for the transfer confirmation flow, following the existing pattern already used for <code>SupervisorTakeoverDialog</code>.</li>
+<li>New component, e.g. <code>src/components/pos/TransferConfirmationDialog.jsx</code>, modeled on the existing <code>src/components/pos/SupervisorTakeoverDialog.jsx</code>.</li>
+<li>New component, e.g. <code>src/components/pos/TerminalLockedScreen.jsx</code>.</li>
+<li><code>src/hooks/useHeartbeat.js</code> — surfaces the new lock-notice field from the heartbeat response to the calling component.</li>
+<li><code>src/api/posApi.js</code> — new function(s) for calling the transfer endpoint and the unlock-acknowledgment endpoint.</li>
+<li><code>billbull-backend/.../pos/terminal/PosTerminalController.java</code> — heartbeat endpoint response DTO gains the optional lock-notice field.</li>
+</ul>
+<h3 id="4-database-migration-required-7">4. Database Migration Required</h3>
+<p>None.</p>
+<h3 id="5-backward-compatibility-considerations-7">5. Backward Compatibility Considerations</h3>
+<p>Every branch other than the pilot branch continues to operate exactly as before this phase — the flag remains off for them (Phase 7's control), so their terminals can never enter <code>LOCKED</code> and their frontend never shows the new dialogs (since the resolution flow, still terminal-first for these branches until Phase 9, never surfaces a "hosted elsewhere" case in the first place). The heartbeat response's new field is purely additive and safely ignored by any client not yet updated.</p>
+<h3 id="6-risks-7">6. Risks</h3>
+<ul>
+<li>UX confusion for pilot-branch cashiers if training doesn't precede rollout. Mitigation: this is explicitly why the blueprint calls for a single pilot branch (Chapter 14/15) rather than a wider rollout — use this phase to gather real usage feedback before Phase 9's full cutover.</li>
+<li>The pilot branch's cashiers are, at this phase, still using terminal-first *resolution* (Phase 9 hasn't shipped) but now have transfer *capability* — meaning the trigger for showing the Transfer Confirmation dialog must be sourced from somewhere. Mitigation: for the pilot branch specifically, wire the *existing* <code>GET /sessions/active</code> 409 "locked by active cashier" response (already present today) as the trigger for offering a transfer, rather than waiting for Phase 9's full resolution-service cutover — this keeps Phase 8 self-contained without silently depending on Phase 9.</li>
+</ul>
+<h3 id="7-testing-strategy-7">7. Testing Strategy</h3>
+<ul>
+<li>Manual QA walkthrough of every scenario in blueprint Chapter 7's "every scenario" list, performed by hand on the pilot branch in staging, then in production with real (but supervised) pilot usage.</li>
+<li>Regression testing confirming non-pilot branches show zero change in behavior or UI.</li>
+<li>Cross-browser/device testing for the new dialogs, consistent with however the existing <code>SupervisorTakeoverDialog</code> was originally validated.</li>
+</ul>
+<h3 id="8-rollback-strategy-7">8. Rollback Strategy</h3>
+<p>Disable the flag for the pilot branch (reverting to Phase 7's dormant state) — any in-flight session at the moment of rollback simply continues on whichever terminal is currently hosting it, since a disabled flag only prevents *new* transfers from being initiated, it does not disrupt an already-completed one. Frontend code rollback (removing the new dialogs) is also available and safe, since nothing else depends on them.</p>
+<h3 id="9-definition-of-done-7">9. Definition of Done</h3>
+<ul>
+<li>Pilot branch running with the flag enabled for a full, uneventful business cycle (minimum one full Day Close, ideally several).</li>
+<li>Every scenario in blueprint Chapter 7 manually verified working as designed.</li>
+<li>Documented pilot feedback reviewed and any UX issues resolved before proceeding to Phase 9.</li>
+<li>Zero behavioral change confirmed on all non-pilot branches.</li>
+</ul>
+<hr>
+<h2 id="phase-9-frontend-cutover-to-user-first-resolution-all-branches">Phase 9 — Frontend Cutover to User-First Resolution (All Branches)</h2>
+<h3 id="1-objective-8">1. Objective</h3>
+<p>Switch the primary session-resolution path, for every branch, from the legacy terminal-first flow to the now-proven (Phases 4/5) user-first Session Resolution Service — this is the phase where the architectural cutover described in blueprint Chapter 14's Phase 4 actually happens.</p>
+<h3 id="2-components-affected-8">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — <code>GET /sessions/active</code> (and related resolution logic) now returns the Session Resolution Service's answer as its primary/authoritative response, with the legacy terminal-first path retained in code (not deleted) as the rollback target.</li>
+<li><strong>Frontend</strong>: yes — <code>registerTerminalAndResumeSession</code>'s logic in <code>POSSales.jsx</code> is restructured so terminal registration and session resolution run as two independent calls (per blueprint Chapter 13), with the full three-way outcome (resumed-here / transfer-prompt / auto-claimed / none) now live for every branch, not just the pilot.</li>
+<li><strong>Database</strong>: none new.</li>
+<li><strong>APIs</strong>: <code>GET /sessions/active</code>'s internal resolution logic changes; its request/response contract is unchanged (backward-compatible per blueprint Chapter 12's API philosophy).</li>
+<li><strong>Services</strong>: <code>PosSessionService.getActiveSession</code> is updated to delegate to <code>PosSessionResolutionService</code> as primary, rather than shadow-only.</li>
+<li><strong>Reports</strong>: not affected yet.</li>
+<li><strong>Security</strong>: no new surface — this phase changes *which* existing, already-proven logic is authoritative, not what is being authorized.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-8">3. Files/Modules Likely to Change</h3>
+<ul>
+<li><code>pos/session/PosSessionService.java</code> — <code>getActiveSession</code> re-keyed to call <code>PosSessionResolutionService</code> as the primary path.</li>
+<li><code>pos/session/PosSessionController.java</code> — <code>GET /active</code> endpoint's internal wiring updated; external contract unchanged.</li>
+<li><code>billbull-frontend/src/pages/Sales/POSSales.jsx</code> — <code>registerTerminalAndResumeSession</code> (lines ~1806-1862 per the dependency audit) restructured per blueprint Chapter 13's new startup flow; the Transfer Confirmation dialog (Phase 8) now triggers from the new resolution outcome for all branches, not just the pilot's legacy-409 workaround.</li>
+<li>Feature flag from Phase 7/8 is widened to all branches (or removed entirely in favor of "always on," per team preference, since Phase 8's pilot has already validated the underlying transfer mechanics — this phase is specifically about resolution, which was independently validated in Phases 4/5).</li>
+</ul>
+<h3 id="4-database-migration-required-8">4. Database Migration Required</h3>
+<p>None.</p>
+<h3 id="5-backward-compatibility-considerations-8">5. Backward Compatibility Considerations</h3>
+<p>Any client that has not been updated to the new frontend build continues to function, because the API contract is unchanged — an old frontend build calling <code>GET /sessions/active</code> still receives a response in the shape it expects, now computed via the new logic but indistinguishable in the common case (a session that has never transferred resolves identically under either model, as established in Phase 5's validation). The legacy terminal-first resolution code path is retained, not deleted, specifically to serve as the rollback target for this phase.</p>
+<h3 id="6-risks-8">6. Risks</h3>
+<ul>
+<li>The primary risk this whole roadmap has been building toward mitigating: a resolution-logic bug surfacing at full production scale that smaller-scale (pilot branch) testing didn't catch. Mitigation: Phases 4/5's shadow-mode validation ran against full production traffic across all branches (not just the pilot) before this phase, specifically to catch exactly this class of risk ahead of time.</li>
+<li>Frontend startup-flow restructuring (two independent calls instead of one sequential dependency) introduces new timing/race possibilities (e.g., terminal registration failing while session resolution succeeds, or vice versa). Mitigation: explicit test cases for each combination of (terminal registration success/failure) × (session resolution outcome), and a defined UI precedence rule (terminal registration failure still hard-stops the UI regardless of what resolution found, per blueprint Chapter 13).</li>
+</ul>
+<h3 id="7-testing-strategy-8">7. Testing Strategy</h3>
+<ul>
+<li>Full regression of the existing POS startup flow test coverage (if any exists — flagged for the implementing team to confirm/expand, since the dependency audit did not find dedicated frontend tests for this flow).</li>
+<li>End-to-end staging tests covering every combination in the Chapter 4 state diagram: resumed-here, transfer-prompt, auto-claimed, none, across multiple branches.</li>
+<li>Gradual production rollout (e.g., branch-by-branch or via a percentage-based flag ramp, if the team's deployment tooling supports it) rather than an instantaneous all-branches flip, even though the phase's *goal* is all-branches — the mechanism of getting there can still be staged for safety without that staging constituting a separate "phase" in this roadmap.</li>
+<li>Monitoring/alerting on <code>GET /sessions/active</code> error rates and latency during rollout, with a defined threshold that triggers rollback.</li>
+</ul>
+<h3 id="8-rollback-strategy-8">8. Rollback Strategy</h3>
+<p>Revert the frontend build to the pre-cutover version (Phase 8's build, which still uses terminal-first resolution for non-pilot branches) and/or flip <code>PosSessionService.getActiveSession</code> back to calling the legacy path directly instead of the Resolution Service — both are pure code-level reverts with no data cleanup required, since the underlying <code>PosSession</code>/<code>PosTerminal</code> data is valid and correctly interpretable under either resolution logic at this point in the rollout (Phase 10 has not yet shipped the suspend-behavior change that would make this less true — see next phase's note on sequencing).</p>
+<h3 id="9-definition-of-done-8">9. Definition of Done</h3>
+<ul>
+<li>All branches resolving sessions via the new user-first service in production.</li>
+<li>Rollout monitoring shows no elevated error rate or latency versus the pre-cutover baseline.</li>
+<li>At least one full Day-Close cycle completed cleanly across all branches post-cutover.</li>
+<li>Legacy terminal-first resolution code remains in the codebase, unused but intact, as the rollback target.</li>
+</ul>
+<hr>
+<h2 id="phase-10-suspend-releases-terminal-behavior-change">Phase 10 — Suspend-Releases-Terminal Behavior Change</h2>
+<h3 id="1-objective-9">1. Objective</h3>
+<p>Ship the one deliberate behavior change called for in blueprint Chapter 4: an idle/hard-timeout auto-suspend (and manual suspend) now releases the session's hosting terminal, rather than leaving it locked as it does today. This is intentionally sequenced *after* Phase 9's cutover, since it only makes sense once user-first resolution is the live path everywhere (per blueprint Chapter 14's own phase ordering).</p>
+<h3 id="2-components-affected-9">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — <code>PosSessionScheduler</code> and <code>PosSessionService.suspendSession</code> gain a call to release the hosting terminal (using the same lock-release mechanism proven in Phase 7's Transfer Service, applied here to a suspend rather than a transfer).</li>
+<li><strong>Frontend</strong>: minor — a terminal that just had its session suspended-and-released should now show its normal "no active session, start one" state rather than continuing to imply it's occupied, if the UI doesn't already do this correctly.</li>
+<li><strong>Database</strong>: none new.</li>
+<li><strong>APIs</strong>: no contract change.</li>
+<li><strong>Services</strong>: <code>pos/session/PosSessionScheduler.java</code> and <code>PosSessionService.suspendSession</code> updated.</li>
+<li><strong>Reports</strong>: not affected.</li>
+<li><strong>Security</strong>: not affected.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-9">3. Files/Modules Likely to Change</h3>
+<ul>
+<li><code>pos/session/PosSessionScheduler.java</code> — <code>suspendIdleSessions</code> now also calls the terminal-release logic after flipping status to <code>SUSPENDED</code>.</li>
+<li><code>pos/session/PosSessionService.java</code> — <code>suspendSession</code> (manual suspend path) gains the same release call.</li>
+<li><code>pos/terminal/PosTerminalRepository.java</code> — reuse of the existing <code>clearOpenSession</code>-style atomic release (already proven in Phase 7 for transfer; this phase is a second, simpler caller of the same underlying mechanism).</li>
+</ul>
+<h3 id="4-database-migration-required-9">4. Database Migration Required</h3>
+<p>None.</p>
+<h3 id="5-backward-compatibility-considerations-9">5. Backward Compatibility Considerations</h3>
+<p>This is the one phase in the roadmap with a genuine, intentional behavior change visible to end users (a suspended session's terminal becomes usable by someone else sooner than it did before). This is explicitly called for by the approved architecture and is not a compatibility concern to avoid — it is flagged here so that operational/support teams are notified ahead of this phase shipping, consistent with the blueprint's Chapter 15 operational-risk mitigation ("communication risk... include explaining the... change before it ships").</p>
+<h3 id="6-risks-9">6. Risks</h3>
+<ul>
+<li>Operational surprise if support staff or branch managers aren't informed that a suspended session no longer "reserves" its terminal. Mitigation: explicit advance communication (a support/ops runbook note), not a code mitigation — flagged plainly as the primary risk of this phase.</li>
+<li>A session auto-suspending mid-transaction on a terminal that a *different* cashier immediately starts using could theoretically create a confusing moment if the original cashier returns expecting their screen to still be there. Mitigation: this is precisely what the Resume-from-anywhere capability (already shipped in Phase 9) is for — the original cashier resumes their session on whatever terminal is free next, losing no data; this should be part of the same communication/training materials as the risk above.</li>
+</ul>
+<h3 id="7-testing-strategy-9">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests confirming both the scheduled auto-suspend and manual suspend paths release the terminal correctly.</li>
+<li>Integration test confirming a released terminal is immediately available to host a *different* user's new or resumed session.</li>
+<li>Staging soak test across a full idle-timeout cycle to observe the end-to-end behavior under realistic timing.</li>
+</ul>
+<h3 id="8-rollback-strategy-9">8. Rollback Strategy</h3>
+<p>Revert the two call sites (scheduler and manual suspend) to their pre-Phase-10 behavior (suspend without releasing) — a pure code rollback; no data cleanup needed, since a terminal's <code>hostedSessionId</code>/lock state is always internally consistent regardless of which suspend behavior is active at any given moment.</p>
+<h3 id="9-definition-of-done-9">9. Definition of Done</h3>
+<ul>
+<li>Both suspend paths (scheduled and manual) confirmed releasing the terminal in staging and production.</li>
+<li>Support/ops teams have received and acknowledged the behavior-change communication.</li>
+<li>No increase in support tickets related to "my terminal was taken" beyond an agreed monitoring window.</li>
+</ul>
+<hr>
+<h2 id="phase-11-z-report-eligibility-redefinition">Phase 11 — Z-Report Eligibility Redefinition</h2>
+<h3 id="1-objective-10">1. Objective</h3>
+<p>Redefine Z-Report/Day-Close eligibility from "every terminal has produced an X-Report" to "every active/closed session for the branch+date has produced an X-Report" (blueprint Chapter 8, Rule 14, and Chapter 9), reflecting that a terminal may now legitimately host zero, one, or several sessions across a single business day.</p>
+<h3 id="2-components-affected-10">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes.</li>
+<li><strong>Frontend</strong>: minor — the Z-Report screen's "pending terminals" messaging becomes "pending sessions" messaging.</li>
+<li><strong>Database</strong>: none new.</li>
+<li><strong>APIs</strong>: <code>GET /sessions/z-report</code> response shape's <code>pendingTerminals</code> field is renamed/reshaped to a session-based equivalent — this is the one place in the roadmap where an existing response field's meaning changes, so it is called out explicitly as a compatibility consideration below.</li>
+<li><strong>Services</strong>: <code>PosSessionService.generateDynamicZReport</code> eligibility-gate logic.</li>
+<li><strong>Reports</strong>: yes — this phase's core deliverable.</li>
+<li><strong>Security</strong>: not affected.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-10">3. Files/Modules Likely to Change</h3>
+<ul>
+<li><code>pos/session/PosSessionService.java</code> — <code>generateDynamicZReport</code>/<code>getZReport</code> eligibility computation re-keyed from a terminal-completeness check to a session-completeness check.</li>
+<li><code>billbull-frontend/src/pages/Sales/POSSales.jsx</code> — <code>renderZReport()</code>/<code>loadZReport</code> messaging updated to reflect pending *sessions* rather than pending *terminals*.</li>
+</ul>
+<h3 id="4-database-migration-required-10">4. Database Migration Required</h3>
+<p>None.</p>
+<h3 id="5-backward-compatibility-considerations-10">5. Backward Compatibility Considerations</h3>
+<p>For any branch where no session has ever transferred (i.e., every branch not yet using roaming in practice, or any day with zero transfers), "every terminal reported" and "every session reported" are mathematically equivalent — so this phase produces <strong>zero observable difference</strong> for the overwhelming majority of days, and only changes behavior (correctly) on days where roaming actually happened. The response field shape change is additive-safe if implemented as "add a new session-based field, keep the old terminal-based field computed for one more phase as a soft-deprecated alias" — recommended explicitly here to avoid a hard breaking change to any dashboard or integration reading the old field name.</p>
+<h3 id="6-risks-10">6. Risks</h3>
+<ul>
+<li>Any external tool, saved report, or dashboard that specifically parses the old <code>pendingTerminals</code> field name would break if that field is removed outright. Mitigation: the additive/aliased approach above avoids this entirely; a hard removal of the old field should be deferred to Phase 13 (cleanup) at the earliest, not bundled into this phase.</li>
+<li>Finance/ops staff noticing the Z-Report screen's wording change without warning. Mitigation: same communication approach as Phase 10.</li>
+</ul>
+<h3 id="7-testing-strategy-10">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests confirming eligibility computation is identical to the legacy logic for every non-roaming scenario (regression safety), and correctly reflects reality for scenarios involving a transferred session.</li>
+<li>Staging verification against both a normal (no-transfer) day and a synthetic roaming day.</li>
+</ul>
+<h3 id="8-rollback-strategy-10">8. Rollback Strategy</h3>
+<p>Revert the eligibility computation to its legacy terminal-based logic — safe, since (per the compatibility note above) the two are equivalent for any day without an actual transfer, meaning a rollback loses no information for the vast majority of historical data; only days that genuinely involved a transfer would show different (and, under rollback, slightly less accurate) eligibility framing, which is an acceptable, well-understood rollback trade-off.</p>
+<h3 id="9-definition-of-done-10">9. Definition of Done</h3>
+<ul>
+<li>Eligibility logic verified equivalent to legacy behavior on all non-roaming days (regression-safe).</li>
+<li>Correct, verified behavior on at least one real or synthetic roaming day.</li>
+<li>Z-Report UI messaging updated and reviewed.</li>
+</ul>
+<hr>
+<h2 id="phase-12-terminalcounter-summary-rebuild">Phase 12 — Terminal/Counter Summary Rebuild</h2>
+<h3 id="1-objective-11">1. Objective</h3>
+<p>Rebuild Terminal Summary and Counter Summary reporting on top of per-transaction location data (each invoice's and cash movement's own point-in-time terminal/counter stamp) rather than "sessions opened on this terminal" — the second half of blueprint Chapter 9's reporting alignment.</p>
+<h3 id="2-components-affected-11">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes.</li>
+<li><strong>Frontend</strong>: minor — report screens consuming the new data shape.</li>
+<li><strong>Database</strong>: none new (uses data already being written since Phase 1/7 — the Session-Terminal-History table — plus data invoices already write today, per the dependency audit's finding that checkout already self-stamps terminal/counter).</li>
+<li><strong>APIs</strong>: any existing Terminal/Counter Summary endpoint's underlying query changes; response shape kept compatible where feasible.</li>
+<li><strong>Services</strong>: reporting query logic in <code>PosSessionService</code>/<code>pos/reports/PosReportsController.java</code>'s supporting services.</li>
+<li><strong>Reports</strong>: yes — this phase's core deliverable.</li>
+<li><strong>Security</strong>: not affected.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-11">3. Files/Modules Likely to Change</h3>
+<ul>
+<li>Reporting query logic under <code>pos/reports/</code> and/or the relevant private helper methods in <code>PosSessionService.java</code> (e.g., alongside <code>buildCashierWiseSummary</code>, <code>buildTopSellingItems</code>) — a new <code>buildTerminalWiseSummary</code>/<code>buildCounterWiseSummary</code> built from invoice/cash-movement stamps rather than session-terminal fixed assignment.</li>
+<li>Frontend report rendering components consuming these summaries.</li>
+</ul>
+<h3 id="4-database-migration-required-11">4. Database Migration Required</h3>
+<p>None new.</p>
+<h3 id="5-backward-compatibility-considerations-11">5. Backward Compatibility Considerations</h3>
+<p>For any historical day with no transfers, the new per-transaction-based Terminal Summary produces numbers identical to the old session-based one (since, absent a transfer, every transaction a session recorded happened on the one terminal it was ever hosted on). This phase is therefore safe to ship without any special historical-data handling — the new logic is simply more correct going forward and equally correct looking backward.</p>
+<h3 id="6-risks-11">6. Risks</h3>
+<ul>
+<li>Query performance: aggregating per-transaction rather than per-session could be more expensive depending on data volume and existing indexing. Mitigation: profile the new query against a realistic-sized dataset in staging before shipping; add indexes if needed (an additive, low-risk migration if so).</li>
+<li>Numbers moving slightly for any historical day that *did* involve a transfer (correctly, per the redesign) could surprise a report viewer comparing against a previously-cached/exported figure. Mitigation: same communication approach as prior reporting-change phases.</li>
+</ul>
+<h3 id="7-testing-strategy-11">7. Testing Strategy</h3>
+<ul>
+<li>Unit tests comparing old vs. new Terminal/Counter Summary output on non-roaming fixture data (must match exactly).</li>
+<li>Unit tests validating correct attribution on synthetic roaming fixture data.</li>
+<li>Performance testing against a production-scale dataset copy.</li>
+</ul>
+<h3 id="8-rollback-strategy-11">8. Rollback Strategy</h3>
+<p>Revert the reporting query logic to its prior session-based computation — safe for the same reason as Phase 11's rollback (equivalent results on the vast majority of non-roaming historical data).</p>
+<h3 id="9-definition-of-done-11">9. Definition of Done</h3>
+<ul>
+<li>New summary logic verified matching legacy output exactly on all non-roaming data.</li>
+<li>Verified correct on roaming scenarios.</li>
+<li>Performance confirmed acceptable at production scale.</li>
+</ul>
+<hr>
+<h2 id="phase-13-legacy-field-demotion-index-retirement-optional-deferred">Phase 13 — Legacy Field Demotion &amp; Index Retirement (Optional, Deferred)</h2>
+<h3 id="1-objective-12">1. Objective</h3>
+<p>The blueprint's explicitly optional cleanup phase (Chapter 11/14): demote <code>openedBy</code>/<code>performedBy</code> string fields to pure display-only status (never read for logic, since <code>owner_user_id</code>/<code>performed_by_user_id</code> have been authoritative since Phase 9), and optionally retire the older of the two redundant DB-level terminal-lock unique indexes. This phase has no fixed deadline and is only undertaken after a sustained, uneventful production period.</p>
+<h3 id="2-components-affected-12">2. Components Affected</h3>
+<ul>
+<li><strong>Backend</strong>: yes — removal of any remaining code paths that read the string fields for logic rather than display.</li>
+<li><strong>Frontend</strong>: none expected.</li>
+<li><strong>Database</strong>: optional — retiring <code>uq_pos_session_terminal_open</code> (the string-<code>terminal_id</code>-keyed index from <code>V13</code>), leaving <code>uix_one_open_session_per_terminal</code> (the numeric-<code>terminal_pk</code>-keyed one) as sole enforcement.</li>
+<li><strong>APIs</strong>: no contract change.</li>
+<li><strong>Services</strong>: cleanup-only changes to <code>PosSessionService</code>/<code>PosCashMovementService</code> removing any lingering string-based comparison logic.</li>
+<li><strong>Reports</strong>: not affected (Phase 12 already moved reporting off any dependency on this).</li>
+<li><strong>Security</strong>: not affected — ownership validation has used the numeric FK since Phase 9's cutover made the Resolution Service authoritative; this phase only removes now-dead string-comparison code.</li>
+</ul>
+<h3 id="3-filesmodules-likely-to-change-12">3. Files/Modules Likely to Change</h3>
+<ul>
+<li><code>pos/session/PosSessionService.java</code>, <code>PosCashMovementService.java</code> — remove any remaining <code>openedBy</code>/<code>performedBy</code> string-equality checks used for authorization (superseded by <code>owner_user_id</code>/<code>performed_by_user_id</code> since Phase 9).</li>
+<li>A new Flyway migration to drop <code>uq_pos_session_terminal_open</code>, if the team elects to proceed with that specific cleanup step.</li>
+</ul>
+<h3 id="4-database-migration-required-12">4. Database Migration Required</h3>
+<p>Only if the index-retirement half of this phase is undertaken — a single <code>DROP INDEX IF EXISTS uq_pos_session_terminal_open</code> (or equivalent), guarded and reversible.</p>
+<h3 id="5-backward-compatibility-considerations-12">5. Backward Compatibility Considerations</h3>
+<p>This phase is explicitly optional and time-unbounded per the blueprint — the system is fully correct and fully supported indefinitely without ever executing it. It should only be scheduled after a documented, sustained period (the blueprint suggests several full Day-Close cycles at minimum) with zero rollback events across every prior phase.</p>
+<h3 id="6-risks-12">6. Risks</h3>
+<ul>
+<li>Removing the redundant index prematurely, before full confidence in the numeric-FK-keyed index's correctness under all edge cases. Mitigation: this is precisely why the blueprint frames this as strictly last and optional — no other phase depends on it happening at all.</li>
+<li>Any lingering, undiscovered code path still reading the string fields for logic (rather than display) that this phase's audit misses. Mitigation: a dedicated code-search pass (grep for every read of <code>openedBy</code>/<code>performedBy</code>) before removing any of it, treating this phase with the same "exhaustive dependency sweep" rigor as the original architecture audits.</li>
+</ul>
+<h3 id="7-testing-strategy-12">7. Testing Strategy</h3>
+<ul>
+<li>Full regression suite plus a dedicated search-and-verify pass confirming no remaining logic-path dependency on the string fields before removing any authorization use of them.</li>
+<li>If retiring the index: verify the remaining index alone still fully enforces the one-session-per-terminal-hosting invariant under the same concurrency tests used in Phase 7.</li>
+</ul>
+<h3 id="8-rollback-strategy-12">8. Rollback Strategy</h3>
+<p>Code-level revert for the string-field cleanup; re-create the dropped index via a follow-up migration if the index-retirement half is rolled back (the index's absence has no data-loss implication, since it is a constraint, not stored data — re-adding it is always safe as long as no invariant violation occurred in the interim, which the remaining index would have already prevented).</p>
+<h3 id="9-definition-of-done-12">9. Definition of Done</h3>
+<ul>
+<li>Documented sustained-stability period elapsed with zero rollbacks across all prior phases.</li>
+<li>String fields confirmed display-only (no remaining logic dependency) via a dedicated code audit.</li>
+<li>If undertaken, index retirement verified not to weaken the one-session-per-terminal-hosting guarantee.</li>
+<li>This phase may be formally deferred indefinitely without blocking anything else — its absence from a given release is itself an acceptable Definition of Done for "not doing it yet."</li>
+</ul>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  function currentTheme() {
+    var attr = document.documentElement.getAttribute('data-theme');
+    if (attr === 'dark' || attr === 'light') return attr;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  if (window.mermaid) {
+    mermaid.initialize({ startOnLoad: true, theme: currentTheme() === 'dark' ? 'dark' : 'default' });
+  }
+</script>
+</body>
+</html>

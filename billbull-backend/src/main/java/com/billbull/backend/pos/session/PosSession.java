@@ -37,6 +37,16 @@ public class PosSession extends BaseEntity {
     @Column(name = "closed_by")
     private String closedBy;
 
+    /** Resolved employee full name (User.getResolvedDisplayName()) captured at the moment
+     *  openedBy/closedBy/xReportGeneratedBy were set — display-only, never used for
+     *  identity/ownership/locking/audit, which continue to rely solely on the username
+     *  columns above. Null on sessions written before this field existed. */
+    @Column(name = "opened_by_display_name")
+    private String openedByDisplayName;
+
+    @Column(name = "closed_by_display_name")
+    private String closedByDisplayName;
+
     @Column(name = "session_date")
     private LocalDate sessionDate;
 
@@ -68,6 +78,24 @@ public class PosSession extends BaseEntity {
     // Absolute session expiry (now + max_session_duration_hours). Null = no hard limit.
     @Column(name = "session_timeout_at")
     private LocalDateTime sessionTimeoutAt;
+
+    /** FK to pos_day_closes.id — set once this session is stamped into a Day Close's
+     *  resolved session range. Null while the session's business date is still open,
+     *  or if the session was explicitly excluded from a supervisor-adjusted range. */
+    @Column(name = "day_close_id")
+    private Long dayCloseId;
+
+    /** Session Roaming Phase 1 (schema foundation only — unused by any service yet). Stable
+     *  owner of this session, independent of which terminal currently hosts it. Null on every
+     *  session created before this feature existed and never backfilled by this phase. */
+    @Column(name = "owner_user_id")
+    private Long ownerUserId;
+
+    /** Session Roaming Phase 1 (schema foundation only — unused by any service yet). Last time
+     *  the session's current-terminal "hosting" pointer was refreshed. Null until a later phase
+     *  starts writing it. */
+    @Column(name = "current_hosting_refreshed_at")
+    private LocalDateTime currentHostingRefreshedAt;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -124,6 +152,10 @@ public class PosSession extends BaseEntity {
 
     @Column(name = "x_report_generated_by")
     private String xReportGeneratedBy;
+
+    /** See {@link #openedByDisplayName} doc — display-only resolved name. */
+    @Column(name = "x_report_generated_by_display_name")
+    private String xReportGeneratedByDisplayName;
 
     @Column(name = "z_report_printed")
     private Boolean zReportPrinted = false;
@@ -186,6 +218,12 @@ public class PosSession extends BaseEntity {
 
     public String getClosedBy() { return closedBy; }
     public void setClosedBy(String closedBy) { this.closedBy = closedBy; }
+
+    public String getOpenedByDisplayName() { return openedByDisplayName; }
+    public void setOpenedByDisplayName(String openedByDisplayName) { this.openedByDisplayName = openedByDisplayName; }
+
+    public String getClosedByDisplayName() { return closedByDisplayName; }
+    public void setClosedByDisplayName(String closedByDisplayName) { this.closedByDisplayName = closedByDisplayName; }
 
     public LocalDate getSessionDate() { return sessionDate; }
     public void setSessionDate(LocalDate sessionDate) { this.sessionDate = sessionDate; }
@@ -262,6 +300,9 @@ public class PosSession extends BaseEntity {
     public String getXReportGeneratedBy() { return xReportGeneratedBy; }
     public void setXReportGeneratedBy(String xReportGeneratedBy) { this.xReportGeneratedBy = xReportGeneratedBy; }
 
+    public String getXReportGeneratedByDisplayName() { return xReportGeneratedByDisplayName; }
+    public void setXReportGeneratedByDisplayName(String xReportGeneratedByDisplayName) { this.xReportGeneratedByDisplayName = xReportGeneratedByDisplayName; }
+
     public Boolean getZReportPrinted() { return zReportPrinted; }
     public void setZReportPrinted(Boolean zReportPrinted) { this.zReportPrinted = zReportPrinted; }
 
@@ -312,4 +353,13 @@ public class PosSession extends BaseEntity {
 
     public LocalDateTime getSessionTimeoutAt() { return sessionTimeoutAt; }
     public void setSessionTimeoutAt(LocalDateTime sessionTimeoutAt) { this.sessionTimeoutAt = sessionTimeoutAt; }
+
+    public Long getDayCloseId() { return dayCloseId; }
+    public void setDayCloseId(Long dayCloseId) { this.dayCloseId = dayCloseId; }
+
+    public Long getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(Long ownerUserId) { this.ownerUserId = ownerUserId; }
+
+    public LocalDateTime getCurrentHostingRefreshedAt() { return currentHostingRefreshedAt; }
+    public void setCurrentHostingRefreshedAt(LocalDateTime currentHostingRefreshedAt) { this.currentHostingRefreshedAt = currentHostingRefreshedAt; }
 }

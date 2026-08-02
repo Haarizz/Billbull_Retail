@@ -2,10 +2,11 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
     Search, Filter, Download, Upload, Plus, MoreHorizontal, ChevronDown, Users, Wallet, MapPin, Phone, Mail,
     FileText, CreditCard, Truck, Building, Save, X, CheckCircle2, AlertCircle, File, Edit, Trash2, Eye,
-    Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw, BarChart2
+    Calendar, DollarSign, Image as ImageIcon, UserPlus, History, Tag, Camera, XCircle, Clock, Paperclip, Printer, Share2, RefreshCw, BarChart2, Banknote
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Import Searchable Dropdown
+import CustomerAdvancesView from './components/CustomerAdvancesView';
 
 import StatementPrintPreview from '../../components/StatementPrintPreview';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
@@ -2875,6 +2876,8 @@ const CustomerLedger = () => {
                 return <ReceiveMoneyView />;
             case 'Customer SoA':
                 return <CustomerSOAView customers={customers} />;
+            case 'Customer Advances':
+                return <CustomerAdvancesView customers={customers} />;
             case 'Debtors Summary':
                 return <DebtorsSummaryView customers={customers} />;
 
@@ -3155,6 +3158,7 @@ const CustomerLedger = () => {
                             { id: 'Customer List', icon: Users },
                             { id: 'Receive Money', icon: Wallet },
                             { id: 'Customer SoA', icon: FileText },
+                            { id: 'Customer Advances', icon: Banknote },
                             { id: 'Debtors Summary', icon: BarChart2 }
                         ].map(tab => (
                             <button

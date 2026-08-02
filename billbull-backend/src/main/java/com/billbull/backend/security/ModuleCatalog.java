@@ -51,7 +51,12 @@ public final class ModuleCatalog {
             "permissions.posting.backdate-into-locked",
             "permissions.sales.override-credit-limit",
             "permissions.vendor.advance",
+            "permissions.customer.advance.view",
+            "permissions.customer.advance.receive",
+            "permissions.customer.advance.apply",
             "permissions.customer.advance.refund",
+            "permissions.customer.advance.adjust",
+            "permissions.customer.advance.void",
             // POS Terminal lifecycle actions (single-switch grants — the 6 CRUD flags don't
             // express "can Block but not Decommission"; see BillBull RBAC-for-POS extension)
             "permissions.pos.terminal.register",
@@ -66,7 +71,20 @@ public final class ModuleCatalog {
             "permissions.pos.terminal.unblock",
             "permissions.pos.terminal.decommission",
             "permissions.pos.terminal.keepactive",
-            "permissions.pos.terminal.setautoarchiveexempt");
+            "permissions.pos.terminal.setautoarchiveexempt",
+            // Cash Drop / Outs Management actions (single-switch grants, same mechanism as
+            // permissions.pos.terminal.* above)
+            "permissions.pos.cashmovement.create",
+            "permissions.pos.cashmovement.view",
+            "permissions.pos.cashmovement.viewall",
+            "permissions.pos.cashmovement.edit",
+            "permissions.pos.cashmovement.void",
+            // POS Reports (Customers & Sales > Reports > POS Reports) — read-only historical
+            // X/Z-Report browser, same single-switch grant mechanism as the two blocks above.
+            "permissions.pos.reports.view",
+            "permissions.pos.reports.viewall",
+            "permissions.pos.reports.print",
+            "permissions.pos.reports.export");
 
     /** lowercase key → canonical key */
     private static final Map<String, String> CANONICAL_BY_LOWERCASE = CANONICAL_MODULES.stream()

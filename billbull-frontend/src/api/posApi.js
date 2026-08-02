@@ -134,6 +134,22 @@ export const touchSessionActivity = async (sessionId) => {
   await api.post(`${BASE}/sessions/${sessionId}/touch-activity`);
 };
 
+// Session Roaming — explicit, operator-confirmed transfer of an existing session to a
+// different terminal. confirm:true is always sent (backend safety gate requires it).
+// supervisorPin is only required when the transfer policy reports SUPERVISOR_REQUIRED.
+export const transferPosSession = async (sessionId, { destinationTerminalId, reason, supervisorPin } = {}) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/transfer`, {
+    destinationTerminalId, reason, supervisorPin, confirm: true,
+  });
+  return res.data;
+};
+
+// Phase 12 - Lightweight session synchronization for polling
+export const syncPosSession = async (sessionId, terminalId) => {
+  const res = await api.get(`${BASE}/sessions/${sessionId}/sync`, { params: { terminalId } });
+  return res.data;
+};
+
 export const closePosSession = async (sessionId, {
   closingCash, notes, closingDenominations, supervisorApproved,
   cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
@@ -145,9 +161,9 @@ export const closePosSession = async (sessionId, {
   return res.data;
 };
 
-export const addPosCashMovement = async (sessionId, { movementType, amount, description }) => {
+export const addPosCashMovement = async (sessionId, { movementType, amount, description, reference, categoryId }) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/cash-movement`, {
-    movementType, amount, description,
+    movementType, amount, description, reference, categoryId,
   });
   return res.data;
 };
@@ -229,16 +245,44 @@ export const setMainPosTerminal = async (terminalId) => {
   return res.data;
 };
 
-export const getPosZReport = async (branchId, date) => {
+export const getPosZReport = async (branchId, date, startSessionId, endSessionId) => {
   const res = await api.get(`${BASE}/sessions/z-report`, {
-    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+    params: {
+      branchId,
+      date: date || new Date().toISOString().slice(0, 10),
+      startSessionId: startSessionId || undefined,
+      endSessionId: endSessionId || undefined,
+    },
   });
   return res.data;
 };
 
-export const closePosDay = async (branchId, date) => {
+/**
+ * Day Close review-screen summary: auto-resolved (or supervisor-adjusted) first/last
+ * session, total sessions, cashiers/counters/terminals, trading time span, session
+ * statuses, and any sessions excluded by a narrowed range. Read-only.
+ */
+export const getPosDayCloseSummary = async (branchId, date, startSessionId, endSessionId) => {
+  const res = await api.get(`${BASE}/sessions/day-close/summary`, {
+    params: {
+      branchId,
+      date: date || new Date().toISOString().slice(0, 10),
+      startSessionId: startSessionId || undefined,
+      endSessionId: endSessionId || undefined,
+    },
+  });
+  return res.data;
+};
+
+export const closePosDay = async (branchId, date, startSessionId, endSessionId, acknowledgeExclusions) => {
   const res = await api.post(`${BASE}/sessions/close-day`, null, {
-    params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
+    params: {
+      branchId,
+      date: date || new Date().toISOString().slice(0, 10),
+      startSessionId: startSessionId || undefined,
+      endSessionId: endSessionId || undefined,
+      acknowledgeExclusions: acknowledgeExclusions || undefined,
+    },
   });
   return res.data;
 };
@@ -260,6 +304,26 @@ export const checkPosZReportPrintable = async (branchId, date) => {
   await api.get(`${BASE}/sessions/z-report/print-check`, {
     params: { branchId, date: date || new Date().toISOString().slice(0, 10) },
   });
+};
+
+/**
+ * Composed Business Date / operating-hours / open-session view for POS mount —
+ * backs the blocking "previous day session still open" popup.
+ */
+export const getPosDayStatus = async (terminalId = "") => {
+  const res = await api.get(`${BASE}/sessions/day-status`, { params: { terminalId } });
+  return res.data;
+};
+
+/**
+ * Date-range session history for the X-Report history picker (browse/reprint a
+ * past closed session). branchId defaults to the caller's current branch if omitted.
+ */
+export const getPosSessionHistory = async ({ branchId, dateFrom, dateTo, terminalId, status, page = 0, size = 20 }) => {
+  const res = await api.get(`${BASE}/sessions/history`, {
+    params: { branchId, dateFrom, dateTo, terminalId, status, page, size },
+  });
+  return res.data;
 };
 
 

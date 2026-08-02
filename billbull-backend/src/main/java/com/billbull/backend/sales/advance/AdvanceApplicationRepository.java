@@ -13,7 +13,7 @@ public interface AdvanceApplicationRepository extends JpaRepository<AdvanceAppli
 
     List<AdvanceApplication> findByInvoiceNumber(String invoiceNumber);
 
-    @Query("SELECT COALESCE(SUM(a.appliedAmount), 0) FROM AdvanceApplication a WHERE a.advanceReceiptId = :receiptId AND a.status = 'APPLIED'")
+    @Query("SELECT COALESCE(SUM(a.appliedAmount), 0) FROM AdvanceApplication a WHERE a.advanceReceiptId = :receiptId AND a.status IN ('APPLIED', 'REFUNDED')")
     BigDecimal sumAppliedByReceiptId(@Param("receiptId") Long receiptId);
 
     /**

@@ -15,6 +15,8 @@ public enum PosAuditAction {
     // Cash
     CASH_DROP_IN,
     CASH_DROP_OUT,
+    CASH_MOVEMENT_EDITED,
+    CASH_MOVEMENT_VOIDED,
 
     // Held sales
     HELD_SALE_SAVED,

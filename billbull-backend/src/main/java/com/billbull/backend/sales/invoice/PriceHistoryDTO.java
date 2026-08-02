@@ -7,5 +7,6 @@ public record PriceHistoryDTO(
         LocalDate date,
         String invoiceNo,
         String customerName,
-        BigDecimal rate) {
+        Integer quantity,
+        BigDecimal price) {
 }

@@ -1,10 +1,17 @@
 package com.billbull.backend.pos.session;
 
+import com.billbull.backend.pos.businessdate.DayStatusResponse;
+import com.billbull.backend.pos.businessdate.PosBusinessDateService;
+import com.billbull.backend.pos.businessdate.PosDayStatusService;
+import com.billbull.backend.settings.branch.BranchAccessService;
+import com.billbull.backend.util.PageResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -17,21 +24,70 @@ import java.util.Optional;
 public class PosSessionController {
 
     private final PosSessionService service;
+    private final PosSessionSyncService syncService;
     private final ObjectMapper objectMapper;
+    private final PosDayStatusService dayStatusService;
+    private final PosBusinessDateService businessDateService;
+    private final BranchAccessService branchAccessService;
 
-    public PosSessionController(PosSessionService service, ObjectMapper objectMapper) {
+    public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
+                                 PosDayStatusService dayStatusService,
+                                 PosBusinessDateService businessDateService,
+                                 BranchAccessService branchAccessService) {
         this.service = service;
+        this.syncService = syncService;
         this.objectMapper = objectMapper;
+        this.dayStatusService = dayStatusService;
+        this.businessDateService = businessDateService;
+        this.branchAccessService = branchAccessService;
     }
 
     @PostMapping("/open")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<PosSession> openSession(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> openSession(@RequestBody Map<String, Object> body) {
         String terminalId = body.getOrDefault("terminalId", "").toString();
         String counterName = body.getOrDefault("counterName", "Main Counter").toString();
         BigDecimal openingCash = body.get("openingCash") != null
                 ? new BigDecimal(body.get("openingCash").toString()) : BigDecimal.ZERO;
-        return ResponseEntity.ok(service.openSession(terminalId, counterName, openingCash));
+        try {
+            return ResponseEntity.ok(service.openSession(terminalId, counterName, openingCash));
+        } catch (PosSessionDiscoveryBlockedException ex) {
+            // Session Roaming Phase 7 — discovery found an existing/ambiguous session elsewhere;
+            // the JSON body shape for the success path above is unchanged, this only adds a new
+            // structured 409 body for a case the pre-Phase-7 API never detected at all.
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getResponse());
+        }
+    }
+
+    /**
+     * Session Roaming Phase 8 — explicit, operator-confirmed session transfer to another
+     * terminal. Deliberately separate from {@code openSession}: transfer moves an existing
+     * OPEN/SUSPENDED session's hosting, it never opens a new one. Requires {@code confirm: true}
+     * in the body so a transfer can never be triggered by an incidental/automated call; all
+     * eligibility, concurrency, and locking checks happen inside
+     * {@code PosSessionService#transferSession} / {@code PosSessionTransferService#transfer}.
+     */
+    @PostMapping("/{id}/transfer")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSessionTransferResponse> transferSession(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        String destinationTerminalId = body != null && body.get("destinationTerminalId") != null
+                ? body.get("destinationTerminalId").toString() : null;
+        boolean confirm = body != null && Boolean.TRUE.equals(body.get("confirm"));
+        String reason = body != null && body.get("reason") != null ? body.get("reason").toString() : null;
+        String supervisorPin = body != null && body.get("supervisorPin") != null
+                ? body.get("supervisorPin").toString() : null;
+
+        if (destinationTerminalId == null || destinationTerminalId.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "destinationTerminalId is required.");
+        }
+        if (!confirm) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Session transfer requires explicit confirmation (confirm: true).");
+        }
+
+        return ResponseEntity.ok(service.transferSession(id, destinationTerminalId, reason, supervisorPin));
     }
 
     @GetMapping("/active")
@@ -45,6 +101,12 @@ public class PosSessionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosSession> getById(@PathVariable Long id) {
         return ResponseEntity.ok(service.getById(id));
+    }
+
+    @GetMapping("/{id}/sync")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSessionSyncResponse> syncSession(@PathVariable Long id, @RequestParam(required = false) String terminalId) {
+        return ResponseEntity.ok(syncService.syncSession(id, terminalId));
     }
 
     @PostMapping("/{id}/close")
@@ -85,7 +147,9 @@ public class PosSessionController {
         String type = body.getOrDefault("movementType", "DROP_IN").toString();
         BigDecimal amount = new BigDecimal(body.get("amount").toString());
         String description = body.get("description") != null ? body.get("description").toString() : "";
-        return ResponseEntity.ok(service.addCashMovement(id, type, amount, description));
+        String reference = body.get("reference") != null ? body.get("reference").toString() : null;
+        Long categoryId = body.get("categoryId") != null ? Long.valueOf(body.get("categoryId").toString()) : null;
+        return ResponseEntity.ok(service.addCashMovement(id, type, amount, description, reference, categoryId));
     }
 
     @GetMapping("/{id}/x-report")
@@ -106,9 +170,26 @@ public class PosSessionController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getZReport(
             @RequestParam Long branchId,
-            @RequestParam(required = false) String date) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
-        return ResponseEntity.ok(service.getZReport(branchId, reportDate));
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) Long startSessionId,
+            @RequestParam(required = false) Long endSessionId) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        return ResponseEntity.ok(service.getZReport(branchId, reportDate, startSessionId, endSessionId));
+    }
+
+    /** Day Close review-screen summary: auto-resolved (or supervisor-adjusted) first/
+     *  last session, total sessions, cashiers/counters/terminals, trading time span,
+     *  session statuses, and any sessions excluded by a narrowed range. Read-only —
+     *  does not create or modify anything. */
+    @GetMapping("/day-close/summary")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> getDayCloseSummary(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) Long startSessionId,
+            @RequestParam(required = false) Long endSessionId) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        return ResponseEntity.ok(service.getDayCloseSummary(branchId, reportDate, startSessionId, endSessionId));
     }
 
     /** Hard gate checked before the frontend commits the X-Report to print/PDF/Excel.
@@ -128,7 +209,7 @@ public class PosSessionController {
     public ResponseEntity<Void> checkZReportPrintable(
             @RequestParam Long branchId,
             @RequestParam(required = false) String date) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
         service.assertZReportPrintable(branchId, reportDate);
         return ResponseEntity.noContent().build();
     }
@@ -137,9 +218,38 @@ public class PosSessionController {
     @PreAuthorize("hasAnyAuthority('SUPERVISOR', 'MANAGER', 'ADMIN', 'ROLE_SUPERVISOR', 'ROLE_MANAGER', 'ROLE_ADMIN')")
     public ResponseEntity<Map<String, Object>> closeDay(
             @RequestParam Long branchId,
-            @RequestParam(required = false) String date) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : LocalDate.now();
-        return ResponseEntity.ok(service.closeDay(branchId, reportDate));
+            @RequestParam(required = false) String date,
+            @RequestParam(required = false) Long startSessionId,
+            @RequestParam(required = false) Long endSessionId,
+            @RequestParam(required = false, defaultValue = "false") boolean acknowledgeExclusions) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        return ResponseEntity.ok(service.closeDay(branchId, reportDate, startSessionId, endSessionId, acknowledgeExclusions));
+    }
+
+    /** Composed business-date / operating-hours / open-session view for POS mount —
+     *  backs the blocking "previous day session still open" popup on late/new logins. */
+    @GetMapping("/day-status")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<DayStatusResponse> getDayStatus(
+            @RequestParam(required = false, defaultValue = "") String terminalId) {
+        return ResponseEntity.ok(dayStatusService.getDayStatus(terminalId));
+    }
+
+    /** Date-range session history for the X-Report history picker (browse/reprint a past
+     *  closed session). branchId defaults to the caller's current branch if omitted. */
+    @GetMapping("/history")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PageResponse<PosSessionHistoryItem>> getSessionHistory(
+            @RequestParam(required = false) Long branchId,
+            @RequestParam String dateFrom,
+            @RequestParam String dateTo,
+            @RequestParam(required = false) String terminalId,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Long resolvedBranchId = branchId != null ? branchId : branchAccessService.getRequiredCurrentUserBranch().getId();
+        return ResponseEntity.ok(service.getSessionHistory(
+                resolvedBranchId, LocalDate.parse(dateFrom), LocalDate.parse(dateTo), terminalId, status, page, size));
     }
 
     // -------------------------------------------------------------------------

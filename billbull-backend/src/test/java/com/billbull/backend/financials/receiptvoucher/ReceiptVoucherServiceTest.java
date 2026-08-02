@@ -53,6 +53,12 @@ class ReceiptVoucherServiceTest {
     @Mock
     private com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
 
+    @Mock
+    private jakarta.persistence.EntityManager entityManager;
+
+    @Mock
+    private com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
+
     private ReceiptVoucherService service;
 
     @BeforeEach
@@ -68,7 +74,20 @@ class ReceiptVoucherServiceTest {
                 new com.billbull.backend.common.ownership.OwnershipAccessService(
                         org.mockito.Mockito.mock(com.billbull.backend.security.RolePermissionRepository.class), false),
                 advanceApplicationRepository,
+                entityManager,
+                effectiveCorrectionViewService,
                 "target/test-receipts");
+        org.mockito.Mockito.lenient().when(effectiveCorrectionViewService.resolveOverlay(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(i -> i.getArgument(2));
+
+        org.mockito.Mockito.lenient().when(effectiveCorrectionViewService.resolveOverlays(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(i -> i.getArgument(1));
     }
 
     @Test
