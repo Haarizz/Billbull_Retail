@@ -45,13 +45,20 @@ class PosCashMovementServiceTest {
     @Mock private PosAuditService auditService;
     @Mock private ObjectMapper objectMapper;
     @Mock private com.billbull.backend.pos.admin.PosCashMovementCategoryRepository categoryRepository;
+    @Mock private jakarta.persistence.EntityManager entityManager;
+    @Mock private com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     private PosCashMovementService service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(effectiveCorrectionViewService.resolveOverlays(
+                any(), any(), any())).thenAnswer(i -> i.getArgument(1));
+        lenient().when(effectiveCorrectionViewService.resolveOverlay(
+                any(), any(), any())).thenAnswer(i -> i.getArgument(2));
+
         service = new PosCashMovementService(repo, posSessionService, postingEngine,
-                branchRepository, auditService, objectMapper, categoryRepository);
+                branchRepository, auditService, objectMapper, categoryRepository, entityManager, effectiveCorrectionViewService);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("supervisor1", null, List.of()));
         lenient().when(repo.save(any(PosCashMovement.class))).thenAnswer(inv -> inv.getArgument(0));

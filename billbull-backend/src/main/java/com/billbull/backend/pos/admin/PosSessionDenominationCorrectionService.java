@@ -45,19 +45,22 @@ public class PosSessionDenominationCorrectionService {
     private final PosSessionRepository posSessionRepository;
     private final FinancialAuditService auditService;
     private final ObjectMapper objectMapper;
+    private final CorrectionOverlayRepository overlayRepository;
 
     public PosSessionDenominationCorrectionService(PosSessionDenominationCorrectionRepository repo,
                                                     CorrectionRequestRepository correctionRequestRepo,
                                                     CorrectionRequestService correctionRequestService,
                                                     PosSessionRepository posSessionRepository,
                                                     FinancialAuditService auditService,
-                                                    ObjectMapper objectMapper) {
+                                                    ObjectMapper objectMapper,
+                                                    CorrectionOverlayRepository overlayRepository) {
         this.repo = repo;
         this.correctionRequestRepo = correctionRequestRepo;
         this.correctionRequestService = correctionRequestService;
         this.posSessionRepository = posSessionRepository;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.overlayRepository = overlayRepository;
     }
 
     private String currentUser() {
@@ -282,6 +285,22 @@ public class PosSessionDenominationCorrectionService {
         c.setAppliedBy(applied.getExecutedBy());
         c.setAppliedAt(applied.getExecutedAt());
         PosSessionDenominationCorrection saved = repo.save(c);
+
+        int version = 1;
+        List<CorrectionOverlay> existing = overlayRepository.findAppliedForTargetOrderByVersionDesc(CorrectionTargetType.POS_SESSION, saved.getSessionId());
+        if (!existing.isEmpty()) {
+            version = existing.get(0).getVersion() + 1;
+        }
+
+        CorrectionOverlay overlay = new CorrectionOverlay();
+        overlay.setTargetType(CorrectionTargetType.POS_SESSION);
+        overlay.setTargetId(saved.getSessionId());
+        overlay.setOriginalSnapshotJson(saved.getOriginalDenominationJson());
+        overlay.setCorrectedSnapshotJson(saved.getCorrectedDenominationJson());
+        overlay.setVersion(version);
+        overlay.setStatus(CorrectionRequestStatus.APPLIED);
+        overlayRepository.save(overlay);
+
         auditService.logEvent(ENTITY_TYPE, applied.getRequestNumber(), "APPLIED", saved.getAppliedBy(),
                 "Denomination correction applied — now the effective overlay for session " + saved.getSessionId()
                         + ". No sales, payment, cash movement, journal, or inventory record was changed.");

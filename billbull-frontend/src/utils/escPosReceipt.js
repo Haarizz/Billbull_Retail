@@ -478,20 +478,15 @@ export const emitEscPosBrandedHeader = async (w, {
   isReprint = false,
 } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
-  // Usable width/dots so the header centres inside the same symmetric software
-  // gutters as the body. Centred lines use the printer's ALIGN_CENTER; the only
-  // left-aligned line here (the divider) is prefixed with the left gutter.
+  // Usable width/dots so the divider centres inside the same symmetric software
+  // gutters as the body. Header text lines use the printer's native ALIGN_CENTER
+  // (see the note by emitCenteredText below); the divider is the only
+  // left-aligned line here, prefixed with the left gutter.
   const width = usableColsFor(mm);
   const gutter = leftGutterFor(mm);
   const hr = '-'.repeat(width);
   const printableDots = usableDotsFor(mm);
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
-
-  const centered = (text, w) => {
-    const t = String(text || '');
-    const pad = Math.max(0, Math.floor((w - t.length) / 2));
-    return `${' '.repeat(pad)}${t}`.slice(0, w);
-  };
 
   let currentAlign = 1;
   const setAlign = (align) => {
@@ -501,13 +496,19 @@ export const emitEscPosBrandedHeader = async (w, {
   };
 
   // Same centred-text emitter the receipt body uses: crisp ESC/POS text for the
-  // Latin case, canvas raster for Arabic/other non-Latin-1 so glyphs render.
+  // Latin case, canvas raster for Arabic/other non-Latin-1 so glyphs render. Per
+  // the MARGIN_COLS note above, header lines are centred with the printer's
+  // NATIVE ESC a 1 (ALIGN_CENTER) rather than software space-padding — a prior
+  // attempt to software-center these lines (leading-space padding under
+  // ALIGN_LEFT) printed flush-left on clone controllers that collapse/ignore a
+  // long leading run of space characters, even though the same controllers
+  // honour ESC a 1 correctly.
   const emitCenteredText = (str, { fontPx = 26, bold = false } = {}) => {
     const text = String(str ?? '');
     if (!text) return;
     if (!hasNonPrintableLatin(text)) {
-      setAlign(0);
-      w.gline(gutter, centered(text, width));
+      setAlign(1);
+      w.line(text);
       return;
     }
     setAlign(1);
@@ -515,8 +516,7 @@ export const emitEscPosBrandedHeader = async (w, {
       widthDots: Math.round(printableDots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
     });
     if (raster) { w.push(raster); w.push([0x0a]); } else {
-      setAlign(0);
-      w.gline(gutter, centered(text, width));
+      w.line(text);
     }
   };
 
@@ -535,18 +535,18 @@ export const emitEscPosBrandedHeader = async (w, {
   }
 
   if (documentTitle) {
-    setAlign(0);
+    setAlign(1);
     w.push(CMD.BOLD_ON);
-    w.gline(gutter, centered(documentTitle, width));
+    w.line(documentTitle);
     w.push(CMD.BOLD_OFF);
   }
   if (header) { emitCenteredText(header, { fontPx: 24 }); }
   if (hasNonPrintableLatin(companyName || '')) {
     emitCenteredText(companyName, { fontPx: 28, bold: true });
   } else {
-    setAlign(0);
+    setAlign(1);
     w.push(CMD.BOLD_ON);
-    w.gline(gutter, centered(companyName || '', width));
+    w.line(companyName || '');
     w.push(CMD.BOLD_OFF);
   }
   if (showCompanyDetails) {
@@ -556,9 +556,9 @@ export const emitEscPosBrandedHeader = async (w, {
   }
   if (showTrn && trn) emitCenteredText(`TRN: ${trn}`, { fontPx: 22 });
   if (isReprint) {
-    setAlign(0);
+    setAlign(1);
     w.push(CMD.BOLD_ON);
-    w.gline(gutter, centered('*** COPY / REPRINT ***', width));
+    w.line('*** COPY / REPRINT ***');
     w.push(CMD.BOLD_OFF);
   }
 

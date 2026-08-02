@@ -44,6 +44,8 @@ public class PosCashMovementService {
     private final PosAuditService auditService;
     private final ObjectMapper objectMapper;
     private final PosCashMovementCategoryRepository categoryRepository;
+    private final jakarta.persistence.EntityManager entityManager;
+    private final com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     public PosCashMovementService(PosCashMovementRepository repo,
                                    PosSessionService posSessionService,
@@ -51,7 +53,9 @@ public class PosCashMovementService {
                                    BranchRepository branchRepository,
                                    PosAuditService auditService,
                                    ObjectMapper objectMapper,
-                                   PosCashMovementCategoryRepository categoryRepository) {
+                                   PosCashMovementCategoryRepository categoryRepository,
+                                   jakarta.persistence.EntityManager entityManager,
+                                   com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService) {
         this.repo = repo;
         this.posSessionService = posSessionService;
         this.postingEngine = postingEngine;
@@ -59,6 +63,8 @@ public class PosCashMovementService {
         this.auditService = auditService;
         this.objectMapper = objectMapper;
         this.categoryRepository = categoryRepository;
+        this.entityManager = entityManager;
+        this.effectiveCorrectionViewService = effectiveCorrectionViewService;
     }
 
     /** Batch-resolves category names for a page of responses (same lazy-enrichment pattern as
@@ -90,14 +96,28 @@ public class PosCashMovementService {
         Pageable pageable = PageRequest.of(Math.max(page, 0), size <= 0 ? 20 : size);
         Page<PosCashMovement> result = repo.search(branchId, sessionId, status, movementType, fromDate, toDate,
                 performedBy, pageable);
-        var content = withCategoryNames(result.getContent().stream().map(PosCashMovementResponse::from).collect(Collectors.toList()));
+        
+        List<PosCashMovement> contentEntities = result.getContent();
+        contentEntities.forEach(entityManager::detach);
+        contentEntities = effectiveCorrectionViewService.resolveOverlays(
+                com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, 
+                contentEntities, 
+                PosCashMovement::getId);
+
+        var content = withCategoryNames(contentEntities.stream().map(PosCashMovementResponse::from).collect(Collectors.toList()));
         return new PageResponse<>(content, result.getNumber(), result.getSize(),
                 result.getTotalElements(), result.getTotalPages());
     }
 
     @Transactional(readOnly = true)
     public PosCashMovementResponse getById(Long id) {
-        return withCategoryNames(List.of(PosCashMovementResponse.from(getEntity(id)))).get(0);
+        PosCashMovement entity = getEntity(id);
+        entityManager.detach(entity);
+        entity = effectiveCorrectionViewService.resolveOverlay(
+                com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT,
+                entity.getId(),
+                entity);
+        return withCategoryNames(List.of(PosCashMovementResponse.from(entity))).get(0);
     }
 
     private PosCashMovement getEntity(Long id) {

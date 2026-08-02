@@ -74,6 +74,8 @@ public class PosTransactionCorrectionService {
     private final AccountingPeriodService accountingPeriodService;
     private final FinancialAuditService auditService;
     private final ObjectMapper objectMapper;
+    private final CorrectionOverlayRepository overlayRepository;
+    private final PosTransactionExecutionService executionService;
 
     public PosTransactionCorrectionService(PosTransactionCorrectionRepository repo,
                                             CorrectionRequestRepository correctionRequestRepo,
@@ -87,7 +89,9 @@ public class PosTransactionCorrectionService {
                                             PostingEngineService postingEngine,
                                             AccountingPeriodService accountingPeriodService,
                                             FinancialAuditService auditService,
-                                            ObjectMapper objectMapper) {
+                                            ObjectMapper objectMapper,
+                                            CorrectionOverlayRepository overlayRepository,
+                                            PosTransactionExecutionService executionService) {
         this.repo = repo;
         this.correctionRequestRepo = correctionRequestRepo;
         this.correctionRequestService = correctionRequestService;
@@ -101,6 +105,8 @@ public class PosTransactionCorrectionService {
         this.accountingPeriodService = accountingPeriodService;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
+        this.overlayRepository = overlayRepository;
+        this.executionService = executionService;
     }
 
     private String currentUser() {
@@ -475,7 +481,7 @@ public class PosTransactionCorrectionService {
         repo.save(c);
 
         try {
-            executeCorrection(c);
+            executionService.executeCorrection(c);
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
@@ -494,87 +500,19 @@ public class PosTransactionCorrectionService {
         c.setAppliedBy(applied.getExecutedBy());
         c.setAppliedAt(applied.getExecutedAt());
         PosTransactionCorrection saved = repo.save(c);
+
+        CorrectionOverlay overlay = new CorrectionOverlay();
+        overlay.setTargetType(saved.getTargetType());
+        overlay.setTargetId(saved.getTargetId());
+        overlay.setOriginalSnapshotJson(saved.getOriginalSnapshotJson());
+        overlay.setCorrectedSnapshotJson(saved.getCorrectedSnapshotJson());
+        overlay.setVersion(saved.getVersion());
+        overlay.setStatus(CorrectionRequestStatus.APPLIED);
+        overlayRepository.save(overlay);
+
         auditService.logEvent(ENTITY_TYPE, applied.getRequestNumber(), "APPLIED", saved.getAppliedBy(),
                 "Transaction correction applied for " + saved.getTargetType() + " #" + saved.getTargetId()
                         + ". Original financial records were not modified — a new offsetting GL event was posted.");
         return toResponse(saved);
-    }
-
-    private void executeCorrection(PosTransactionCorrection c) {
-        Map<String, Object> original = parseJson(c.getOriginalSnapshotJson());
-        Map<String, Object> corrected = parseJson(c.getCorrectedSnapshotJson());
-        String revRef = "TXNCORR-REV-" + c.getId();
-        String applyRef = "TXNCORR-APPLY-" + c.getId();
-        LocalDate date = LocalDate.now();
-
-        switch (c.getTargetType()) {
-            case RECEIPT_VOUCHER -> {
-                if (c.getCorrectionType() == CorrectionType.CUSTOMER) {
-                    return; // no GL dimension for customer ownership in this schema — overlay only
-                }
-                boolean isAdvance = Boolean.TRUE.equals(original.get("isAdvance"));
-                String creditAccount = isAdvance ? PostingEngineService.ACC_CUSTOMER_ADVANCE : PostingEngineService.ACC_ACCOUNTS_RECEIVABLE;
-                String creditName = isAdvance ? "Customer Advance" : "Accounts Receivable";
-
-                BigDecimal originalAmount = new BigDecimal(original.get("amount").toString());
-                String originalPaymentMode = (String) original.get("paymentMode");
-                BigDecimal correctedAmount = new BigDecimal(corrected.get("amount").toString());
-                String correctedPaymentMode = (String) corrected.get("paymentMode");
-
-                String originalAccountCode = postingEngine.resolveSettlementAccountCode(originalPaymentMode);
-                String originalAccountName = postingEngine.resolveSettlementAccountName(originalPaymentMode);
-                String correctedAccountCode = postingEngine.resolveSettlementAccountCode(correctedPaymentMode);
-                String correctedAccountName = postingEngine.resolveSettlementAccountName(correctedPaymentMode);
-
-                postingEngine.postCorrectionEntry(revRef, "Correction reversal of receipt #" + c.getTargetId(),
-                        "RVCORR", null, date, creditName, creditAccount, originalAccountName, originalAccountCode, originalAmount);
-                postingEngine.postCorrectionEntry(applyRef, "Correction of receipt #" + c.getTargetId(),
-                        "RVCORR", null, date, correctedAccountName, correctedAccountCode, creditName, creditAccount, correctedAmount);
-            }
-            case CUSTOMER_ADVANCE -> {
-                BigDecimal originalAmount = new BigDecimal(original.get("amount").toString());
-                BigDecimal correctedAmount = new BigDecimal(corrected.get("amount").toString());
-                postingEngine.postCorrectionEntry(revRef, "Correction reversal of advance allocation #" + c.getTargetId(),
-                        "ADVACORR", null, date, "Accounts Receivable", PostingEngineService.ACC_ACCOUNTS_RECEIVABLE,
-                        "Customer Advance", PostingEngineService.ACC_CUSTOMER_ADVANCE, originalAmount);
-                postingEngine.postCorrectionEntry(applyRef, "Correction of advance allocation #" + c.getTargetId(),
-                        "ADVACORR", null, date, "Customer Advance", PostingEngineService.ACC_CUSTOMER_ADVANCE,
-                        "Accounts Receivable", PostingEngineService.ACC_ACCOUNTS_RECEIVABLE, correctedAmount);
-            }
-            case CASH_MOVEMENT -> {
-                PosCashMovement movement = cashMovementRepository.findById(c.getTargetId()).orElseThrow(() ->
-                        new ResponseStatusException(HttpStatus.NOT_FOUND, "Cash movement not found: " + c.getTargetId()));
-                String originalAccountCode = (String) original.get("postedAccountCode");
-                String originalAccountName = (String) original.get("postedAccountName");
-                String correctedAccountCode = (String) corrected.get("postedAccountCode");
-                String correctedAccountName = (String) corrected.get("postedAccountName");
-                if (originalAccountCode != null && originalAccountCode.equals(correctedAccountCode)) {
-                    return; // same GL account either way — category changed, nothing to re-post
-                }
-                boolean isDropIn = movement.getMovementType() == PosCashMovementType.DROP_IN;
-                String cashName = "Cash in Hand";
-                String cashCode = PostingEngineService.ACC_CASH;
-                // Branch dimension omitted here — the same simplification already accepted for
-                // advance-allocation corrections above; these are small correction entries, not
-                // full transaction postings, and branch is optional on postCorrectionEntry.
-                com.billbull.backend.settings.branch.Branch branch = null;
-
-                if (isDropIn) {
-                    // Original: Dr Cash / Cr originalAccount. Reverse: Dr originalAccount / Cr Cash.
-                    postingEngine.postCorrectionEntry(revRef, "Correction reversal of cash movement #" + c.getTargetId(),
-                            "CMDCORR", branch, date, originalAccountName, originalAccountCode, cashName, cashCode, movement.getAmount());
-                    postingEngine.postCorrectionEntry(applyRef, "Correction of cash movement #" + c.getTargetId(),
-                            "CMDCORR", branch, date, cashName, cashCode, correctedAccountName, correctedAccountCode, movement.getAmount());
-                } else {
-                    // Original: Dr originalAccount / Cr Cash. Reverse: Dr Cash / Cr originalAccount.
-                    postingEngine.postCorrectionEntry(revRef, "Correction reversal of cash movement #" + c.getTargetId(),
-                            "CMDCORR", branch, date, cashName, cashCode, originalAccountName, originalAccountCode, movement.getAmount());
-                    postingEngine.postCorrectionEntry(applyRef, "Correction of cash movement #" + c.getTargetId(),
-                            "CMDCORR", branch, date, correctedAccountName, correctedAccountCode, cashName, cashCode, movement.getAmount());
-                }
-            }
-            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Unsupported target type for execution: " + c.getTargetType());
-        }
     }
 }

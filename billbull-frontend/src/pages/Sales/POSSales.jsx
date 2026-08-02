@@ -427,11 +427,17 @@ export default function POSSales() {
 
   // Phase 12 - Session Synchronization (Polling)
   useEffect(() => {
-    if (!currentSession || !currentTerminal?.terminalId || sessionInvalidated) return;
+    // Once this terminal has closed the session itself, stop polling — the
+    // X-Report screen keeps `currentSession` around (status CLOSED) so the
+    // cashier can still Print/Export/History the just-closed report, and the
+    // sync check would otherwise treat "closed by us" the same as "closed/
+    // transferred remotely" and boot them out mid-review (see "Session No
+    // Longer Available" overlay).
+    if (!currentSession || currentSession.status === 'CLOSED' || !currentTerminal?.terminalId || sessionInvalidated) return;
     let aborted = false;
 
     const poll = async () => {
-      if (aborted || !currentSession || !currentTerminal?.terminalId || sessionInvalidated) return;
+      if (aborted || !currentSession || currentSession.status === 'CLOSED' || !currentTerminal?.terminalId || sessionInvalidated) return;
       
       // Do not poll if we are viewing a session from a DIFFERENT terminal
       // (e.g. clicking "Go to Close Session" on the PREVIOUS_DAY_SESSION_OPEN modal
@@ -752,6 +758,12 @@ export default function POSSales() {
     billDiscountAmount: 0,
   });
   const currentInvoiceRef = useRef(null);
+  // addToInvoice is redefined fresh every render (it closes over posSettings,
+  // e.g. taxInclusive). handleUnifiedEntry below is memoized with an empty
+  // dep array so its own closure is frozen from the first render — calling
+  // addToInvoice directly there would permanently use the mount-time tax
+  // mode. Route through this ref, kept current every render, instead.
+  const addToInvoiceRef = useRef(null);
   // True when the Quick Customer modal was launched from the Checkout credit
   // panel, so the newly created customer is auto-selected as the credit buyer.
   const quickCustomerCreditCtxRef = useRef(false);
@@ -2759,6 +2771,7 @@ export default function POSSales() {
     });
     return { ok: true };
   };
+  addToInvoiceRef.current = addToInvoice;
 
   /**
    * Helper wrapper around addToInvoice that accepts a rich initial payload.
@@ -2769,7 +2782,7 @@ export default function POSSales() {
       return { ok: false, reason: 'Missing product payload' };
     }
     
-    return addToInvoice(
+    return addToInvoiceRef.current(
       payload.product,
       payload.quantity || 1,
       payload.batch || null,
@@ -2806,7 +2819,7 @@ export default function POSSales() {
       isSerial: payload.invoiceLine.serialNumber ? 1 : 0
     };
 
-    return addToInvoice(
+    return addToInvoiceRef.current(
       fakeProduct,
       payload.quantity,
       payload.invoiceLine.pinnedBatchNumber || null,
@@ -3231,9 +3244,12 @@ export default function POSSales() {
     const isXReportsMissing = Array.isArray(zReportPending) && zReportPending.length > 0;
     const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
     const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
-    
-    if (isXReportsMissing || isOpenSessions || isSuspendedBills) {
-      alert("Cannot close day while blocking validations exist. Please resolve all pending actions.");
+    const isNoSessions = !daySummary || daySummary.totalSessions === 0;
+
+    if (isXReportsMissing || isOpenSessions || isSuspendedBills || isNoSessions) {
+      alert(isNoSessions
+        ? "Cannot close day: no POS sessions exist for this business date."
+        : "Cannot close day while blocking validations exist. Please resolve all pending actions.");
       return;
     }
     try {
@@ -5018,7 +5034,7 @@ export default function POSSales() {
         clearInputs();
         return;
       }
-      const res = addToInvoice(cached, qty);
+      const res = addToInvoiceRef.current(cached, qty);
       if (res && res.ok === false) {
         showFeedback('error', res.reason || 'Could not add this item.');
         clearInputs();
@@ -5072,7 +5088,7 @@ export default function POSSales() {
           clearInputs();
           return;
         }
-        addToInvoice(product, 1, null, pinnedSerialNumber);
+        addToInvoiceRef.current(product, 1, null, pinnedSerialNumber);
         setLastScannedItem({
           name: product.name, nameAr: product.nameAr || '',
           barcode: pinnedSerialNumber, qty: 1, total: product.price,
@@ -5092,7 +5108,7 @@ export default function POSSales() {
       }
       // addToInvoice enforces one-batch-one-unit for batch/serial products added
       // without a pin (e.g. resolved by product code) — surface its refusal.
-      const addRes = addToInvoice(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
+      const addRes = addToInvoiceRef.current(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
       if (addRes && addRes.ok === false) {
         showFeedback('error', addRes.reason || 'Could not add this item.');
         clearInputs();
@@ -6916,7 +6932,10 @@ export default function POSSales() {
     const isXReportsMissing = zReportBlocked;
     const isOpenSessions = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false;
     const isSuspendedBills = (typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false;
-    const isDayCloseBlocked = isXReportsMissing || isOpenSessions || isSuspendedBills;
+    // A day with no sessions at all has nothing to close — the backend rejects
+    // it outright, so the checklist must not report "ready" for this case.
+    const isNoSessions = !daySummary || daySummary.totalSessions === 0;
+    const isDayCloseBlocked = isXReportsMissing || isOpenSessions || isSuspendedBills || isNoSessions;
 
     const renderValidationChecklist = () => {
       const checklist = [
@@ -6930,6 +6949,9 @@ export default function POSSales() {
       const allPassed = !isDayCloseBlocked;
 
       const issues = [];
+      if (isNoSessions) {
+        issues.push({ title: 'No Sessions Found', desc: 'No POS sessions exist for this business date — there is nothing to close.' });
+      }
       if (typeof daySummary !== 'undefined' && daySummary) {
         if (daySummary.openSessionCount > 0) {
           issues.push({ title: 'Open Sessions', desc: `${daySummary.openSessionCount} session(s) are still open and must be closed.` });
@@ -7558,7 +7580,7 @@ export default function POSSales() {
             summaryContent={
               <>
                 <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Business Status</span><span className="text-[13px] font-bold text-[#1E293B]">{zReportData?.isDayClosed ? 'CLOSED' : 'OPEN'}</span></div>
-                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Ready For Close</span><span className="text-[13px] font-bold text-[#1E293B]">{(!zReportBlocked && !((typeof daySummary !== 'undefined' && daySummary) ? (daySummary.openSessionCount > 0) : false) && !((typeof daySummary !== 'undefined' && daySummary) ? (daySummary.suspendedSessionCount > 0) : false)) ? 'YES' : 'NO'}</span></div>
+                <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Ready For Close</span><span className="text-[13px] font-bold text-[#1E293B]">{!isDayCloseBlocked ? 'YES' : 'NO'}</span></div>
                 {zReportData?.isDayClosed && <div className="flex flex-col"><span className="text-[11px] text-gray-500 font-bold uppercase tracking-wide">Z-Report #</span><span className="text-[13px] font-bold text-[#1E293B]">{`ZR-${String(zReportData?.sessions?.[0]?.id ?? '0').padStart(9, '0')}`}</span></div>}
               </>
             }

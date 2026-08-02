@@ -9,10 +9,11 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
-
 import com.billbull.backend.financials.generalledger.postingengine.PostingException;
 import com.billbull.backend.logging.RequestLoggingFilter;
 import com.billbull.backend.ratelimit.RateLimitExceededException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import jakarta.persistence.OptimisticLockException;
 
 import org.springframework.http.HttpHeaders;
 
@@ -133,6 +134,26 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(HttpStatus.FORBIDDEN)
                 .body(errorBody("Access denied"));
+    }
+
+    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, OptimisticLockException.class})
+    public ResponseEntity<Map<String, Object>> handleOptimisticLocking(Exception ex) {
+        log.warn("OptimisticLockingFailureException requestId={}: {}", requestId(), ex.getMessage());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("code", "OPTIMISTIC_LOCK_FAILED");
+        body.put("message", "This request was modified by another user. Please refresh the page.");
+        body.put("requestId", requestId());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(PermissionDeniedException.class)
+    public ResponseEntity<Map<String, Object>> handlePermissionDenied(PermissionDeniedException ex) {
+        log.warn("PermissionDeniedException requestId={}: {}", requestId(), ex.getMessage());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("code", ex.getCode());
+        body.put("message", ex.getMessage());
+        body.put("requestId", requestId());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(body);
     }
 
     private Map<String, String> errorBody(String message) {

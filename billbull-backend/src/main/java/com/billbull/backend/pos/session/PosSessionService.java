@@ -90,6 +90,8 @@ public class PosSessionService {
     private final PosSessionTransferService sessionTransferService;
     private final PosSessionTransferLogRepository transferLogRepository;
     private final PosSessionTransferPolicy sessionTransferPolicy;
+    private final jakarta.persistence.EntityManager entityManager;
+    private final com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -126,7 +128,9 @@ public class PosSessionService {
                              PosSessionDiscoveryService sessionDiscoveryService,
                              PosSessionTransferService sessionTransferService,
                              PosSessionTransferLogRepository transferLogRepository,
-                             PosSessionTransferPolicy sessionTransferPolicy) {
+                             PosSessionTransferPolicy sessionTransferPolicy,
+                             jakarta.persistence.EntityManager entityManager,
+                             com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -155,6 +159,8 @@ public class PosSessionService {
         this.sessionTransferService = sessionTransferService;
         this.transferLogRepository = transferLogRepository;
         this.sessionTransferPolicy = sessionTransferPolicy;
+        this.entityManager = entityManager;
+        this.effectiveCorrectionViewService = effectiveCorrectionViewService;
     }
 
     private String currentUser() {
@@ -183,6 +189,14 @@ public class PosSessionService {
                 .map(m -> nz(m.getAmount()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
+    
+    private BigDecimal sumCashMovements(List<PosCashMovement> movements, PosCashMovementType movementType) {
+        return movements.stream()
+                .filter(m -> movementType.equals(m.getMovementType()))
+                .filter(m -> m.getStatus() == null || m.getStatus() == PosCashMovementStatus.ACTIVE)
+                .map(m -> nz(m.getAmount()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
 
     /** Single source of truth for "Expected Cash in Drawer", shared by closeSession()
      *  and getXReport() so the Close Session modal and the X-Report page never diverge. */
@@ -191,19 +205,26 @@ public class PosSessionService {
         return nz(session.getOpeningCash()).add(tenderCash).add(cashDropIn).subtract(cashDropOut);
     }
 
-    /** SUM(amount) grouped by movementType (DROP_IN / DROP_OUT) across a set of sessions,
-     *  in one batch query — used by the Day Close cash reconciliation and by the
-     *  Consolidated Cash Position section, instead of looping per-session over each
-     *  PosSession's lazy {@code cashMovements} collection (which would fire one query
-     *  per session — see {@link PosCashMovementRepository}). */
+    /** SUM(amount) grouped by movementType (DROP_IN / DROP_OUT) across a set of sessions.
+     *  Now fetches entities, detaches them, resolves overlays, and sums in-memory to ensure
+     *  corrections are accurately reflected. */
     private Map<String, BigDecimal> sumCashMovementsByType(List<Long> sessionIds) {
         Map<String, BigDecimal> totals = new java.util.HashMap<>();
         if (sessionIds == null || sessionIds.isEmpty()) return totals;
+        
+        List<PosCashMovement> movements = cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds);
+        if (!movements.isEmpty()) {
+            movements.forEach(entityManager::detach);
+            movements = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, movements, PosCashMovement::getId);
+        }
+        
         // ACTIVE only — voided drops/outs are excluded from every reconciliation/report total.
-        for (Object[] row : cashMovementRepository.sumAmountByMovementTypeForSessionIds(sessionIds, PosCashMovementStatus.ACTIVE)) {
-            String type = ((PosCashMovementType) row[0]).name();
-            BigDecimal amount = row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO;
-            totals.put(type, amount);
+        for (PosCashMovement m : movements) {
+            if (m.getStatus() != null && m.getStatus() != PosCashMovementStatus.ACTIVE) continue;
+            String type = m.getMovementType().name();
+            BigDecimal amount = nz(m.getAmount());
+            totals.merge(type, amount, BigDecimal::add);
         }
         return totals;
     }
@@ -939,9 +960,21 @@ public class PosSessionService {
         // and per-line void detail, so a plain fetch would trigger N+1 lazy loads.
         List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
         List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(sessionId);
+        if (!advances.isEmpty()) {
+            advances.forEach(entityManager::detach);
+            advances = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
+        }
 
-        BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
-        BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
+        List<PosCashMovement> cashMovements = new java.util.ArrayList<>(session.getCashMovements());
+        if (!cashMovements.isEmpty()) {
+            cashMovements.forEach(entityManager::detach);
+            cashMovements = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, cashMovements, PosCashMovement::getId);
+        }
+
+        BigDecimal cashDropIn = sumCashMovements(cashMovements, PosCashMovementType.DROP_IN);
+        BigDecimal cashDropOut = sumCashMovements(cashMovements, PosCashMovementType.DROP_OUT);
 
         // Actual tender collected (not invoice value) for this single session.
         TenderTotals tender = aggregateTender(invoices, advances);
@@ -1091,6 +1124,10 @@ public class PosSessionService {
         if (ascending.isEmpty()) {
             return new ResolvedSessionRange(branchId, date, ascending, List.of(), null, null, List.of());
         }
+
+        ascending.forEach(entityManager::detach);
+        ascending = effectiveCorrectionViewService.resolveOverlays(
+                com.billbull.backend.pos.admin.CorrectionTargetType.POS_SESSION, ascending, PosSession::getId);
 
         PosSession startSession = startSessionId != null
                 ? resolveBoundarySession(startSessionId, branchId, date, "Start")
@@ -1247,6 +1284,11 @@ public class PosSessionService {
                     .toList();
 
         List<ReceiptVoucher> advances = sessionIds.isEmpty() ? List.of() : receiptVoucherRepository.findByPosSessionIdIn(sessionIds);
+        if (!advances.isEmpty()) {
+            advances.forEach(entityManager::detach);
+            advances = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
+        }
 
         TenderTotals tender = aggregateTender(invoices, advances);
         // Actual tender refunded (paymentType = MADE) across the day's invoices — same
@@ -1624,6 +1666,12 @@ public class PosSessionService {
         List<ReceiptVoucher> receipts = new java.util.ArrayList<>();
         receipts.addAll(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(branchId, date, ReceiptPurpose.CASH_SALE));
         receipts.addAll(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(branchId, date, ReceiptPurpose.AGAINST_INVOICE));
+        if (!receipts.isEmpty()) {
+            receipts.forEach(entityManager::detach);
+            receipts = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, receipts, ReceiptVoucher::getId);
+        }
+        
         for (ReceiptVoucher rv : receipts) {
             if (!isCashMode(rv.getPaymentMode())) continue;
             BigDecimal amount = nz(rv.getAmount());
@@ -1638,6 +1686,11 @@ public class PosSessionService {
 
         List<ReceiptVoucher> advances = receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(
                 branchId, date, ReceiptPurpose.ADVANCE_RECEIVED);
+        if (!advances.isEmpty()) {
+            advances.forEach(entityManager::detach);
+            advances = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
+        }
         for (ReceiptVoucher rv : advances) {
             if (!isCashMode(rv.getPaymentMode())) continue;
             BigDecimal amount = nz(rv.getAmount());
@@ -1666,6 +1719,11 @@ public class PosSessionService {
         List<PosCashMovement> movements = (sessionIds == null || sessionIds.isEmpty())
                 ? List.of()
                 : cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds);
+        if (!movements.isEmpty()) {
+            movements.forEach(entityManager::detach);
+            movements = effectiveCorrectionViewService.resolveOverlays(
+                    com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, movements, PosCashMovement::getId);
+        }
         List<Map<String, Object>> cashDropRows = new java.util.ArrayList<>();
         int sl = 1;
         for (PosCashMovement m : movements) {
@@ -1837,7 +1895,7 @@ public class PosSessionService {
         info.put("durationSeconds", s.getDurationSeconds());
         info.put("openingCash", nz(s.getOpeningCash()));
         info.put("closingCash", nz(s.getClosingCash()));
-        info.put("closingDenominationsJson", s.getClosingDenominationsJson());
+        info.put("closingDenominationsJson", effectiveClosingDenominationsJson(s));
         info.put("cardBatchNo", s.getCardBatchNo());
         info.put("cardSettlementVerified", Boolean.TRUE.equals(s.getCardSettlementVerified()));
         info.put("cardClosingCash", nz(s.getCardClosingCash()));
@@ -1847,6 +1905,27 @@ public class PosSessionService {
         info.put("closingRemarks", s.getClosingRemarks());
         info.put("varianceRemarks", s.getNotes());
         return info;
+    }
+
+    /** Overlays an applied denomination correction (Enterprise Console > POS Administration)
+     *  onto the session's closing count, mirroring how receipts/advances/cash movements are
+     *  already overlaid elsewhere in this class via {@link #effectiveCorrectionViewService}.
+     *  Falls back to the raw {@code closingDenominationsJson} for open sessions or when no
+     *  correction has been applied — denomination corrections only ever target CLOSED sessions. */
+    private String effectiveClosingDenominationsJson(PosSession s) {
+        if (s.getId() == null || s.getStatus() != PosSessionStatus.CLOSED) {
+            return s.getClosingDenominationsJson();
+        }
+        Map<String, Object> effective = effectiveCorrectionViewService.getEffectiveView(
+                com.billbull.backend.pos.admin.CorrectionTargetType.POS_SESSION, s.getId());
+        if (!Boolean.TRUE.equals(effective.get("corrected"))) {
+            return s.getClosingDenominationsJson();
+        }
+        try {
+            return objectMapper.writeValueAsString(effective.get("effective"));
+        } catch (Exception e) {
+            return s.getClosingDenominationsJson();
+        }
     }
 
     /** Maps a session-open time to a human shift label. */

@@ -59,6 +59,10 @@ public class CorrectionRequest extends BaseEntity {
     @Column(name = "business_date")
     private LocalDate businessDate;
 
+    @jakarta.persistence.Version
+    @Column(name = "version", nullable = false)
+    private Integer version = 0;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20, nullable = false)
     private CorrectionRequestStatus status = CorrectionRequestStatus.REQUESTED;
@@ -130,6 +134,9 @@ public class CorrectionRequest extends BaseEntity {
 
     public LocalDate getBusinessDate() { return businessDate; }
     public void setBusinessDate(LocalDate businessDate) { this.businessDate = businessDate; }
+
+    public Integer getVersion() { return version; }
+    public void setVersion(Integer version) { this.version = version; }
 
     public CorrectionRequestStatus getStatus() { return status; }
     public void setStatus(CorrectionRequestStatus status) { this.status = status; }

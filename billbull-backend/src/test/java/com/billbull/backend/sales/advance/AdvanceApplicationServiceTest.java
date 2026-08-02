@@ -39,12 +39,20 @@ class AdvanceApplicationServiceTest {
     @Mock private PostingEngineService postingEngine;
     @Mock private com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService;
     @Mock private com.billbull.backend.pos.session.PosSessionService posSessionService;
+    @Mock private jakarta.persistence.EntityManager entityManager;
+    @Mock private com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     private AdvanceApplicationService service;
 
     @BeforeEach
     void setUp() {
-        service = new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService);
+        service = new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService, entityManager, effectiveCorrectionViewService);
+
+        org.mockito.Mockito.lenient().when(effectiveCorrectionViewService.resolveOverlays(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.any()))
+                .thenAnswer(i -> i.getArgument(1));
     }
 
     private ReceiptVoucher advance(Long id, String customerCode, BigDecimal amount) {

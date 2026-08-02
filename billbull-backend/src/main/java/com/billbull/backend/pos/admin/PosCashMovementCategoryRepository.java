@@ -21,8 +21,8 @@ public interface PosCashMovementCategoryRepository extends JpaRepository<PosCash
     @Query("SELECT c FROM PosCashMovementCategory c WHERE "
             + "(:active IS NULL OR c.isActive = :active) AND "
             + "(:movementType IS NULL OR c.movementType = :movementType OR c.movementType = 'BOTH') AND "
-            + "(:search IS NULL OR LOWER(c.name) LIKE LOWER(CONCAT('%', :search, '%')) "
-            + "     OR LOWER(c.code) LIKE LOWER(CONCAT('%', :search, '%'))) "
+            + "(CAST(:search AS string) IS NULL OR LOWER(c.name) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%')) "
+            + "     OR LOWER(c.code) LIKE LOWER(CONCAT('%', CAST(:search AS string), '%'))) "
             + "ORDER BY c.displayOrder ASC, c.name ASC")
     Page<PosCashMovementCategory> search(@Param("active") Boolean active,
                                           @Param("movementType") PosCashMovementCategoryMovementType movementType,

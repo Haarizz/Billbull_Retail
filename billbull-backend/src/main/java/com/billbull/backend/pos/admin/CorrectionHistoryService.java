@@ -37,8 +37,11 @@ public class CorrectionHistoryService {
         LocalDateTime from = fromDate != null ? fromDate.atStartOfDay() : null;
         LocalDateTime to = toDate != null ? toDate.atTime(23, 59, 59) : null;
 
-        Page<CorrectionRequest> result = repo.searchHistory(branchId, status, targetType, correctionType, targetId,
-                blankToNull(requestedBy), blankToNull(approvedBy), from, to, blankToNull(search), pageable);
+        Page<CorrectionRequest> result = repo.searchHistory(branchId,
+                status != null ? status.name() : null,
+                targetType != null ? targetType.name() : null,
+                correctionType != null ? correctionType.name() : null,
+                targetId, blankToNull(requestedBy), blankToNull(approvedBy), from, to, blankToNull(search), pageable);
         var content = result.getContent().stream().map(CorrectionRequestResponse::from).toList();
         return new PageResponse<>(content, result.getNumber(), result.getSize(),
                 result.getTotalElements(), result.getTotalPages());

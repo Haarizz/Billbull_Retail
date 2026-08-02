@@ -87,6 +87,8 @@ class PosSessionServiceTest {
     @Mock private com.billbull.backend.pos.admin.PosCashMovementCategoryService cashMovementCategoryService;
     @Mock private PosSessionTerminalHistoryRepository sessionTerminalHistoryRepository;
     @Mock private PosSessionTransferLogRepository transferLogRepository;
+    @Mock private jakarta.persistence.EntityManager entityManager;
+    @Mock private com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     private PosSessionService service;
 
@@ -109,8 +111,10 @@ class PosSessionServiceTest {
                 businessDateService, cashMovementRepository, receiptVoucherRepository,
                 xReportSnapshotRepository, reportNumberService, userRepository, cashMovementCategoryService,
                 sessionResolutionStrategy, sessionOwnershipService, terminalHostingService, sessionDiscoveryService,
-                sessionTransferService, transferLogRepository, sessionTransferPolicy);
+                sessionTransferService, transferLogRepository, sessionTransferPolicy,
+                entityManager, effectiveCorrectionViewService);
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(effectiveCorrectionViewService.resolveOverlays(any(), org.mockito.ArgumentMatchers.anyList(), any())).thenAnswer(inv -> inv.getArgument(1));
         lenient().when(transferLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
         // Default: no linked User row — resolveDisplayName() falls back to the raw username.
         lenient().when(userRepository.findByUsername(any())).thenReturn(java.util.Optional.empty());
@@ -875,10 +879,16 @@ class PosSessionServiceTest {
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
         when(paymentRepository.sumTenderByModeForInvoices(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
-        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L), PosCashMovementStatus.ACTIVE))
-                .thenReturn(List.<Object[]>of(
-                        new Object[]{ PosCashMovementType.DROP_IN, bd("30") },
-                        new Object[]{ PosCashMovementType.DROP_OUT, bd("5") }));
+        PosCashMovement inMovement = new PosCashMovement();
+        inMovement.setMovementType(PosCashMovementType.DROP_IN);
+        inMovement.setAmount(bd("30"));
+        inMovement.setStatus(PosCashMovementStatus.ACTIVE);
+        PosCashMovement outMovement = new PosCashMovement();
+        outMovement.setMovementType(PosCashMovementType.DROP_OUT);
+        outMovement.setAmount(bd("5"));
+        outMovement.setStatus(PosCashMovementStatus.ACTIVE);
+        when(cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(List.of(1L)))
+                .thenReturn(List.of(inMovement, outMovement));
 
         ReceiptVoucher cashReceipt = receiptVoucher("Alice", "Cash", bd("50"));
         ReceiptVoucher cardReceipt = receiptVoucher("Bob", "Card", bd("999")); // must be excluded (not cash)
@@ -933,10 +943,16 @@ class PosSessionServiceTest {
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
         when(paymentRepository.sumTenderByModeForInvoices(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
-        when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(List.of(1L), PosCashMovementStatus.ACTIVE))
-                .thenReturn(List.<Object[]>of(
-                        new Object[]{ PosCashMovementType.DROP_IN, bd("50") },
-                        new Object[]{ PosCashMovementType.DROP_OUT, bd("20") }));
+        PosCashMovement inMovementDayClose = new PosCashMovement();
+        inMovementDayClose.setMovementType(PosCashMovementType.DROP_IN);
+        inMovementDayClose.setAmount(bd("50"));
+        inMovementDayClose.setStatus(PosCashMovementStatus.ACTIVE);
+        PosCashMovement outMovementDayClose = new PosCashMovement();
+        outMovementDayClose.setMovementType(PosCashMovementType.DROP_OUT);
+        outMovementDayClose.setAmount(bd("20"));
+        outMovementDayClose.setStatus(PosCashMovementStatus.ACTIVE);
+        when(cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(List.of(1L)))
+                .thenReturn(List.of(inMovementDayClose, outMovementDayClose));
         when(dayCloseRepository.save(any(com.billbull.backend.pos.dayclose.PosDayClose.class))).thenAnswer(inv -> {
             com.billbull.backend.pos.dayclose.PosDayClose d = inv.getArgument(0);
             d.setId(99L);

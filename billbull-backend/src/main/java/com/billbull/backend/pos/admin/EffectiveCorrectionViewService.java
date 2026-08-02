@@ -26,11 +26,14 @@ public class EffectiveCorrectionViewService {
 
     private final PosSessionDenominationCorrectionService denominationCorrectionService;
     private final PosTransactionCorrectionService transactionCorrectionService;
+    private final OverlayResolutionService overlayResolutionService;
 
     public EffectiveCorrectionViewService(PosSessionDenominationCorrectionService denominationCorrectionService,
-                                           PosTransactionCorrectionService transactionCorrectionService) {
+                                           PosTransactionCorrectionService transactionCorrectionService,
+                                           OverlayResolutionService overlayResolutionService) {
         this.denominationCorrectionService = denominationCorrectionService;
         this.transactionCorrectionService = transactionCorrectionService;
+        this.overlayResolutionService = overlayResolutionService;
     }
 
     /**
@@ -58,5 +61,21 @@ public class EffectiveCorrectionViewService {
                 yield uncorrected;
             }
         };
+    }
+
+    /**
+     * Resolves the corrected values for a given DTO using the generic OverlayResolutionService.
+     * Merges the corrected snapshot over the original DTO dynamically for reporting paths.
+     */
+    public <T> T resolveOverlay(CorrectionTargetType targetType, Long targetId, T originalDto) {
+        return overlayResolutionService.resolveOverlay(targetType, targetId, originalDto);
+    }
+
+    /**
+     * Bulk resolves overlays for a collection of DTOs to avoid N+1 queries.
+     * Delegates to the underlying OverlayResolutionService.
+     */
+    public <T> java.util.List<T> resolveOverlays(CorrectionTargetType targetType, java.util.List<T> originalDtos, java.util.function.Function<T, Long> idExtractor) {
+        return overlayResolutionService.resolveOverlays(targetType, originalDtos, idExtractor);
     }
 }

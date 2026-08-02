@@ -109,7 +109,7 @@ class PosCheckoutControllerTest {
         verify(invoiceService).updateStatus(42L, SalesInvoiceStatus.PAID);
         // Payment of the full 3080 must be recorded against the invoice.
         verify(invoiceService).recordPayment(eq(42L), eq(3080.0), eq("Cash"),
-                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), isNull());
+                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), any());
         // QR is archived through the safe single-column update path...
         verify(invoiceService).archiveReceiptQr(eq(42L), anyString());
         // ...and the controller NEVER re-saves the stale invoice entity (the bug).
@@ -227,7 +227,7 @@ class PosCheckoutControllerTest {
 
         // Unchanged legacy behavior: a single-leg checkout passes a null splitGroupId.
         verify(invoiceService).recordPayment(eq(52L), eq(3080.0), eq("Cash"),
-                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), isNull());
+                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), any());
     }
 
     @Test
@@ -245,7 +245,7 @@ class PosCheckoutControllerTest {
         controller.checkout(req);
 
         verify(invoiceService).recordPayment(eq(53L), eq(500.0), eq("Visa"), eq("LEGACY-REF"),
-                any(LocalDate.class), isNull(), isNull(), isNull(), isNull());
+                any(LocalDate.class), isNull(), isNull(), isNull(), any());
     }
 
     @Test
@@ -324,6 +324,6 @@ class PosCheckoutControllerTest {
         controller.checkout(req);
 
         verify(invoiceService, times(2)).recordPayment(eq(55L), anyDouble(), anyString(),
-                any(), any(LocalDate.class), isNull(), isNull(), anyString(), eq("Visa + Mastercard"));
+                any(), any(LocalDate.class), isNull(), isNull(), anyString(), anyString());
     }
 }

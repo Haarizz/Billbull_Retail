@@ -8,6 +8,10 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 
+import jakarta.persistence.EntityManager;
+import com.billbull.backend.pos.admin.CorrectionTargetType;
+import com.billbull.backend.pos.admin.EffectiveCorrectionViewService;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +31,8 @@ public class AdvanceApplicationService {
     private final PostingEngineService postingEngine;
     private final ReceiptVoucherService receiptVoucherService;
     private final com.billbull.backend.pos.session.PosSessionService posSessionService;
+    private final EntityManager entityManager;
+    private final EffectiveCorrectionViewService effectiveCorrectionViewService;
 
     public AdvanceApplicationService(
             AdvanceApplicationRepository applicationRepo,
@@ -34,13 +40,17 @@ public class AdvanceApplicationService {
             SalesInvoiceRepository salesInvoiceRepo,
             PostingEngineService postingEngine,
             ReceiptVoucherService receiptVoucherService,
-            com.billbull.backend.pos.session.PosSessionService posSessionService) {
+            com.billbull.backend.pos.session.PosSessionService posSessionService,
+            EntityManager entityManager,
+            EffectiveCorrectionViewService effectiveCorrectionViewService) {
         this.applicationRepo = applicationRepo;
         this.receiptRepo     = receiptRepo;
         this.salesInvoiceRepo = salesInvoiceRepo;
         this.postingEngine   = postingEngine;
         this.receiptVoucherService = receiptVoucherService;
         this.posSessionService = posSessionService;
+        this.entityManager = entityManager;
+        this.effectiveCorrectionViewService = effectiveCorrectionViewService;
     }
 
     /**
@@ -49,6 +59,10 @@ public class AdvanceApplicationService {
     public List<AdvanceBalance> findOpenAdvances(String customerCode) {
         List<ReceiptVoucher> advances = receiptRepo.findByCustomerCodeAndPurposeOrderByDateAsc(
                 customerCode, ReceiptPurpose.ADVANCE_RECEIVED);
+        
+        advances.forEach(entityManager::detach);
+        advances = effectiveCorrectionViewService.resolveOverlays(
+                CorrectionTargetType.CUSTOMER_ADVANCE, advances, ReceiptVoucher::getId);
 
         List<AdvanceBalance> result = new ArrayList<>();
         for (ReceiptVoucher rv : advances) {
@@ -313,6 +327,10 @@ public class AdvanceApplicationService {
         List<ReceiptVoucher> advances = receiptRepo.findByCustomerCodeAndPurposeOrderByDateAsc(
                 customerCode, ReceiptPurpose.ADVANCE_RECEIVED);
 
+        advances.forEach(entityManager::detach);
+        advances = effectiveCorrectionViewService.resolveOverlays(
+                CorrectionTargetType.CUSTOMER_ADVANCE, advances, ReceiptVoucher::getId);
+
         BigDecimal totalReceived = BigDecimal.ZERO;
         BigDecimal totalApplied = BigDecimal.ZERO;
         BigDecimal totalRefunded = BigDecimal.ZERO;
@@ -360,6 +378,10 @@ public class AdvanceApplicationService {
             String customerCode, String filter, int page, int size) {
         List<ReceiptVoucher> advances = receiptRepo.findByCustomerCodeAndPurposeOrderByDateAsc(
                 customerCode, ReceiptPurpose.ADVANCE_RECEIVED);
+
+        advances.forEach(entityManager::detach);
+        advances = effectiveCorrectionViewService.resolveOverlays(
+                CorrectionTargetType.CUSTOMER_ADVANCE, advances, ReceiptVoucher::getId);
 
         List<AdvanceHistoryItem> items = new ArrayList<>();
         for (ReceiptVoucher rv : advances) {

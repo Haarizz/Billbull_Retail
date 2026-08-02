@@ -12,41 +12,69 @@ import java.util.List;
 public interface CorrectionRequestRepository extends JpaRepository<CorrectionRequest, Long> {
 
     /** Back-office list/filter for the Correction Approvals tab. Every filter is optional
-     *  (null = don't filter on it), mirroring PosCashMovementRepository#search. */
-    @Query("SELECT c FROM CorrectionRequest c WHERE "
-            + "(:branchId IS NULL OR c.branchId = :branchId) AND "
-            + "(:status IS NULL OR c.status = :status) AND "
-            + "(:targetType IS NULL OR c.targetType = :targetType) AND "
-            + "(:correctionType IS NULL OR c.correctionType = :correctionType) "
-            + "ORDER BY c.requestedAt DESC")
+     *  (null = don't filter on it), mirroring PosCashMovementRepository#search.
+     *
+     *  Native query so every optional param can be CAST at every occurrence — an untyped null
+     *  bind in PostgreSQL resolves to an undeterminable/bytea parameter type and breaks
+     *  execution, and JPQL's CAST(... AS string) only shields the occurrence it wraps, leaving
+     *  any bare "IS NULL" check on the same named parameter unresolved (see
+     *  PosLayawayRepository#search / PosDayCloseRepository#search for the same pattern). Status/
+     *  targetType/correctionType are passed as their enum {@code name()} strings so they can be
+     *  CAST like any other varchar filter. */
+    @Query(value = "SELECT * FROM pos_correction_requests cr WHERE "
+            + "(CAST(:branchId AS bigint) IS NULL OR cr.branch_id = CAST(:branchId AS bigint)) AND "
+            + "(CAST(:status AS varchar) IS NULL OR cr.status = CAST(:status AS varchar)) AND "
+            + "(CAST(:targetType AS varchar) IS NULL OR cr.target_type = CAST(:targetType AS varchar)) AND "
+            + "(CAST(:correctionType AS varchar) IS NULL OR cr.correction_type = CAST(:correctionType AS varchar)) "
+            + "ORDER BY cr.requested_at DESC",
+            countQuery = "SELECT count(*) FROM pos_correction_requests cr WHERE "
+            + "(CAST(:branchId AS bigint) IS NULL OR cr.branch_id = CAST(:branchId AS bigint)) AND "
+            + "(CAST(:status AS varchar) IS NULL OR cr.status = CAST(:status AS varchar)) AND "
+            + "(CAST(:targetType AS varchar) IS NULL OR cr.target_type = CAST(:targetType AS varchar)) AND "
+            + "(CAST(:correctionType AS varchar) IS NULL OR cr.correction_type = CAST(:correctionType AS varchar))",
+            nativeQuery = true)
     Page<CorrectionRequest> search(@Param("branchId") Long branchId,
-                                    @Param("status") CorrectionRequestStatus status,
-                                    @Param("targetType") CorrectionTargetType targetType,
-                                    @Param("correctionType") CorrectionType correctionType,
+                                    @Param("status") String status,
+                                    @Param("targetType") String targetType,
+                                    @Param("correctionType") String correctionType,
                                     Pageable pageable);
 
     // ── Phase 5: unified History search (reporting only — read-only, no new workflow) ──────
 
     /** Every filter optional. {@code search} matches requestNumber or reason (case-insensitive
      *  substring) — the "correction number / reason / reference" search the History tab needs,
-     *  since requestNumber is this system's reference/correction-number. */
-    @Query("SELECT c FROM CorrectionRequest c WHERE "
-            + "(:branchId IS NULL OR c.branchId = :branchId) AND "
-            + "(:status IS NULL OR c.status = :status) AND "
-            + "(:targetType IS NULL OR c.targetType = :targetType) AND "
-            + "(:correctionType IS NULL OR c.correctionType = :correctionType) AND "
-            + "(:targetId IS NULL OR c.targetId = :targetId) AND "
-            + "(:requestedBy IS NULL OR LOWER(c.requestedBy) = LOWER(:requestedBy)) AND "
-            + "(:approvedBy IS NULL OR LOWER(c.approvedBy) = LOWER(:approvedBy)) AND "
-            + "(:fromDate IS NULL OR c.requestedAt >= :fromDate) AND "
-            + "(:toDate IS NULL OR c.requestedAt <= :toDate) AND "
-            + "(:search IS NULL OR LOWER(c.requestNumber) LIKE LOWER(CONCAT('%', :search, '%')) "
-            + "     OR LOWER(c.reason) LIKE LOWER(CONCAT('%', :search, '%'))) "
-            + "ORDER BY c.requestedAt DESC")
+     *  since requestNumber is this system's reference/correction-number. Native query, CAST at
+     *  every occurrence — see {@link #search} for why. */
+    @Query(value = "SELECT * FROM pos_correction_requests cr WHERE "
+            + "(CAST(:branchId AS bigint) IS NULL OR cr.branch_id = CAST(:branchId AS bigint)) AND "
+            + "(CAST(:status AS varchar) IS NULL OR cr.status = CAST(:status AS varchar)) AND "
+            + "(CAST(:targetType AS varchar) IS NULL OR cr.target_type = CAST(:targetType AS varchar)) AND "
+            + "(CAST(:correctionType AS varchar) IS NULL OR cr.correction_type = CAST(:correctionType AS varchar)) AND "
+            + "(CAST(:targetId AS bigint) IS NULL OR cr.target_id = CAST(:targetId AS bigint)) AND "
+            + "(CAST(:requestedBy AS varchar) IS NULL OR LOWER(cr.requested_by) = LOWER(CAST(:requestedBy AS varchar))) AND "
+            + "(CAST(:approvedBy AS varchar) IS NULL OR LOWER(cr.approved_by) = LOWER(CAST(:approvedBy AS varchar))) AND "
+            + "(CAST(:fromDate AS timestamp) IS NULL OR cr.requested_at >= CAST(:fromDate AS timestamp)) AND "
+            + "(CAST(:toDate AS timestamp) IS NULL OR cr.requested_at <= CAST(:toDate AS timestamp)) AND "
+            + "(CAST(:search AS varchar) IS NULL OR LOWER(cr.request_number) LIKE CONCAT('%', LOWER(CAST(:search AS varchar)), '%') "
+            + "     OR LOWER(cr.reason) LIKE CONCAT('%', LOWER(CAST(:search AS varchar)), '%')) "
+            + "ORDER BY cr.requested_at DESC",
+            countQuery = "SELECT count(*) FROM pos_correction_requests cr WHERE "
+            + "(CAST(:branchId AS bigint) IS NULL OR cr.branch_id = CAST(:branchId AS bigint)) AND "
+            + "(CAST(:status AS varchar) IS NULL OR cr.status = CAST(:status AS varchar)) AND "
+            + "(CAST(:targetType AS varchar) IS NULL OR cr.target_type = CAST(:targetType AS varchar)) AND "
+            + "(CAST(:correctionType AS varchar) IS NULL OR cr.correction_type = CAST(:correctionType AS varchar)) AND "
+            + "(CAST(:targetId AS bigint) IS NULL OR cr.target_id = CAST(:targetId AS bigint)) AND "
+            + "(CAST(:requestedBy AS varchar) IS NULL OR LOWER(cr.requested_by) = LOWER(CAST(:requestedBy AS varchar))) AND "
+            + "(CAST(:approvedBy AS varchar) IS NULL OR LOWER(cr.approved_by) = LOWER(CAST(:approvedBy AS varchar))) AND "
+            + "(CAST(:fromDate AS timestamp) IS NULL OR cr.requested_at >= CAST(:fromDate AS timestamp)) AND "
+            + "(CAST(:toDate AS timestamp) IS NULL OR cr.requested_at <= CAST(:toDate AS timestamp)) AND "
+            + "(CAST(:search AS varchar) IS NULL OR LOWER(cr.request_number) LIKE CONCAT('%', LOWER(CAST(:search AS varchar)), '%') "
+            + "     OR LOWER(cr.reason) LIKE CONCAT('%', LOWER(CAST(:search AS varchar)), '%'))",
+            nativeQuery = true)
     Page<CorrectionRequest> searchHistory(@Param("branchId") Long branchId,
-                                           @Param("status") CorrectionRequestStatus status,
-                                           @Param("targetType") CorrectionTargetType targetType,
-                                           @Param("correctionType") CorrectionType correctionType,
+                                           @Param("status") String status,
+                                           @Param("targetType") String targetType,
+                                           @Param("correctionType") String correctionType,
                                            @Param("targetId") Long targetId,
                                            @Param("requestedBy") String requestedBy,
                                            @Param("approvedBy") String approvedBy,
