@@ -29,6 +29,12 @@ const POSItemEntryContainer = ({
     binId,
     editablePrice = true,
     editableDiscount = true,
+    // A barcode scan can resolve one specific physical unit. That unit is shown
+    // in the dialog and cannot be changed here; quantity is pinned to 1 because
+    // a batch/serial line is exactly one unit. Price/discount stay editable.
+    lockQuantity = false,
+    lockedBatch = null,
+    lockedSerial = null,
     showContextPanel = true,
     showStock = true,
     showPriceHistory = true,
@@ -211,6 +217,9 @@ const POSItemEntryContainer = ({
             mode={mode}
             editablePrice={editablePrice}
             editableDiscount={editableDiscount}
+            lockQuantity={lockQuantity}
+            lockedBatch={lockedBatch || (mode === 'edit' ? activeEntity.pinnedBatchNumber : null)}
+            lockedSerial={lockedSerial || (mode === 'edit' ? activeEntity.serialNumber : null)}
             showContextPanel={showContextPanel}
             contextState={contextState}
             customerName={customerName}

@@ -260,9 +260,33 @@ const loadImage = (dataUrl) => new Promise((resolve, reject) => {
   img.src = dataUrl;
 });
 
+// Dither cache: the raster for a given (image, width) is deterministic, but the
+// branch logo/stamp is the SAME data-URL on every receipt — so decoding the image,
+// running Floyd–Steinberg over ~100k pixels and re-packing the bitmap was repeated
+// in full for every single print. Keyed on the data-URL + width, capped so a session
+// that cycles through many branch logos can't grow without bound. Stores the promise
+// (not the resolved value) so two prints racing the first build share one computation.
+const DITHER_CACHE_MAX = 8;
+const ditherCache = new Map();
+
 // Dithers an image to 1-bit monochrome at the given dot width and returns it
 // already packed into ESC/POS GS v 0 raster bit-image command bytes.
 export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
+  const cacheKey = `${targetWidthDots}|${dataUrl}`;
+  const cached = ditherCache.get(cacheKey);
+  if (cached) return cached;
+  const pending = ditherImageToRasterCommandUncached(dataUrl, targetWidthDots);
+  ditherCache.set(cacheKey, pending);
+  // A failed build must not be cached as a permanent failure — drop it so the next
+  // print retries, preserving the caller's existing fall-back-on-error behaviour.
+  pending.catch(() => ditherCache.delete(cacheKey));
+  if (ditherCache.size > DITHER_CACHE_MAX) {
+    ditherCache.delete(ditherCache.keys().next().value);
+  }
+  return pending;
+};
+
+const ditherImageToRasterCommandUncached = async (dataUrl, targetWidthDots) => {
   const img = await loadImage(dataUrl);
   const aspect = img.naturalHeight / img.naturalWidth;
   const w = Math.min(targetWidthDots, img.naturalWidth > 0 ? targetWidthDots : targetWidthDots);
@@ -329,8 +353,14 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
   const xH = (bytesPerRow >> 8) & 0xff;
   const yL = h & 0xff;
   const yH = (h >> 8) & 0xff;
-  const header = [GS, 0x76, 0x30, 0x00, xL, xH, yL, yH];
-  return Uint8Array.from([...header, ...raster]);
+  // Build by allocate-and-set rather than Uint8Array.from([...header, ...raster]):
+  // the spread materialises an intermediate boxed JS array of every raster byte
+  // (tens of thousands for a logo) before copying it back down to bytes. Identical
+  // output, without the round-trip.
+  const out = new Uint8Array(8 + raster.length);
+  out.set([GS, 0x76, 0x30, 0x00, xL, xH, yL, yH], 0);
+  out.set(raster, 8);
+  return out;
 };
 
 // Packs a 1-bit black/white bitmap (row-major, true = black/print) into a single
@@ -348,7 +378,11 @@ const packBitmapToRasterCommand = (bits, w, h) => {
   const xH = (bytesPerRow >> 8) & 0xff;
   const yL = h & 0xff;
   const yH = (h >> 8) & 0xff;
-  return Uint8Array.from([GS, 0x76, 0x30, 0x00, xL, xH, yL, yH, ...raster]);
+  // allocate-and-set, not spread — see ditherImageToRasterCommand for why.
+  const out = new Uint8Array(8 + raster.length);
+  out.set([GS, 0x76, 0x30, 0x00, xL, xH, yL, yH], 0);
+  out.set(raster, 8);
+  return out;
 };
 
 // True when a string contains any character the printer's single-byte WPC1252

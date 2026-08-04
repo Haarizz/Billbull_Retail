@@ -34,8 +34,11 @@ const POSTouchScreen = React.memo((props) => {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
+    // product entry — POSSales.jsx owns the Product Entry Mode decision and the
+    // Item Entry dialog; this template only reports which product was picked.
+    handleProductSelection,
     // cart actions
-    addToInvoice, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
+    updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     // layaway
     activeLayawayId, activeLayawayDeposit,
@@ -173,15 +176,17 @@ const POSTouchScreen = React.memo((props) => {
   // Selecting a suggestion from the Cart Focus scan/search dropdown adds it straight
   // to the cart, same as scanning its barcode.
   const selectBarcodeSuggestion = useCallback((product) => {
-    const res = addToInvoice(product, 1);
+    const res = handleProductSelection(product, { quantity: 1 });
     if (res && res.ok === false) {
       showFeedback('error', res.reason || 'Could not add this item.');
       return;
     }
-    showFeedback('success', `${product.name} added`);
+    // In OPEN_ENTRY_DIALOG mode nothing is in the cart until the dialog is
+    // confirmed, so skip the "added" toast.
+    if (!res?.deferred) showFeedback('success', `${product.name} added`);
     setBarcodeInput('');
     setBarcodeSuggestions([]);
-  }, [addToInvoice, showFeedback, setBarcodeInput, setBarcodeSuggestions]);
+  }, [handleProductSelection, showFeedback, setBarcodeInput, setBarcodeSuggestions]);
 
   // Shared, template-independent Actions/Functions buttons. Defined once so the
   // Classic and Cart Focus panels render the same set, labels, icons and colours
@@ -1180,7 +1185,7 @@ const POSTouchScreen = React.memo((props) => {
                             showFeedback('error', `Batch ${pin} is already in the cart`);
                             return;
                           }
-                          const res = addToInvoice(product, 1, pin);
+                          const res = handleProductSelection(product, { quantity: 1, batch: pin });
                           if (res && res.ok === false) {
                             showFeedback('error', res.reason || 'Could not add this item.');
                             return;
@@ -1770,7 +1775,7 @@ const POSTouchScreen = React.memo((props) => {
                         </div>
                         <button type="button"
                           onClick={() => {
-                            addToInvoice(dup);
+                            handleProductSelection(dup);
                             setShowQuickProductModal(false);
                             if (showFeedback) showFeedback('Added existing product to cart!', 'success');
                           }}
