@@ -40,6 +40,13 @@ public class PosCheckoutRequest {
     private Double deliveryCharge;
     private Double shippingCharge;
     private Boolean taxInclusive;
+    /** §2.4 price-override supervisor gate: if the cashier lacks the pos_price_override
+     *  permission and any line is below its minimum price, checkout is rejected unless one of
+     *  these is supplied and verifies server-side against PosSettingsService — the same PIN/
+     *  password mechanism already used for the cart-add-time approval dialog. */
+    private String supervisorOverridePin;
+    private String supervisorOverrideEmail;
+    private String supervisorOverridePassword;
     private List<PosCheckoutItem> items;
     /** Additive multi-card split: when present and non-empty, this is the source of truth for
      *  the card portion of the payment instead of the legacy scalar cardAmount/cardType/cardReference.
@@ -166,6 +173,12 @@ public class PosCheckoutRequest {
     public void setShippingCharge(Double shippingCharge) { this.shippingCharge = shippingCharge; }
     public Boolean getTaxInclusive() { return taxInclusive; }
     public void setTaxInclusive(Boolean taxInclusive) { this.taxInclusive = taxInclusive; }
+    public String getSupervisorOverridePin() { return supervisorOverridePin; }
+    public void setSupervisorOverridePin(String supervisorOverridePin) { this.supervisorOverridePin = supervisorOverridePin; }
+    public String getSupervisorOverrideEmail() { return supervisorOverrideEmail; }
+    public void setSupervisorOverrideEmail(String supervisorOverrideEmail) { this.supervisorOverrideEmail = supervisorOverrideEmail; }
+    public String getSupervisorOverridePassword() { return supervisorOverridePassword; }
+    public void setSupervisorOverridePassword(String supervisorOverridePassword) { this.supervisorOverridePassword = supervisorOverridePassword; }
     public List<PosCheckoutItem> getItems() { return items; }
     public void setItems(List<PosCheckoutItem> items) { this.items = items; }
     public List<PosCardLeg> getCardLegs() { return cardLegs; }

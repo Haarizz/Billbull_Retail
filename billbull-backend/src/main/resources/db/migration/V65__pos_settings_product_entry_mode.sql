@@ -1,0 +1,1 @@
+ALTER TABLE pos_settings ADD COLUMN IF NOT EXISTS product_entry_mode VARCHAR(30) DEFAULT 'DIRECT_ADD';

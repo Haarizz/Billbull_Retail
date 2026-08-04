@@ -3,8 +3,8 @@ import { TradeHeader } from './components/layout/TradeHeader';
 import { TradeMainCanvas } from './components/layout/TradeMainCanvas';
 import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
-import POSItemEntryContainer from '../../../../components/POS/ItemEntry/POSItemEntryContainer';
-import { ProductEntryMode } from '../../../../components/POS/ItemEntry/constants';
+import POSItemEntryContainer from '../../../../components/pos/ItemEntry/POSItemEntryContainer';
+import { ProductEntryMode } from '../../../../components/pos/ItemEntry/constants';
 
 /**
  * TradePOSTouchScreen

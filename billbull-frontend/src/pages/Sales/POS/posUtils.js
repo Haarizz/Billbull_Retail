@@ -95,14 +95,22 @@ export const mapPosCustomer = (customer = {}) => ({
 // (see PosCheckoutController §2.4) — mirrored here so a product with no minPrice
 // configured still warns instead of going silent. Above maxPrice is
 // informational only; the backend never blocks on it.
+// Shared with the cart-add/price-edit supervisor-override gate in POSSales.jsx —
+// keep in sync with PosCheckoutController §2.4's effectiveMin computation.
+export const getPriceFloor = (minPrice, cost) => {
+  const min = toNumber(minPrice);
+  if (min > 0) return min;
+  const c = toNumber(cost);
+  return c > 0 ? c : null;
+};
+
 export const getCartPriceWarning = (item) => {
   if (!item || item.isVoided) return null;
   const unitPrice = toNumber(item.price, 0);
   const discountPct = toNumber(item.discount, 0);
   const effectivePrice = unitPrice * (1 - (discountPct / 100));
 
-  const floor = toNumber(item.minPrice) > 0 ? toNumber(item.minPrice) 
-              : (toNumber(item.cost) > 0 ? toNumber(item.cost) : null);
+  const floor = getPriceFloor(item.minPrice, item.cost);
 
   if (floor != null && effectivePrice < floor) {
     return { level: 'error', message: `Below min price (${floor})` };

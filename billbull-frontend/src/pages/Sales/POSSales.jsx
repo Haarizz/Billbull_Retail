@@ -24,7 +24,7 @@ import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import {
-  registerPosTerminal, getPosSettings, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
+  registerPosTerminal, getPosSettings, getPosSettingsForBranch, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
   getPosSessionById,
   closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
@@ -147,7 +147,7 @@ import {
 // ─── POS sub-modules ──────────────────────────────────────────────────────────
 import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
 import { WALK_IN_CUSTOMER, POS_PRODUCT_PAGE_SIZE, CATEGORY_ICONS, STATUS_LABEL_TO_ENUM, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
-import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct } from './POS/posUtils';
+import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct, getPriceFloor } from './POS/posUtils';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
   buildPosPrintData, buildPosA4Template, buildThermalReceiptText,
@@ -517,12 +517,20 @@ export default function POSSales() {
   // Supervisor PIN dialog for void
   const [showSupervisorPin, setShowSupervisorPin] = useState(false);
   const [supervisorPinValue, setSupervisorPinValue] = useState('');
+  // Only used when supervisorApprovalMode === 'PASSWORD' — identifies who is authorizing,
+  // since verifySupervisorAuth (unlike verifyPosSupervisorPin) checks a specific account.
+  const [supervisorPinEmail, setSupervisorPinEmail] = useState('');
   const [supervisorPinError, setSupervisorPinError] = useState('');
   const [handoverBusy, setHandoverBusy] = useState(false);
   const [handoverEmail, setHandoverEmail] = useState('');
   const [handoverPassword, setHandoverPassword] = useState('');
   const [handoverError, setHandoverError] = useState('');
   const [pendingVoidItemId, setPendingVoidItemId] = useState(null);
+  // Price-override approval pending supervisor sign-off. Serializable request object
+  // (never a closure) describing what to do once approved — see handleSupervisorPinSubmit.
+  //   { type: 'ADD_ITEM', product, quantity, batch, serial, expiry, overrides, minPrice, attemptedPrice }
+  //   { type: 'UPDATE_PRICE', itemId, newPrice, itemName, minPrice }
+  const [pendingPriceOverride, setPendingPriceOverride] = useState(null);
   // Action pending supervisor approval during layaway conversion (Clear / Remove / Void)
   const [pendingLayawayAbortAction, setPendingLayawayAbortAction] = useState(null);
   // true = action is a full cart clear (should also reset layaway conversion state)
@@ -552,6 +560,9 @@ export default function POSSales() {
   const [zReportPending, setZReportPending] = useState(null);
   const [zReportLoading, setZReportLoading] = useState(false);
   const [zReportDate, setZReportDate] = useState(new Date().toISOString().slice(0, 10));
+  // Session-driven Day Close resolution: the next business date actually needing a
+  // Day Close (or null if there's nothing pending) — see PosPendingDayCloseResolver.
+  const [pendingDayCloseDate, setPendingDayCloseDate] = useState(null);
   // Day Close session-range resolution: the backend auto-resolves first/last session
   // by default (rangeOverride stays null); a supervisor may narrow the range via the
   // collapsed Advanced section, which re-triggers loadDaySummary with the override.
@@ -2147,6 +2158,23 @@ export default function POSSales() {
     return () => { cancelled = true; };
   }, []);
 
+  // Correct posSettings once the terminal's actual branch is known. The initial fetch above
+  // (getPosSettings, ambient) resolves branch from this tab's Branch Selector state, which can
+  // diverge from the terminal actually being operated — e.g. "All Branches" selected, or the
+  // admin configured Behavior/Price Override settings in a different browser tab with a
+  // different branch context. Re-fetching explicitly by currentTerminal.branchId guarantees the
+  // live cart always enforces the settings of the branch it's actually running under (void
+  // approval, supervisor PIN, price override, etc.) instead of a stale/mismatched branch's row.
+  useEffect(() => {
+    if (!currentTerminal?.branchId) return;
+    let cancelled = false;
+    getPosSettingsForBranch(currentTerminal.branchId).then(settings => {
+      if (cancelled || !settings) return;
+      setPosSettings(prev => ({ ...(prev || {}), ...settings }));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentTerminal?.branchId]);
+
   // Phase 3 cutover: resolve the real Back Office "Sales Invoice"/"Sales Return"
   // PrintTemplate rows when USE_NEW_POS_PRINT_TEMPLATE is on — POS now shares the
   // exact same template Back Office's Sales Invoice designer edits, not a separate
@@ -2175,7 +2203,23 @@ export default function POSSales() {
     // Opening the dedicated X-Report view is the deliberate "Generate X Report"
     // action — mark this terminal complete so it clears the Z-Report gate.
     if (currentView === 'x-report') loadXReport(true);
-    if (currentView === 'z-report') loadZReport(zReportDate);
+    if (currentView === 'z-report') {
+      const branchId = currentTerminal?.branchId || currentSession?.branchId;
+      if (branchId) {
+        getPosDayStatus().then((status) => {
+          const pending = status?.pendingDayCloseDate || null;
+          setPendingDayCloseDate(pending);
+          if (pending && pending !== zReportDate) {
+            setZReportDate(pending);
+            loadZReport(pending);
+            return;
+          }
+          loadZReport(zReportDate);
+        }).catch(() => loadZReport(zReportDate));
+      } else {
+        loadZReport(zReportDate);
+      }
+    }
     // Refresh dashboard stats whenever returning to dashboard with an active session
     if (currentView === 'dashboard' && (currentSession?.status === 'active' || currentSession?.status === 'OPEN')) {
       loadXReport();
@@ -2693,6 +2737,27 @@ export default function POSSales() {
     const unitDiscountType = overrides.discountType || 'percent'; // currently always percent in model but extensible
     const unitTaxRate = overrides.taxRate !== undefined ? overrides.taxRate : resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false);
 
+    // Supervisor price-override gate — only active when the admin has turned it on
+    // (Behavior tab > Price Override). Mirrors PosCheckoutController §2.4's floor check
+    // exactly, including applying the line discount before comparing to the floor, so a
+    // full-price item discounted below minimum at add-time is caught here too, not just
+    // at checkout. `overrides.approved` marks the post-approval retry dispatched from
+    // handleSupervisorPinSubmit, so it isn't re-gated.
+    if (!overrides.approved && posSettings?.requirePriceOverrideApproval) {
+      const floor = getPriceFloor(product.minPrice, product.cost);
+      const effectivePrice = unitPrice * (1 - unitDiscount / 100);
+      if (floor != null && effectivePrice < floor) {
+        setPendingPriceOverride({
+          type: 'ADD_ITEM',
+          product, quantity, batch: pinnedBatchNumber, serial: pinnedSerialNumber, expiry: pinnedExpiry,
+          overrides, itemName: product.name, minPrice: floor, attemptedPrice: effectivePrice,
+        });
+        setSupervisorPinValue('');
+        setSupervisorPinError('');
+        setShowSupervisorPin(true);
+        return { ok: false, reason: 'supervisor-approval-required' };
+      }
+    }
 
     // Block re-adding a batch-controlled product from the grid (its line already
     // holds one physical unit; another unit means another batch → must be scanned).
@@ -2864,7 +2929,22 @@ export default function POSSales() {
     });
   };
 
-  const updateDiscount = (itemId, discount) => {
+  const updateDiscount = (itemId, discount, approved = false) => {
+    if (!approved && posSettings?.requirePriceOverrideApproval) {
+      const target = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
+      const floor = target ? getPriceFloor(target.minPrice, target.cost) : null;
+      const effectivePrice = target ? toNumber(target.price, 0) * (1 - toNumber(discount, 0) / 100) : null;
+      if (floor != null && effectivePrice != null && effectivePrice < floor) {
+        setPendingPriceOverride({
+          type: 'UPDATE_DISCOUNT',
+          itemId, newDiscount: discount, itemName: target?.name, minPrice: floor, attemptedPrice: effectivePrice,
+        });
+        setSupervisorPinValue('');
+        setSupervisorPinError('');
+        setShowSupervisorPin(true);
+        return;
+      }
+    }
     setCurrentInvoice(prev => {
       const newItems = prev.items.map(item =>
         item.id === itemId
@@ -2879,8 +2959,23 @@ export default function POSSales() {
     });
   };
 
-  const updateItemPrice = (itemId, newPrice) => {
+  const updateItemPrice = (itemId, newPrice, approved = false) => {
     if (newPrice <= 0) return;
+    if (!approved && posSettings?.requirePriceOverrideApproval) {
+      const target = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
+      const floor = target ? getPriceFloor(target.minPrice, target.cost) : null;
+      const effectivePrice = target ? newPrice * (1 - toNumber(target.discount, 0) / 100) : newPrice;
+      if (floor != null && effectivePrice < floor) {
+        setPendingPriceOverride({
+          type: 'UPDATE_PRICE',
+          itemId, newPrice, itemName: target?.name, minPrice: floor, attemptedPrice: effectivePrice,
+        });
+        setSupervisorPinValue('');
+        setSupervisorPinError('');
+        setShowSupervisorPin(true);
+        return;
+      }
+    }
     setCurrentInvoice(prev => {
       const newItems = prev.items.map(item =>
         item.id === itemId
@@ -2984,10 +3079,28 @@ export default function POSSales() {
   };
 
   const handleSupervisorPinSubmit = async () => {
-    // ARCHFIX S5: the PIN is verified server-side (BCrypt) — it is no longer shipped to the client.
+    // ARCHFIX S5: verified server-side — the PIN/password is never shipped to the client.
+    // PASSWORD mode authenticates a specific supervisor account (needs email + password);
+    // PIN mode just checks the branch-wide PIN against the BCrypt hash.
     let valid = false;
+    let failureReason = null;
     try {
-      valid = supervisorPinValue ? await verifyPosSupervisorPin(supervisorPinValue) : false;
+      if (supervisorApprovalMode === 'PASSWORD') {
+        if (!supervisorPinEmail || !supervisorPinValue) {
+          setSupervisorPinError('Enter supervisor email/username and password.');
+          return;
+        }
+        const result = await verifySupervisorAuth({
+          email: supervisorPinEmail,
+          password: supervisorPinValue,
+          terminalId: currentTerminal?.terminalId || '',
+          lockedBy: cashierDisplayName || '',
+        });
+        valid = !!result?.valid;
+        failureReason = result?.reason || null;
+      } else {
+        valid = supervisorPinValue ? await verifyPosSupervisorPin(supervisorPinValue) : false;
+      }
     } catch {
       setSupervisorPinError('Could not verify approval. Please try again.');
       return;
@@ -3003,6 +3116,26 @@ export default function POSSales() {
         applyVoid(pendingVoidItemId);
         setPendingVoidItemId(null);
       }
+      if (pendingPriceOverride) {
+        const req = pendingPriceOverride;
+        setPendingPriceOverride(null);
+        if (req.type === 'ADD_ITEM') {
+          addToInvoice(req.product, req.quantity, req.batch, req.serial, req.expiry, { ...req.overrides, approved: true });
+        } else if (req.type === 'UPDATE_PRICE') {
+          updateItemPrice(req.itemId, req.newPrice, true);
+        } else if (req.type === 'UPDATE_DISCOUNT') {
+          updateDiscount(req.itemId, req.newDiscount, true);
+        } else if (req.type === 'CHECKOUT') {
+          // Re-run checkout with the just-verified credentials attached so the backend's
+          // §2.4 gate (PosCheckoutController) can independently confirm and bypass it —
+          // never trust the client-side verify above alone for a money-moving action.
+          processPayment(
+            supervisorApprovalMode === 'PASSWORD'
+              ? { email: supervisorPinEmail, password: supervisorPinValue }
+              : { pin: supervisorPinValue }
+          );
+        }
+      }
       if (pendingLayawayAbortAction) {
         const action = pendingLayawayAbortAction;
         const isFullClear = pendingLayawayAbortIsFullClear;
@@ -3016,13 +3149,14 @@ export default function POSSales() {
         }
       }
       setSupervisorPinValue('');
+      setSupervisorPinEmail('');
       setSupervisorPinError('');
     } else {
-      setSupervisorPinError(
+      setSupervisorPinError(failureReason || (
         supervisorApprovalMode === 'PASSWORD'
           ? 'Incorrect password. Please try again.'
           : 'Incorrect PIN. Please try again.'
-      );
+      ));
     }
   };
 
@@ -3070,8 +3204,11 @@ export default function POSSales() {
     setSettingsDraft({
       requireSupervisorForVoid: !!posSettings?.requireSupervisorForVoid,
       supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
-      supervisorPin: posSettings?.supervisorPin || '',
+      requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
+      // Write-only — the backend never returns the raw PIN (see supervisorPinSet on posSettings).
+      supervisorPin: '',
       voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',
+      productEntryMode: posSettings?.productEntryMode || 'DIRECT_ADD',
       cartViewMode: posSettings?.cartViewMode === 'DETAILED' ? 'DETAILED' : 'MINIMAL',
       cartShowBarcode: posSettings?.cartShowBarcode !== false,
       cartShowProductCode: posSettings?.cartShowProductCode !== false,
@@ -3079,11 +3216,18 @@ export default function POSSales() {
       cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
       cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
       cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
+      operatingHoursEnabled: !!posSettings?.operatingHoursEnabled,
+      operatingStartTime: posSettings?.operatingStartTime || '',
+      operatingEndTime: posSettings?.operatingEndTime || '',
     });
   };
 
   const handleSaveSettings = async () => {
     if (!settingsDraft) return;
+    if (settingsDraft.operatingHoursEnabled && (!settingsDraft.operatingStartTime || !settingsDraft.operatingEndTime)) {
+      window.alert('Business Day Start Time and End Time are required when the Business Day Window is enabled.');
+      return;
+    }
     setSettingsSaving(true);
     try {
       const payload = { ...(posSettings || {}), ...settingsDraft };
@@ -4485,7 +4629,12 @@ export default function POSSales() {
     return { mode: 'agent-escpos', printer };
   }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs]);
 
-  const processPayment = async () => {
+  // overrideCreds, when present, carries a supervisor PIN ({pin}) or credentials
+  // ({email,password}) already confirmed via the supervisor-approval dialog (see
+  // handleSupervisorPinSubmit's 'CHECKOUT' branch) — attached to the checkout payload so the
+  // backend's §2.4 price-override gate (PosCheckoutController) can verify and bypass it,
+  // instead of only the pos_price_override role-permission check.
+  const processPayment = async (overrideCreds = null) => {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
     setCheckoutLoading(true);
     setCheckoutError(null);
@@ -4635,6 +4784,9 @@ export default function POSSales() {
         driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
         deliveryNotes: deliveryNotes || null,
         items,
+        supervisorOverridePin: overrideCreds?.pin || undefined,
+        supervisorOverrideEmail: overrideCreds?.email || undefined,
+        supervisorOverridePassword: overrideCreds?.password || undefined,
       };
 
       // ── PAYMENT CONFIRMED HERE ────────────────────────────────────────────
@@ -4837,7 +4989,20 @@ export default function POSSales() {
       // released safely when the payment dialog closes (effect on showPaymentDialog),
       // so the cashier can read the error / retry against the still-frozen preview.
       const msg = err?.response?.data?.message || err?.response?.data || err?.message || 'Checkout failed. Please try again.';
-      setCheckoutError(typeof msg === 'string' ? msg : 'Checkout failed. Please try again.');
+      const msgStr = typeof msg === 'string' ? msg : 'Checkout failed. Please try again.';
+      // Backend §2.4 gate (PosCheckoutController) rejected a below-minimum line because the
+      // cashier lacks the pos_price_override permission — route into the same supervisor-
+      // approval dialog used at cart-add time instead of a dead-end error, so the checkout can
+      // be retried with a verified PIN/password attached (see processPayment's overrideCreds).
+      if (err?.response?.status === 403 && msgStr.includes('pos_price_override')) {
+        setPendingPriceOverride({ type: 'CHECKOUT' });
+        setSupervisorPinValue('');
+        setSupervisorPinEmail('');
+        setSupervisorPinError('');
+        setShowSupervisorPin(true);
+      } else {
+        setCheckoutError(msgStr);
+      }
     } finally {
       setCheckoutLoading(false);
     }
@@ -6994,6 +7159,25 @@ export default function POSSales() {
               </div>
             ))}
           </div>
+
+          {isNoSessions && (
+            <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 mb-5">
+              <div className="text-[13px] text-slate-600">
+                {pendingDayCloseDate ? (
+                  <>
+                    <span className="font-bold text-[#1E293B]">No pending Day Close.</span> The next business date with
+                    activity is <span className="font-bold text-[#1E293B]">{pendingDayCloseDate}</span> — nothing to do
+                    for {zReportDate} until sessions exist on it.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-bold text-[#1E293B]">No pending Day Close.</span> No POS sessions have occurred
+                    since the last close — calendar dates without activity never require operator action.
+                  </>
+                )}
+              </div>
+            </div>
+          )}
 
           {!allPassed && issues.length > 0 && (() => {
             const blockingTerminals = [];
@@ -10782,7 +10966,7 @@ export default function POSSales() {
                     className="flex-none px-3 sm:px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
-                  <button type="button" onClick={processPayment} disabled={!canSettle || currentInvoice.items.length === 0 || checkoutLoading}
+                  <button type="button" onClick={() => processPayment()} disabled={!canSettle || currentInvoice.items.length === 0 || checkoutLoading}
                     className={`flex-1 min-w-0 py-3.5 rounded-xl font-black text-sm sm:text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 && !checkoutLoading ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
                     {checkoutLoading
                       ? <><div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin shrink-0" />Processing...</>
@@ -10809,7 +10993,11 @@ export default function POSSales() {
                 <div>
                   <h2 className="text-base font-bold text-white">Supervisor Approval</h2>
                   <p className="text-xs text-amber-100 mt-0.5">
-                    {pendingLayawayAbortAction
+                    {pendingPriceOverride?.type === 'CHECKOUT'
+                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve the below-minimum price override and complete checkout`
+                      : pendingPriceOverride
+                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve price override${pendingPriceOverride.itemName ? ` for ${pendingPriceOverride.itemName}` : ''} (below min ${pendingPriceOverride.minPrice})`
+                      : pendingLayawayAbortAction
                       ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to clear layaway cart' : 'Enter PIN to clear layaway cart')
                       : (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize void' : 'Enter PIN to authorize void')}
                   </p>
@@ -10817,6 +11005,22 @@ export default function POSSales() {
               </div>
             </div>
             <div className="p-6 space-y-4">
+              {supervisorApprovalMode === 'PASSWORD' && (
+                <div>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
+                    Supervisor Email / Username
+                  </label>
+                  <input
+                    type="text"
+                    value={supervisorPinEmail}
+                    onChange={e => { setSupervisorPinEmail(e.target.value); setSupervisorPinError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
+                    autoFocus
+                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:border-amber-400"
+                    placeholder="manager@example.com"
+                  />
+                </div>
+              )}
               <div>
                 <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
                   {supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN'}
@@ -10826,7 +11030,7 @@ export default function POSSales() {
                   value={supervisorPinValue}
                   onChange={e => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
                   onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
-                  autoFocus
+                  autoFocus={supervisorApprovalMode !== 'PASSWORD'}
                   maxLength={supervisorApprovalMode === 'PASSWORD' ? 64 : 8}
                   className={`w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:border-amber-400 ${supervisorApprovalMode === 'PASSWORD' ? 'text-base' : 'text-center text-xl tracking-[0.5em]'}`}
                   placeholder={supervisorApprovalMode === 'PASSWORD' ? 'Manager password' : '····'}
@@ -10843,6 +11047,10 @@ export default function POSSales() {
                     <button
                       key={k}
                       type="button"
+                      // Keep focus on the PIN input so typing on a physical keyboard keeps
+                      // working after clicking a keypad button (a button click would otherwise
+                      // steal focus from the input, silently breaking further keyboard entry).
+                      onMouseDown={e => e.preventDefault()}
                       onClick={() => {
                         if (k === 'C') { setSupervisorPinValue(''); setSupervisorPinError(''); }
                         else if (k === '✓') handleSupervisorPinSubmit();
@@ -10865,7 +11073,7 @@ export default function POSSales() {
               )}
               <button
                 type="button"
-                onClick={() => { setShowSupervisorPin(false); setPendingVoidItemId(null); setSupervisorPinValue(''); setSupervisorPinError(''); }}
+                onClick={() => { setShowSupervisorPin(false); setPendingVoidItemId(null); setPendingPriceOverride(null); setSupervisorPinValue(''); setSupervisorPinEmail(''); setSupervisorPinError(''); }}
                 className="w-full py-2.5 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50"
               >Cancel</button>
             </div>

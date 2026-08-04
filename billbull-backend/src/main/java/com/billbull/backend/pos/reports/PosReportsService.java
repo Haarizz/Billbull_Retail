@@ -68,7 +68,11 @@ public class PosReportsService {
     public PosReportDetail getZDetail(Long id) {
         PosDayClose dayClose = zRepo.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Z-Report not found: " + id));
-        return PosReportDetail.fromZ(dayClose, parseJson(dayClose.getzReportJson()));
+        // Historical "Skip Non-Trading Day" rows (retired workflow — see
+        // PosPendingDayCloseResolver) never had a Z-Report snapshot to parse; render
+        // them safely instead of failing on the missing payload.
+        Map<String, Object> report = dayClose.isSkipped() ? Map.of() : parseJson(dayClose.getzReportJson());
+        return PosReportDetail.fromZ(dayClose, report);
     }
 
     @SuppressWarnings("unchecked")

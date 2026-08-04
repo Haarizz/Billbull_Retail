@@ -488,12 +488,21 @@ export const emitEscPosBrandedHeader = async (w, {
   const printableDots = usableDotsFor(mm);
   const oneLineAddress = (addr) => String(addr || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).join(', ');
 
-  let currentAlign = 1;
+  // `null` (not 1) so the very first setAlign() call always emits its command —
+  // never trust an assumed starting state.
+  let currentAlign = null;
   const setAlign = (align) => {
     if (currentAlign === align) return;
     w.push(align === 1 ? CMD.ALIGN_CENTER : CMD.ALIGN_LEFT);
     currentAlign = align;
   };
+  // A raster/image print (GS v 0) resets alignment on several clone controllers
+  // (the same clone-quirk family documented above for GS W). Invalidate the
+  // tracked state after one so the NEXT setAlign() call always re-sends ESC a n,
+  // instead of skipping it because the JS-side state thinks nothing changed —
+  // that mismatch is what silently dropped the header back to flush-left print
+  // (and let the unwrapped address line overflow/clip) after the logo raster.
+  const invalidateAlignAfterRaster = () => { currentAlign = null; };
 
   // Same centred-text emitter the receipt body uses: crisp ESC/POS text for the
   // Latin case, canvas raster for Arabic/other non-Latin-1 so glyphs render. Per
@@ -515,12 +524,13 @@ export const emitEscPosBrandedHeader = async (w, {
     const raster = renderTextLineToRasterCommand(text, {
       widthDots: Math.round(printableDots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
     });
-    if (raster) { w.push(raster); w.push([0x0a]); } else {
+    if (raster) { w.push(raster); w.push([0x0a]); invalidateAlignAfterRaster(); } else {
       w.line(text);
     }
   };
 
   w.push(CMD.ALIGN_CENTER);
+  currentAlign = 1;
 
   // Logo: dithered raster, full quality. Flush a text line first (see the note in
   // buildEscPosReceipt — a raster as the very first printable content garbles on
@@ -531,6 +541,7 @@ export const emitEscPosBrandedHeader = async (w, {
       w.line(' ');
       w.push(raster);
       w.push([0x0a]);
+      invalidateAlignAfterRaster();
     } catch { /* logo failed to decode/dither — print without it */ }
   }
 

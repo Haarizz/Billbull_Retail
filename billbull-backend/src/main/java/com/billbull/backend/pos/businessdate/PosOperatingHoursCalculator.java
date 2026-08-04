@@ -21,11 +21,23 @@ public final class PosOperatingHoursCalculator {
     public static boolean isWithinOperatingHours(LocalTime start, LocalTime end, LocalTime now) {
         if (start == null || end == null || now == null) return true;
         if (start.equals(end)) return true; // 24-hour operation
-        if (start.isBefore(end)) {
+        if (!isOvernightWindow(start, end)) {
             return !now.isBefore(start) && now.isBefore(end);
         }
         // Wrap-around window (crosses midnight): "now" is within hours if it's after
         // start (evening side) or before end (early-morning side of the next day).
         return !now.isBefore(start) || now.isBefore(end);
+    }
+
+    /**
+     * Whether {@code start}/{@code end} describe a window that crosses midnight
+     * (e.g. 08:00 -> 02:00), as opposed to a same-day window (e.g. 08:00 -> 22:00).
+     * Shared with {@link BusinessDayResolver} so the two components can never
+     * disagree about what counts as "overnight" — this is the single definition.
+     * Callers must handle the {@code start.equals(end)} "24-hour operation" case
+     * themselves before calling this, same as {@link #isWithinOperatingHours} does.
+     */
+    public static boolean isOvernightWindow(LocalTime start, LocalTime end) {
+        return !start.isBefore(end);
     }
 }

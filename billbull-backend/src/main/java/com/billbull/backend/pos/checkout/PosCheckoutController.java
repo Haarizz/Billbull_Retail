@@ -12,6 +12,8 @@ import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.receipt.ZatcaQrGenerator;
 import com.billbull.backend.pos.session.PosSessionService;
+import com.billbull.backend.pos.settings.PosSettings;
+import com.billbull.backend.pos.settings.PosSettingsService;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
@@ -62,6 +64,7 @@ public class PosCheckoutController {
     private final ProductRepository productRepository;
     private final ProductPricingRepository pricingRepository;
     private final RolePermissionService permissionService;
+    private final PosSettingsService posSettingsService;
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
     private final PaymentRepository paymentRepository;
@@ -76,6 +79,7 @@ public class PosCheckoutController {
                                   ProductRepository productRepository,
                                   ProductPricingRepository pricingRepository,
                                   RolePermissionService permissionService,
+                                  PosSettingsService posSettingsService,
                                   ProductService productService,
                                   EmployeeRepository employeeRepository,
                                   PaymentRepository paymentRepository,
@@ -92,6 +96,7 @@ public class PosCheckoutController {
         this.productRepository = productRepository;
         this.pricingRepository = pricingRepository;
         this.permissionService = permissionService;
+        this.posSettingsService = posSettingsService;
         this.productService = productService;
         this.employeeRepository = employeeRepository;
         this.paymentRepository = paymentRepository;
@@ -672,8 +677,18 @@ public class PosCheckoutController {
         Map<String, Long> productIdByCode = new java.util.HashMap<>();
 
         // §2.4 Price override gate: batch-load product pricings and verify that any
-        // below-list-price sale is made by a user with the pos_price_override permission.
-        if (req.getItems() != null && !req.getItems().isEmpty()) {
+        // below-list-price sale is made by a user with the pos_price_override permission (or a
+        // verified supervisor override). Gated by PosSettings.requirePriceOverrideApproval —
+        // when the branch has this off, below-minimum sales are allowed through untouched, same
+        // as the cart-add-time dialog being off. When the branch/setting can't be resolved,
+        // fail safe (gate stays ON) rather than silently letting every sale bypass it.
+        Long gateBranchId = req.getBranchId();
+        PosSettings priceOverrideSettings = gateBranchId != null
+                ? posSettingsService.getForBranch(gateBranchId)
+                : posSettingsService.getForCurrentBranch();
+        boolean priceOverrideGateEnabled = priceOverrideSettings == null
+                || !Boolean.FALSE.equals(priceOverrideSettings.getRequirePriceOverrideApproval());
+        if (priceOverrideGateEnabled && req.getItems() != null && !req.getItems().isEmpty()) {
             List<String> codes = req.getItems().stream()
                     .filter(i -> !Boolean.TRUE.equals(i.getVoided()) && i.getItemCode() != null)
                     .map(PosCheckoutRequest.PosCheckoutItem::getItemCode)
@@ -683,6 +698,12 @@ public class PosCheckoutController {
                     productIdByCode.put(p.getCode(), p.getId());
                     pricingRepository.findByProductId(p.getId()).ifPresent(pr -> pricingByCode.put(p.getCode(), pr));
                 });
+                // Lazily verified at most once per checkout — a supervisor PIN/password supplied
+                // by the frontend's price-override dialog (see PosSettings.requirePriceOverrideApproval)
+                // grants the same bypass as the pos_price_override permission, for every line in
+                // this request. null = not yet checked, so a checkout with no below-min lines never
+                // pays the verification cost.
+                Boolean supervisorOverrideVerified = null;
                 for (PosCheckoutRequest.PosCheckoutItem item : req.getItems()) {
                     if (Boolean.TRUE.equals(item.getVoided()) || item.getPrice() == null) continue;
                     ProductPricing pr = pricingByCode.get(item.getItemCode());
@@ -697,8 +718,12 @@ public class PosCheckoutController {
                     // Zero is treated as "not configured" — a zero cost is not a valid floor.
                     BigDecimal effectiveMin = isPositive(pr.getMinPrice()) ? pr.getMinPrice()
                                            : (isPositive(pr.getCost()) ? pr.getCost() : null);
-                    if (effectiveMin != null && effectivePrice.compareTo(effectiveMin) < 0) {
-                        if (!permissionService.currentUserCanEdit("pos_price_override")) {
+                    if (effectiveMin != null && effectivePrice.compareTo(effectiveMin) < 0
+                            && !permissionService.currentUserCanEdit("pos_price_override")) {
+                        if (supervisorOverrideVerified == null) {
+                            supervisorOverrideVerified = verifySupervisorPriceOverride(req);
+                        }
+                        if (!supervisorOverrideVerified) {
                             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                                     "Price below minimum (" + effectiveMin + ") for " + item.getItemCode()
                                     + ". Supervisor override required (pos_price_override).");
@@ -888,5 +913,24 @@ public class PosCheckoutController {
     /** Returns true when a BigDecimal value is non-null and strictly positive (> 0). */
     private static boolean isPositive(BigDecimal value) {
         return value != null && value.compareTo(BigDecimal.ZERO) > 0;
+    }
+
+    /** §2.4 price-override bypass: verifies a supervisor PIN or credentials supplied on the
+     *  checkout request, via the same PosSettingsService checks the cart-add-time approval
+     *  dialog uses (ARCHFIX S5 — PIN is BCrypt-hashed; credentials check role membership). PIN
+     *  is tried first when both are present, matching PIN being the simpler/default approval mode. */
+    private boolean verifySupervisorPriceOverride(PosCheckoutRequest req) {
+        if (req.getSupervisorOverridePin() != null && !req.getSupervisorOverridePin().isBlank()) {
+            return posSettingsService.verifyPin(req.getSupervisorOverridePin());
+        }
+        if (req.getSupervisorOverrideEmail() != null && !req.getSupervisorOverrideEmail().isBlank()
+                && req.getSupervisorOverridePassword() != null && !req.getSupervisorOverridePassword().isBlank()) {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            String cashier = auth != null ? auth.getName() : null;
+            return posSettingsService.verifySupervisorCredentials(
+                    req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(),
+                    req.getTerminalId(), cashier).isValid();
+        }
+        return false;
     }
 }

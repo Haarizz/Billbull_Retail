@@ -1,5 +1,6 @@
 package com.billbull.backend.pos.session;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -12,7 +13,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.server.ResponseStatusException;
 
-import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.businessdate.PosDayStatusService;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,7 +34,6 @@ class PosSessionTransferControllerTest {
     @Mock private PosSessionService service;
     @Mock private ObjectMapper objectMapper;
     @Mock private PosDayStatusService dayStatusService;
-    @Mock private PosBusinessDateService businessDateService;
     @Mock private BranchAccessService branchAccessService;
 
     @InjectMocks private PosSessionController controller;
@@ -111,6 +110,23 @@ class PosSessionTransferControllerTest {
                 () -> controller.transferSession(5L, body("  ", true, null, null)));
 
         verifyNoInteractions(service);
+    }
+
+    // -----------------------------------------------------------------
+    // API compatibility: POST /skip-day is deprecated, never removed —
+    // it must keep responding (410 Gone) rather than 404ing older/cached
+    // clients that still call it.
+    // -----------------------------------------------------------------
+
+    @Test
+    void skipDayEndpointIsDeprecatedAndAlwaysReturnsGone() {
+        when(service.skipBusinessDate(1L, LocalDate.of(2026, 7, 25), "Public holiday"))
+                .thenThrow(new ResponseStatusException(HttpStatus.GONE, "The Skip Non-Trading Day workflow has been retired."));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> controller.skipDay(1L, "2026-07-25", "Public holiday"));
+
+        assertEquals(HttpStatus.GONE, ex.getStatusCode());
     }
 
     private static PosSession sessionMoved() {

@@ -1,10 +1,19 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
+import com.billbull.backend.pos.businessdate.PosBusinessDateService;
+import com.billbull.backend.pos.businessdate.BusinessDayBlockingReason;
+import com.billbull.backend.pos.businessdate.BusinessDayFeatureFlagService;
+import com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException;
+import com.billbull.backend.pos.businessdate.BusinessDayResolver;
+import com.billbull.backend.pos.businessdate.BusinessDaySettings;
+import com.billbull.backend.pos.businessdate.BusinessDayStateService;
+import com.billbull.backend.pos.businessdate.BusinessDayValidationResult;
+import com.billbull.backend.pos.businessdate.BusinessDayValidationService;
+import com.billbull.backend.pos.businessdate.PosOperatingHoursCalculator;
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
-import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.audit.PosAuditAction;
 import com.billbull.backend.pos.audit.PosAuditLog;
 import com.billbull.backend.pos.audit.PosAuditLogRepository;
@@ -77,6 +86,9 @@ public class PosSessionService {
     private final ObjectMapper objectMapper;
     private final PosTerminalActivityService terminalActivityService;
     private final PosBusinessDateService businessDateService;
+    private final BusinessDayStateService businessDayStateService;
+    private final BusinessDayValidationService businessDayValidationService;
+    private final BusinessDayFeatureFlagService businessDayFeatureFlagService;
     private final PosCashMovementRepository cashMovementRepository;
     private final ReceiptVoucherRepository receiptVoucherRepository;
     private final PosXReportSnapshotRepository xReportSnapshotRepository;
@@ -116,6 +128,9 @@ public class PosSessionService {
                              ObjectMapper objectMapper,
                              PosTerminalActivityService terminalActivityService,
                              PosBusinessDateService businessDateService,
+                             BusinessDayStateService businessDayStateService,
+                             BusinessDayValidationService businessDayValidationService,
+                             BusinessDayFeatureFlagService businessDayFeatureFlagService,
                              PosCashMovementRepository cashMovementRepository,
                              ReceiptVoucherRepository receiptVoucherRepository,
                              PosXReportSnapshotRepository xReportSnapshotRepository,
@@ -146,6 +161,9 @@ public class PosSessionService {
         this.objectMapper = objectMapper;
         this.terminalActivityService = terminalActivityService;
         this.businessDateService = businessDateService;
+        this.businessDayStateService = businessDayStateService;
+        this.businessDayValidationService = businessDayValidationService;
+        this.businessDayFeatureFlagService = businessDayFeatureFlagService;
         this.cashMovementRepository = cashMovementRepository;
         this.receiptVoucherRepository = receiptVoucherRepository;
         this.xReportSnapshotRepository = xReportSnapshotRepository;
@@ -242,21 +260,53 @@ public class PosSessionService {
         Long branchId = branch.getId();
         LocalDate businessDate = businessDateService.getCurrentBusinessDate(branchId);
 
-        // 0. Verify day is not already closed
-        if (businessDateService.isDateClosed(branchId, businessDate)) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
+        // Stage 3B.2B — per-branch enforcement switch. A failure to even read the
+        // flag is itself an infrastructure concern and must fail open to the
+        // already-proven legacy gate, same philosophy as everything below.
+        boolean enforcementEnabled;
+        try {
+            enforcementEnabled = businessDayFeatureFlagService.isLoginGateV2Enabled(branchId);
+        } catch (Exception flagLookupFailure) {
+            enforcementEnabled = false;
+            businessDayStateService.recordInfrastructureFailure(branchId,
+                    BusinessDayInfrastructureException.FailureCategory.UNEXPECTED, flagLookupFailure);
+        }
+        businessDayStateService.recordFeatureFlagRequest(branchId, enforcementEnabled);
+
+        ResponseStatusException blockingException;
+        if (!enforcementEnabled) {
+            // Flag OFF (the default for every branch): behavior is byte-identical to
+            // Stage 3B.2A.6 — legacy gate is authoritative, Shadow Validation runs
+            // purely for observation afterward, its result never consulted here.
+            blockingException = runLegacyGate(branchId, businessDate);
+            boolean legacyAllowed = blockingException == null;
+            runShadowValidation(branchId, legacyAllowed);
+        } else {
+            // Flag ON: BusinessDayValidationService becomes authoritative. An
+            // Infrastructure Failure (categorized or not) falls back to the exact
+            // same legacy gate, for this request only — never blocks a cashier
+            // because the new engine itself couldn't run.
+            try {
+                PosSettings enforcementSettings = loadSettingsOrFail(branchId);
+                BusinessDayValidationResult result = businessDayValidationService.validate(
+                        branchId, LocalDateTime.now(), BusinessDaySettings.from(enforcementSettings));
+                businessDayStateService.recordEnforcementDecision(branchId, result);
+                blockingException = toEnforcementException(branchId, result);
+            } catch (BusinessDayInfrastructureException infra) {
+                businessDayStateService.recordEnforcementFallback(branchId, infra.getCategory(), infra);
+                blockingException = runLegacyGate(branchId, businessDate);
+            } catch (Exception unclassified) {
+                // A bug in the new engine must never block a real cashier — same
+                // fail-open guarantee, for a failure mode too unexpected to have
+                // already been wrapped as a BusinessDayInfrastructureException.
+                businessDayStateService.recordEnforcementFallback(branchId,
+                        BusinessDayInfrastructureException.FailureCategory.UNEXPECTED, unclassified);
+                blockingException = runLegacyGate(branchId, businessDate);
+            }
         }
 
-        // 0b. Guard against silently rolling into a new day while a prior day's session is
-        // still open/suspended (BBQA-5.3-013): surface it as a distinct, machine-readable
-        // status so the frontend can prompt the user to close it instead of just failing.
-        List<PosSession> stale = repo.findUnclosedSessionsBeforeDate(branchId, businessDate);
-        if (!stale.isEmpty()) {
-            PosSession oldest = stale.get(0);
-            throw new ResponseStatusException(HttpStatus.CONFLICT,
-                    "PREVIOUS_DAY_SESSION_OPEN: Session #" + oldest.getId() + " on " + oldest.getSessionDate()
-                            + " (terminal " + oldest.getTerminalId() + ") is still " + oldest.getStatus()
-                            + ". Close the previous day's session before starting a new one.");
+        if (blockingException != null) {
+            throw blockingException;
         }
 
         // Session Roaming Phase 7 — controlled discovery. NO_SESSION/TERMINAL_SESSION/SAME_SESSION
@@ -303,6 +353,16 @@ public class PosSessionService {
         session.setOwnerUserId(ownerUserId);
         session.setSessionDate(businessDate);
         session.setOpenedAt(now);
+        // Business Day persistence (Phase 3A) — Day Close domain only; immutable,
+        // set once here, never re-derived or updated afterward. Resolved via the
+        // Business Day Engine (BusinessDayResolver + this branch's configured
+        // operating hours) rather than a raw calendar-date stamp, so an overnight
+        // window is correctly honored. For any branch without operating hours
+        // configured (the default), this is byte-identical to now.toLocalDate().
+        // See PosSession#getTradingDate() / PosPendingDayCloseResolver /
+        // docs/business-day-architecture.md.
+        LocalDate candidateBusinessDay = BusinessDayResolver.resolve(now, BusinessDaySettings.from(settings));
+        session.setTradingDate(candidateBusinessDay);
         session.setLastActivityAt(now);
         session.setDurationSeconds(null);
         session.setStatus(PosSessionStatus.OPEN);
@@ -328,6 +388,13 @@ public class PosSessionService {
 
         PosSession saved = repo.save(session);
 
+        // Phase 3A shadow validation — diagnostics only, recorded after persistence,
+        // never influences anything above or below. Compares the legacy Business
+        // Date pointer against the now-persisted Business Day (tradingDate).
+        boolean overnightWindowConfigured = BusinessDaySettings.from(settings).isConfigured()
+                && PosOperatingHoursCalculator.isOvernightWindow(settings.getOperatingStartTime(), settings.getOperatingEndTime());
+        businessDayStateService.recordShadowValidation(branchId, businessDate, candidateBusinessDay, overnightWindowConfigured);
+
         // Atomically acquire terminal lock (DB partial unique index is the concurrency safety net)
         if (terminal != null) {
             int acquired = terminalRepository.setOpenSession(terminal.getId(), saved.getId());
@@ -344,6 +411,150 @@ public class PosSessionService {
         auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
         terminalActivityService.recordActivity(saved.getTerminalId(), "SESSION_OPEN");
         return saved;
+    }
+
+    /**
+     * The complete legacy Business Date pointer gate — byte-identical logic to
+     * every phase through Stage 3B.2A.6, extracted into its own method so it can
+     * be reused both as the primary path (flag OFF) and as the Stage 3B.2B
+     * fail-open fallback (flag ON, but the new engine hit an Infrastructure
+     * Failure for this request). Returns the {@link ResponseStatusException} to
+     * throw, or {@code null} if the legacy gate allows the session to proceed.
+     */
+    private ResponseStatusException runLegacyGate(Long branchId, LocalDate businessDate) {
+        try {
+            // 0. Verify day is not already closed
+            if (businessDateService.isDateClosed(branchId, businessDate)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
+            }
+
+            // 0b. Guard against silently rolling into a new day while a prior Business
+            // Day remains unclosed (BBQA-5.3-013). Phase 3B.1: detection source is
+            // BusinessDayStateService (session-driven Business Day data) instead of the
+            // legacy sessionDate<pointer scan — the decision path, exception type, HTTP
+            // status, and message format are unchanged; only where "does an unclosed
+            // prior day exist" is answered from. Mirrors the legacy query's strict
+            // "< businessDate" condition: an unclosed day equal to (or after) today's
+            // pointer is today's own still-in-progress day, not a prior one — it must
+            // never block additional sessions opening on the same Business Day.
+            Optional<LocalDate> unclosedBusinessDay = businessDayStateService.findUnclosedBusinessDay(branchId);
+            boolean isPriorUnclosedDay = unclosedBusinessDay.isPresent() && unclosedBusinessDay.get().isBefore(businessDate);
+            List<PosSession> legacyStaleCheck = repo.findUnclosedSessionsBeforeDate(branchId, businessDate);
+            businessDayStateService.logPreviousUnclosedDayDisagreement(branchId, !legacyStaleCheck.isEmpty(),
+                    isPriorUnclosedDay ? unclosedBusinessDay : Optional.empty());
+            if (isPriorUnclosedDay) {
+                PosSession oldest = oldestSessionOnUnclosedDay(branchId, unclosedBusinessDay.get());
+                if (oldest != null) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
+                                    + "Business Day " + unclosedBusinessDay.get() + " cannot be completed because an active session still exists.\n"
+                                    + "Session ID : " + oldest.getId() + "\n"
+                                    + "Terminal : " + oldest.getTerminalId() + "\n"
+                                    + "Status : " + oldest.getStatus() + "\n"
+                                    + "Business Day : " + oldest.getTradingDate() + "\n"
+                                    + "Close or complete the active session before running Day Close.");
+                } else {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT,
+                            "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
+                                    + "Business Day " + unclosedBusinessDay.get() + " has not been closed.\n"
+                                    + "All sessions for this Business Day are already closed.\n"
+                                    + "Run Day Close (Z Report) before opening a new Business Day.");
+                }
+            }
+        } catch (ResponseStatusException legacyException) {
+            return legacyException;
+        }
+        return null;
+    }
+
+    /** Stage 3B.2A Shadow Validation — unchanged since Stage 3B.2A.6. Runs only on
+     *  the flag-OFF path now (Stage 3B.2B): its result never participates in any
+     *  if/throw/return; wrapped so a bug in the new engine can never prevent a
+     *  real cashier from opening a session. */
+    private void runShadowValidation(Long branchId, boolean legacyAllowed) {
+        try {
+            PosSettings shadowSettings = loadSettingsOrFail(branchId);
+            BusinessDayValidationResult shadowResult = businessDayValidationService.validate(
+                    branchId, LocalDateTime.now(), BusinessDaySettings.from(shadowSettings));
+            businessDayStateService.recordValidationOutcome(branchId, legacyAllowed, shadowResult);
+        } catch (BusinessDayInfrastructureException infrastructureFailure) {
+            businessDayStateService.recordInfrastructureFailure(branchId, infrastructureFailure.getCategory(), infrastructureFailure);
+        } catch (Exception unexpectedShadowError) {
+            businessDayStateService.recordInfrastructureFailure(branchId,
+                    BusinessDayInfrastructureException.FailureCategory.UNEXPECTED, unexpectedShadowError);
+        }
+    }
+
+    /** Shared by shadow validation and enforcement — loads the branch's
+     *  {@code PosSettings}, classifying a repository failure as a
+     *  {@link BusinessDayInfrastructureException} (category {@code SETTINGS}) so
+     *  both callers' fail-open handling can react uniformly. */
+    private PosSettings loadSettingsOrFail(Long branchId) {
+        try {
+            return posSettingsRepository.findByBranchId(branchId).orElse(new PosSettings());
+        } catch (RuntimeException settingsFailure) {
+            throw new BusinessDayInfrastructureException(BusinessDayInfrastructureException.FailureCategory.SETTINGS,
+                    "Failed to load PosSettings for Business Day validation", settingsFailure);
+        }
+    }
+
+    /** The earliest-opened session on the branch's oldest unclosed Business Day —
+     *  shared by the legacy gate and Stage 3B.2B enforcement's {@code BLOCK}/
+     *  {@code PREVIOUS_BUSINESS_DAY_OPEN} message, so both produce an identical
+     *  "Session #X on Y (terminal Z) is still STATUS" message. */
+    private PosSession oldestSessionOnUnclosedDay(Long branchId, LocalDate unclosedBusinessDay) {
+        List<PosSession> sessionsOnUnclosedDay =
+                repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, unclosedBusinessDay);
+        return sessionsOnUnclosedDay.stream()
+                .filter(s -> s.getStatus() == PosSessionStatus.OPEN || s.getStatus() == PosSessionStatus.SUSPENDED)
+                .min(Comparator.comparing(PosSession::getOpenedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(null);
+    }
+
+    /**
+     * Stage 3B.2B — translates an authoritative {@link BusinessDayValidationResult}
+     * into the exact exception shape the legacy gate would have thrown for the
+     * equivalent situation, per the approved enforcement policy:
+     * <ul>
+     *   <li>{@code ALLOW} → {@code null} (proceed)
+     *   <li>{@code BLOCK}/{@code BUSINESS_DAY_ALREADY_CLOSED} → same 403 message as the legacy "already closed" check
+     *   <li>{@code BLOCK}/{@code PREVIOUS_BUSINESS_DAY_OPEN} → same 409 "PREVIOUS_DAY_SESSION_OPEN" message as the legacy gate
+     *   <li>{@code UNEXPECTED_STATE} → fails closed, 409, a new message (no legacy equivalent existed for this case)
+     * </ul>
+     */
+    private ResponseStatusException toEnforcementException(Long branchId, BusinessDayValidationResult result) {
+        return switch (result.verdict()) {
+            case ALLOW -> null;
+            case BLOCK -> {
+                if (result.blockingReason() == BusinessDayBlockingReason.BUSINESS_DAY_ALREADY_CLOSED) {
+                    yield new ResponseStatusException(HttpStatus.FORBIDDEN, "Cannot open session: The business day has already been closed.");
+                }
+                LocalDate unclosedDay = result.previousUnclosedBusinessDay().orElse(result.candidateBusinessDay());
+                PosSession oldest = oldestSessionOnUnclosedDay(branchId, unclosedDay);
+                if (oldest == null) {
+                    // Data changed between validate() and here (e.g. the blocking
+                    // session closed in the interim) — fail closed generically
+                    // rather than silently allow.
+                    yield new ResponseStatusException(HttpStatus.CONFLICT,
+                            "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
+                                    + "Business Day " + unclosedDay + " has not been closed.\n"
+                                    + "All sessions for this Business Day are already closed.\n"
+                                    + "Run Day Close (Z Report) before opening a new Business Day.");
+                }
+                yield new ResponseStatusException(HttpStatus.CONFLICT,
+                        "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
+                                + "Business Day " + unclosedDay + " cannot be completed because an active session still exists.\n"
+                                + "Session ID : " + oldest.getId() + "\n"
+                                + "Terminal : " + oldest.getTerminalId() + "\n"
+                                + "Status : " + oldest.getStatus() + "\n"
+                                + "Business Day : " + oldest.getTradingDate() + "\n"
+                                + "Close or complete the active session before running Day Close.");
+            }
+            case UNEXPECTED_STATE -> new ResponseStatusException(HttpStatus.CONFLICT,
+                    "BUSINESS_DAY_UNEXPECTED_STATE: Candidate Business Day " + result.candidateBusinessDay()
+                            + " precedes an unclosed Business Day (" + result.previousUnclosedBusinessDay().orElse(null)
+                            + "). Contact support before opening a new session.");
+        };
     }
 
     /**
@@ -1107,15 +1318,17 @@ public class PosSessionService {
     }
 
     /**
-     * Resolves the session range for a business date. With no override, the range is
-     * the entire date (first session -> last session by openedAt), matching the
-     * pre-existing "every session is included automatically" behavior. With an
-     * explicit startSessionId/endSessionId (supervisor override), the range narrows
-     * to the sessions between those two boundaries (inclusive), and everything else
-     * for the date is reported as excluded rather than silently dropped.
+     * Resolves the session range for a trading date (Day Close domain — keyed on
+     * {@code PosSession.tradingDate}, the real calendar day sessions opened on, never
+     * {@code sessionDate}; see {@code PosPendingDayCloseResolver}). With no override,
+     * the range is the entire date (first session -> last session by openedAt),
+     * matching the pre-existing "every session is included automatically" behavior.
+     * With an explicit startSessionId/endSessionId (supervisor override), the range
+     * narrows to the sessions between those two boundaries (inclusive), and everything
+     * else for the date is reported as excluded rather than silently dropped.
      */
     private ResolvedSessionRange resolveSessionRange(Long branchId, LocalDate date, Long startSessionId, Long endSessionId) {
-        List<PosSession> ascending = repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date).stream()
+        List<PosSession> ascending = repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date).stream()
                 .sorted(Comparator
                         .comparing(PosSession::getOpenedAt, Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparing(PosSession::getId, Comparator.nullsLast(Comparator.naturalOrder())))
@@ -1160,7 +1373,7 @@ public class PosSessionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     label + " session " + sessionId + " does not belong to branch " + branchId + ".");
         }
-        if (!Objects.equals(session.getSessionDate(), date)) {
+        if (!Objects.equals(session.getTradingDate(), date)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     label + " session " + sessionId + " does not belong to business date " + date + ".");
         }
@@ -1566,9 +1779,28 @@ public class PosSessionService {
 
         // Advance the business date by exactly one day — never to LocalDate.now() (see
         // PosBusinessDateService for why: a late catch-up close must not skip a date).
+        // Note: this is the POS *operating* business date, a separate concept from the
+        // session-driven "pending Day Close" date PosPendingDayCloseResolver computes —
+        // see that class's javadoc for why the two must not be merged.
         businessDateService.advanceBusinessDate(branchId, currentUser());
 
         return report;
+    }
+
+    /** Advances the Business Date past a calendar date on which the branch never
+     *  traded. @deprecated OBSOLETE — the Skip Non-Trading Day workflow is retired in
+     *  favor of session-driven Day Close resolution ({@code PosPendingDayCloseResolver}):
+     *  a calendar date with no POS sessions is simply never surfaced as pending, so
+     *  nothing needs to be explicitly skipped anymore. Kept only so the deprecated
+     *  {@code POST /skip-day} endpoint has something to call while it still exists for
+     *  older clients; always returns 410 Gone rather than writing a new marker row. */
+    @Deprecated
+    @Transactional
+    public Map<String, Object> skipBusinessDate(Long branchId, LocalDate date, String reason) {
+        throw new ResponseStatusException(HttpStatus.GONE,
+                "The Skip Non-Trading Day workflow has been retired. Calendar dates with no POS "
+                        + "sessions are now automatically ignored by Day Close — no action is required. "
+                        + "See GET /api/pos/sessions/day-status (pendingDayCloseDate/hasPendingDayClose).");
     }
 
     /** Returns/refund figures for a single business day + branch, sourced from the Sales

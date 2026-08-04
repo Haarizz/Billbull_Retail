@@ -34,6 +34,11 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     List<PosSession> findByBranchIdAndSessionDateOrderByOpenedAtDesc(Long branchId, LocalDate sessionDate);
 
+    // Day Close domain ONLY (resolveSessionRange/closeDay session grouping) — keyed on
+    // tradingDate (the real calendar day the session opened), not sessionDate (the
+    // Business-Date accounting bucket every other consumer still uses).
+    List<PosSession> findByBranchIdAndTradingDateOrderByOpenedAtDesc(Long branchId, LocalDate tradingDate);
+
     // Date-range browsing for the Session/X-Report history picker.
     List<PosSession> findByBranchIdAndSessionDateBetweenOrderByOpenedAtDesc(Long branchId, LocalDate from, LocalDate to);
 
@@ -45,6 +50,29 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
     @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND s.sessionDate < :date " +
            "AND s.status IN ('OPEN', 'SUSPENDED') ORDER BY s.sessionDate ASC")
     List<PosSession> findUnclosedSessionsBeforeDate(@Param("branchId") Long branchId, @Param("date") LocalDate date);
+
+    // Session-driven Day Close resolution (PosPendingDayCloseResolver): the trading
+    // date (real calendar open day, not the Business Date accounting bucket) of the
+    // earliest session strictly after the branch's last closed date is the next date
+    // requiring a Day Close. Any calendar date with zero sessions is simply never
+    // returned by these queries — no "skip" is ever needed for it.
+    @Query("select min(s.tradingDate) from PosSession s where s.branchId = :branchId and s.tradingDate > :afterDate")
+    Optional<LocalDate> findEarliestTradingDateAfter(@Param("branchId") Long branchId, @Param("afterDate") LocalDate afterDate);
+
+    @Query("select min(s.tradingDate) from PosSession s where s.branchId = :branchId")
+    Optional<LocalDate> findEarliestTradingDate(@Param("branchId") Long branchId);
+
+    // Business Day Engine (Phase 1 — shadow mode, not yet wired into any production
+    // decision). BusinessDayStateService's read-only view of "does this branch have
+    // an unclosed Business Day, and if so which one" — the oldest tradingDate with
+    // sessions but no matching PosDayClose row. Deliberately reuses tradingDate
+    // rather than introducing a new column: per the approved architecture, sessionDate
+    // and tradingDate/businessDay stay separate, and tradingDate already represents
+    // exactly the day a session's trading activity belongs to for Day-Close purposes.
+    @Query("select min(s.tradingDate) from PosSession s where s.branchId = :branchId and s.tradingDate is not null " +
+           "and not exists (select 1 from com.billbull.backend.pos.dayclose.PosDayClose d " +
+           "where d.branchId = s.branchId and d.closeDate = s.tradingDate)")
+    Optional<LocalDate> findOldestUnclosedTradingDate(@Param("branchId") Long branchId);
 
     boolean existsByBranchIdAndTerminalIdAndStatus(Long branchId, String terminalId, PosSessionStatus status);
 

@@ -23,6 +23,11 @@ public class PosReportSummary {
     private String generatedBy;
     private LocalDateTime generatedAt;
     private String status;
+    /** True only for a historical row written by the retired "Skip Non-Trading Day"
+     *  workflow — the application no longer creates these (see
+     *  {@code PosPendingDayCloseResolver}), but old rows must keep rendering safely. */
+    private boolean skipped;
+    private String skipReason;
 
     public static PosReportSummary fromX(PosXReportSnapshot s) {
         PosReportSummary r = new PosReportSummary();
@@ -54,7 +59,9 @@ public class PosReportSummary {
         r.cashierName = null;
         r.generatedBy = d.getClosedBy();
         r.generatedAt = d.getClosedAt();
-        r.status = "COMPLETED";
+        r.skipped = d.isSkipped();
+        r.skipReason = d.getSkipReason();
+        r.status = d.isSkipped() ? "SKIPPED" : "COMPLETED";
         return r;
     }
 
@@ -70,4 +77,6 @@ public class PosReportSummary {
     public String getGeneratedBy() { return generatedBy; }
     public LocalDateTime getGeneratedAt() { return generatedAt; }
     public String getStatus() { return status; }
+    public boolean isSkipped() { return skipped; }
+    public String getSkipReason() { return skipReason; }
 }

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.pos.dayclose.PosDayClose;
@@ -47,5 +48,17 @@ class PosDayCloseIntegrationTest {
         });
         
         assertEquals("409 CONFLICT \"Business day has already been closed.\"", exception.getMessage());
+    }
+
+    /** API compatibility: {@code POST /skip-day} (via {@code skipBusinessDate}) is kept
+     *  for older/cached clients rather than physically removed, but the retired Skip
+     *  Non-Trading Day workflow must never write a new marker row — it always responds
+     *  410 Gone instead. */
+    @Test
+    void testSkipBusinessDateIsDeprecatedAndAlwaysReturnsGone() {
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> posSessionService.skipBusinessDate(1L, LocalDate.now(), "Public holiday"));
+
+        assertEquals(HttpStatus.GONE, exception.getStatusCode());
     }
 }

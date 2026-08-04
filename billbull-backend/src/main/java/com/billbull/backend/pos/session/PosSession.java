@@ -15,7 +15,10 @@ import java.util.List;
     @Index(name = "idx_pos_session_date",   columnList = "session_date"),
     @Index(name = "idx_pos_session_status", columnList = "status"),
     // ARCHFIX §3 — hot session lookup; name matches V3__missing_indexes.sql.
-    @Index(name = "idx_pos_sess_lookup",    columnList = "branch_id, terminal_id, status")
+    @Index(name = "idx_pos_sess_lookup",    columnList = "branch_id, terminal_id, status"),
+    // Day Close domain lookup — PosPendingDayCloseResolver / resolveSessionRange();
+    // name matches V68__pos_session_trading_date.sql.
+    @Index(name = "idx_pos_session_trading_date", columnList = "branch_id, trading_date")
 })
 public class PosSession extends BaseEntity {
 
@@ -47,8 +50,32 @@ public class PosSession extends BaseEntity {
     @Column(name = "closed_by_display_name")
     private String closedByDisplayName;
 
+    /** Accounting bucket — copied from the Business Date pointer at open time
+     *  ({@code PosBusinessDateService.getCurrentBusinessDate}). Drives everything
+     *  outside the Day Close domain (cash-movement businessDate/GL date, X-Report
+     *  numbering/snapshot date, advance-receipt date, session history). Intentionally
+     *  left as-is by the Day Close session-driven resolution work — see
+     *  {@link #tradingDate} for that. */
     @Column(name = "session_date")
     private LocalDate sessionDate;
+
+    /** The Business Day this session belongs to — resolved once, at creation, via
+     *  {@code BusinessDayResolver.resolve(openedAt, BusinessDaySettings)} (the
+     *  branch's configured operating-hours window), and never modified afterward.
+     *  For a branch with no operating hours configured (the default), this equals
+     *  {@code openedAt.toLocalDate()}. Immutable by design: if Business Day
+     *  Settings change later, only sessions created after the change use the new
+     *  configuration — this value never gets recalculated retroactively.
+     *
+     *  <p>Single source of truth for the Day Close domain only
+     *  ({@code PosPendingDayCloseResolver}, {@code closeDay()}, Day Close Summary,
+     *  dynamic Z-Report session grouping) — deliberately independent of the
+     *  Business Date pointer so a calendar gap with no sessions is simply never
+     *  surfaced as a date requiring Day Close. Not used outside the Day Close
+     *  domain; see {@link #sessionDate} for the accounting-bucket concept those
+     *  other consumers still rely on. See {@code docs/business-day-architecture.md}. */
+    @Column(name = "trading_date")
+    private LocalDate tradingDate;
 
     @Column(name = "opened_at")
     private LocalDateTime openedAt;
@@ -227,6 +254,9 @@ public class PosSession extends BaseEntity {
 
     public LocalDate getSessionDate() { return sessionDate; }
     public void setSessionDate(LocalDate sessionDate) { this.sessionDate = sessionDate; }
+
+    public LocalDate getTradingDate() { return tradingDate; }
+    public void setTradingDate(LocalDate tradingDate) { this.tradingDate = tradingDate; }
 
     @JsonIgnore
     public LocalDateTime getOpenedAt() { return openedAt; }
