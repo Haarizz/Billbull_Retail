@@ -79,6 +79,15 @@ export const getPosSettings = async () => {
   return res.data;
 };
 
+// Explicit branch variant — use this whenever a specific terminal/branch is already known
+// (e.g. the live POS terminal session), instead of the ambient getPosSettings(), which
+// resolves branch from the session's Branch Selector state and can silently diverge from
+// the terminal's actual branch (e.g. "All Branches" selected, or a different browser tab).
+export const getPosSettingsForBranch = async (branchId) => {
+  const res = await api.get(`${BASE}/settings/branch/${branchId}`);
+  return res.data;
+};
+
 export const savePosSettings = async (settings) => {
   const res = await api.post(`${BASE}/settings`, settings);
   return res.data;

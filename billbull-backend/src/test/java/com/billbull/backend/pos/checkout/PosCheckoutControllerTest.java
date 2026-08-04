@@ -28,11 +28,15 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.billbull.backend.inventory.product.Product;
+import com.billbull.backend.inventory.product.ProductPricing;
 import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.session.PosSessionService;
+import com.billbull.backend.pos.settings.PosSettings;
+import com.billbull.backend.pos.settings.PosSettingsService;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
@@ -63,6 +67,7 @@ class PosCheckoutControllerTest {
     @Mock private ProductRepository productRepository;
     @Mock private ProductPricingRepository pricingRepository;
     @Mock private RolePermissionService permissionService;
+    @Mock private PosSettingsService posSettingsService;
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
 
@@ -325,5 +330,158 @@ class PosCheckoutControllerTest {
 
         verify(invoiceService, times(2)).recordPayment(eq(55L), anyDouble(), anyString(),
                 any(), any(LocalDate.class), isNull(), isNull(), anyString(), anyString());
+    }
+
+    // ── §2.4 price-override gate ────────────────────────────────────────────
+
+    private void stubBelowMinimumPricedProduct(String code, long productId, String minPrice) {
+        Product product = new Product();
+        product.setId(productId);
+        product.setCode(code);
+        ProductPricing pricing = new ProductPricing();
+        pricing.setMinPrice(new BigDecimal(minPrice));
+        lenient().when(productRepository.findByCodeIn(any())).thenReturn(List.of(product));
+        lenient().when(pricingRepository.findByProductId(productId)).thenReturn(java.util.Optional.of(pricing));
+    }
+
+    private PosCheckoutRequest belowMinimumCheckoutRequest(String code, double price) {
+        PosCheckoutRequest req = new PosCheckoutRequest();
+        req.setPaymentMode("Cash");
+        req.setAmountTendered(price);
+        PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
+        item.setItemCode(code);
+        item.setQuantity(1);
+        item.setPrice(price);
+        req.setItems(List.of(item));
+        return req;
+    }
+
+    @Test
+    void belowMinimumPriceRejectedWithoutPermissionOrSupervisorOverride() {
+        stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+
+        assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void belowMinimumPriceAllowedWhenUserHasPermissionNoOverrideNeeded() {
+        SalesInvoice draft = draftInvoice(60L, "INV-2026-0060", "180.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(60L)).thenReturn(draft);
+        stubBelowMinimumPricedProduct("10672", 900L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(true);
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+
+        controller.checkout(req);
+
+        verify(invoiceService).updateStatus(60L, SalesInvoiceStatus.PAID);
+        verify(posSettingsService, never()).verifyPin(any());
+    }
+
+    @Test
+    void belowMinimumPriceBypassedWithValidSupervisorPin() {
+        SalesInvoice draft = draftInvoice(61L, "INV-2026-0061", "180.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(61L)).thenReturn(draft);
+        stubBelowMinimumPricedProduct("10672", 901L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        when(posSettingsService.verifyPin("4321")).thenReturn(true);
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+        req.setSupervisorOverridePin("4321");
+
+        controller.checkout(req);
+
+        verify(invoiceService).updateStatus(61L, SalesInvoiceStatus.PAID);
+    }
+
+    @Test
+    void belowMinimumPriceRejectedWithWrongSupervisorPin() {
+        stubBelowMinimumPricedProduct("10672", 902L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        when(posSettingsService.verifyPin("0000")).thenReturn(false);
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+        req.setSupervisorOverridePin("0000");
+
+        assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void belowMinimumPriceBypassedWithValidSupervisorCredentials() {
+        SalesInvoice draft = draftInvoice(62L, "INV-2026-0062", "180.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(62L)).thenReturn(draft);
+        stubBelowMinimumPricedProduct("10672", 903L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        when(posSettingsService.verifySupervisorCredentials(eq("manager@example.com"), eq("secret"), any(), any()))
+                .thenReturn(PosSettingsService.SupervisorAuthResult.valid("Manager", "manager"));
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+        req.setSupervisorOverrideEmail("manager@example.com");
+        req.setSupervisorOverridePassword("secret");
+
+        controller.checkout(req);
+
+        verify(invoiceService).updateStatus(62L, SalesInvoiceStatus.PAID);
+    }
+
+    @Test
+    void gateSkippedEntirelyWhenRequirePriceOverrideApprovalIsOff() {
+        SalesInvoice draft = draftInvoice(64L, "INV-2026-0064", "180.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(64L)).thenReturn(draft);
+        stubBelowMinimumPricedProduct("10672", 905L, "190.00");
+        PosSettings offSettings = new PosSettings();
+        offSettings.setRequirePriceOverrideApproval(false);
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+        req.setBranchId(1L);
+        when(posSettingsService.getForBranch(1L)).thenReturn(offSettings);
+
+        controller.checkout(req);
+
+        verify(invoiceService).updateStatus(64L, SalesInvoiceStatus.PAID);
+        verify(permissionService, never()).currentUserCanEdit(any());
+        verify(posSettingsService, never()).verifyPin(any());
+    }
+
+    @Test
+    void gateStillEnforcedWhenRequirePriceOverrideApprovalIsOn() {
+        stubBelowMinimumPricedProduct("10672", 906L, "190.00");
+        PosSettings onSettings = new PosSettings();
+        onSettings.setRequirePriceOverrideApproval(true);
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+        req.setBranchId(1L);
+        when(posSettingsService.getForBranch(1L)).thenReturn(onSettings);
+
+        assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void gateFailsSafeOnWhenBranchSettingsCannotBeResolved() {
+        stubBelowMinimumPricedProduct("10672", 907L, "190.00");
+        when(permissionService.currentUserCanEdit("pos_price_override")).thenReturn(false);
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 180.0);
+        req.setBranchId(1L);
+        when(posSettingsService.getForBranch(1L)).thenReturn(null);
+
+        assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
+    }
+
+    @Test
+    void atOrAboveMinimumPriceNeverConsultsPermissionOrOverride() {
+        SalesInvoice draft = draftInvoice(63L, "INV-2026-0063", "200.00");
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(63L)).thenReturn(draft);
+        stubBelowMinimumPricedProduct("10672", 904L, "190.00");
+        PosCheckoutRequest req = belowMinimumCheckoutRequest("10672", 200.0);
+
+        controller.checkout(req);
+
+        verify(permissionService, never()).currentUserCanEdit(any());
+        verify(posSettingsService, never()).verifyPin(any());
     }
 }

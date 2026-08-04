@@ -41,9 +41,20 @@ public class PosSettings extends BaseEntity {
     @Column(name = "require_supervisor_for_cross_branch_transfer")
     private Boolean requireSupervisorForCrossBranchTransfer = true;
 
+    /** Whether adding a cart line (or editing its price) below the product's minPrice/cost
+     *  floor prompts for supervisor approval immediately, instead of only being caught by the
+     *  checkout-time §2.4 gate in PosCheckoutController. Defaults false — off until an admin
+     *  opts in, matching requireSupervisorForVoid's convention. */
+    @Column(name = "require_price_override_approval")
+    private Boolean requirePriceOverrideApproval = false;
+
     // Void behavior
     @Column(name = "void_mode", length = 20)
     private String voidMode = "VOID"; // VOID = strikethrough, DELETE = remove
+
+    // Product Entry Mode — DIRECT_ADD (instant 1 qty) or OPEN_ENTRY_DIALOG (qty/price/discount first)
+    @Column(name = "product_entry_mode", length = 30)
+    private String productEntryMode = "DIRECT_ADD";
 
     // Cart view
     @Column(name = "cart_view_mode", length = 20)
@@ -153,6 +164,16 @@ public class PosSettings extends BaseEntity {
     @Column(name = "operating_end_time")
     private java.time.LocalTime operatingEndTime;
 
+    /** Stage 3B.2B rollout switch (per-branch): OFF by default on every install and
+     *  every existing branch. When (eventually) enabled, {@code openSession()}'s
+     *  login/session-opening gate would become authoritative via
+     *  {@code BusinessDayValidationService} instead of the legacy
+     *  {@code PosBusinessDateService} pointer — see docs/business-day-architecture.md.
+     *  As of Stage 3B.2A.5, this flag exists and is readable but is not consulted
+     *  anywhere: flipping it currently has zero runtime effect. */
+    @Column(name = "business_day_login_gate_v2_enabled")
+    private Boolean businessDayLoginGateV2Enabled = false;
+
     // Session lifecycle
     @Column(name = "session_idle_timeout_minutes")
     private Integer sessionIdleTimeoutMinutes = 0; // 0 = disabled
@@ -203,10 +224,13 @@ public class PosSettings extends BaseEntity {
     public Boolean getRequireSupervisorForCrossBranchTransfer() { return requireSupervisorForCrossBranchTransfer; }
     public void setRequireSupervisorForCrossBranchTransfer(Boolean requireSupervisorForCrossBranchTransfer) { this.requireSupervisorForCrossBranchTransfer = requireSupervisorForCrossBranchTransfer; }
 
+    public Boolean getRequirePriceOverrideApproval() { return requirePriceOverrideApproval; }
+    public void setRequirePriceOverrideApproval(Boolean requirePriceOverrideApproval) { this.requirePriceOverrideApproval = requirePriceOverrideApproval; }
+
     // ARCHFIX S5: never serialize the supervisor PIN (now a BCrypt hash) to the client. The setter
     // stays public so the save request body can still carry a new raw PIN (Jackson deserializes via
     // the setter; @JsonIgnore on the getter only blocks the OUTBOUND value).
-    @com.fasterxml.jackson.annotation.JsonIgnore
+    @com.fasterxml.jackson.annotation.JsonProperty(access = com.fasterxml.jackson.annotation.JsonProperty.Access.WRITE_ONLY)
     public String getSupervisorPin() { return supervisorPin; }
     public void setSupervisorPin(String supervisorPin) { this.supervisorPin = supervisorPin; }
 
@@ -218,6 +242,9 @@ public class PosSettings extends BaseEntity {
 
     public String getVoidMode() { return voidMode; }
     public void setVoidMode(String voidMode) { this.voidMode = voidMode; }
+
+    public String getProductEntryMode() { return productEntryMode; }
+    public void setProductEntryMode(String productEntryMode) { this.productEntryMode = productEntryMode; }
 
     public String getCartViewMode() { return cartViewMode; }
     public void setCartViewMode(String cartViewMode) { this.cartViewMode = cartViewMode; }
@@ -298,6 +325,9 @@ public class PosSettings extends BaseEntity {
 
     public java.time.LocalTime getOperatingEndTime() { return operatingEndTime; }
     public void setOperatingEndTime(java.time.LocalTime operatingEndTime) { this.operatingEndTime = operatingEndTime; }
+
+    public Boolean getBusinessDayLoginGateV2Enabled() { return businessDayLoginGateV2Enabled; }
+    public void setBusinessDayLoginGateV2Enabled(Boolean businessDayLoginGateV2Enabled) { this.businessDayLoginGateV2Enabled = businessDayLoginGateV2Enabled; }
 
     public Integer getSessionIdleTimeoutMinutes() { return sessionIdleTimeoutMinutes; }
     public void setSessionIdleTimeoutMinutes(Integer sessionIdleTimeoutMinutes) { this.sessionIdleTimeoutMinutes = sessionIdleTimeoutMinutes; }

@@ -11,14 +11,21 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -48,6 +55,205 @@ class PosSettingsServiceTest {
         service = new PosSettingsService(repo, branchAccessService, encoder, userRepository, auditLogService, posSessionService);
     }
 
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private void authenticateAs(String... authorities) {
+        List<GrantedAuthority> granted = java.util.Arrays.stream(authorities)
+                .map(SimpleGrantedAuthority::new)
+                .map(GrantedAuthority.class::cast)
+                .toList();
+        SecurityContextHolder.getContext().setAuthentication(
+                new TestingAuthenticationToken("testuser", "n/a", granted));
+    }
+
+    // ── Supervisor-config role gate ─────────────────────────────────────────
+
+    @Test
+    void nonSupervisorCannotEnableRequireSupervisorForVoid() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+
+        authenticateAs("CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setRequireSupervisorForVoid(true);
+
+        assertThrows(AccessDeniedException.class, () -> service.save(incoming));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void nonSupervisorCannotChangeSupervisorPin() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+
+        authenticateAs("CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setSupervisorPin("1234");
+
+        assertThrows(AccessDeniedException.class, () -> service.save(incoming));
+    }
+
+    @Test
+    void supervisorCanChangeSupervisorConfig() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setRequireSupervisorForVoid(true);
+        incoming.setSupervisorPin("1234");
+
+        PosSettings saved = service.save(incoming);
+
+        assertTrue(saved.getRequireSupervisorForVoid());
+        assertTrue(encoder.matches("1234", saved.getSupervisorPin()));
+    }
+
+    @Test
+    void nonSupervisorCanStillSaveUnrelatedSettings() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDefaultLayout("compact");
+
+        PosSettings saved = service.save(incoming);
+
+        assertEquals("compact", saved.getDefaultLayout());
+    }
+
+    @Test
+    void nonSupervisorCannotEnableRequirePriceOverrideApproval() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+
+        authenticateAs("CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setRequirePriceOverrideApproval(true);
+
+        assertThrows(AccessDeniedException.class, () -> service.save(incoming));
+    }
+
+    @Test
+    void supervisorCanEnableRequirePriceOverrideApproval() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_MANAGER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setRequirePriceOverrideApproval(true);
+
+        PosSettings saved = service.save(incoming);
+
+        assertTrue(saved.getRequirePriceOverrideApproval());
+    }
+
+    // ── Product Entry Mode ───────────────────────────────────────────────────
+
+    @Test
+    void productEntryModePersistsThroughUpsert() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        existing.setProductEntryMode("DIRECT_ADD");
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setProductEntryMode("OPEN_ENTRY_DIALOG");
+
+        PosSettings saved = service.save(incoming);
+
+        assertEquals("OPEN_ENTRY_DIALOG", saved.getProductEntryMode());
+    }
+
+    @Test
+    void nonSupervisorCanChangeProductEntryMode() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        existing.setProductEntryMode("DIRECT_ADD");
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setProductEntryMode("OPEN_ENTRY_DIALOG");
+
+        PosSettings saved = service.save(incoming);
+
+        assertEquals("OPEN_ENTRY_DIALOG", saved.getProductEntryMode());
+    }
+
+    // ── Branch resolution must follow the Branch Selector, not the user's home branch ──────
+    // (mirrors BranchTaxConfigurationService — see getForCurrentBranch()/save()/verifyPin())
+
+    @Test
+    void getForCurrentBranchUsesActiveBranchNotHomeBranch() {
+        PosSettings hilite = new PosSettings();
+        hilite.setBranchId(99L);
+        hilite.setSupervisorPin(encoder.encode("5555"));
+        when(branchAccessService.getActiveBranchId()).thenReturn(99L);
+        // Home branch (getCurrentUserBranchId) deliberately left unstubbed/different — if the
+        // service still called it, this would return null and getForCurrentBranch() would
+        // fall through to defaultSettings() instead of the real HILITE row.
+        when(repo.findByBranchId(99L)).thenReturn(Optional.of(hilite));
+
+        PosSettings result = service.getForCurrentBranch();
+
+        assertEquals(99L, result.getBranchId());
+    }
+
+    @Test
+    void saveWithoutExplicitBranchIdTargetsActiveBranch() {
+        when(branchAccessService.getActiveBranchId()).thenReturn(99L);
+        when(repo.findByBranchId(99L)).thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings incoming = new PosSettings(); // no branchId set — mimics a POST with none
+
+        PosSettings saved = service.save(incoming);
+
+        assertEquals(99L, saved.getBranchId());
+    }
+
+    @Test
+    void verifyPinChecksActiveBranchNotHomeBranch() {
+        PosSettings hilite = new PosSettings();
+        hilite.setBranchId(99L);
+        hilite.setSupervisorPin(encoder.encode("5555"));
+        when(branchAccessService.getActiveBranchId()).thenReturn(99L);
+        when(repo.findByBranchId(99L)).thenReturn(Optional.of(hilite));
+
+        assertTrue(service.verifyPin("5555"), "PIN configured on the active branch must verify");
+    }
+
     @Test
     void saveHashesRawPinAndNeverStoresPlaintext() {
         PosSettings incoming = new PosSettings();
@@ -70,7 +276,7 @@ class PosSettingsServiceTest {
         stored.setBranchId(7L);
         stored.setSupervisorPin(encoder.encode("4321"));
 
-        when(branchAccessService.getCurrentUserBranchId()).thenReturn(7L);
+        when(branchAccessService.getActiveBranchId()).thenReturn(7L);
         when(repo.findByBranchId(7L)).thenReturn(Optional.of(stored));
 
         assertTrue(service.verifyPin("4321"), "correct PIN verifies");
@@ -83,7 +289,7 @@ class PosSettingsServiceTest {
         legacy.setBranchId(7L);
         legacy.setSupervisorPin("9999"); // legacy plaintext, not a hash
 
-        when(branchAccessService.getCurrentUserBranchId()).thenReturn(7L);
+        when(branchAccessService.getActiveBranchId()).thenReturn(7L);
         when(repo.findByBranchId(7L)).thenReturn(Optional.of(legacy));
         when(repo.save(any(PosSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -101,7 +307,7 @@ class PosSettingsServiceTest {
         noPin.setBranchId(7L);
         noPin.setSupervisorPin(null);
 
-        when(branchAccessService.getCurrentUserBranchId()).thenReturn(7L);
+        when(branchAccessService.getActiveBranchId()).thenReturn(7L);
         when(repo.findByBranchId(7L)).thenReturn(Optional.of(noPin));
 
         assertFalse(service.verifyPin("anything"), "no configured PIN -> verification fails");

@@ -4,13 +4,16 @@ import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.user.UserRepository;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Objects;
 
 @Service
 public class PosSettingsService {
@@ -44,9 +47,14 @@ public class PosSettingsService {
         return isHashed(pin) ? pin : passwordEncoder.encode(pin);
     }
 
+    /** Uses {@link BranchAccessService#getActiveBranchId()} (not {@code getCurrentUserBranchId()})
+     *  so this resolves against the Branch Selector's active branch, not always the user's
+     *  primary/HQ branch — same rationale as {@code BranchTaxConfigurationService.getForCurrentBranch()}.
+     *  Otherwise an admin viewing/editing another branch's POS Console would silently read and
+     *  save settings (including the supervisor PIN) against their home branch instead. */
     @Transactional(readOnly = true)
     public PosSettings getForCurrentBranch() {
-        Long branchId = branchAccessService.getCurrentUserBranchId();
+        Long branchId = branchAccessService.getActiveBranchId();
         if (branchId == null) return defaultSettings();
         return repo.findByBranchId(branchId).orElseGet(() -> {
             PosSettings s = defaultSettings();
@@ -86,25 +94,66 @@ public class PosSettingsService {
         }
     }
 
+    /** Business Day window (UI label) / operatingHours* (backend field names) — when enabled,
+     *  both a start and end time are required. End &lt; start is allowed and represents an
+     *  overnight Business Day; only presence is validated here. */
+    private void validateOperatingHoursConfig(PosSettings settings) {
+        if (Boolean.TRUE.equals(settings.getOperatingHoursEnabled())) {
+            if (settings.getOperatingStartTime() == null) {
+                throw new IllegalArgumentException("Business Day Start Time is required when the Business Day Window is enabled.");
+            }
+            if (settings.getOperatingEndTime() == null) {
+                throw new IllegalArgumentException("Business Day End Time is required when the Business Day Window is enabled.");
+            }
+        }
+    }
+
+    /** Roles allowed to change supervisor-approval configuration (void gate, mode, PIN). */
+    private static final List<String> SUPERVISOR_CONFIG_ROLES = List.of(
+            "ADMIN", "ROLE_ADMIN", "BRANCH_ADMIN", "ROLE_BRANCH_ADMIN",
+            "MANAGER", "ROLE_MANAGER", "SUPERVISOR", "ROLE_SUPERVISOR");
+
+    private boolean currentUserCanConfigureSupervisorSettings() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(SUPERVISOR_CONFIG_ROLES::contains);
+    }
+
     @Transactional
     public PosSettings save(PosSettings settings) {
         if (settings.getBranchId() == null) {
-            Long branchId = branchAccessService.getCurrentUserBranchId();
+            // Same Branch Selector-aware resolution as getForCurrentBranch() — a save posted
+            // without an explicit branchId must land on the branch the admin is looking at.
+            Long branchId = branchAccessService.getActiveBranchId();
             settings.setBranchId(branchId);
         }
         validateTerminalAutoArchiveConfig(settings);
+        validateOperatingHoursConfig(settings);
         // Upsert by branchId
         return repo.findByBranchId(settings.getBranchId())
                 .map(existing -> {
+                    boolean changesSupervisorConfig =
+                            !Objects.equals(existing.getRequireSupervisorForVoid(), settings.getRequireSupervisorForVoid())
+                            || !Objects.equals(existing.getSupervisorApprovalMode(), settings.getSupervisorApprovalMode())
+                            || !Objects.equals(existing.getRequirePriceOverrideApproval(), settings.getRequirePriceOverrideApproval())
+                            || (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank());
+                    if (changesSupervisorConfig && !currentUserCanConfigureSupervisorSettings()) {
+                        throw new AccessDeniedException(
+                                "Only supervisors/managers/admins may change supervisor approval settings.");
+                    }
                     existing.setMaxTerminalsPerBranch(settings.getMaxTerminalsPerBranch());
                     existing.setRequireSupervisorForVoid(settings.getRequireSupervisorForVoid());
                     existing.setRequireCashMovementCategory(settings.getRequireCashMovementCategory());
                     existing.setSupervisorApprovalMode(settings.getSupervisorApprovalMode());
+                    existing.setRequirePriceOverrideApproval(settings.getRequirePriceOverrideApproval());
                     // ARCHFIX S5: hash a newly supplied PIN; a blank/absent PIN leaves the stored hash untouched.
                     if (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank()) {
                         existing.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
                     }
                     existing.setVoidMode(settings.getVoidMode());
+                    existing.setProductEntryMode(settings.getProductEntryMode());
                     existing.setCartViewMode(settings.getCartViewMode());
                     existing.setCartShowBarcode(settings.getCartShowBarcode());
                     existing.setCartShowProductCode(settings.getCartShowProductCode());
@@ -129,6 +178,9 @@ public class PosSettingsService {
                     existing.setTerminalArchiveAfterDays(settings.getTerminalArchiveAfterDays());
                     existing.setTerminalArchiveNotifyBefore(settings.getTerminalArchiveNotifyBefore());
                     existing.setTerminalArchiveWarningDays(settings.getTerminalArchiveWarningDays());
+                    existing.setOperatingHoursEnabled(settings.getOperatingHoursEnabled());
+                    existing.setOperatingStartTime(settings.getOperatingStartTime());
+                    existing.setOperatingEndTime(settings.getOperatingEndTime());
                     return repo.save(existing);
                 })
                 .orElseGet(() -> {
@@ -147,7 +199,10 @@ public class PosSettingsService {
     @Transactional
     public boolean verifyPin(String rawPin) {
         if (rawPin == null || rawPin.isBlank()) return false;
-        Long branchId = branchAccessService.getCurrentUserBranchId();
+        // Must match the branch getForCurrentBranch()/save() resolve to (the active/selected
+        // branch), not the user's home branch, or a PIN saved while viewing another branch's
+        // console would never verify against the branch actually enforcing it at checkout.
+        Long branchId = branchAccessService.getActiveBranchId();
         if (branchId == null) return false;
         return repo.findByBranchId(branchId)
                 .map(settings -> {

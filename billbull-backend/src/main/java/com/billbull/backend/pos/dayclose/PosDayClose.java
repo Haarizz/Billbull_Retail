@@ -99,6 +99,23 @@ public class PosDayClose {
     @Column(name = "report_number", unique = true, length = 50)
     private String reportNumber;
 
+    /** @deprecated OBSOLETE — the "Skip Non-Trading Day" workflow was retired in favor
+     *  of session-driven Day Close resolution ({@code PosPendingDayCloseResolver}): a
+     *  calendar date with no POS sessions is now simply never surfaced as pending, so
+     *  nothing is ever explicitly "skipped" going forward. Kept read-only for backward
+     *  compatibility with historical rows already written by the old flow (see
+     *  {@code PosReportsService}/{@code PosReportSummary} for how those still render).
+     *  No code path sets this to {@code true} anymore. Column retained for a future
+     *  cleanup migration rather than dropped immediately. */
+    @Deprecated
+    @Column(name = "is_skipped", nullable = false)
+    private boolean skipped = false;
+
+    /** @deprecated OBSOLETE alongside {@link #skipped} — see that field's javadoc. */
+    @Deprecated
+    @Column(name = "skip_reason", length = 255)
+    private String skipReason;
+
     public PosDayClose() {
     }
 
@@ -310,5 +327,21 @@ public class PosDayClose {
 
     public void setReportNumber(String reportNumber) {
         this.reportNumber = reportNumber;
+    }
+
+    public boolean isSkipped() {
+        return skipped;
+    }
+
+    public void setSkipped(boolean skipped) {
+        this.skipped = skipped;
+    }
+
+    public String getSkipReason() {
+        return skipReason;
+    }
+
+    public void setSkipReason(String skipReason) {
+        this.skipReason = skipReason;
     }
 }

@@ -17,6 +17,14 @@ public interface PosDayCloseRepository extends JpaRepository<PosDayClose, Long> 
 
     boolean existsByBranchIdAndCloseDate(Long branchId, LocalDate closeDate);
 
+    /** Latest date this branch has a {@link PosDayClose} row for — real close or a
+     *  historical skip marker alike, since both mean "this date has been dealt with"
+     *  for the purpose of resolving what's next. Anchor for
+     *  {@code PosPendingDayCloseResolver}: the next pending Day Close is the earliest
+     *  POS session strictly after this date. */
+    @Query("select max(d.closeDate) from PosDayClose d where d.branchId = :branchId")
+    Optional<LocalDate> findMaxCloseDateByBranchId(@Param("branchId") Long branchId);
+
     /**
      * Back-office POS Reports browser (Z-Reports tab) — every filter optional.
      *

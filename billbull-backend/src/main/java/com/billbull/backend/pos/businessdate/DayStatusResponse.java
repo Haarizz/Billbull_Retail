@@ -11,6 +11,32 @@ public class DayStatusResponse {
     private Long branchId;
     private LocalDate currentBusinessDate;
     private String businessDateStatus; // "OPEN" | "CLOSED" — derived live, never stored
+    /** Business date of the earliest unclosed POS session — the next Day Close due,
+     *  per {@link PosPendingDayCloseResolver}. Null when there is nothing pending. */
+    private LocalDate pendingDayCloseDate;
+    private boolean hasPendingDayClose;
+
+    // ---------------------------------------------------------------------
+    // Phase 2 — Business Day Engine, read-only/informational only. None of these
+    // fields drive `blocked`, session opening, or any other decision in this
+    // response; they exist purely so the new engine's output can be observed
+    // against live traffic. currentBusinessDate/businessDateStatus/blocked above
+    // remain fully legacy-pointer-driven — see businessDaySource.
+    // ---------------------------------------------------------------------
+
+    /** What {@code BusinessDayResolver.resolve(now, settings)} computes right now —
+     *  a proposal only, never persisted, never activated by this endpoint. */
+    private LocalDate candidateBusinessDay;
+    /** What {@code BusinessDayStateService} reports as the branch's Active Business
+     *  Day (oldest unclosed session date), or null for No Active Business Day. */
+    private LocalDate activeBusinessDay;
+    private boolean hasActiveBusinessDay;
+    /** Always {@code "LEGACY_POINTER"} in Phase 2 — documents that
+     *  currentBusinessDate/businessDateStatus/blocked are still fully controlled
+     *  by {@code PosBusinessDateService}, not the new engine. Will change once a
+     *  later phase actually switches control. */
+    private String businessDaySource;
+
     private OperatingHoursInfo operatingHours;
     private int totalOpenSessions;
     private CurrentSessionInfo currentTerminalSession; // null if none
@@ -25,6 +51,24 @@ public class DayStatusResponse {
 
     public String getBusinessDateStatus() { return businessDateStatus; }
     public void setBusinessDateStatus(String businessDateStatus) { this.businessDateStatus = businessDateStatus; }
+
+    public LocalDate getPendingDayCloseDate() { return pendingDayCloseDate; }
+    public void setPendingDayCloseDate(LocalDate pendingDayCloseDate) { this.pendingDayCloseDate = pendingDayCloseDate; }
+
+    public boolean isHasPendingDayClose() { return hasPendingDayClose; }
+    public void setHasPendingDayClose(boolean hasPendingDayClose) { this.hasPendingDayClose = hasPendingDayClose; }
+
+    public LocalDate getCandidateBusinessDay() { return candidateBusinessDay; }
+    public void setCandidateBusinessDay(LocalDate candidateBusinessDay) { this.candidateBusinessDay = candidateBusinessDay; }
+
+    public LocalDate getActiveBusinessDay() { return activeBusinessDay; }
+    public void setActiveBusinessDay(LocalDate activeBusinessDay) { this.activeBusinessDay = activeBusinessDay; }
+
+    public boolean isHasActiveBusinessDay() { return hasActiveBusinessDay; }
+    public void setHasActiveBusinessDay(boolean hasActiveBusinessDay) { this.hasActiveBusinessDay = hasActiveBusinessDay; }
+
+    public String getBusinessDaySource() { return businessDaySource; }
+    public void setBusinessDaySource(String businessDaySource) { this.businessDaySource = businessDaySource; }
 
     public OperatingHoursInfo getOperatingHours() { return operatingHours; }
     public void setOperatingHours(OperatingHoursInfo operatingHours) { this.operatingHours = operatingHours; }

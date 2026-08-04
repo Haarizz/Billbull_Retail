@@ -1,8 +1,8 @@
 package com.billbull.backend.pos.session;
 
 import com.billbull.backend.pos.businessdate.DayStatusResponse;
-import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.businessdate.PosDayStatusService;
+import com.billbull.backend.pos.businessdate.PosPendingDayCloseResolver;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.PageResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -27,19 +27,26 @@ public class PosSessionController {
     private final PosSessionSyncService syncService;
     private final ObjectMapper objectMapper;
     private final PosDayStatusService dayStatusService;
-    private final PosBusinessDateService businessDateService;
+    private final PosPendingDayCloseResolver pendingDayCloseResolver;
     private final BranchAccessService branchAccessService;
 
     public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
                                  PosDayStatusService dayStatusService,
-                                 PosBusinessDateService businessDateService,
+                                 PosPendingDayCloseResolver pendingDayCloseResolver,
                                  BranchAccessService branchAccessService) {
         this.service = service;
         this.syncService = syncService;
         this.objectMapper = objectMapper;
         this.dayStatusService = dayStatusService;
-        this.businessDateService = businessDateService;
+        this.pendingDayCloseResolver = pendingDayCloseResolver;
         this.branchAccessService = branchAccessService;
+    }
+
+    /** Default {@code date} for endpoints that don't receive an explicit one: the next
+     *  business date that actually needs a Day Close (session-driven — see
+     *  {@link PosPendingDayCloseResolver}), or today when there's nothing pending. */
+    private LocalDate resolveDefaultDate(Long branchId) {
+        return pendingDayCloseResolver.resolvePendingBusinessDate(branchId).orElseGet(LocalDate::now);
     }
 
     @PostMapping("/open")
@@ -173,7 +180,7 @@ public class PosSessionController {
             @RequestParam(required = false) String date,
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         return ResponseEntity.ok(service.getZReport(branchId, reportDate, startSessionId, endSessionId));
     }
 
@@ -188,7 +195,7 @@ public class PosSessionController {
             @RequestParam(required = false) String date,
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         return ResponseEntity.ok(service.getDayCloseSummary(branchId, reportDate, startSessionId, endSessionId));
     }
 
@@ -209,7 +216,7 @@ public class PosSessionController {
     public ResponseEntity<Void> checkZReportPrintable(
             @RequestParam Long branchId,
             @RequestParam(required = false) String date) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         service.assertZReportPrintable(branchId, reportDate);
         return ResponseEntity.noContent().build();
     }
@@ -222,8 +229,25 @@ public class PosSessionController {
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId,
             @RequestParam(required = false, defaultValue = "false") boolean acknowledgeExclusions) {
-        LocalDate reportDate = date != null ? LocalDate.parse(date) : businessDateService.getCurrentBusinessDate(branchId);
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         return ResponseEntity.ok(service.closeDay(branchId, reportDate, startSessionId, endSessionId, acknowledgeExclusions));
+    }
+
+    /** @deprecated OBSOLETE — the Skip Non-Trading Day workflow has been retired in
+     *  favor of session-driven Day Close resolution (see {@link PosPendingDayCloseResolver}):
+     *  a calendar date with no POS sessions is now simply never surfaced as pending, so
+     *  nothing needs to be explicitly skipped. Kept (not removed) purely for API
+     *  compatibility with older/cached clients — always responds 410 Gone rather than
+     *  writing a new marker row. The frontend must never call this endpoint. */
+    @Deprecated
+    @PostMapping("/skip-day")
+    @PreAuthorize("hasAnyAuthority('SUPERVISOR', 'MANAGER', 'ADMIN', 'ROLE_SUPERVISOR', 'ROLE_MANAGER', 'ROLE_ADMIN')")
+    public ResponseEntity<Map<String, Object>> skipDay(
+            @RequestParam Long branchId,
+            @RequestParam(required = false) String date,
+            @RequestParam String reason) {
+        LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
+        return ResponseEntity.ok(service.skipBusinessDate(branchId, reportDate, reason));
     }
 
     /** Composed business-date / operating-hours / open-session view for POS mount —

@@ -1,0 +1,160 @@
+package com.billbull.backend.pos.businessdate;
+
+import com.billbull.backend.pos.session.PosSessionRepository;
+import com.billbull.backend.pos.session.PosSessionResolutionStrategy;
+import com.billbull.backend.pos.settings.PosSettings;
+import com.billbull.backend.pos.settings.PosSettingsRepository;
+import com.billbull.backend.pos.terminal.PosTerminalRepository;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchAccessService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.List;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * Phase 2 tests for {@link PosDayStatusService} — proves the Business Day Engine's
+ * new fields are populated correctly AND that the pre-existing public contract
+ * (currentBusinessDate/businessDateStatus/blocked/...) remains driven exclusively
+ * by {@link PosBusinessDateService}, unchanged from before this phase.
+ */
+@ExtendWith(MockitoExtension.class)
+class PosDayStatusServiceTest {
+
+    @Mock private PosBusinessDateService businessDateService;
+    @Mock private PosPendingDayCloseResolver pendingDayCloseResolver;
+    @Mock private BusinessDayStateService businessDayStateService;
+    @Mock private PosSessionRepository sessionRepository;
+    @Mock private PosSessionResolutionStrategy sessionResolutionStrategy;
+    @Mock private PosSettingsRepository settingsRepository;
+    @Mock private PosTerminalRepository terminalRepository;
+    @Mock private BranchAccessService branchAccessService;
+
+    private PosDayStatusService service;
+
+    @BeforeEach
+    void setUp() {
+        service = new PosDayStatusService(businessDateService, pendingDayCloseResolver, businessDayStateService,
+                sessionRepository, sessionResolutionStrategy, settingsRepository, terminalRepository, branchAccessService);
+
+        Branch branch = new Branch();
+        branch.setId(1L);
+        lenient().when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch);
+        lenient().when(sessionRepository.findUnclosedSessionsBeforeDate(anyLong(), any())).thenReturn(List.of());
+        lenient().when(sessionRepository.findOpenSessionsByBranchAndDate(anyLong(), any())).thenReturn(List.of());
+        lenient().when(pendingDayCloseResolver.resolvePendingBusinessDate(anyLong())).thenReturn(Optional.empty());
+    }
+
+    @Test
+    void currentBusinessDateAndStatusRemainFullyPointerDriven() {
+        LocalDate pointerDate = LocalDate.of(2026, 1, 1);
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(pointerDate);
+        when(businessDateService.isDateClosed(1L, pointerDate)).thenReturn(true);
+        when(settingsRepository.findByBranchId(1L)).thenReturn(Optional.empty());
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        DayStatusResponse response = service.getDayStatus("");
+
+        // Unchanged from before Phase 2 — sourced exclusively from PosBusinessDateService.
+        assertEquals(pointerDate, response.getCurrentBusinessDate());
+        assertEquals("CLOSED", response.getBusinessDateStatus());
+    }
+
+    @Test
+    void newFieldsArePopulatedFromBusinessDayEngineAndDoNotAlterLegacyFields() {
+        LocalDate pointerDate = LocalDate.of(2026, 1, 1); // deliberately not "today"
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(pointerDate);
+        when(businessDateService.isDateClosed(1L, pointerDate)).thenReturn(false);
+        when(settingsRepository.findByBranchId(1L)).thenReturn(Optional.empty()); // no operating hours configured
+        LocalDate active = LocalDate.of(2025, 12, 30);
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(active));
+
+        DayStatusResponse response = service.getDayStatus("");
+
+        assertEquals(LocalDate.now(), response.getCandidateBusinessDay(), "no settings configured -> plain calendar date");
+        assertEquals(active, response.getActiveBusinessDay());
+        assertTrue(response.isHasActiveBusinessDay());
+        assertEquals("LEGACY_POINTER", response.getBusinessDaySource());
+        // Legacy fields untouched by the new engine's (deliberately different) values.
+        assertEquals(pointerDate, response.getCurrentBusinessDate());
+        assertEquals("OPEN", response.getBusinessDateStatus());
+    }
+
+    @Test
+    void hasActiveBusinessDayIsFalseAndActiveBusinessDayIsNullWhenNothingUnclosed() {
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(LocalDate.now());
+        when(businessDateService.isDateClosed(1L, LocalDate.now())).thenReturn(false);
+        when(settingsRepository.findByBranchId(1L)).thenReturn(Optional.empty());
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        DayStatusResponse response = service.getDayStatus("");
+
+        assertNull(response.getActiveBusinessDay());
+        assertFalse(response.isHasActiveBusinessDay());
+        verify(businessDayStateService).recordNoActiveBusinessDay(1L);
+    }
+
+    @Test
+    void recordsShadowValidationExactlyOncePerRequest() {
+        LocalDate pointerDate = LocalDate.now();
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(pointerDate);
+        when(businessDateService.isDateClosed(1L, pointerDate)).thenReturn(false);
+        when(settingsRepository.findByBranchId(1L)).thenReturn(Optional.empty());
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(pointerDate));
+
+        service.getDayStatus("");
+
+        verify(businessDayStateService).recordShadowValidation(anyLong(), any(), any(), anyBoolean());
+        verify(businessDayStateService, never()).recordNoActiveBusinessDay(anyLong());
+    }
+
+    @Test
+    void overnightConfiguredWindowIsDetectedAndPassedToShadowValidation() {
+        PosSettings settings = new PosSettings();
+        settings.setOperatingHoursEnabled(true);
+        settings.setOperatingStartTime(LocalTime.of(8, 0));
+        settings.setOperatingEndTime(LocalTime.of(2, 0)); // overnight
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(LocalDate.now());
+        when(businessDateService.isDateClosed(1L, LocalDate.now())).thenReturn(false);
+        when(settingsRepository.findByBranchId(1L)).thenReturn(Optional.of(settings));
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        service.getDayStatus("");
+
+        verify(businessDayStateService).recordShadowValidation(org.mockito.ArgumentMatchers.eq(1L),
+                any(), any(), org.mockito.ArgumentMatchers.eq(true));
+    }
+
+    @Test
+    void blockedFieldIsUnaffectedByBusinessDayEngine() {
+        // blocked stays computed exactly as before: hoursEnabled && !withinHours &&
+        // staleSessions non-empty && caller doesn't own one — none of that reads the
+        // new engine's output.
+        when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(LocalDate.now());
+        when(businessDateService.isDateClosed(1L, LocalDate.now())).thenReturn(false);
+        when(settingsRepository.findByBranchId(1L)).thenReturn(Optional.empty());
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        DayStatusResponse response = service.getDayStatus("");
+
+        assertFalse(response.isBlocked()); // no operating hours configured -> never blocked
+    }
+}

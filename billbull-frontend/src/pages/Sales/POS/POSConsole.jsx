@@ -111,8 +111,12 @@ const POSConsole = React.memo((props) => {
     // Frontend gating mirrors backend permissions.pos.terminal.<action> exactly — this hides
     // actions the user can't perform, but the backend (ModulePermissionService) is the actual
     // enforcement (see PosTerminalController.requireTerminalAction).
-    const { canAction } = usePermissions();
+    const { canAction, hasAnyRole } = usePermissions();
     const canTerminalAction = (action) => canAction(`permissions.pos.terminal.${action}`, 'view');
+    // The Behavior tab exposes supervisor-approval config (void gate, PIN/password) —
+    // restrict it to supervisor-capable roles, mirroring the backend role gate in
+    // PosSettingsService.save() (SUPERVISOR_CONFIG_ROLES).
+    const canManageBehaviorSettings = hasAnyRole('ADMIN', 'BRANCH_ADMIN', 'MANAGER', 'SUPERVISOR');
 
     // Phase 3 cutover (reworked): POS now resolves the real Back Office "Sales
     const allBtnList = [
@@ -569,7 +573,7 @@ const POSConsole = React.memo((props) => {
 
     const tabs = [
       { id:'layout',    label:'Manage Layouts', icon:<LayoutGrid className="h-4 w-4" /> },
-      { id:'behavior',  label:'Behavior',       icon:<Shield className="h-4 w-4" /> },
+      ...(canManageBehaviorSettings ? [{ id:'behavior', label:'Behavior', icon:<Shield className="h-4 w-4" /> }] : []),
       { id:'devices',   label:'Devices',        icon:<Printer className="h-4 w-4" /> },
       { id:'templates', label:'Print Templates',icon:<FileText className="h-4 w-4" /> },
       { id:'terminals', label:'Terminals & Counters', icon:<Hash className="h-4 w-4" /> },
@@ -832,11 +836,20 @@ const POSConsole = React.memo((props) => {
           )}
 
           {/* ══ BEHAVIOR ══ */}
-          {consoleTab==='behavior' && (() => {
+          {consoleTab==='behavior' && !canManageBehaviorSettings && (
+            <div className="bg-white rounded-2xl border border-gray-200 p-8 shadow-sm text-center">
+              <Shield className="h-8 w-8 text-gray-300 mx-auto mb-2" />
+              <p className="text-sm font-bold text-[#1E293B]">Admins/Supervisors Only</p>
+              <p className="text-xs text-gray-400 mt-1">You don't have permission to view or change POS behavior settings.</p>
+            </div>
+          )}
+          {consoleTab==='behavior' && canManageBehaviorSettings && (() => {
             const d = settingsDraft || {
               requireSupervisorForVoid: !!posSettings?.requireSupervisorForVoid,
               supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
-              supervisorPin: posSettings?.supervisorPin || '',
+              requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
+              // Write-only field — the backend never returns the raw PIN (see supervisorPinSet below).
+              supervisorPin: '',
               voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',
               productEntryMode: posSettings?.productEntryMode || 'DIRECT_ADD',
               cartViewMode: posSettings?.cartViewMode === 'DETAILED' ? 'DETAILED' : 'MINIMAL',
@@ -846,6 +859,9 @@ const POSConsole = React.memo((props) => {
               cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
               cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
               cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
+              operatingHoursEnabled: !!posSettings?.operatingHoursEnabled,
+              operatingStartTime: posSettings?.operatingStartTime || '',
+              operatingEndTime: posSettings?.operatingEndTime || '',
             };
             const patch = (changes) => setSettingsDraft({ ...d, ...changes });
             const credLabel = d.supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN';
@@ -931,18 +947,42 @@ const POSConsole = React.memo((props) => {
                       </div>
                     </div>
                     <div>
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">{credLabel}</label>
+                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
+                        {credLabel}
+                        {posSettings?.supervisorPinSet ? (
+                          <span className="normal-case font-semibold text-green-600 flex items-center gap-0.5"><CheckCircle className="h-3 w-3" />Configured</span>
+                        ) : (
+                          <span className="normal-case font-semibold text-gray-400">Not set</span>
+                        )}
+                      </label>
                       <input
                         type="password"
                         value={d.supervisorPin}
                         onChange={e=>patch({ supervisorPin: e.target.value })}
                         maxLength={d.supervisorApprovalMode==='PIN' ? 8 : 64}
-                        placeholder={d.supervisorApprovalMode==='PIN' ? 'e.g. 1234' : 'Manager password'}
+                        placeholder={posSettings?.supervisorPinSet ? 'Leave blank to keep current' : (d.supervisorApprovalMode==='PIN' ? 'e.g. 1234' : 'Manager password')}
                         className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
                       />
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Price Override */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Wallet className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Price Override
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">Control whether adding/editing an item below its minimum price requires supervisor approval.</p>
+
+                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl">
+                  <div>
+                    <p className="text-sm font-medium text-[#1E293B]">Require Supervisor Approval for Price Override</p>
+                    <p className="text-[10px] text-gray-400">When on, adding a line or editing its price below the minimum price prompts for supervisor PIN/password immediately. When off, only the checkout-time check applies.</p>
+                  </div>
+                  <Switch checked={d.requirePriceOverrideApproval} onCheckedChange={v=>patch({ requirePriceOverrideApproval: v })} />
+                </div>
               </div>
 
               {/* Void behavior */}
@@ -1018,6 +1058,58 @@ const POSConsole = React.memo((props) => {
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Business Day */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Clock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Business Day
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">
+                  Business Day controls how POS sessions are grouped for Trading Date, session grouping,
+                  Pending Day Close, Day Close, X Reports and Z Reports.
+                </p>
+
+                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl mb-3">
+                  <div>
+                    <p className="text-sm font-medium text-[#1E293B]">Enable Business Day Window</p>
+                    <p className="text-[10px] text-gray-400">Define a start/end time window for the Business Day instead of following the calendar day.</p>
+                  </div>
+                  <Switch checked={d.operatingHoursEnabled} onCheckedChange={v=>patch({ operatingHoursEnabled: v })} />
+                </div>
+
+                {!d.operatingHoursEnabled && (
+                  <p className="text-xs text-gray-400 italic px-1">Business Day follows the calendar day.</p>
+                )}
+
+                {d.operatingHoursEnabled && (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Business Day Start Time</label>
+                        <input
+                          type="time"
+                          value={(d.operatingStartTime || '').slice(0, 5)}
+                          onChange={e=>patch({ operatingStartTime: e.target.value ? `${e.target.value}:00` : '' })}
+                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Business Day End Time</label>
+                        <input
+                          type="time"
+                          value={(d.operatingEndTime || '').slice(0, 5)}
+                          onChange={e=>patch({ operatingEndTime: e.target.value ? `${e.target.value}:00` : '' })}
+                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-gray-400 px-1">
+                      If the End Time is earlier than the Start Time, the Business Day automatically continues past midnight into the next calendar day.
+                    </p>
+                  </>
+                )}
               </div>
 
             </div>

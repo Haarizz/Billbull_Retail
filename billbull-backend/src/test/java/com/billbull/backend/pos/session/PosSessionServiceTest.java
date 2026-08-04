@@ -79,6 +79,9 @@ class PosSessionServiceTest {
     @Mock private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     @Mock private com.billbull.backend.pos.businessdate.PosBusinessDateService businessDateService;
+    @Mock private com.billbull.backend.pos.businessdate.BusinessDayStateService businessDayStateService;
+    @Mock private com.billbull.backend.pos.businessdate.BusinessDayValidationService businessDayValidationService;
+    @Mock private com.billbull.backend.pos.businessdate.BusinessDayFeatureFlagService businessDayFeatureFlagService;
     @Mock private PosCashMovementRepository cashMovementRepository;
     @Mock private com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository receiptVoucherRepository;
     @Mock private com.billbull.backend.pos.reports.PosXReportSnapshotRepository xReportSnapshotRepository;
@@ -108,7 +111,7 @@ class PosSessionServiceTest {
         service = new PosSessionService(repo, invoiceRepo, branchAccessService, branchRepository,
                 postingEngine, posSettingsRepository, auditService, paymentRepository, auditLogRepository,
                 terminalRepository, returnRepository, dayCloseRepository, objectMapper, terminalActivityService,
-                businessDateService, cashMovementRepository, receiptVoucherRepository,
+                businessDateService, businessDayStateService, businessDayValidationService, businessDayFeatureFlagService, cashMovementRepository, receiptVoucherRepository,
                 xReportSnapshotRepository, reportNumberService, userRepository, cashMovementCategoryService,
                 sessionResolutionStrategy, sessionOwnershipService, terminalHostingService, sessionDiscoveryService,
                 sessionTransferService, transferLogRepository, sessionTransferPolicy,
@@ -127,6 +130,13 @@ class PosSessionServiceTest {
         lenient().when(cashMovementRepository.sumAmountByMovementTypeForSessionIds(any(), any())).thenReturn(List.of());
         lenient().when(cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(any())).thenReturn(List.of());
         lenient().when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(any(), any(), any())).thenReturn(List.of());
+        // Stage 3B.2A shadow validation — always executes inside openSession(); default
+        // to a harmless ALLOW so unrelated tests never trip the exception-safety catch path.
+        lenient().when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        LocalDate.now(), java.util.Optional.empty(),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.ALLOW,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.NONE));
     }
 
     // ---------------------------------------------------------------------
@@ -150,11 +160,569 @@ class PosSessionServiceTest {
     private void stubOpenSessionPreconditions(Long branchId, LocalDate businessDate, String terminalId) {
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
         when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(businessDate);
-        when(businessDateService.isDateClosed(branchId, businessDate)).thenReturn(false);
-        when(repo.findUnclosedSessionsBeforeDate(branchId, businessDate)).thenReturn(List.of());
-        when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN))
+        // lenient: Stage 3B.2B enforcement-ALLOW tests never reach the legacy gate at
+        // all, so this stub goes unused for them — that's expected, not a bug.
+        lenient().when(businessDateService.isDateClosed(branchId, businessDate)).thenReturn(false);
+        lenient().when(repo.findUnclosedSessionsBeforeDate(branchId, businessDate)).thenReturn(List.of());
+        lenient().when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN))
                 .thenReturn(Optional.empty());
         lenient().when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
+    }
+
+    /** Day Close domain: tradingDate must be the real calendar day the session opens
+     *  on, independent of the Business Date pointer — even when the pointer lags
+     *  behind (the exact scenario Skip Date used to exist for). sessionDate keeps
+     *  reflecting the pointer, unchanged. */
+    @Test
+    void openSessionStampsTradingDateFromRealCalendarDayIndependentOfLaggingBusinessDate() {
+        LocalDate laggingBusinessDate = LocalDate.of(2020, 1, 1); // deliberately not "today"
+        stubOpenSessionPreconditions(1L, laggingBusinessDate, "T1");
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(laggingBusinessDate, opened.getSessionDate(), "sessionDate must still track the pointer");
+        assertEquals(LocalDate.now(), opened.getTradingDate(), "tradingDate must be the real open day");
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3A — Business Day persistence (tradingDate, resolver-driven)
+    // ---------------------------------------------------------------------
+
+    /** With no operating hours configured (the default), the resolver's output is
+     *  byte-identical to the raw calendar date — proving Phase 3A changes nothing
+     *  observable for the common case. */
+    @Test
+    void openSessionTradingDateMatchesCalendarDateWhenNoOperatingHoursConfigured() {
+        LocalDate businessDate = LocalDate.of(2020, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(LocalDate.now(), opened.getTradingDate());
+    }
+
+    /** Proves tradingDate is genuinely resolver-driven (not just now.toLocalDate())
+     *  by configuring an overnight window and opening the session on the
+     *  early-morning side of it — only BusinessDayResolver would roll this back to
+     *  the previous calendar day; a naive now.toLocalDate() stamp would not. */
+    @Test
+    void openSessionTradingDateUsesResolverForOvernightWindow() {
+        Long branchId = 1L;
+        LocalDate businessDate = LocalDate.of(2020, 1, 1);
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(businessDate);
+        when(businessDateService.isDateClosed(branchId, businessDate)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, businessDate)).thenReturn(List.of());
+        when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, "T1", PosSessionStatus.OPEN))
+                .thenReturn(Optional.empty());
+
+        com.billbull.backend.pos.settings.PosSettings settings = new com.billbull.backend.pos.settings.PosSettings();
+        settings.setOperatingHoursEnabled(true);
+        settings.setOperatingStartTime(java.time.LocalTime.of(8, 0));
+        settings.setOperatingEndTime(java.time.LocalTime.of(2, 0)); // overnight
+        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.of(settings));
+
+        // We can't control LocalDateTime.now() inside openSession(), so instead we
+        // prove the *rule*: with these settings, "now" always resolves to either
+        // today or yesterday depending on the wall clock — either way, the result
+        // must equal exactly what BusinessDayResolver independently computes for
+        // the same instant class, never the raw calendar date when they'd differ.
+        // Deterministic assertion: candidateBusinessDay is never simply undefined/
+        // null and always matches BusinessDayResolver.resolve(now, settings) to
+        // within the same day (re-resolved immediately after, negligible race).
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        com.billbull.backend.pos.businessdate.BusinessDaySettings bds =
+                com.billbull.backend.pos.businessdate.BusinessDaySettings.from(settings);
+        LocalDate expected = com.billbull.backend.pos.businessdate.BusinessDayResolver.resolve(
+                java.time.LocalDateTime.now(), bds);
+        assertEquals(expected, opened.getTradingDate());
+    }
+
+    @Test
+    void openSessionSessionDateStillTracksBusinessDatePointerUnchanged() {
+        LocalDate laggingBusinessDate = LocalDate.of(2020, 6, 15);
+        stubOpenSessionPreconditions(1L, laggingBusinessDate, "T1");
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(laggingBusinessDate, opened.getSessionDate());
+    }
+
+    /** Existing pointer-driven gating (getCurrentBusinessDate/isDateClosed) must be
+     *  called exactly as before — Phase 3A adds a field write, not a new gate. */
+    @Test
+    void openSessionStillUsesLegacyBusinessDatePointerForGating() {
+        LocalDate businessDate = LocalDate.of(2020, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        service.openSession("T1", "Counter 1", bd("100"));
+
+        verify(businessDateService).getCurrentBusinessDate(1L);
+        verify(businessDateService).isDateClosed(1L, businessDate);
+    }
+
+    @Test
+    void openSessionRecordsShadowValidationAfterPersistence() {
+        LocalDate businessDate = LocalDate.of(2020, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        service.openSession("T1", "Counter 1", bd("100"));
+
+        verify(businessDayStateService).recordShadowValidation(
+                eq(1L), eq(businessDate), eq(LocalDate.now()), eq(false));
+    }
+
+    /** Business Day, once persisted, is never re-derived — no other session
+     *  lifecycle method (close/suspend/resume/transfer) touches tradingDate. */
+    @Test
+    void tradingDateIsNeverModifiedByCloseSession() {
+        PosSession session = openSession();
+        session.setSessionDate(LocalDate.of(2020, 1, 1));
+        session.setTradingDate(LocalDate.of(2020, 1, 1));
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+
+        LocalDate before = session.getTradingDate();
+        service.closeSession(1L, bd("0"), "eod");
+
+        assertEquals(before, session.getTradingDate());
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase 3B.1 — Previous Unclosed Business Day detection, sourced from
+    // BusinessDayStateService instead of the legacy sessionDate<pointer scan.
+    // The allow/block decision, exception type, HTTP status, and message format
+    // must all stay identical to before this phase.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void openSessionAllowsWhenNoUnclosedBusinessDayExists() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(businessDayStateService).findUnclosedBusinessDay(1L);
+    }
+
+    @Test
+    void openSessionBlocksWhenPreviousUnclosedBusinessDayExists() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1); // strictly before businessDate
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(unclosedDay));
+        PosSession stale = sessionAt(77L, 1L, unclosedDay, "cashierX", PosSessionStatus.OPEN,
+                unclosedDay.atStartOfDay().plusHours(9));
+        stale.setTerminalId("T-OLD");
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(stale));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+        assertTrue(ex.getReason().contains("Session ID : 77"));
+        assertTrue(ex.getReason().contains("T-OLD"));
+    }
+
+    /** The critical case: an "unclosed Business Day" that equals today's own
+     *  in-progress day (Day Close simply hasn't run yet, as is normal mid-shift)
+     *  must never block a second/third/... session from opening on that same day. */
+    @Test
+    void openSessionAllowsWhenUnclosedBusinessDayEqualsCurrentBusinessDate() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(businessDate));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(repo, org.mockito.Mockito.never()).findByBranchIdAndTradingDateOrderByOpenedAtDesc(anyLong(), any());
+    }
+
+    /** Multiple sessions already open on the same unclosed prior day: the message
+     *  must reference the earliest-opened one, matching the legacy "oldest" pick. */
+    @Test
+    void openSessionBlockMessageReferencesEarliestSessionAmongMultipleOnUnclosedDay() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(unclosedDay));
+        PosSession earlier = sessionAt(1L, 1L, unclosedDay, "cashierA", PosSessionStatus.OPEN,
+                unclosedDay.atStartOfDay().plusHours(8));
+        PosSession later = sessionAt(2L, 1L, unclosedDay, "cashierB", PosSessionStatus.SUSPENDED,
+                unclosedDay.atStartOfDay().plusHours(11));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(later, earlier));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertTrue(ex.getReason().contains("Session ID : 1"));
+        assertFalse(ex.getReason().contains("Session ID : 2"));
+    }
+
+    /** A prior date that has already been through Day Close is excluded by
+     *  BusinessDayStateService's underlying query (no PosDayClose row = unclosed;
+     *  a closed date is never returned) — verified here at the gate level: an
+     *  empty Optional (as would result from a fully-closed history) never blocks. */
+    @Test
+    void openSessionAllowsWhenAllHistoricalBusinessDaysAreAlreadyClosed() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 5);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+    }
+
+    /** Overnight-configured Business Days are just another LocalDate as far as this
+     *  gate is concerned — the overnight-aware computation itself is Phase 3A's
+     *  concern (BusinessDayResolver); this gate only compares whatever
+     *  BusinessDayStateService reports against the pointer's businessDate. */
+    @Test
+    void openSessionBlocksOnPriorUnclosedOvernightBusinessDay() {
+        LocalDate businessDate = LocalDate.of(2026, 7, 30);
+        LocalDate unclosedOvernightDay = LocalDate.of(2026, 7, 28); // e.g. rolled back from July 29 by the resolver
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(unclosedOvernightDay));
+        PosSession overnightStale = sessionAt(50L, 1L, unclosedOvernightDay, "cashierY", PosSessionStatus.OPEN,
+                unclosedOvernightDay.atStartOfDay().plusHours(23));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedOvernightDay)).thenReturn(List.of(overnightStale));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertTrue(ex.getReason().contains("Session ID : 50"));
+    }
+
+    /** REGRESSION TEST: When the unclosed Business Day has only CLOSED sessions
+     *  (i.e. Day Close has not been run yet), the legacy gate MUST still block.
+     *  This was the exact production regression introduced by the message-only patch. */
+    @Test
+    void openSessionBlocksWhenAllSessionsOnUnclosedDayAreClosed() {
+        LocalDate businessDate = LocalDate.of(2026, 8, 4);
+        LocalDate unclosedDay = LocalDate.of(2026, 8, 3);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(unclosedDay));
+        // All sessions on the unclosed day are CLOSED — no OPEN or SUSPENDED remain.
+        PosSession s1 = sessionAt(50L, 1L, unclosedDay, "cashierA", PosSessionStatus.CLOSED, unclosedDay.atStartOfDay().plusHours(9));
+        PosSession s2 = sessionAt(51L, 1L, unclosedDay, "cashierB", PosSessionStatus.CLOSED, unclosedDay.atStartOfDay().plusHours(10));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(s2, s1));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+        assertTrue(ex.getReason().contains("Previous Business Day Not Closed"));
+        assertTrue(ex.getReason().contains("Business Day 2026-08-03 has not been closed."));
+        assertTrue(ex.getReason().contains("All sessions for this Business Day are already closed."));
+        // Must NOT mention any session details
+        assertFalse(ex.getReason().contains("Session ID"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Stage 3B.2A — Shadow Validation integration: BusinessDayValidationService
+    // always executes, never affects the decision, exceptions are swallowed.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void openSessionExecutesShadowValidationOnSuccessfulOpen() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        service.openSession("T1", "Counter 1", bd("100"));
+
+        verify(businessDayValidationService).validate(eq(1L), any(LocalDateTime.class), any());
+        verify(businessDayStateService).recordValidationOutcome(eq(1L), eq(true), any());
+    }
+
+    @Test
+    void openSessionExecutesShadowValidationEvenWhenLegacyGateBlocks() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(unclosedDay));
+        PosSession stale = sessionAt(88L, 1L, unclosedDay, "cashierX", PosSessionStatus.OPEN,
+                unclosedDay.atStartOfDay().plusHours(9));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(stale));
+
+        // The legacy gate still throws — unchanged behavior — but shadow validation
+        // must still have run beforehand, observing the (now-known) legacy outcome.
+        assertThrows(ResponseStatusException.class, () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        verify(businessDayValidationService).validate(eq(1L), any(LocalDateTime.class), any());
+        verify(businessDayStateService).recordValidationOutcome(eq(1L), eq(false), any());
+    }
+
+    @Test
+    void openSessionSwallowsShadowValidationExceptionsAndStillOpensTheSession() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+        when(businessDayValidationService.validate(any(), any(), any()))
+                .thenThrow(new RuntimeException("shadow engine bug"));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        // Stage 3B.2A.6: an unclassified shadow-validation exception is categorized
+        // UNEXPECTED and recorded via recordInfrastructureFailure (which internally
+        // also calls recordValidationError for backward compatibility — but that's
+        // an implementation detail of the real class, invisible to this mock-based
+        // assertion, so we verify the categorized entry point instead).
+        verify(businessDayStateService).recordInfrastructureFailure(
+                eq(1L), eq(com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.UNEXPECTED),
+                any(RuntimeException.class));
+        verify(businessDayStateService, org.mockito.Mockito.never())
+                .recordValidationOutcome(anyLong(), org.mockito.ArgumentMatchers.anyBoolean(), any());
+    }
+
+    @Test
+    void openSessionCategorizesSettingsLookupFailureSeparatelyFromRepositoryFailure() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+        // First call is the shadow-validation settings read (fails); the method's
+        // own pre-existing idle/timeout settings read further down (unrelated to
+        // this phase) must still succeed so the rest of openSession() is unaffected.
+        when(posSettingsRepository.findByBranchId(1L))
+                .thenThrow(new RuntimeException("settings datasource down"))
+                .thenReturn(Optional.empty());
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(businessDayStateService).recordInfrastructureFailure(
+                eq(1L), eq(com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.SETTINGS),
+                any(RuntimeException.class));
+        // businessDayValidationService must never even be called — the settings
+        // lookup failed before validate() could be invoked.
+        verify(businessDayValidationService, org.mockito.Mockito.never()).validate(any(), any(), any());
+    }
+
+    @Test
+    void openSessionCategorizesBusinessDayStateServiceExceptionAsInfrastructureFailure() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        // The 3B.1 gate's own call to findUnclosedBusinessDay succeeds (empty —
+        // legacy allows), but the shadow validate() call fails downstream inside
+        // BusinessDayValidationService, surfacing as a categorized infra exception.
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+        when(businessDayValidationService.validate(any(), any(), any()))
+                .thenThrow(new com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException(
+                        com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.REPOSITORY,
+                        "dependency failure", new RuntimeException("timeout")));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(businessDayStateService).recordInfrastructureFailure(
+                eq(1L), eq(com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.REPOSITORY),
+                any());
+    }
+
+    // ---------------------------------------------------------------------
+    // Stage 3B.2B — Enforcement (feature-flag controlled)
+    // ---------------------------------------------------------------------
+
+    private static final com.billbull.backend.pos.businessdate.BusinessDayValidationResult ALLOW_RESULT =
+            new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                    LocalDate.of(2026, 1, 1), Optional.empty(),
+                    com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.ALLOW,
+                    com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.NONE);
+
+    @Test
+    void openSessionFlagOffUsesLegacyGateAndIgnoresNewEngineDecision() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(false);
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+        // Even though the new engine would BLOCK, flag OFF means it must never be consulted for the decision.
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.of(businessDate.minusDays(1)),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.BLOCK,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.PREVIOUS_BUSINESS_DAY_OPEN));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(businessDayStateService).recordFeatureFlagRequest(1L, false);
+        verify(businessDayStateService, org.mockito.Mockito.never())
+                .recordEnforcementDecision(anyLong(), any());
+    }
+
+    @Test
+    void openSessionFlagOnAllowsWhenEngineAllows() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(ALLOW_RESULT);
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(businessDayStateService).recordFeatureFlagRequest(1L, true);
+        verify(businessDayStateService).recordEnforcementDecision(1L, ALLOW_RESULT);
+        // The legacy pointer gate itself must never run when enforcement succeeds.
+        verify(businessDateService, org.mockito.Mockito.never()).isDateClosed(anyLong(), any());
+    }
+
+    @Test
+    void openSessionFlagOnBlocksWithLegacyMessageShapeForPreviousBusinessDayOpen() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.of(unclosedDay),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.BLOCK,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.PREVIOUS_BUSINESS_DAY_OPEN));
+        PosSession stale = sessionAt(99L, 1L, unclosedDay, "cashierZ", PosSessionStatus.OPEN,
+                unclosedDay.atStartOfDay().plusHours(9));
+        stale.setTerminalId("T-OLD");
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(stale));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+        assertTrue(ex.getReason().contains("Session ID : 99"));
+        assertTrue(ex.getReason().contains("T-OLD"));
+        verify(businessDayStateService).recordEnforcementDecision(eq(1L), any());
+    }
+
+    @Test
+    void openSessionFlagOnBlocksWithLegacyMessageShapeForBusinessDayAlreadyClosed() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.empty(),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.BLOCK,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.BUSINESS_DAY_ALREADY_CLOSED));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(org.springframework.http.HttpStatus.FORBIDDEN, ex.getStatusCode());
+        assertEquals("Cannot open session: The business day has already been closed.", ex.getReason());
+    }
+
+    @Test
+    void openSessionFlagOnFailsClosedForUnexpectedState() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.of(businessDate.plusDays(3)),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.UNEXPECTED_STATE,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.UNEXPECTED_STATE));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("BUSINESS_DAY_UNEXPECTED_STATE"));
+        verify(repo, org.mockito.Mockito.never()).save(any(PosSession.class));
+    }
+
+    @Test
+    void openSessionFlagOnFallsBackToLegacyGateOnRepositoryInfrastructureFailure() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any()))
+                .thenThrow(new com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException(
+                        com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.REPOSITORY,
+                        "dependency failure", new RuntimeException("timeout")));
+        // Legacy fallback: no unclosed day -> allow.
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(businessDayStateService).recordEnforcementFallback(
+                eq(1L), eq(com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.REPOSITORY),
+                any());
+    }
+
+    @Test
+    void openSessionFlagOnFallsBackToLegacyGateOnSettingsLookupFailure() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        // First posSettingsRepository call is the enforcement-path settings load (fails);
+        // the method's own later idle/timeout settings read (unrelated to this phase)
+        // must still succeed once the legacy fallback allows the session to proceed.
+        when(posSettingsRepository.findByBranchId(1L))
+                .thenThrow(new RuntimeException("settings datasource down"))
+                .thenReturn(Optional.empty());
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        verify(businessDayStateService).recordEnforcementFallback(
+                eq(1L), eq(com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.SETTINGS),
+                any());
+        // The engine's validate() must never have been reached — settings load failed first.
+        verify(businessDayValidationService, org.mockito.Mockito.never()).validate(any(), any(), any());
+    }
+
+    @Test
+    void openSessionFlagOnFallbackStillBlocksWhenLegacyGateWouldBlock() {
+        // Proves the fallback is a real re-evaluation, not a silent allow: the new
+        // engine fails, and the legacy gate it falls back to also says block.
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any()))
+                .thenThrow(new com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException(
+                        com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.UNEXPECTED,
+                        "boom", new RuntimeException()));
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(unclosedDay));
+        PosSession stale = sessionAt(77L, 1L, unclosedDay, "cashierX", PosSessionStatus.OPEN,
+                unclosedDay.atStartOfDay().plusHours(9));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(stale));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+        verify(businessDayStateService).recordEnforcementFallback(
+                eq(1L), eq(com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException.FailureCategory.UNEXPECTED),
+                any());
+    }
+
+    @Test
+    void openSessionFlagLookupFailureDefaultsToLegacyGate() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenThrow(new RuntimeException("flag lookup failed"));
+        when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        // Flag lookup failure defaults to OFF (legacy-primary) — Shadow Validation
+        // still runs on that path exactly as it does for any other OFF branch, so
+        // businessDayValidationService.validate() IS still called here; what must
+        // never happen is the flag defaulting to true/enforcement mode.
+        verify(businessDayStateService).recordFeatureFlagRequest(1L, false);
+        verify(businessDayStateService, org.mockito.Mockito.never()).recordEnforcementDecision(anyLong(), any());
     }
 
     @Test
@@ -656,7 +1224,7 @@ class PosSessionServiceTest {
         s2.setTotalCashSales(bd("80"));
         s2.setInvoiceCount(1);
 
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
                 .thenReturn(List.of(s1, s2));
         when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
                 .thenReturn(List.of(invoiceWithTax(200.0, 10.0), invoiceWithTax(100.0, 5.0)));
@@ -690,7 +1258,7 @@ class PosSessionServiceTest {
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
         when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(suspended, closed));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(suspended, closed));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
                 () -> service.closeDay(branchId, date));
@@ -706,7 +1274,7 @@ class PosSessionServiceTest {
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
         when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(open));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(open));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
                 () -> service.closeDay(branchId, date));
@@ -724,7 +1292,7 @@ class PosSessionServiceTest {
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
         when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s3, s2, s1));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s3, s2, s1));
         when(repo.findById(1L)).thenReturn(Optional.of(s1));
         when(repo.findById(2L)).thenReturn(Optional.of(s2));
 
@@ -745,7 +1313,7 @@ class PosSessionServiceTest {
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
         when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s2, s1));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s2, s1));
         when(repo.findById(1L)).thenReturn(Optional.of(s1));
         when(repo.findById(2L)).thenReturn(Optional.of(s2));
 
@@ -764,13 +1332,38 @@ class PosSessionServiceTest {
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
         when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
         when(repo.findById(9L)).thenReturn(Optional.of(otherBranch));
 
         ResponseStatusException ex = assertThrows(ResponseStatusException.class,
                 () -> service.closeDay(branchId, date, 9L, 1L, false));
 
         assertTrue(ex.getReason().contains("does not belong to branch"));
+    }
+
+    /** Day Close domain must use tradingDate exclusively — a session whose sessionDate
+     *  happens to match the requested date but whose tradingDate does not (e.g. a
+     *  historical row from before this field existed, or a lagging Business Date
+     *  pointer) must still be rejected as a boundary, proving resolveBoundarySession
+     *  really switched fields rather than accepting either. */
+    @Test
+    void closeDayBoundarySessionWithMatchingSessionDateButMismatchedTradingDateIsRejected() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        PosSession inRange = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(9));
+        PosSession mismatched = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(8));
+        // sessionDate matches the requested date, but tradingDate does not.
+        mismatched.setTradingDate(date.minusDays(3));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(inRange));
+        when(repo.findById(1L)).thenReturn(Optional.of(mismatched));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.closeDay(branchId, date, 1L, 2L, false));
+
+        assertTrue(ex.getReason().contains("does not belong to business date"));
     }
 
     @Test
@@ -785,7 +1378,7 @@ class PosSessionServiceTest {
         s2.setCounterName("Counter-2");
         s2.setTerminalId("T-2");
 
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s2, s1));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s2, s1));
 
         Map<String, Object> summary = service.getDayCloseSummary(branchId, date, null, null);
 
@@ -809,7 +1402,7 @@ class PosSessionServiceTest {
         PosSession s2 = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(10));
         PosSession s3 = sessionAt(3L, branchId, date, "cashierC", PosSessionStatus.CLOSED, date.atStartOfDay().plusHours(12));
 
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s3, s2, s1));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s3, s2, s1));
         when(repo.findById(1L)).thenReturn(Optional.of(s1));
         when(repo.findById(2L)).thenReturn(Optional.of(s2));
 
@@ -873,7 +1466,7 @@ class PosSessionServiceTest {
         s1.setOpeningCash(bd("100"));
         s1.setInvoiceCount(1);
 
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
                 .thenReturn(List.of(s1));
         when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
@@ -938,7 +1531,7 @@ class PosSessionServiceTest {
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
         when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
         when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(eq(branchId), any()))
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
         when(paymentRepository.sumTenderByModeForInvoices(any()))
@@ -1032,7 +1625,7 @@ class PosSessionServiceTest {
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
         when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
-        when(repo.findByBranchIdAndSessionDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
         when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(eq(branchId), any())).thenReturn(List.of());
         when(reportNumberService.nextReportNumber("ZR", branchId, date)).thenReturn("ZR-20260101-000001");
         var captor = org.mockito.ArgumentCaptor.forClass(com.billbull.backend.pos.dayclose.PosDayClose.class);
@@ -1360,6 +1953,7 @@ class PosSessionServiceTest {
         s.setId(id);
         s.setBranchId(branchId);
         s.setSessionDate(date);
+        s.setTradingDate(date);
         s.setOpenedBy(openedBy);
         s.setStatus(status);
         s.setOpenedAt(openedAt);
@@ -1438,5 +2032,122 @@ class PosSessionServiceTest {
         r.setReturnAction(action);
         r.setTotalAmount(BigDecimal.valueOf(amount));
         return r;
+    }
+
+    // ---------------------------------------------------------------------
+    // Enforcement Messaging Regression Tests
+    // ---------------------------------------------------------------------
+
+    @Test
+    void enforcementMessageWhenAllSessionsAreClosed() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.of(unclosedDay),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.BLOCK,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.PREVIOUS_BUSINESS_DAY_OPEN));
+
+        PosSession s1 = sessionAt(101L, 1L, unclosedDay, "cashierX", PosSessionStatus.CLOSED, unclosedDay.atStartOfDay().plusHours(9));
+        PosSession s2 = sessionAt(102L, 1L, unclosedDay, "cashierY", PosSessionStatus.CLOSED, unclosedDay.atStartOfDay().plusHours(10));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(s2, s1));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        String msg = ex.getReason();
+        assertTrue(msg.contains("Previous Business Day Not Closed"));
+        assertTrue(msg.contains("Business Day 2026-01-01 has not been closed."));
+        assertTrue(msg.contains("All sessions for this Business Day are already closed."));
+        assertFalse(msg.contains("Session ID"));
+        assertFalse(msg.contains("Terminal :"));
+        assertFalse(msg.contains("Status :"));
+        assertFalse(msg.contains("CLOSED"));
+    }
+
+    @Test
+    void enforcementMessageWhenOpenSessionExists() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.of(unclosedDay),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.BLOCK,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.PREVIOUS_BUSINESS_DAY_OPEN));
+
+        PosSession s1 = sessionAt(101L, 1L, unclosedDay, "cashierX", PosSessionStatus.OPEN, unclosedDay.atStartOfDay().plusHours(9));
+        s1.setTerminalId("T-101");
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(s1));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        String msg = ex.getReason();
+        assertTrue(msg.contains("Previous Business Day Not Closed"));
+        assertTrue(msg.contains("Business Day 2026-01-01 cannot be completed because an active session still exists."));
+        assertTrue(msg.contains("Session ID : 101"));
+        assertTrue(msg.contains("Terminal : T-101"));
+        assertTrue(msg.contains("Status : OPEN"));
+        assertTrue(msg.contains("Business Day : 2026-01-01"));
+        assertFalse(msg.contains("sessionDate"));
+    }
+
+    @Test
+    void enforcementMessageWhenSuspendedSessionExists() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.of(unclosedDay),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.BLOCK,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.PREVIOUS_BUSINESS_DAY_OPEN));
+
+        PosSession s1 = sessionAt(101L, 1L, unclosedDay, "cashierX", PosSessionStatus.SUSPENDED, unclosedDay.atStartOfDay().plusHours(9));
+        s1.setTerminalId("T-101");
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(s1));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        String msg = ex.getReason();
+        assertTrue(msg.contains("Previous Business Day Not Closed"));
+        assertTrue(msg.contains("Business Day 2026-01-01 cannot be completed because an active session still exists."));
+        assertTrue(msg.contains("Session ID : 101"));
+        assertTrue(msg.contains("Terminal : T-101"));
+        assertTrue(msg.contains("Status : SUSPENDED"));
+        assertTrue(msg.contains("Business Day : 2026-01-01"));
+    }
+
+    @Test
+    void enforcementMessageShowsTradingDateNotSessionDate() {
+        LocalDate businessDate = LocalDate.of(2026, 1, 3);
+        LocalDate unclosedDay = LocalDate.of(2026, 1, 2); // Trading Date
+        LocalDate sessionDate = LocalDate.of(2026, 1, 1); // Session Date
+        
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+        when(businessDayFeatureFlagService.isLoginGateV2Enabled(1L)).thenReturn(true);
+        when(businessDayValidationService.validate(any(), any(), any())).thenReturn(
+                new com.billbull.backend.pos.businessdate.BusinessDayValidationResult(
+                        businessDate, Optional.of(unclosedDay),
+                        com.billbull.backend.pos.businessdate.BusinessDayValidationVerdict.BLOCK,
+                        com.billbull.backend.pos.businessdate.BusinessDayBlockingReason.PREVIOUS_BUSINESS_DAY_OPEN));
+
+        PosSession s1 = sessionAt(101L, 1L, sessionDate, "cashierX", PosSessionStatus.OPEN, unclosedDay.atStartOfDay().plusHours(9));
+        s1.setTradingDate(unclosedDay);
+        s1.setTerminalId("T-101");
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(1L, unclosedDay)).thenReturn(List.of(s1));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+
+        String msg = ex.getReason();
+        assertTrue(msg.contains("Business Day : 2026-01-02"));
+        assertFalse(msg.contains("2026-01-01"));
     }
 }

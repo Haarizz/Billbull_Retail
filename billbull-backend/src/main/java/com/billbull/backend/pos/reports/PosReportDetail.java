@@ -20,6 +20,8 @@ public class PosReportDetail {
     private String generatedBy;
     private LocalDateTime generatedAt;
     private Map<String, Object> report;
+    private boolean skipped;
+    private String skipReason;
 
     public static PosReportDetail fromX(PosXReportSnapshot s, Map<String, Object> report) {
         PosReportDetail d = new PosReportDetail();
@@ -49,6 +51,8 @@ public class PosReportDetail {
         d.generatedBy = z.getClosedBy();
         d.generatedAt = z.getClosedAt();
         d.report = report;
+        d.skipped = z.isSkipped();
+        d.skipReason = z.getSkipReason();
         return d;
     }
 
@@ -64,4 +68,6 @@ public class PosReportDetail {
     public String getGeneratedBy() { return generatedBy; }
     public LocalDateTime getGeneratedAt() { return generatedAt; }
     public Map<String, Object> getReport() { return report; }
+    public boolean isSkipped() { return skipped; }
+    public String getSkipReason() { return skipReason; }
 }

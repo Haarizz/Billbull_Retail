@@ -52,7 +52,10 @@ public class ProductBarcode extends BaseEntity {
 	}
 
 	public void setBarcode(String barcode) {
-		this.barcode = barcode;
+		// Stray whitespace here silently breaks exact-match scan resolution (product_barcodes.barcode
+		// is compared as-is at scan time) while the loose grid LIKE search still finds it — trim at
+		// the write boundary so every barcode stored from here on is scan-safe.
+		this.barcode = barcode == null ? null : barcode.trim();
 	}
 
 	public Long getBranchId() {

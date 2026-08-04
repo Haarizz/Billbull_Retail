@@ -176,4 +176,41 @@ class PosReportsServiceTest {
         ResponseStatusException ex = assertThrows(ResponseStatusException.class, () -> service.getZDetail(5L));
         assertEquals(500, ex.getStatusCode().value());
     }
+
+    // ---------------------------------------------------------------------
+    // Historical "Skip Non-Trading Day" rows — retired workflow, but old rows
+    // (zReportJson == null, isSkipped == true) must keep rendering safely.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void listZLabelsHistoricalSkippedRowsDistinctlyFromCompletedCloses() {
+        PosDayClose skipped = zRow(6L, null);
+        skipped.setSkipped(true);
+        skipped.setSkipReason("Public holiday");
+        when(zRepo.search(eq(7L), any(), any(), any(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of(skipped), PageRequest.of(0, 20), 1));
+
+        PageResponse<PosReportSummary> result = service.listZ(7L, null, null, null, null, 0, 20);
+
+        PosReportSummary summary = result.getContent().get(0);
+        assertEquals("SKIPPED", summary.getStatus());
+        assertTrue(summary.isSkipped());
+        assertEquals("Public holiday", summary.getSkipReason());
+    }
+
+    @Test
+    void getZDetailRendersHistoricalSkippedRowWithoutFailingOnMissingJson() {
+        // Skip rows never had a Z-Report snapshot to parse — unlike a genuinely corrupt
+        // or missing snapshot on a real close, this must not 500.
+        PosDayClose skipped = zRow(6L, null);
+        skipped.setSkipped(true);
+        skipped.setSkipReason("Store closed - public holiday");
+        when(zRepo.findById(6L)).thenReturn(Optional.of(skipped));
+
+        PosReportDetail detail = service.getZDetail(6L);
+
+        assertTrue(detail.isSkipped());
+        assertEquals("Store closed - public holiday", detail.getSkipReason());
+        assertNotNull(detail.getReport());
+    }
 }
