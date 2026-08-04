@@ -164,6 +164,12 @@ class PosSessionServiceTest {
         // all, so this stub goes unused for them — that's expected, not a bug.
         lenient().when(businessDateService.isDateClosed(branchId, businessDate)).thenReturn(false);
         lenient().when(repo.findUnclosedSessionsBeforeDate(branchId, businessDate)).thenReturn(List.of());
+        // The gate itself asks about the Candidate Business Day, which for an
+        // unconfigured window (this helper's default) is today's calendar date —
+        // NOT the `businessDate` pointer these tests pass in. Both are stubbed so a
+        // test can keep using an arbitrary pointer without tripping strict stubbing.
+        lenient().when(businessDateService.isDateClosed(branchId, LocalDate.now())).thenReturn(false);
+        lenient().when(repo.findUnclosedSessionsBeforeDate(branchId, LocalDate.now())).thenReturn(List.of());
         lenient().when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, terminalId, PosSessionStatus.OPEN))
                 .thenReturn(Optional.empty());
         lenient().when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
@@ -271,27 +277,78 @@ class PosSessionServiceTest {
         assertTrue(ex.getReason().contains(today.minusDays(1).toString()));
     }
 
-    /** Scenario 4 — window DISABLED: the gate keeps using the legacy pointer
-     *  verbatim, so pre-existing behavior is untouched. */
+    /** Scenario 4 — window DISABLED and the pointer has drifted AHEAD of the
+     *  calendar (one advanceBusinessDate per resolved backlog Day Close). The gate
+     *  must compare against the Candidate Business Day (= today), not the pointer,
+     *  or today's own unclosed Business Day reads as a prior one. sessionDate keeps
+     *  tracking the pointer, unchanged. */
     @Test
-    void openSessionWithBusinessDayWindowDisabledStillGatesOnLegacyPointer() {
+    void openSessionWithWindowDisabledGatesOnCandidateDayNotDriftedPointer() {
         Long branchId = 1L;
-        LocalDate pointer = LocalDate.of(2026, 8, 5);
+        LocalDate today = LocalDate.now();
+        LocalDate driftedPointer = today.plusDays(1);
 
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
-        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(pointer);
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(driftedPointer);
         when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
-        // Stubbed against the POINTER, not today — proves the legacy path is intact.
-        when(businessDateService.isDateClosed(branchId, pointer)).thenReturn(false);
-        when(repo.findUnclosedSessionsBeforeDate(branchId, pointer)).thenReturn(List.of());
+        // Stubbed against TODAY, not the pointer — the gate must ask about today.
+        when(businessDateService.isDateClosed(branchId, today)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, today)).thenReturn(List.of());
         when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, "T1", PosSessionStatus.OPEN))
                 .thenReturn(Optional.empty());
-        when(businessDayStateService.findUnclosedBusinessDay(branchId)).thenReturn(Optional.empty());
+        // Today is the oldest Business Day with no PosDayClose row — its own sessions
+        // are all CLOSED, which is precisely the reported production state.
+        when(businessDayStateService.findUnclosedBusinessDay(branchId)).thenReturn(Optional.of(today));
 
         PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
 
         assertEquals(PosSessionStatus.OPEN, opened.getStatus());
-        assertEquals(pointer, opened.getSessionDate());
+        assertEquals(today, opened.getTradingDate());
+        assertEquals(driftedPointer, opened.getSessionDate(), "sessionDate must still track the pointer");
+    }
+
+    /** Same unconfigured-window branch, but the unclosed day is GENUINELY prior —
+     *  Day Close really is overdue. Must still block (BBQA-5.3-013 regression). */
+    @Test
+    void openSessionWithWindowDisabledStillBlocksOnGenuinelyPriorUnclosedDay() {
+        Long branchId = 1L;
+        LocalDate today = LocalDate.now();
+        LocalDate stale = today.minusDays(2);
+
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(today);
+        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
+        when(businessDateService.isDateClosed(branchId, today)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, today)).thenReturn(List.of());
+        when(businessDayStateService.findUnclosedBusinessDay(branchId)).thenReturn(Optional.of(stale));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, stale)).thenReturn(List.of());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+        assertTrue(ex.getReason().contains(stale.toString()));
+    }
+
+    /** Unconfigured window, today's Business Day still has an OPEN session — the
+     *  same-Business-Day reopen path must not be blocked by it either. */
+    @Test
+    void openSessionWithWindowDisabledAllowsReopenWhileTodaysDayStillHasAnOpenSession() {
+        Long branchId = 1L;
+        LocalDate today = LocalDate.now();
+
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(today);
+        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
+        when(businessDateService.isDateClosed(branchId, today)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, today)).thenReturn(List.of());
+        when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, "T1", PosSessionStatus.OPEN))
+                .thenReturn(Optional.empty());
+        when(businessDayStateService.findUnclosedBusinessDay(branchId)).thenReturn(Optional.of(today));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        assertEquals(today, opened.getTradingDate());
     }
 
     /** Proves tradingDate is genuinely resolver-driven (not just now.toLocalDate())
@@ -348,17 +405,19 @@ class PosSessionServiceTest {
         assertEquals(laggingBusinessDate, opened.getSessionDate());
     }
 
-    /** Existing pointer-driven gating (getCurrentBusinessDate/isDateClosed) must be
-     *  called exactly as before — Phase 3A adds a field write, not a new gate. */
+    /** The pointer is still read (sessionDate depends on it), but the already-closed
+     *  gate asks about the Candidate Business Day — for an unconfigured window,
+     *  today — so a drifted pointer can no longer decide whether trading is blocked. */
     @Test
-    void openSessionStillUsesLegacyBusinessDatePointerForGating() {
+    void openSessionReadsPointerButGatesOnCandidateBusinessDay() {
         LocalDate businessDate = LocalDate.of(2020, 1, 1);
         stubOpenSessionPreconditions(1L, businessDate, "T1");
 
         service.openSession("T1", "Counter 1", bd("100"));
 
         verify(businessDateService).getCurrentBusinessDate(1L);
-        verify(businessDateService).isDateClosed(1L, businessDate);
+        verify(businessDateService).isDateClosed(1L, LocalDate.now());
+        verify(businessDateService, org.mockito.Mockito.never()).isDateClosed(1L, businessDate);
     }
 
     @Test
@@ -432,7 +491,10 @@ class PosSessionServiceTest {
      *  must never block a second/third/... session from opening on that same day. */
     @Test
     void openSessionAllowsWhenUnclosedBusinessDayEqualsCurrentBusinessDate() {
-        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        // The unclosed day must equal the CANDIDATE Business Day (today) — that is
+        // what "today's own in-progress day" means now that the gate no longer
+        // consults the pointer.
+        LocalDate businessDate = LocalDate.now();
         stubOpenSessionPreconditions(1L, businessDate, "T1");
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(businessDate));
 
@@ -869,8 +931,9 @@ class PosSessionServiceTest {
         LocalDate businessDate = LocalDate.of(2026, 1, 1);
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
         when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(businessDate);
-        when(businessDateService.isDateClosed(1L, businessDate)).thenReturn(false);
-        when(repo.findUnclosedSessionsBeforeDate(1L, businessDate)).thenReturn(List.of());
+        // Gate operands are the Candidate Business Day (today), not the pointer.
+        when(businessDateService.isDateClosed(1L, LocalDate.now())).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(1L, LocalDate.now())).thenReturn(List.of());
         PosSession existing = openSession();
         existing.setOpenedBy("cashier1");
         when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN))
@@ -2006,8 +2069,9 @@ class PosSessionServiceTest {
         LocalDate businessDate = LocalDate.of(2026, 1, 1);
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
         when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(businessDate);
-        when(businessDateService.isDateClosed(1L, businessDate)).thenReturn(false);
-        when(repo.findUnclosedSessionsBeforeDate(1L, businessDate)).thenReturn(List.of());
+        // Gate operands are the Candidate Business Day (today), not the pointer.
+        when(businessDateService.isDateClosed(1L, LocalDate.now())).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(1L, LocalDate.now())).thenReturn(List.of());
 
         PosSession ownerSessionElsewhere = openSession();
         ownerSessionElsewhere.setId(9L);

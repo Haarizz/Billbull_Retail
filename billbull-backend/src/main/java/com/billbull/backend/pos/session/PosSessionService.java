@@ -297,9 +297,18 @@ public class PosSessionService {
         // misreported as an unclosed PREVIOUS one and every further session on the
         // same Business Day was blocked.
         LocalDate candidateBusinessDay = BusinessDayResolver.resolve(now, businessDaySettings);
-        // Branches with NO configured window keep the legacy pointer verbatim, so
-        // their behavior is byte-identical to before this change.
-        LocalDate gateBusinessDate = businessDaySettings.isConfigured() ? candidateBusinessDay : businessDate;
+        // The gate ALWAYS compares against the Candidate Business Day — including
+        // for branches with no configured window, where BusinessDayResolver already
+        // returns now.toLocalDate() and the pointer was the only remaining way for
+        // the two domains to diverge. Keeping the legacy pointer here (as an earlier
+        // pass did) left the same bug alive for exactly those branches: resolving a
+        // backlog of pending Day Closes advances the pointer once per close
+        // (advanceBusinessDate is unconditionally +1), so it can end up AHEAD of the
+        // calendar — pointer 2026-08-05 while the unclosed tradingDate is today,
+        // 2026-08-04 — and today's own Business Day is again read as an unclosed
+        // PRIOR one. A genuinely stale prior day still blocks: it is strictly before
+        // the Candidate too (BBQA-5.3-013 unaffected).
+        LocalDate gateBusinessDate = candidateBusinessDay;
 
         // Stage 3B.2B — per-branch enforcement switch. A failure to even read the
         // flag is itself an infrastructure concern and must fail open to the
