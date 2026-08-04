@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Lock } from 'lucide-react';
 import EntryForm from './EntryForm';
 import StockCard from './StockCard';
 import CustomerPriceCard from './CustomerPriceCard';
@@ -28,6 +28,9 @@ const POSItemEntryModal = ({
     onChangeDiscount,
     editablePrice,
     editableDiscount,
+    lockQuantity,
+    lockedBatch,
+    lockedSerial,
     customerName,
     selectedPriceRef,
     onSelectPrice
@@ -54,6 +57,14 @@ const POSItemEntryModal = ({
                         <p className="text-xs text-white/80 font-medium font-mono uppercase">
                             {product.code || 'SKU-UNKNOWN'} &bull; {product.uom || 'UNIT'}
                         </p>
+                        {/* The scan already pinned one physical unit — show it so the
+                            cashier can see exactly what they are confirming. */}
+                        {(lockedSerial || lockedBatch) && (
+                            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white/25 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
+                                <Lock size={10} strokeWidth={3} />
+                                {lockedSerial ? `Serial ${lockedSerial}` : `Batch ${lockedBatch}`}
+                            </span>
+                        )}
                     </div>
 
                     <div className="flex-1 p-4 sm:p-6 md:overflow-y-auto">
@@ -72,6 +83,7 @@ const POSItemEntryModal = ({
                             onConfirm={onConfirm}
                             mode={mode}
                             uom={product.uom || 'BAG'}
+                            lockQuantity={lockQuantity}
                         />
                     </div>
                 </div>

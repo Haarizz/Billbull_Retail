@@ -1,6 +1,7 @@
 import { printZplBatch } from "./zebraZpl";
 import { createPrintJob, dispatchPrintJob, reportPrintJobResult } from "../api/posPrintJobApi";
 import { printPosPrinterEscPos } from "../api/posPrinterApi";
+import { startPrintTimer } from "./printTiming";
 
 const PRINT_AGENT_BASES = [
   "http://127.0.0.1:19777",
@@ -67,25 +68,57 @@ const agentFetch = async (path, init = {}) => {
   return response.json();
 };
 
+// In-flight probe, so N concurrent prints (or a warm-up racing the first real
+// print) share ONE round of health checks instead of each running their own.
+let probeInFlight = null;
+
+const probeBase = async (base) => {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
+    const resp = await fetch(`${base}/health`, { signal: controller.signal });
+    clearTimeout(timer);
+    return resp.ok;
+  } catch {
+    return false;
+  }
+};
+
 export const resolvePrintAgentBase = async () => {
   if (resolvedAgentBase) return resolvedAgentBase;
   if (lastProbeFailedAt && Date.now() - lastProbeFailedAt < PROBE_RETRY_COOLDOWN_MS) return null;
-  for (const base of PRINT_AGENT_BASES) {
+  if (probeInFlight) return probeInFlight;
+
+  // Probe the candidate hosts CONCURRENTLY rather than one-after-the-other. The
+  // 127.0.0.1-then-localhost preference order is still honoured (the winner is
+  // picked by index, not by who answered first), but a dead/filtered first
+  // candidate no longer serialises its full timeout in front of the second —
+  // worst case is one HEALTH_PROBE_TIMEOUT_MS, not two.
+  probeInFlight = (async () => {
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
-      const resp = await fetch(`${base}/health`, { signal: controller.signal });
-      clearTimeout(timer);
-      if (resp.ok) {
-        resolvedAgentBase = base;
-        return base;
+      const results = await Promise.all(PRINT_AGENT_BASES.map(probeBase));
+      const winner = PRINT_AGENT_BASES.find((_, i) => results[i]);
+      if (winner) {
+        resolvedAgentBase = winner;
+        return winner;
       }
-    } catch {
-      // Keep probing candidates.
+      lastProbeFailedAt = Date.now();
+      return null;
+    } finally {
+      probeInFlight = null;
     }
-  }
-  lastProbeFailedAt = Date.now();
-  return null;
+  })();
+  return probeInFlight;
+};
+
+/**
+ * Fire-and-forget health probe used to warm `resolvedAgentBase` (and the browser's
+ * TCP/keep-alive connection to the agent) BEFORE the operator clicks Print, so the
+ * first print of a session doesn't pay the discovery round-trip inline. Safe to call
+ * repeatedly — it no-ops once resolved and is deduped by `probeInFlight`.
+ */
+export const warmPrintAgent = () => {
+  resolvePrintAgentBase().catch(() => {});
 };
 
 // The agent returns Windows/PowerShell PascalCase fields (Name, DriverName,
@@ -245,6 +278,49 @@ const trackPrintJobSafely = async (fn, label) => {
   }
 };
 
+/**
+ * Starts the create→dispatch bookkeeping WITHOUT blocking on it, returning a promise
+ * that resolves to the job (or null).
+ *
+ * Previously both calls were awaited before a single byte was sent to the printer, so
+ * every print paid two serial backend round-trips of pure audit bookkeeping up front —
+ * the exact opposite of what the "must never block the actual print" contract above
+ * says. create→dispatch are still strictly ordered relative to each other and to the
+ * later result report (callers chain off this same promise), so the recorded job
+ * lifecycle is byte-for-byte what it was; it just no longer sits in front of the paper.
+ */
+const beginPrintJobTracking = (printer, { jobType, sourceType, sourceRefId, payload }) => {
+  if (!printer?.id) return Promise.resolve(null);
+  return trackPrintJobSafely(() => createPrintJob({
+    printerId: printer.id,
+    jobType,
+    sourceType: sourceType || null,
+    sourceRefId: sourceRefId || null,
+    payload,
+  }), "create print job").then(async (job) => {
+    if (!job) return null;
+    await trackPrintJobSafely(() => dispatchPrintJob(job.id), "dispatch print job");
+    return job;
+  });
+};
+
+/**
+ * Reports the outcome once the (concurrently running) create→dispatch chain has
+ * settled. Deliberately NOT awaited by callers: the receipt is already physically
+ * printing, and making the operator wait on an audit write adds latency for nothing.
+ */
+const finishPrintJobTracking = (jobPromise, success, errorMessage) => {
+  jobPromise
+    .then((job) => {
+      if (!job) return null;
+      return trackPrintJobSafely(
+        () => reportPrintJobResult(job.id, success ? { success: true } : { success: false, errorMessage }),
+        success ? "report print job success" : "report print job failure",
+      );
+    })
+    .catch((err) => console.warn("[print-job] result reporting failed (non-blocking):", err));
+};
+
 export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, title, sourceType, sourceRefId } = {}) => {
   if (!printer) {
     throw new Error("Printer configuration is missing.");
@@ -257,16 +333,12 @@ export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, tit
     throw new Error("Configured printer does not have a system printer name.");
   }
 
-  const job = printer.id
-    ? await trackPrintJobSafely(() => createPrintJob({
-        printerId: printer.id,
-        jobType: "RECEIPT",
-        sourceType: sourceType || null,
-        sourceRefId: sourceRefId || null,
-        payload: receiptText,
-      }), "create print job")
-    : null;
-  if (job) await trackPrintJobSafely(() => dispatchPrintJob(job.id), "dispatch print job");
+  const jobPromise = beginPrintJobTracking(printer, {
+    jobType: "RECEIPT",
+    sourceType,
+    sourceRefId,
+    payload: receiptText,
+  });
 
   try {
     const result = await printReceiptThroughAgent({
@@ -279,15 +351,10 @@ export const sendReceiptToConfiguredPrinter = async (printer, { receiptText, tit
       portNumber: printer.portNumber,
       deviceIdentifier: printer.deviceIdentifier,
     });
-    if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
+    finishPrintJobTracking(jobPromise, true);
     return result;
   } catch (err) {
-    if (job) {
-      await trackPrintJobSafely(
-        () => reportPrintJobResult(job.id, { success: false, errorMessage: err?.message || "Print failed." }),
-        "report print job failure",
-      );
-    }
+    finishPrintJobTracking(jobPromise, false, err?.message || "Print failed.");
     throw err;
   }
 };
@@ -307,16 +374,15 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
     throw new Error("Configured printer does not have a system printer name.");
   }
 
-  const job = printer.id
-    ? await trackPrintJobSafely(() => createPrintJob({
-        printerId: printer.id,
-        jobType: "RECEIPT",
-        sourceType: sourceType || null,
-        sourceRefId: sourceRefId || null,
-        payload: receiptText || "[ESC/POS binary receipt]",
-      }), "create print job")
-    : null;
-  if (job) await trackPrintJobSafely(() => dispatchPrintJob(job.id), "dispatch print job");
+  const timer = startPrintTimer(`escpos → ${printer.deviceName || printer.systemPrinterName || printer.ipAddress}`);
+
+  const jobPromise = beginPrintJobTracking(printer, {
+    jobType: "RECEIPT",
+    sourceType,
+    sourceRefId,
+    payload: receiptText || "[ESC/POS binary receipt]",
+  });
+  timer.mark("print-job tracking (async, off-path)");
 
   try {
     // Network/IP printers are relayed straight through the backend, which opens
@@ -327,7 +393,10 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
     let result;
     if (printer.connectionType === "NETWORK_IP") {
       result = await printPosPrinterEscPos(printer.id, dataBase64);
+      timer.mark("backend relay → network printer");
     } else {
+      await resolvePrintAgentBase();
+      timer.mark("resolve agent base");
       try {
         result = await printEscPosThroughAgent({
           printerName: printer.systemPrinterName,
@@ -337,7 +406,10 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
           portNumber: printer.portNumber,
           title,
         });
-        await logEscPosIntegrity(dataBase64, result);
+        timer.mark("agent /print/escpos → printer");
+        // Diagnostic only — hashing the whole payload is pure overhead on the
+        // operator's critical path, so let it run after we've already returned.
+        void logEscPosIntegrity(dataBase64, result);
       } catch (escPosErr) {
         // The queue's driver rejected the raw job (typically a v4/WSD-class
         // driver — StartDocPrinter refuses datatype RAW). Fall back to the
@@ -359,20 +431,18 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
             deviceIdentifier: printer.deviceIdentifier,
           });
           result = { ...textResult, fallbackUsed: "text", escPosError: escPosErr?.message || String(escPosErr) };
+          timer.mark("agent /print/receipt (text fallback)");
         } catch {
           throw escPosErr; // both modes failed — the ESC/POS error is the meaningful one
         }
       }
     }
-    if (job) await trackPrintJobSafely(() => reportPrintJobResult(job.id, { success: true }), "report print job success");
+    finishPrintJobTracking(jobPromise, true);
+    timer.end(result?.fallbackUsed ? "text-fallback" : "ok");
     return result;
   } catch (err) {
-    if (job) {
-      await trackPrintJobSafely(
-        () => reportPrintJobResult(job.id, { success: false, errorMessage: err?.message || "Print failed." }),
-        "report print job failure",
-      );
-    }
+    finishPrintJobTracking(jobPromise, false, err?.message || "Print failed.");
+    timer.end("failed");
     throw err;
   }
 };

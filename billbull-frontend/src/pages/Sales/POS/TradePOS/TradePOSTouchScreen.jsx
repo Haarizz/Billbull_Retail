@@ -1,10 +1,8 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { TradeHeader } from './components/layout/TradeHeader';
 import { TradeMainCanvas } from './components/layout/TradeMainCanvas';
 import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
-import POSItemEntryContainer from '../../../../components/pos/ItemEntry/POSItemEntryContainer';
-import { ProductEntryMode } from '../../../../components/pos/ItemEntry/constants';
 
 /**
  * TradePOSTouchScreen
@@ -54,52 +52,16 @@ export const TradePOSTouchScreen = React.memo((props) => {
     selectedCategory,
     setSelectedCategory,
     filteredProducts,
-    addToInvoice,
-    createInvoiceLine,
-    updateInvoiceLine,
-    posProductsLoading
+    posProductsLoading,
+
+    // Product Entry Mode controllers — owned by POSSales.jsx, which is the single
+    // place that decides Direct Add vs Open Entry Dialog and renders the dialog.
+    handleProductSelection,
+    handleEditItem
   } = props;
 
   // Presentation state for mobile/tablet responsive behavior
   const [mobileActiveTab, setMobileActiveTab] = useState('catalog'); // 'catalog' | 'cart'
-
-  // Default to opening the entry dialog to allow quantity/price editing before adding
-  const itemEntryMode = posSettings?.productEntryMode || ProductEntryMode.OPEN_ENTRY_DIALOG;
-  const [isItemEntryOpen, setIsItemEntryOpen] = useState(false);
-  const [selectedProductForEntry, setSelectedProductForEntry] = useState(null);
-  const [itemEntryAction, setItemEntryAction] = useState('add'); // 'add' | 'edit'
-
-  // Single controller for product selection logic (Add Mode)
-  const handleProductSelection = useCallback((product, explicitPayload = null) => {
-    if (itemEntryMode === ProductEntryMode.DIRECT_ADD || explicitPayload) {
-      if (explicitPayload) {
-        // If it came from the dialog, use the single-transaction wrapper
-        createInvoiceLine(explicitPayload);
-      } else {
-        // Legacy fast-path
-        addToInvoice(product, 1);
-      }
-
-      if (isItemEntryOpen) {
-        setIsItemEntryOpen(false);
-        setSelectedProductForEntry(null);
-      }
-    } else if (itemEntryMode === ProductEntryMode.OPEN_ENTRY_DIALOG) {
-      setItemEntryAction('add');
-      setSelectedProductForEntry(product);
-      setIsItemEntryOpen(true);
-    }
-  }, [itemEntryMode, isItemEntryOpen, addToInvoice, createInvoiceLine]);
-
-  // Controller for editing an existing cart row
-  const handleEditItem = useCallback((itemId) => {
-    const item = currentInvoice?.items?.find(i => i.id === itemId);
-    if (!item) return;
-
-    setItemEntryAction('edit');
-    setSelectedProductForEntry(item);
-    setIsItemEntryOpen(true);
-  }, [currentInvoice]);
 
   // Grouped and memoized prop objects to prevent full-tree re-renders
   const headerProps = useMemo(() => ({
@@ -207,35 +169,6 @@ export const TradePOSTouchScreen = React.memo((props) => {
 
         </div>
       </main>
-
-      {/* Reusable Item Entry Modal */}
-      {selectedProductForEntry && (
-        <POSItemEntryContainer
-          isOpen={isItemEntryOpen}
-          onClose={() => {
-            setIsItemEntryOpen(false);
-            setSelectedProductForEntry(null);
-          }}
-          product={itemEntryAction === 'add' ? selectedProductForEntry : undefined}
-          invoiceLine={itemEntryAction === 'edit' ? selectedProductForEntry : undefined}
-          mode={itemEntryAction}
-          posSettings={posSettings}
-          customerId={selectedCustomerData?.id}
-          customerCode={selectedCustomerData?.code}
-          customerName={selectedCustomerData?.name}
-          warehouseId={currentSession?.warehouseId || posSettings?.defaultWarehouseId}
-          onConfirm={(payload) => {
-            if (itemEntryAction === 'add') {
-              handleProductSelection(selectedProductForEntry, payload);
-            } else {
-              // Edit mode: single transaction overwrite using update wrapper
-              updateInvoiceLine(payload);
-              setIsItemEntryOpen(false);
-              setSelectedProductForEntry(null);
-            }
-          }}
-        />
-      )}
 
       {/* Mobile Bottom Navigation */}
       <nav className="lg:hidden shrink-0 bg-white border-t border-gray-200 p-2 flex justify-around shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] relative z-10 gap-2">

@@ -166,13 +166,16 @@ import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { TradePOSTouchScreen } from './POS/TradePOS/TradePOSTouchScreen';
+import POSItemEntryContainer from '../../components/pos/ItemEntry/POSItemEntryContainer';
+import { ProductEntryMode } from '../../components/pos/ItemEntry/constants';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
 import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
-import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../utils/localPrintAgent';
+import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
+import { startPrintTimer } from '../../utils/printTiming';
 import { buildEscPosReceiptBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
 import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
 import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
@@ -775,6 +778,13 @@ export default function POSSales() {
   // addToInvoice directly there would permanently use the mount-time tax
   // mode. Route through this ref, kept current every render, instead.
   const addToInvoiceRef = useRef(null);
+  // Same frozen-closure problem, same fix: handleUnifiedEntry reads the live
+  // POS settings, the Product Entry Mode controller and the feedback toaster
+  // through refs kept current on every render.
+  const posSettingsRef = useRef(null);
+  const handleProductSelectionRef = useRef(null);
+  const showFeedbackRef = useRef(null);
+  posSettingsRef.current = posSettings;
   // True when the Quick Customer modal was launched from the Checkout credit
   // panel, so the newly created customer is auto-selected as the credit buyer.
   const quickCustomerCreditCtxRef = useRef(false);
@@ -3120,6 +3130,9 @@ export default function POSSales() {
         const req = pendingPriceOverride;
         setPendingPriceOverride(null);
         if (req.type === 'ADD_ITEM') {
+          // Resumption of an add that already passed through handleProductSelection
+          // (and, in dialog mode, was already confirmed) — not a new selection, so
+          // it must not be re-routed through the Product Entry Mode decision.
           addToInvoice(req.product, req.quantity, req.batch, req.serial, req.expiry, { ...req.overrides, approved: true });
         } else if (req.type === 'UPDATE_PRICE') {
           updateItemPrice(req.itemId, req.newPrice, true);
@@ -4170,6 +4183,12 @@ export default function POSSales() {
     return out;
   }, [cartViewDetailed, posSettings]);
 
+  // Discover (and keep a warm connection to) the local print agent as soon as the
+  // POS screen mounts, rather than on the first Print click. The probe is bounded,
+  // deduped and cached inside localPrintAgent, so this just moves a round-trip that
+  // used to sit inside the operator's first print out of the critical path.
+  useEffect(() => { warmPrintAgent(); }, []);
+
   const loadPrinterConfigs = useCallback(async (branchIdOverride = null) => {
     const fallbackBranchId = sessionStorage.getItem('activeBranchId');
     const branchId = branchIdOverride
@@ -4352,17 +4371,10 @@ export default function POSSales() {
         };
     const qrContent = buildQrContent(buildPosPrintData(full, activeFooter), tplOutletName);
 
-    // The QR *image* (for the HTML/browser path) and the ESC/POS build (which only
-    // needs the raw qrContent *string* — the printer renders its own QR natively, and
-    // dithers the logo raster if any) are independent of each other. Running them
-    // concurrently instead of one-after-the-other roughly halves the wait before the
-    // preferred, fastest print path (ESC/POS, no OS print dialog at all) is ready.
-    // QR image is needed when the ACTIVE template's QR toggle is on — Template 2
-    // has its own (per sub-tab); Template 1 uses the invoice/receipt toggle.
-    const qrToggleOn = receiptTemplateId === 'billbull-ar' ? activeT2.showQRCode : activeShowQRCode;
-    const qrDataUrlPromise = qrToggleOn
-      ? QRCode.toDataURL(qrContent, { errorCorrectionLevel: 'L', width: 160, margin: 1 })
-      : Promise.resolve(null);
+    // Only the raw qrContent *string* is needed here — the ESC/POS path has the
+    // printer render its own QR natively (GS ( k), so no rasterised QR image is
+    // built on this path. (The QR *image* is only meaningful to an HTML renderer;
+    // the checkout A4/preview sites build their own via generatePrintHtmlAsync.)
     const escPosOpts = {
       companyName: tplOutletName,
       trn: tplOutletTrn,
@@ -4425,9 +4437,7 @@ export default function POSSales() {
     // toggle flags with the activeT2 values so the real checkout print honours
     // the Template 2 designer settings for the sub-tab that applies to THIS
     // invoice — not always the Tax Invoice tab's. These keys are consumed by
-    // the bilingual canvas renderer (ESC/POS) and, below, by mapToTemplate2Data
-    // (HTML fallback).
-    const t2Toggles = activeT2;
+    // the bilingual canvas renderer (ESC/POS).
     if (receiptTemplateId === 'billbull-ar') {
       escPosOpts.showLogo = activeT2.showLogo;
       escPosOpts.showCompanyDetails = activeT2.showCompanyDetails;
@@ -4465,85 +4475,16 @@ export default function POSSales() {
       return null;
     });
 
-    const [qrDataUrl, escPosBase64] = await Promise.all([qrDataUrlPromise, escPosPromise]);
+    const escPosBase64 = await escPosPromise;
 
-    // Template 2 (Arabic/bilingual) uses its own HTML renderer for the browser
-    // print-preview / fallback path — same swap the ESC/POS build above already
-    // makes, so a fallback print (or reprint) still matches the saved template.
-    const html = receiptTemplateId === 'billbull-ar'
-      ? buildTemplate2Html(mapToTemplate2Data(
-          {
-            name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
-            logoDataUrl: tplLogoDataUrl,
-            // Real ZATCA QR (image) when QR is enabled AND no stamp is uploaded;
-            // an uploaded stamp replaces the QR (same rule as Template 1). Kept
-            // separate so the component prints a genuine verifiable QR, not the
-            // stamp image mislabelled as a QR. Gated by Template 2's own QR toggle.
-            qrDataUrl: activeT2.showQRCode && !tplStampDataUrl ? qrDataUrl : null,
-            stampDataUrl: activeT2.showQRCode ? tplStampDataUrl : null,
-            footerText: activeFooter,
-            titleEn: activeHeader,
-            titleAr: activeHeaderAr,
-          },
-          mapInvoiceToTxn(full, {
-            ...escPosOpts,
-            // Account Balance is data-gated on showCreditBalance in the mapper;
-            // the T2 toggle is already folded into escPosOpts.showCreditBalance.
-            cashierName: cashierNameOverride || cashierDisplayName,
-            terminalId: full.posTerminalId || currentTerminal?.terminalId,
-          }),
-          t2Toggles,
-        ))
-      : buildThermalReceiptHtml(tplInvoicePaper, full, {
-      companyName: tplOutletName,
-      trn: tplOutletTrn,
-      // documentTitle is the bold receipt title (defaults to 'TAX INVOICE'
-      // otherwise); pass activeHeader there instead of `header` so a no-tax
-      // sale's "SALES INVOICE" replaces it instead of printing underneath it.
-      documentTitle: activeHeader,
-      footer: activeFooter,
-      showTrn: activeShowTrn,
-      isReprint,
-      zatcaQrDataUrl: qrDataUrl,
-      logoDataUrl: tplLogoDataUrl,
-      stampDataUrl: activeShowQRCode ? tplStampDataUrl : null,
-      showLogo: activeShowLogo,
-      showCompanyDetails: activeShowCompanyDetails,
-      outletAddress: tplOutletAddress,
-      outletPhone: tplOutletPhone,
-      showServiceCharge: tplInvoiceShowGrandTotalBanner,
-      showVatSummary: activeShowVatSummary,
-      // No-tax sale ⇒ suppress ALL tax content (per-line VAT%, Taxable Amount
-      // row, VAT summary row) so the receipt reads as a plain Sales Invoice.
-      hasTax,
-      showPaymentDetails: activeShowPaymentDetails,
-      showQRCode: activeShowQRCode,
-      showCustomerDetails: activeShowCustomerDetails,
-      showLoyaltyPoints: activeShowLoyaltyPoints,
-      showCreditBalance: resolvedShowCreditBalance,
-      showFooterText: activeShowFooterText,
-      cashierName: cashierNameOverride || cashierDisplayName,
-      terminalId: full.posTerminalId || currentTerminal?.terminalId,
-      counterName: full.posCounterName || currentTerminal?.counterName,
-      cashGiven,
-      changeAmount,
-      mixedCashGiven,
-      mixedCardGiven,
-      mixedCardType,
-      paymentLines,
-      depositApplied,
-      balanceDue,
-      shippingCharge,
-      customerPhone,
-      customerEmail,
-      deliveryAddress: full.shippingAddress || null,
-      creditPreviousBalance,
-      creditInvoiceCredit,
-      creditAmountPaid,
-      creditUpdatedBalance,
-      currency: activeCurrency,
-      qrPlacement: tplInvoiceQrPlacement,
-    });
+    // NOTE (perf): this builder previously also rendered the full receipt HTML
+    // (Template 1 buildThermalReceiptHtml / Template 2 buildTemplate2Html) plus a
+    // rasterised QR data-URL purely to feed it. Nothing consumed that `html` — every
+    // call site here destructures only { text, escPosBase64 }, and the checkout
+    // preview / A4 sites build their own HTML from their own memos. Rendering it on
+    // the print critical path was pure dead work on every sale and every reprint, so
+    // it is gone. `text` below is still built: it is the real ESC/POS→text/GDI
+    // compatibility fallback payload AND the print-job audit payload.
     const text = buildThermalReceiptText(tplInvoicePaper, full, {
       companyName: tplOutletName,
       trn: tplOutletTrn,
@@ -4565,7 +4506,7 @@ export default function POSSales() {
       hasTax,
       currency: activeCurrency,
     });
-    return { html, text, escPosBase64 };
+    return { text, escPosBase64 };
   }, [
     activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
     tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoicePaper,
@@ -5081,6 +5022,7 @@ export default function POSSales() {
   const handleReprintConfirm = async () => {
     if (!reprintSelectedInvoice) return;
     setReprintPrinting(true);
+    const timer = startPrintTimer(`reprint (${reprintPrintMode})`);
     try {
       const inv = reprintInvoices.find(i => i.invoiceNumber === reprintSelectedInvoice);
       if (inv?.id) {
@@ -5092,6 +5034,7 @@ export default function POSSales() {
           terminalId: currentTerminal?.terminalId,
           branchId: currentTerminal?.branchId || currentSession?.branchId,
         });
+        timer.mark("backend /reprint (invoice + audit)");
         const full = reprintResult.invoice;
         setReprintInvoices(prev => prev.map(i => i.id === inv.id
           ? { ...i, reprintCount: full.reprintCount, lastReprintedBy: full.lastReprintedBy, lastReprintedAt: full.lastReprintedAt }
@@ -5129,6 +5072,7 @@ export default function POSSales() {
             showCreditBalanceOverride: false,
             cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
           });
+          timer.mark("build ESC/POS + text");
           openCashDrawer('RECEIPT_PRINT');
           await printThermalReceiptWithConfiguredPrinter({
             full,
@@ -5136,9 +5080,12 @@ export default function POSSales() {
             escPosBase64,
             title: `Reprint ${full.invoiceNumber || reprintSelectedInvoice || ''}`.trim(),
           });
+          timer.mark("send to printer");
         }
       }
+      timer.end('ok');
     } catch (err) {
+      timer.end('failed');
       console.warn('Reprint error', err);
       alert(`Reprint failed: ${err?.message || 'printer error'}.`);
     } finally {
@@ -5153,6 +5100,7 @@ export default function POSSales() {
     setBarcodeScanFeedback({ type, message });
     setTimeout(() => setBarcodeScanFeedback(null), 2500);
   };
+  showFeedbackRef.current = showFeedback;
 
   /**
    * Unified search/scan handler. One input both filters the grid (as you type)
@@ -5199,9 +5147,15 @@ export default function POSSales() {
         clearInputs();
         return;
       }
-      const res = addToInvoiceRef.current(cached, qty);
+      const res = handleProductSelectionRef.current(cached, { quantity: qty });
       if (res && res.ok === false) {
         showFeedback('error', res.reason || 'Could not add this item.');
+        clearInputs();
+        return;
+      }
+      // OPEN_ENTRY_DIALOG took over — nothing is in the cart yet, so no
+      // "added" toast and no last-scanned banner until the cashier confirms.
+      if (res?.deferred) {
         clearInputs();
         return;
       }
@@ -5253,7 +5207,16 @@ export default function POSSales() {
           clearInputs();
           return;
         }
-        addToInvoiceRef.current(product, 1, null, pinnedSerialNumber);
+        const serialRes = handleProductSelectionRef.current(product, { quantity: 1, serial: pinnedSerialNumber });
+        if (serialRes && serialRes.ok === false) {
+          showFeedback('error', serialRes.reason || 'Could not add this item.');
+          clearInputs();
+          return;
+        }
+        if (serialRes?.deferred) {
+          clearInputs();
+          return;
+        }
         setLastScannedItem({
           name: product.name, nameAr: product.nameAr || '',
           barcode: pinnedSerialNumber, qty: 1, total: product.price,
@@ -5273,9 +5236,17 @@ export default function POSSales() {
       }
       // addToInvoice enforces one-batch-one-unit for batch/serial products added
       // without a pin (e.g. resolved by product code) — surface its refusal.
-      const addRes = addToInvoiceRef.current(product, effectiveQty, pinnedBatchNumber, null, pinnedExpiry);
+      const addRes = handleProductSelectionRef.current(product, {
+        quantity: effectiveQty,
+        batch: pinnedBatchNumber,
+        expiry: pinnedExpiry,
+      });
       if (addRes && addRes.ok === false) {
         showFeedback('error', addRes.reason || 'Could not add this item.');
+        clearInputs();
+        return;
+      }
+      if (addRes?.deferred) {
         clearInputs();
         return;
       }
@@ -5306,6 +5277,114 @@ export default function POSSales() {
 
   // Back-compat alias: existing scan/keypad call sites add-to-cart.
   const handleBarcodeScan = handleUnifiedEntry;
+
+  /* ─── Product Entry Mode: the single decision point ────────────────────────
+   * Every way a product can enter the cart — grid/touch click, barcode scan,
+   * keyboard Enter from the search box, scan suggestions, favourites/quick
+   * products — routes through handleProductSelection. Nothing else may call
+   * addToInvoice for a *new* selection, otherwise the configured mode gets
+   * bypassed (which is exactly the bug this replaces). Templates receive
+   * handleProductSelection/handleEditItem as props and stay presentational.
+   * ─────────────────────────────────────────────────────────────────────── */
+  const [isItemEntryOpen, setIsItemEntryOpen] = useState(false);
+  const [selectedProductForEntry, setSelectedProductForEntry] = useState(null);
+  const [itemEntryAction, setItemEntryAction] = useState('add'); // 'add' | 'edit'
+  // Carries the scan-resolved unit (batch/serial/expiry) plus qty locking into
+  // the dialog, and back out again when the cashier confirms.
+  const [itemEntryContext, setItemEntryContext] = useState(null);
+
+  const closeItemEntry = useCallback(() => {
+    setIsItemEntryOpen(false);
+    setSelectedProductForEntry(null);
+    setItemEntryContext(null);
+  }, []);
+
+  /**
+   * Resolves the configured Product Entry Mode and acts on it.
+   * DIRECT_ADD        → adds straight to the cart (qty 1 unless a scan said otherwise)
+   * OPEN_ENTRY_DIALOG → opens the Item Entry dialog; nothing is added until confirm
+   *
+   * Returns addToInvoice's `{ ok, reason }` in DIRECT_ADD mode so callers can
+   * surface refusals, or `{ ok: true, deferred: true }` when the dialog took
+   * over — `deferred` tells scan callers to skip their "added" feedback.
+   *
+   * DIRECT_ADD is the default everywhere (backend, POS Settings, here); there is
+   * deliberately no OPEN_ENTRY_DIALOG fallback.
+   */
+  const handleProductSelection = useCallback((product, options = {}) => {
+    if (!product) return { ok: false, reason: 'No product selected' };
+    const { quantity = 1, batch = null, serial = null, expiry = null } = options;
+    const entryMode = posSettingsRef.current?.productEntryMode || ProductEntryMode.DIRECT_ADD;
+
+    if (entryMode !== ProductEntryMode.OPEN_ENTRY_DIALOG) {
+      return addToInvoiceRef.current(product, quantity, batch, serial, expiry);
+    }
+
+    // A scan that already resolved a specific batch/serial still opens the
+    // dialog — the unit is preselected and locked, price/discount stay editable.
+    const isControlledUnit = Boolean(batch || serial || product.isBatch || product.isSerial);
+    setItemEntryAction('add');
+    setSelectedProductForEntry(product);
+    setItemEntryContext({
+      batch,
+      serial,
+      expiry,
+      // One physical unit per batch/serial line — qty is fixed at 1.
+      quantity: isControlledUnit ? 1 : quantity,
+      lockQuantity: isControlledUnit,
+    });
+    setIsItemEntryOpen(true);
+    return { ok: true, deferred: true };
+  }, []);
+  // handleUnifiedEntry is frozen at mount (empty dep array), so it reaches the
+  // live handler through a ref — same reason addToInvoiceRef exists.
+  handleProductSelectionRef.current = handleProductSelection;
+
+  /** Opens the Item Entry dialog on an existing cart row. */
+  const handleEditItem = useCallback((itemId) => {
+    const item = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
+    if (!item) return;
+    setItemEntryAction('edit');
+    setSelectedProductForEntry(item);
+    setItemEntryContext({ lockQuantity: Boolean(item.batchControlled) });
+    setIsItemEntryOpen(true);
+  }, []);
+
+  const handleItemEntryConfirm = useCallback((payload) => {
+    if (itemEntryAction === 'edit') {
+      updateInvoiceLine(payload);
+      closeItemEntry();
+      return;
+    }
+    // Re-attach the scan-pinned unit so the confirmed line lands on the exact
+    // batch/serial the cashier scanned.
+    const res = createInvoiceLine({
+      ...payload,
+      batch: itemEntryContext?.batch || null,
+      serial: itemEntryContext?.serial || null,
+      expiry: itemEntryContext?.expiry || null,
+    });
+    if (res && res.ok === false) {
+      // The price floor sent this to the supervisor-PIN gate. The pending
+      // override already carries the whole line, so hand off and get out of the
+      // way rather than stacking dialogs.
+      if (res.reason === 'supervisor-approval-required') {
+        closeItemEntry();
+        return;
+      }
+      showFeedbackRef.current?.('error', res.reason || 'Could not add this item.');
+      return;
+    }
+    closeItemEntry();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemEntryAction, itemEntryContext, createInvoiceLine, updateInvoiceLine, closeItemEntry]);
+
+  // Stable object so POSItemEntryContainer's data-fetch effect doesn't re-run
+  // (and reset the form) on every parent render.
+  const itemEntryInitialValues = useMemo(
+    () => ({ quantity: itemEntryContext?.quantity ?? 1 }),
+    [itemEntryContext]
+  );
 
   const resetFocusMode = () => {
     setPosActionMode('none');
@@ -8874,8 +8953,14 @@ export default function POSSales() {
 
       if (newProdRes && newProdRes.product) {
         const mappedProduct = mapPosProductAggregateItem(newProdRes);
-        addToInvoice(mappedProduct);
-        showFeedback('success', `${mappedProduct.name} created and added to cart!`);
+        const res = handleProductSelection(mappedProduct);
+        if (res?.deferred) {
+          showFeedback('success', `${mappedProduct.name} created — confirm the entry to add it.`);
+        } else if (res && res.ok === false) {
+          showFeedback('error', res.reason || `${mappedProduct.name} created but could not be added.`);
+        } else {
+          showFeedback('success', `${mappedProduct.name} created and added to cart!`);
+        }
       }
 
       setShowQuickProductModal(false);
@@ -8884,7 +8969,7 @@ export default function POSSales() {
     } finally {
       setQuickProductLoading(false);
     }
-  }, [quickProductForm, loadPosProducts, addToInvoice, showFeedback]);
+  }, [quickProductForm, loadPosProducts, handleProductSelection, showFeedback]);
 
   const handleCheckout = useCallback(() => {
     const grandWithShip = (currentInvoice?.total || 0) + (Number(shippingCharge) || 0);
@@ -8916,7 +9001,12 @@ export default function POSSales() {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
-    addToInvoice, createInvoiceLine, updateInvoiceLine, updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
+    // Product Entry Mode is decided here, once, for every template.
+    handleProductSelection, handleEditItem,
+    // addToInvoice/createInvoiceLine/updateInvoiceLine are deliberately NOT
+    // handed to templates — a template that could call them directly could
+    // bypass the Product Entry Mode decision, which is the bug this fixes.
+    updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     activeLayawayId, activeLayawayDeposit, shippingCharge,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
@@ -9420,6 +9510,29 @@ export default function POSSales() {
       {currentView === 'dashboard' && renderDashboard()}
       {currentView === 'console' && <POSConsole {...consoleProps} />}
       {currentView === 'touch-screen' && (posTemplate === 'compact' ? <TradePOSTouchScreen {...touchScreenProps} /> : <POSTouchScreen {...touchScreenProps} />)}
+
+      {/* Item Entry dialog — owned here so every template and every entry path
+          (click, touch, scan, keyboard search) shares one instance and one
+          Product Entry Mode decision. */}
+      {selectedProductForEntry && (
+        <POSItemEntryContainer
+          isOpen={isItemEntryOpen}
+          onClose={closeItemEntry}
+          onConfirm={handleItemEntryConfirm}
+          product={itemEntryAction === 'add' ? selectedProductForEntry : undefined}
+          invoiceLine={itemEntryAction === 'edit' ? selectedProductForEntry : undefined}
+          mode={itemEntryAction}
+          initialValues={itemEntryInitialValues}
+          lockQuantity={Boolean(itemEntryContext?.lockQuantity)}
+          lockedBatch={itemEntryContext?.batch || null}
+          lockedSerial={itemEntryContext?.serial || null}
+          posSettings={posSettings}
+          customerId={selectedCustomerData?.id}
+          customerCode={selectedCustomerData?.code}
+          customerName={selectedCustomerData?.name}
+          warehouseId={currentSession?.warehouseId || posSettings?.defaultWarehouseId}
+        />
+      )}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
       {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal}
@@ -12656,7 +12769,7 @@ export default function POSSales() {
               <div className="bg-gray-50 border-t border-gray-200 px-3 sm:px-6 py-4 flex flex-wrap justify-end gap-3 shrink-0">
                 <button onClick={() => setShowPriceCheck(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
                 {foundProduct && (
-                  <button onClick={() => { addToInvoice(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
+                  <button onClick={() => { handleProductSelection(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
                     className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-6 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition-colors">
                     <Plus className="h-4 w-4" />Add to Cart
                   </button>
@@ -12718,11 +12831,12 @@ export default function POSSales() {
                       key={product.id}
                       type="button"
                       onClick={() => {
-                        const res = addToInvoice(product, 1);
+                        const res = handleProductSelection(product, { quantity: 1 });
                         if (res && res.ok === false) {
                           showFeedback('error', res.reason || 'Could not add this item.');
                           return;
                         }
+                        if (res?.deferred) return;
                         showFeedback('success', `${product.name} added`);
                       }}
                       className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-[#F5C742] hover:shadow-md transition-all text-left"

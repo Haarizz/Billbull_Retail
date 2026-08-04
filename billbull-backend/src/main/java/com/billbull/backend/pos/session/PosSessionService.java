@@ -260,6 +260,47 @@ public class PosSessionService {
         Long branchId = branch.getId();
         LocalDate businessDate = businessDateService.getCurrentBusinessDate(branchId);
 
+        // Settings are loaded ONCE here — the Business Day gate itself now needs the
+        // configured window (see gateBusinessDate below), and every later consumer
+        // (shadow validation, enforcement, idle/hard-limit timeouts, tradingDate)
+        // reuses this same snapshot instead of re-reading. A settings-datasource
+        // failure must never blow up session opening: it is recorded as a SETTINGS
+        // Infrastructure Failure and degrades to an unconfigured window, which
+        // leaves the gate on the legacy pointer — i.e. exactly the pre-existing
+        // behavior. `settingsAvailable` is false in that case, so the Business Day
+        // engine is skipped rather than run against fabricated settings.
+        // The failure is NOT recorded here — it is handed to whichever path runs
+        // below (shadow validation or enforcement) so each still records it under
+        // exactly the same metric it always did.
+        PosSettings settings;
+        BusinessDayInfrastructureException settingsFailure = null;
+        try {
+            settings = loadSettingsOrFail(branchId);
+        } catch (BusinessDayInfrastructureException failure) {
+            settings = new PosSettings();
+            settingsFailure = failure;
+        }
+        BusinessDaySettings businessDaySettings = BusinessDaySettings.from(settings);
+        LocalDateTime now = LocalDateTime.now();
+
+        // ── Candidate Business Day, resolved ONCE for the whole open flow ────────
+        // Every Business-Day comparison below (the legacy gate's "is there a PRIOR
+        // unclosed day", the already-closed check, and the persisted tradingDate)
+        // must be made against the same value. Mixing the legacy Business Date
+        // pointer with Business-Day-domain data is what produced the reported bug:
+        // findUnclosedBusinessDay() answers from tradingDate (Business Day domain)
+        // and returns the CURRENT, still-in-progress day when Day Close has not run
+        // yet, while `businessDate` is the persisted legacy pointer, which
+        // advanceBusinessDate() had already moved to the next calendar day. With a
+        // 09:00–21:00 window on 2026-08-04 16:42 that made the comparison
+        // 2026-08-04.isBefore(2026-08-05) → true, so the current Business Day was
+        // misreported as an unclosed PREVIOUS one and every further session on the
+        // same Business Day was blocked.
+        LocalDate candidateBusinessDay = BusinessDayResolver.resolve(now, businessDaySettings);
+        // Branches with NO configured window keep the legacy pointer verbatim, so
+        // their behavior is byte-identical to before this change.
+        LocalDate gateBusinessDate = businessDaySettings.isConfigured() ? candidateBusinessDay : businessDate;
+
         // Stage 3B.2B — per-branch enforcement switch. A failure to even read the
         // flag is itself an infrastructure concern and must fail open to the
         // already-proven legacy gate, same philosophy as everything below.
@@ -278,30 +319,30 @@ public class PosSessionService {
             // Flag OFF (the default for every branch): behavior is byte-identical to
             // Stage 3B.2A.6 — legacy gate is authoritative, Shadow Validation runs
             // purely for observation afterward, its result never consulted here.
-            blockingException = runLegacyGate(branchId, businessDate);
+            blockingException = runLegacyGate(branchId, gateBusinessDate);
             boolean legacyAllowed = blockingException == null;
-            runShadowValidation(branchId, legacyAllowed);
+            runShadowValidation(branchId, settings, settingsFailure, legacyAllowed);
         } else {
             // Flag ON: BusinessDayValidationService becomes authoritative. An
             // Infrastructure Failure (categorized or not) falls back to the exact
             // same legacy gate, for this request only — never blocks a cashier
             // because the new engine itself couldn't run.
             try {
-                PosSettings enforcementSettings = loadSettingsOrFail(branchId);
+                if (settingsFailure != null) throw settingsFailure;
                 BusinessDayValidationResult result = businessDayValidationService.validate(
-                        branchId, LocalDateTime.now(), BusinessDaySettings.from(enforcementSettings));
+                        branchId, now, businessDaySettings);
                 businessDayStateService.recordEnforcementDecision(branchId, result);
                 blockingException = toEnforcementException(branchId, result);
             } catch (BusinessDayInfrastructureException infra) {
                 businessDayStateService.recordEnforcementFallback(branchId, infra.getCategory(), infra);
-                blockingException = runLegacyGate(branchId, businessDate);
+                blockingException = runLegacyGate(branchId, gateBusinessDate);
             } catch (Exception unclassified) {
                 // A bug in the new engine must never block a real cashier — same
                 // fail-open guarantee, for a failure mode too unexpected to have
                 // already been wrapped as a BusinessDayInfrastructureException.
                 businessDayStateService.recordEnforcementFallback(branchId,
                         BusinessDayInfrastructureException.FailureCategory.UNEXPECTED, unclassified);
-                blockingException = runLegacyGate(branchId, businessDate);
+                blockingException = runLegacyGate(branchId, gateBusinessDate);
             }
         }
 
@@ -339,10 +380,9 @@ public class PosSessionService {
             return existing.get();
         }
 
-        // Snapshot settings for idle / hard-limit timeout
-        PosSettings settings = posSettingsRepository.findByBranchId(branchId).orElse(new PosSettings());
-
-        LocalDateTime now = LocalDateTime.now();
+        // `settings` / `now` / `candidateBusinessDay` were resolved once at the top
+        // of this method (the gate needs them too) — deliberately NOT re-derived
+        // here, so the value that was validated is the value that gets persisted.
         PosSession session = new PosSession();
         session.setBranchId(branchId);
         session.setBranchName(branch.getName());
@@ -361,7 +401,6 @@ public class PosSessionService {
         // configured (the default), this is byte-identical to now.toLocalDate().
         // See PosSession#getTradingDate() / PosPendingDayCloseResolver /
         // docs/business-day-architecture.md.
-        LocalDate candidateBusinessDay = BusinessDayResolver.resolve(now, BusinessDaySettings.from(settings));
         session.setTradingDate(candidateBusinessDay);
         session.setLastActivityAt(now);
         session.setDurationSeconds(null);
@@ -391,7 +430,7 @@ public class PosSessionService {
         // Phase 3A shadow validation — diagnostics only, recorded after persistence,
         // never influences anything above or below. Compares the legacy Business
         // Date pointer against the now-persisted Business Day (tradingDate).
-        boolean overnightWindowConfigured = BusinessDaySettings.from(settings).isConfigured()
+        boolean overnightWindowConfigured = businessDaySettings.isConfigured()
                 && PosOperatingHoursCalculator.isOvernightWindow(settings.getOperatingStartTime(), settings.getOperatingEndTime());
         businessDayStateService.recordShadowValidation(branchId, businessDate, candidateBusinessDay, overnightWindowConfigured);
 
@@ -420,6 +459,13 @@ public class PosSessionService {
      * fail-open fallback (flag ON, but the new engine hit an Infrastructure
      * Failure for this request). Returns the {@link ResponseStatusException} to
      * throw, or {@code null} if the legacy gate allows the session to proceed.
+     */
+    /*
+     * NOTE on the {@code businessDate} parameter: callers pass the RESOLVED
+     * Candidate Business Day when the branch has a Business Day window
+     * configured, and the legacy Business Date pointer only when it does not.
+     * The comparisons below are unchanged; what changed is that both sides of
+     * {@code isBefore} now come from the same Business Day domain.
      */
     private ResponseStatusException runLegacyGate(Long branchId, LocalDate businessDate) {
         try {
@@ -471,9 +517,12 @@ public class PosSessionService {
      *  the flag-OFF path now (Stage 3B.2B): its result never participates in any
      *  if/throw/return; wrapped so a bug in the new engine can never prevent a
      *  real cashier from opening a session. */
-    private void runShadowValidation(Long branchId, boolean legacyAllowed) {
+    private void runShadowValidation(Long branchId, PosSettings shadowSettings,
+                                     BusinessDayInfrastructureException settingsFailure, boolean legacyAllowed) {
         try {
-            PosSettings shadowSettings = loadSettingsOrFail(branchId);
+            // Settings are now loaded once by openSession(); a failure there is
+            // rethrown here so it is recorded under the same metric as before.
+            if (settingsFailure != null) throw settingsFailure;
             BusinessDayValidationResult shadowResult = businessDayValidationService.validate(
                     branchId, LocalDateTime.now(), BusinessDaySettings.from(shadowSettings));
             businessDayStateService.recordValidationOutcome(branchId, legacyAllowed, shadowResult);
@@ -721,8 +770,18 @@ public class PosSessionService {
         try {
             Branch branch = closed.getBranchId() != null
                     ? branchRepository.findById(closed.getBranchId()).orElse(null) : null;
+            // Post the cash-pickup JE against the session's Business Day, not the
+            // calendar date: with an overnight window a session opened 2026-08-04
+            // 22:00 and closed 2026-08-05 02:00 belongs to Business Day 08-04, and
+            // its GL must land there too or the Z-Report and the GL disagree. The
+            // date is used only as the JournalEntry posting date (see
+            // PostingEngineService#createJournalFromSessionClose) — nothing
+            // downstream depends on it being the calendar date. tradingDate is null
+            // only for sessions opened before Phase 3A, hence the fallback.
+            LocalDate glDate = closed.getTradingDate() != null
+                    ? closed.getTradingDate() : java.time.LocalDate.now();
             postingEngine.createJournalFromSessionClose(
-                    closed.getId(), actualClosing, java.time.LocalDate.now(), branch);
+                    closed.getId(), actualClosing, glDate, branch);
         } catch (Exception e) {
             // Non-blocking — GL failure must not prevent the session from closing.
         }

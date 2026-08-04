@@ -13,6 +13,9 @@ const EntryForm = ({
     onChangeQuantity,
     onChangeDiscount,
     isReadOnly = false,
+    // A batch/serial line is exactly one physical unit, so its quantity is
+    // fixed even though price/discount stay editable.
+    lockQuantity = false,
     errors = {},
     onCancel,
     onConfirm,
@@ -24,8 +27,10 @@ const EntryForm = ({
     const discId = useId();
     const [discountMode, setDiscountMode] = useState('percent'); // 'percent' | 'amount'
 
+    const qtyDisabled = isReadOnly || lockQuantity;
+
     const handleQtyChange = (delta) => {
-        if (isReadOnly) return;
+        if (qtyDisabled) return;
         const current = parseFloat(quantity) || 0;
         const next = Math.max(0, current + delta);
         onChangeQuantity?.(next);
@@ -75,7 +80,7 @@ const EntryForm = ({
                         <button 
                             type="button" 
                             onClick={() => handleQtyChange(-1)}
-                            disabled={isReadOnly}
+                            disabled={qtyDisabled}
                             className="w-12 h-12 rounded-xl border-2 border-gray-100 bg-gray-50 flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-50 shrink-0"
                         >
                             <Minus size={18} strokeWidth={3} />
@@ -87,24 +92,29 @@ const EntryForm = ({
                             step="any"
                             value={quantity}
                             onChange={(e) => onChangeQuantity?.(e.target.value)}
-                            disabled={isReadOnly}
+                            disabled={qtyDisabled}
                             className={`flex-1 w-full px-4 py-3 text-xl font-bold text-slate-800 border-2 rounded-xl focus:outline-none transition-colors text-center ${
                                 errors.quantity 
                                     ? 'border-red-400 focus:border-red-500' 
                                     : 'border-gray-100 focus:border-amber-400 bg-white'
-                            } ${isReadOnly ? 'opacity-70 cursor-not-allowed bg-gray-50' : ''}`}
+                            } ${qtyDisabled ? 'opacity-70 cursor-not-allowed bg-gray-50' : ''}`}
                             placeholder="1"
                         />
                         <button 
                             type="button" 
                             onClick={() => handleQtyChange(1)}
-                            disabled={isReadOnly}
+                            disabled={qtyDisabled}
                             className="w-12 h-12 rounded-xl border-2 border-gray-100 bg-gray-50 flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors disabled:opacity-50 shrink-0"
                         >
                             <Plus size={18} strokeWidth={3} />
                         </button>
                     </div>
                     {errors.quantity && <p className="mt-1.5 text-xs text-red-500 font-medium">{errors.quantity}</p>}
+                    {lockQuantity && !isReadOnly && (
+                        <p className="mt-1.5 text-xs text-gray-400 font-medium">
+                            Batch/serial-tracked — one unit per line. Scan another unit to add more.
+                        </p>
+                    )}
                 </div>
 
                 {/* Discount */}

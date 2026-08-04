@@ -408,8 +408,13 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
       const gross = parseFloat(it.grossAmount ?? (q * parseFloat(it.unitPrice ?? it.price ?? 0)));
       return sum + (Number.isFinite(gross) ? gross : 0);
     }, 0);
-    const lineDiscountTotal = Math.max(0, grossSubtotal - taxableAmount);
+    // INCLUSIVE: grossAmount is VAT-laden, so compare against the VAT-laden net
+    // (taxable + tax); comparing against the ex-VAT taxable base manufactured a
+    // phantom Discount equal to the VAT. See posPrintUtils.js for the original.
+    const taxTotalForNet = parseFloat(invoice.taxTotal || 0) || 0;
+    const netAfterDiscount = invoice.taxInclusive ? taxableAmount + taxTotalForNet : taxableAmount;
     const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    const lineDiscountTotal = Math.max(0, grossSubtotal - netAfterDiscount - billDiscountTotal);
     discountTotal = lineDiscountTotal + billDiscountTotal;
     subTotal = grossSubtotal > 0 ? grossSubtotal : taxableAmount;
   }

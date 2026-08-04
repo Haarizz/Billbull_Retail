@@ -218,8 +218,14 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
       const gross = Number(it.grossAmount ?? q * Number(it.unitPrice ?? it.price ?? 0));
       return sum + (Number.isFinite(gross) ? gross : 0);
     }, 0);
-    const lineDiscount = Math.max(0, grossSubtotal - taxable);
-    discount = lineDiscount + (Number(invoice.billDiscountAmount || 0) || 0);
+    // INCLUSIVE: grossAmount is VAT-laden, so compare against the VAT-laden net
+    // (taxable + tax); comparing against the ex-VAT taxable base manufactured a
+    // phantom Discount equal to the VAT. See posPrintUtils.js for the original.
+    const taxTotalForNet = Number(invoice.taxTotal || 0) || 0;
+    const netAfterDiscount = invoice.taxInclusive ? taxable + taxTotalForNet : taxable;
+    const billDiscount = Number(invoice.billDiscountAmount || 0) || 0;
+    const lineDiscount = Math.max(0, grossSubtotal - netAfterDiscount - billDiscount);
+    discount = lineDiscount + billDiscount;
     subtotal = grossSubtotal > 0 ? grossSubtotal : taxable;
   }
 

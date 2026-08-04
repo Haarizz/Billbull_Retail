@@ -201,6 +201,99 @@ class PosSessionServiceTest {
         assertEquals(LocalDate.now(), opened.getTradingDate());
     }
 
+    // ---------------------------------------------------------------------
+    // "Previous Business Day Not Closed" regression — the gate must compare the
+    // unclosed Business Day (tradingDate domain) against the RESOLVED Candidate
+    // Business Day, never against the legacy Business Date pointer. Mixing the
+    // two made a branch on Business Day D, whose pointer had already advanced to
+    // D+1, read its own current day as an unclosed PREVIOUS day and refuse every
+    // further session.
+    // ---------------------------------------------------------------------
+
+    /** Helper: same-day 09:00–21:00 window, i.e. the reported configuration. */
+    private com.billbull.backend.pos.settings.PosSettings sameDayWindowSettings() {
+        com.billbull.backend.pos.settings.PosSettings s = new com.billbull.backend.pos.settings.PosSettings();
+        s.setOperatingHoursEnabled(true);
+        s.setOperatingStartTime(java.time.LocalTime.of(9, 0));
+        s.setOperatingEndTime(java.time.LocalTime.of(21, 0));
+        return s;
+    }
+
+    /** Scenario 1 — current Business Day is D, all its sessions are closed, Day
+     *  Close has not run, and the legacy pointer has already advanced to D+1.
+     *  A further session on D must still open. This is the reported bug. */
+    @Test
+    void openSessionAllowsAnotherSessionOnCurrentBusinessDayWhenPointerAlreadyAdvanced() {
+        Long branchId = 1L;
+        com.billbull.backend.pos.settings.PosSettings settings = sameDayWindowSettings();
+        LocalDate today = com.billbull.backend.pos.businessdate.BusinessDayResolver.resolve(
+                java.time.LocalDateTime.now(), com.billbull.backend.pos.businessdate.BusinessDaySettings.from(settings));
+
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
+        // Legacy pointer has rolled ahead of the actual Business Day.
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(today.plusDays(1));
+        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.of(settings));
+        when(businessDateService.isDateClosed(branchId, today)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, today)).thenReturn(List.of());
+        when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, "T1", PosSessionStatus.OPEN))
+                .thenReturn(Optional.empty());
+        // The oldest Business Day without a PosDayClose row IS the current one.
+        when(businessDayStateService.findUnclosedBusinessDay(branchId)).thenReturn(Optional.of(today));
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        assertEquals(today, opened.getTradingDate());
+    }
+
+    /** Scenario 2/3 — a genuinely PRIOR Business Day is unclosed. Still blocked,
+     *  with the same message, even though the pointer is unreliable. */
+    @Test
+    void openSessionStillBlocksWhenAGenuinelyPriorBusinessDayIsUnclosed() {
+        Long branchId = 1L;
+        com.billbull.backend.pos.settings.PosSettings settings = sameDayWindowSettings();
+        LocalDate today = com.billbull.backend.pos.businessdate.BusinessDayResolver.resolve(
+                java.time.LocalDateTime.now(), com.billbull.backend.pos.businessdate.BusinessDaySettings.from(settings));
+
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(today);
+        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.of(settings));
+        when(businessDateService.isDateClosed(branchId, today)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, today)).thenReturn(List.of());
+        when(businessDayStateService.findUnclosedBusinessDay(branchId))
+                .thenReturn(Optional.of(today.minusDays(1)));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, today.minusDays(1)))
+                .thenReturn(List.of());
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("100")));
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+        assertTrue(ex.getReason().contains(today.minusDays(1).toString()));
+    }
+
+    /** Scenario 4 — window DISABLED: the gate keeps using the legacy pointer
+     *  verbatim, so pre-existing behavior is untouched. */
+    @Test
+    void openSessionWithBusinessDayWindowDisabledStillGatesOnLegacyPointer() {
+        Long branchId = 1L;
+        LocalDate pointer = LocalDate.of(2026, 8, 5);
+
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
+        when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(pointer);
+        when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.empty());
+        // Stubbed against the POINTER, not today — proves the legacy path is intact.
+        when(businessDateService.isDateClosed(branchId, pointer)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, pointer)).thenReturn(List.of());
+        when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, "T1", PosSessionStatus.OPEN))
+                .thenReturn(Optional.empty());
+        when(businessDayStateService.findUnclosedBusinessDay(branchId)).thenReturn(Optional.empty());
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        assertEquals(pointer, opened.getSessionDate());
+    }
+
     /** Proves tradingDate is genuinely resolver-driven (not just now.toLocalDate())
      *  by configuring an overnight window and opening the session on the
      *  early-morning side of it — only BusinessDayResolver would roll this back to
@@ -211,8 +304,6 @@ class PosSessionServiceTest {
         LocalDate businessDate = LocalDate.of(2020, 1, 1);
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(branchId));
         when(businessDateService.getCurrentBusinessDate(branchId)).thenReturn(businessDate);
-        when(businessDateService.isDateClosed(branchId, businessDate)).thenReturn(false);
-        when(repo.findUnclosedSessionsBeforeDate(branchId, businessDate)).thenReturn(List.of());
         when(repo.findByBranchIdAndTerminalIdAndStatus(branchId, "T1", PosSessionStatus.OPEN))
                 .thenReturn(Optional.empty());
 
@@ -221,6 +312,14 @@ class PosSessionServiceTest {
         settings.setOperatingStartTime(java.time.LocalTime.of(8, 0));
         settings.setOperatingEndTime(java.time.LocalTime.of(2, 0)); // overnight
         when(posSettingsRepository.findByBranchId(branchId)).thenReturn(Optional.of(settings));
+
+        // With a CONFIGURED window the gate no longer queries the stale legacy
+        // pointer (2020-01-01) — it queries the resolved Candidate Business Day.
+        // Stubbing against the resolved day is itself the assertion that it does.
+        LocalDate resolvedDay = com.billbull.backend.pos.businessdate.BusinessDayResolver.resolve(
+                java.time.LocalDateTime.now(), com.billbull.backend.pos.businessdate.BusinessDaySettings.from(settings));
+        when(businessDateService.isDateClosed(branchId, resolvedDay)).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(branchId, resolvedDay)).thenReturn(List.of());
 
         // We can't control LocalDateTime.now() inside openSession(), so instead we
         // prove the *rule*: with these settings, "now" always resolves to either

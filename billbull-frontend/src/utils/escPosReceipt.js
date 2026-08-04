@@ -260,9 +260,33 @@ const loadImage = (dataUrl) => new Promise((resolve, reject) => {
   img.src = dataUrl;
 });
 
+// Dither cache: the raster for a given (image, width) is deterministic, but the
+// branch logo/stamp is the SAME data-URL on every receipt — so decoding the image,
+// running Floyd–Steinberg over ~100k pixels and re-packing the bitmap was repeated
+// in full for every single print. Keyed on the data-URL + width, capped so a session
+// that cycles through many branch logos can't grow without bound. Stores the promise
+// (not the resolved value) so two prints racing the first build share one computation.
+const DITHER_CACHE_MAX = 8;
+const ditherCache = new Map();
+
 // Dithers an image to 1-bit monochrome at the given dot width and returns it
 // already packed into ESC/POS GS v 0 raster bit-image command bytes.
 export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
+  const cacheKey = `${targetWidthDots}|${dataUrl}`;
+  const cached = ditherCache.get(cacheKey);
+  if (cached) return cached;
+  const pending = ditherImageToRasterCommandUncached(dataUrl, targetWidthDots);
+  ditherCache.set(cacheKey, pending);
+  // A failed build must not be cached as a permanent failure — drop it so the next
+  // print retries, preserving the caller's existing fall-back-on-error behaviour.
+  pending.catch(() => ditherCache.delete(cacheKey));
+  if (ditherCache.size > DITHER_CACHE_MAX) {
+    ditherCache.delete(ditherCache.keys().next().value);
+  }
+  return pending;
+};
+
+const ditherImageToRasterCommandUncached = async (dataUrl, targetWidthDots) => {
   const img = await loadImage(dataUrl);
   const aspect = img.naturalHeight / img.naturalWidth;
   const w = Math.min(targetWidthDots, img.naturalWidth > 0 ? targetWidthDots : targetWidthDots);
@@ -329,8 +353,14 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
   const xH = (bytesPerRow >> 8) & 0xff;
   const yL = h & 0xff;
   const yH = (h >> 8) & 0xff;
-  const header = [GS, 0x76, 0x30, 0x00, xL, xH, yL, yH];
-  return Uint8Array.from([...header, ...raster]);
+  // Build by allocate-and-set rather than Uint8Array.from([...header, ...raster]):
+  // the spread materialises an intermediate boxed JS array of every raster byte
+  // (tens of thousands for a logo) before copying it back down to bytes. Identical
+  // output, without the round-trip.
+  const out = new Uint8Array(8 + raster.length);
+  out.set([GS, 0x76, 0x30, 0x00, xL, xH, yL, yH], 0);
+  out.set(raster, 8);
+  return out;
 };
 
 // Packs a 1-bit black/white bitmap (row-major, true = black/print) into a single
@@ -348,7 +378,11 @@ const packBitmapToRasterCommand = (bits, w, h) => {
   const xH = (bytesPerRow >> 8) & 0xff;
   const yL = h & 0xff;
   const yH = (h >> 8) & 0xff;
-  return Uint8Array.from([GS, 0x76, 0x30, 0x00, xL, xH, yL, yH, ...raster]);
+  // allocate-and-set, not spread — see ditherImageToRasterCommand for why.
+  const out = new Uint8Array(8 + raster.length);
+  out.set([GS, 0x76, 0x30, 0x00, xL, xH, yL, yH], 0);
+  out.set(raster, 8);
+  return out;
 };
 
 // True when a string contains any character the printer's single-byte WPC1252
@@ -496,28 +530,44 @@ export const emitEscPosBrandedHeader = async (w, {
     w.push(align === 1 ? CMD.ALIGN_CENTER : CMD.ALIGN_LEFT);
     currentAlign = align;
   };
-  // A raster/image print (GS v 0) resets alignment on several clone controllers
-  // (the same clone-quirk family documented above for GS W). Invalidate the
-  // tracked state after one so the NEXT setAlign() call always re-sends ESC a n,
-  // instead of skipping it because the JS-side state thinks nothing changed —
-  // that mismatch is what silently dropped the header back to flush-left print
-  // (and let the unwrapped address line overflow/clip) after the logo raster.
+  // A raster/image print (GS v 0) resets alignment on several clone controllers.
+  // Invalidate the tracked state after one so the NEXT setAlign() call always
+  // re-sends ESC a n instead of skipping it because the JS-side state thinks
+  // nothing changed.
   const invalidateAlignAfterRaster = () => { currentAlign = null; };
 
-  // Same centred-text emitter the receipt body uses: crisp ESC/POS text for the
-  // Latin case, canvas raster for Arabic/other non-Latin-1 so glyphs render. Per
-  // the MARGIN_COLS note above, header lines are centred with the printer's
-  // NATIVE ESC a 1 (ALIGN_CENTER) rather than software space-padding — a prior
-  // attempt to software-center these lines (leading-space padding under
-  // ALIGN_LEFT) printed flush-left on clone controllers that collapse/ignore a
-  // long leading run of space characters, even though the same controllers
-  // honour ESC a 1 correctly.
+  // ── Header text centring: SOFTWARE, not ESC a 1 ────────────────────────────
+  // The client's POS-80C honours ESC a 1 for GRAPHICS (the logo raster centres
+  // correctly) but prints TEXT flush-left regardless of the alignment register —
+  // so every native-centred header line (TAX INVOICE, company name, address,
+  // Tel, TRN, COPY/REPRINT) came out left-aligned. Re-sending ESC a 1 after the
+  // logo raster does not help: the register is being applied to rasters only.
+  // Space padding is plain glyph data that no controller can ignore, so header
+  // text is centred in software under ALIGN_LEFT, inside the same gutter every
+  // body row uses. Rasters keep native ESC a 1 (it demonstrably works for them).
+  const centerInWidth = (text) => {
+    const t = String(text || '').slice(0, width);
+    return ' '.repeat(Math.max(0, Math.floor((width - t.length) / 2))) + t;
+  };
+  // Long values (the outlet address is routinely > 46 cols) MUST be word-wrapped
+  // before centring. Un-wrapped, the printer hard-wraps them itself mid-word at
+  // the full 48-col paper width — which both broke words and made the line span
+  // the whole paper, reinforcing the flush-left look. Earlier software-centring
+  // instead `slice`d to width, silently truncating the address.
+  const emitCenteredPlainText = (text, bold = false) => {
+    setAlign(0);
+    if (bold) w.push(CMD.BOLD_ON);
+    for (const ln of wrapToWidth(text, width)) w.gline(gutter, centerInWidth(ln));
+    if (bold) w.push(CMD.BOLD_OFF);
+  };
+
+  // Crisp ESC/POS text for the Latin case, canvas raster for Arabic/other
+  // non-Latin-1 so glyphs render at all.
   const emitCenteredText = (str, { fontPx = 26, bold = false } = {}) => {
     const text = String(str ?? '');
     if (!text) return;
     if (!hasNonPrintableLatin(text)) {
-      setAlign(1);
-      w.line(text);
+      emitCenteredPlainText(text, bold);
       return;
     }
     setAlign(1);
@@ -525,7 +575,7 @@ export const emitEscPosBrandedHeader = async (w, {
       widthDots: Math.round(printableDots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
     });
     if (raster) { w.push(raster); w.push([0x0a]); invalidateAlignAfterRaster(); } else {
-      w.line(text);
+      emitCenteredPlainText(text, bold);
     }
   };
 
@@ -545,33 +595,16 @@ export const emitEscPosBrandedHeader = async (w, {
     } catch { /* logo failed to decode/dither — print without it */ }
   }
 
-  if (documentTitle) {
-    setAlign(1);
-    w.push(CMD.BOLD_ON);
-    w.line(documentTitle);
-    w.push(CMD.BOLD_OFF);
-  }
+  if (documentTitle) emitCenteredPlainText(documentTitle, true);
   if (header) { emitCenteredText(header, { fontPx: 24 }); }
-  if (hasNonPrintableLatin(companyName || '')) {
-    emitCenteredText(companyName, { fontPx: 28, bold: true });
-  } else {
-    setAlign(1);
-    w.push(CMD.BOLD_ON);
-    w.line(companyName || '');
-    w.push(CMD.BOLD_OFF);
-  }
+  if (companyName) emitCenteredText(companyName, { fontPx: 28, bold: true });
   if (showCompanyDetails) {
     const addrLine = oneLineAddress(outletAddress);
     if (addrLine) emitCenteredText(addrLine, { fontPx: 22 });
     if (outletPhone) emitCenteredText(`Tel: ${outletPhone}`, { fontPx: 22 });
   }
   if (showTrn && trn) emitCenteredText(`TRN: ${trn}`, { fontPx: 22 });
-  if (isReprint) {
-    setAlign(1);
-    w.push(CMD.BOLD_ON);
-    w.line('*** COPY / REPRINT ***');
-    w.push(CMD.BOLD_OFF);
-  }
+  if (isReprint) emitCenteredPlainText('*** COPY / REPRINT ***', true);
 
   setAlign(0);
   emitDivider(w, gutter, hr);
@@ -824,8 +857,17 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
       const gross = parseFloat(it.grossAmount ?? (q * unit));
       return sum + (Number.isFinite(gross) ? gross : 0);
     }, 0);
-    const lineDiscountTotal = Math.max(0, grossSubtotal - resolvedTaxableAmount);
+    // INCLUSIVE: each line's grossAmount is VAT-laden, so it must be compared
+    // against the VAT-laden net (taxable + tax) — comparing it against the
+    // ex-VAT taxable base alone manufactured a phantom "Discount" exactly equal
+    // to the VAT on an undiscounted sale. EXCLUSIVE: gross is already ex-VAT.
+    // Mirrors posPrintUtils.js resolveInvoiceGrossTotals.
+    const taxTotalForNet = parseFloat(invoice.taxTotal || 0) || 0;
+    const netAfterDiscount = invoice.taxInclusive
+      ? resolvedTaxableAmount + taxTotalForNet
+      : resolvedTaxableAmount;
     const billDiscountTotal = parseFloat(invoice.billDiscountAmount || 0) || 0;
+    const lineDiscountTotal = Math.max(0, grossSubtotal - netAfterDiscount - billDiscountTotal);
     resolvedDiscountTotal = lineDiscountTotal + billDiscountTotal;
     resolvedSubTotal = grossSubtotal > 0 ? grossSubtotal : resolvedTaxableAmount;
   }
