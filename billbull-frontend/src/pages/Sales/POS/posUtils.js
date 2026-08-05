@@ -134,3 +134,94 @@ export const calculateDenominationTotal = (denom) => {
   }, 0);
 };
 
+/**
+ * Tax Enabled / Tax Mode / Branch Default VAT Rate live in BranchTaxConfiguration,
+ * NOT in PosSettings — POS merges them into its client-side posSettings object so
+ * the whole UI can read one object. That makes any `setPosSettings(savedRow)` a
+ * trap: the saved PosSettings row has no tax fields, so replacing state with it
+ * silently drops them and the cart falls back to Exclusive / 0% until a reload
+ * re-merges the branch config.
+ *
+ * Use this for every save response instead of assigning it directly: it applies
+ * the server's row on top of the current state while carrying the branch tax
+ * fields through untouched.
+ */
+export const BRANCH_TAX_FIELDS = ['taxEnabled', 'taxInclusive', 'branchDefaultVatRate'];
+
+export const mergeSavedPosSettings = (prev, saved) => {
+  const base = { ...(prev || {}), ...(saved || {}) };
+  BRANCH_TAX_FIELDS.forEach(field => {
+    if (prev && Object.prototype.hasOwnProperty.call(prev, field)) {
+      base[field] = prev[field];
+    }
+  });
+  return base;
+};
+
+/**
+ * Pure cart-total math for the POS cart. Extracted from POSSales'
+ * recalculateInvoice so the VAT Inclusive / VAT Exclusive behaviour can be
+ * tested directly — the component keeps calling this on every cart mutation
+ * (add from grid, barcode scan, qty change, discount, void, remove), so every
+ * entry path lands on exactly this one formula.
+ *
+ * The VAT mode is cart-global and read-only in POS: it comes from the branch's
+ * Tax Configuration (posSettings.taxInclusive), not from the individual line.
+ * Adding an item therefore never carries or overrides a mode of its own.
+ */
+export const computePosCartTotals = (items, billDiscountAmount = 0, posSettings = null) => {
+  const activeItems = items.filter(i => !i.isVoided);
+  const taxInclusive = !!posSettings?.taxInclusive;
+  const fallbackRate = posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0);
+
+  let subtotal = 0;       // gross line value (entered price x qty) before discount —
+                          // matches the backoffice invoice's "Sub Total" presentation
+  let totalDiscount = 0;  // line discount, as a straight % of the entered price
+  let tax = 0;            // extracted/added VAT after line discount
+
+  activeItems.forEach(item => {
+    const rate = toNumber(item.taxRate, fallbackRate) / 100;
+    const disc = (item.discount || 0) / 100;
+    const lineValue = item.price * item.quantity;
+    // Discount is a percentage OFF THE ENTERED PRICE (tax-inclusive when
+    // taxInclusive, ex-VAT otherwise) — e.g. "20% off AED 3,500" is AED 700,
+    // not AED 700 further reduced by the VAT divisor. Computing the discount
+    // on an already-VAT-stripped net (net/1+rate first, then *disc) silently
+    // deflates it by the same factor (700 -> 636.36 at 10% VAT), which
+    // desynced this cart-total preview from the backoffice/print totals that
+    // discount the entered price directly.
+    const discountAmount = lineValue * disc;
+    const netAfterDiscount = lineValue - discountAmount;
+    // In inclusive mode the discounted price still carries VAT, so strip it
+    // out now to get the net (ex-VAT) base; in exclusive mode it already is one.
+    const net = taxInclusive ? netAfterDiscount / (1 + rate) : netAfterDiscount;
+    const taxOnLine = taxInclusive ? (netAfterDiscount - net) : net * rate;
+    subtotal += lineValue;
+    totalDiscount += discountAmount;
+    tax += taxOnLine;
+  });
+
+  // Under INCLUSIVE VAT, netAfterDiscount (= subtotal - totalDiscount) already
+  // carries the tax, so `tax` must not be added again on top — only EXCLUSIVE
+  // mode adds it. Bill-level discount is subtracted flat either way.
+  const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + (taxInclusive ? 0 : tax));
+
+  // Voided lines are excluded from the total but disclosed separately in the
+  // cart summary. Value uses the same discounted line formula the cart's
+  // line-total cell shows, so the "Voided Items" figure matches the rows.
+  const voidedItems = items.filter(i => i.isVoided);
+  const voidedCount = voidedItems.length;
+  const voidedTotal = voidedItems.reduce(
+    (s, i) => s + (i.quantity * i.price * (1 - (i.discount || 0) / 100)),
+    0,
+  );
+
+  return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive, voidedTotal, voidedCount };
+};
+
+export const getPosVatLabel = (currentInvoice, posSettings) => {
+  if (!currentInvoice || !currentInvoice.items) return currentInvoice?.taxInclusive ? 'VAT incl.' : 'VAT';
+  const rates = [...new Set(currentInvoice.items.filter(i => !i.isVoided).map(i => toNumber(i.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0))))];
+  const base = rates.length === 1 ? `VAT (${rates[0]}%)` : 'VAT';
+  return currentInvoice.taxInclusive ? `${base} incl.` : base;
+};

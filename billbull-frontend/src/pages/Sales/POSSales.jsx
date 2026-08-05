@@ -147,7 +147,7 @@ import {
 // ─── POS sub-modules ──────────────────────────────────────────────────────────
 import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
 import { WALK_IN_CUSTOMER, POS_PRODUCT_PAGE_SIZE, CATEGORY_ICONS, STATUS_LABEL_TO_ENUM, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
-import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct, getPriceFloor } from './POS/posUtils';
+import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct, getPriceFloor, computePosCartTotals, mergeSavedPosSettings } from './POS/posUtils';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
   buildPosPrintData, buildPosA4Template, buildThermalReceiptText,
@@ -3246,7 +3246,7 @@ export default function POSSales() {
       const payload = { ...(posSettings || {}), ...settingsDraft };
       console.log('SAVING POS SETTINGS PAYLOAD:', payload);
       const saved = await savePosSettings(payload);
-      setPosSettings(saved || payload);
+      setPosSettings(prev => mergeSavedPosSettings(prev, saved || payload));
       setSettingsDraft(null);
       setSettingsSavedFlash(true);
       setTimeout(() => setSettingsSavedFlash(false), 2000);
@@ -3440,61 +3440,15 @@ export default function POSSales() {
     }
   };
 
-  const recalculateInvoice = (items, billDiscountAmount = 0) => {
-    const activeItems = items.filter(i => !i.isVoided);
-    // Global VAT mode: Inclusive means the entered price already contains VAT,
-    // Exclusive means VAT is added on top. Fallback rate from the branch's Tax
-    // Configuration — 0 outright when Tax Enabled is off (kill switch), regardless of the
-    // configured Branch Default VAT Rate.
-    const taxInclusive = !!posSettings?.taxInclusive;
-    console.log(`[recalculateInvoice] Evaluated taxInclusive = ${taxInclusive} (posSettings:`, posSettings, `)`);
-    const fallbackRate = posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0);
-
-    let subtotal = 0;       // gross line value (entered price x qty) before discount —
-                             // matches the backoffice invoice's "Sub Total" presentation
-    let totalDiscount = 0;  // line discount, as a straight % of the entered price
-    let tax = 0;            // extracted/added VAT after line discount
-
-    activeItems.forEach(item => {
-      const rate = toNumber(item.taxRate, fallbackRate) / 100;
-      const disc = (item.discount || 0) / 100;
-      const lineValue = item.price * item.quantity;
-      // Discount is a percentage OFF THE ENTERED PRICE (tax-inclusive when
-      // taxInclusive, ex-VAT otherwise) — e.g. "20% off AED 3,500" is AED 700,
-      // not AED 700 further reduced by the VAT divisor. Computing the discount
-      // on an already-VAT-stripped net (net/1+rate first, then *disc) silently
-      // deflates it by the same factor (700 -> 636.36 at 10% VAT), which
-      // desynced this cart-total preview from the backoffice/print totals that
-      // discount the entered price directly.
-      const discountAmount = lineValue * disc;
-      const netAfterDiscount = lineValue - discountAmount;
-      // In inclusive mode the discounted price still carries VAT, so strip it
-      // out now to get the net (ex-VAT) base; in exclusive mode it already is one.
-      const net = taxInclusive ? netAfterDiscount / (1 + rate) : netAfterDiscount;
-      const taxOnLine = taxInclusive ? (netAfterDiscount - net) : net * rate;
-      subtotal += lineValue;
-      totalDiscount += discountAmount;
-      tax += taxOnLine;
-    });
-
-    // Under INCLUSIVE VAT, netAfterDiscount (= subtotal - totalDiscount) already
-    // carries the tax, so `tax` must not be added again on top — only EXCLUSIVE
-    // mode adds it. Bill-level discount is subtracted flat either way (matches
-    // prior behavior).
-    const total = Math.max(0, subtotal - totalDiscount - billDiscountAmount + (taxInclusive ? 0 : tax));
-
-    // Voided lines are excluded from the total but disclosed separately in the
-    // cart summary. Value uses the same discounted line formula the cart's
-    // line-total cell shows, so the "Voided Items" figure matches the rows.
-    const voidedItems = items.filter(i => i.isVoided);
-    const voidedCount = voidedItems.length;
-    const voidedTotal = voidedItems.reduce(
-      (s, i) => s + (i.quantity * i.price * (1 - (i.discount || 0) / 100)),
-      0,
-    );
-
-    return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive, voidedTotal, voidedCount };
-  };
+  // Global VAT mode: Inclusive means the entered price already contains VAT,
+  // Exclusive means VAT is added on top. Fallback rate from the branch's Tax
+  // Configuration — 0 outright when Tax Enabled is off (kill switch), regardless
+  // of the configured Branch Default VAT Rate. The math itself lives in
+  // posUtils.computePosCartTotals so it can be unit-tested; this reads the live
+  // posSettings (every cart mutation re-runs it, so a scan always uses the
+  // current mode, never a mount-time snapshot).
+  const recalculateInvoice = (items, billDiscountAmount = 0) =>
+    computePosCartTotals(items, billDiscountAmount, posSettings);
 
   const clearInvoice = () => {
     setCurrentInvoice({
@@ -15091,7 +15045,7 @@ export default function POSSales() {
                       layoutHideItemsPanel: hideItemsPanel,
                       layoutHiddenPanelButtons: [...hiddenPanelButtons].join(','),
                     });
-                    setPosSettings(saved);
+                    setPosSettings(prev => mergeSavedPosSettings(prev, saved));
                   } catch (e) {
                     console.warn('POS layout save failed', e);
                   } finally {
