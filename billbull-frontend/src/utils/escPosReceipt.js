@@ -271,11 +271,16 @@ const ditherCache = new Map();
 
 // Dithers an image to 1-bit monochrome at the given dot width and returns it
 // already packed into ESC/POS GS v 0 raster bit-image command bytes.
-export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
-  const cacheKey = `${targetWidthDots}|${dataUrl}`;
+// `padToWidthDots` centres the image in SOFTWARE: the raster is emitted at the
+// full printable dot span with the image sitting in the middle of a white field,
+// so the print lands centred regardless of what the controller does with ESC a 1
+// (the client's POS-80C ignores the alignment register for rasters too, not just
+// for text — the logo came out left-of-centre on real 80mm paper).
+export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots, { padToWidthDots = 0 } = {}) => {
+  const cacheKey = `${targetWidthDots}|${padToWidthDots}|${dataUrl}`;
   const cached = ditherCache.get(cacheKey);
   if (cached) return cached;
-  const pending = ditherImageToRasterCommandUncached(dataUrl, targetWidthDots);
+  const pending = ditherImageToRasterCommandUncached(dataUrl, targetWidthDots, padToWidthDots);
   ditherCache.set(cacheKey, pending);
   // A failed build must not be cached as a permanent failure — drop it so the next
   // print retries, preserving the caller's existing fall-back-on-error behaviour.
@@ -286,21 +291,25 @@ export const ditherImageToRasterCommand = async (dataUrl, targetWidthDots) => {
   return pending;
 };
 
-const ditherImageToRasterCommandUncached = async (dataUrl, targetWidthDots) => {
+const ditherImageToRasterCommandUncached = async (dataUrl, targetWidthDots, padToWidthDots = 0) => {
   const img = await loadImage(dataUrl);
   const aspect = img.naturalHeight / img.naturalWidth;
-  const w = Math.min(targetWidthDots, img.naturalWidth > 0 ? targetWidthDots : targetWidthDots);
-  const h = Math.max(1, Math.round(w * aspect));
+  const imgW = Math.min(targetWidthDots, img.naturalWidth > 0 ? targetWidthDots : targetWidthDots);
+  const h = Math.max(1, Math.round(imgW * aspect));
+  // Raster width: the padded canvas when software-centring, else just the image.
+  const w = Math.max(imgW, padToWidthDots || 0);
+  const offsetX = Math.max(0, Math.floor((w - imgW) / 2));
 
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   // Thermal paper is white; flatten any transparency to white before dithering
-  // so transparent PNG logos don't dither to black noise.
+  // so transparent PNG logos don't dither to black noise. The white fill also
+  // forms the left/right pad that centres the image inside the raster.
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
-  ctx.drawImage(img, 0, 0, w, h);
+  ctx.drawImage(img, offsetX, 0, imgW, h);
 
   const imageData = ctx.getImageData(0, 0, w, h);
   const gray = new Float32Array(w * h);
@@ -536,15 +545,22 @@ export const emitEscPosBrandedHeader = async (w, {
   // nothing changed.
   const invalidateAlignAfterRaster = () => { currentAlign = null; };
 
-  // ── Header text centring: SOFTWARE, not ESC a 1 ────────────────────────────
-  // The client's POS-80C honours ESC a 1 for GRAPHICS (the logo raster centres
-  // correctly) but prints TEXT flush-left regardless of the alignment register —
-  // so every native-centred header line (TAX INVOICE, company name, address,
-  // Tel, TRN, COPY/REPRINT) came out left-aligned. Re-sending ESC a 1 after the
-  // logo raster does not help: the register is being applied to rasters only.
-  // Space padding is plain glyph data that no controller can ignore, so header
-  // text is centred in software under ALIGN_LEFT, inside the same gutter every
-  // body row uses. Rasters keep native ESC a 1 (it demonstrably works for them).
+  // ── ALL header centring is SOFTWARE, never ESC a 1 ─────────────────────────
+  // The client's POS-80C prints flush-left regardless of the alignment register,
+  // for BOTH text and rasters — so every native-centred header line (TAX INVOICE,
+  // company name, address, Tel, TRN, COPY/REPRINT) came out left-aligned, and the
+  // logo raster printed left-of-centre. Re-sending ESC a 1 after a raster does not
+  // help; the register is simply not applied.
+  //   • Text is centred with space padding — plain glyph data no controller can
+  //     ignore — under ALIGN_LEFT, inside the same gutter every body row uses.
+  //   • Rasters are centred inside the bitmap: built at the FULL paper dot span
+  //     with the image drawn at (W - imgW)/2 on white (ditherImageToRasterCommand's
+  //     `padToWidthDots`). A full-width raster cannot be shifted by the alignment
+  //     register, so it lands centred either way. This is exactly what Template 2
+  //     (bilingualReceiptCanvas.js) has always done, and its logo prints centred on
+  //     this same hardware — which is what proved ESC a 1 was the culprit here.
+  // An earlier version of this comment claimed ESC a 1 worked for graphics. It does
+  // not; that assumption is why the logo drifted.
   const centerInWidth = (text) => {
     const t = String(text || '').slice(0, width);
     return ' '.repeat(Math.max(0, Math.floor((width - t.length) / 2))) + t;
@@ -571,8 +587,10 @@ export const emitEscPosBrandedHeader = async (w, {
       return;
     }
     setAlign(1);
+    // Full paper width + align:'center' → the glyphs sit centred in the bitmap,
+    // so this doesn't depend on ESC a 1 either (same reasoning as the logo).
     const raster = renderTextLineToRasterCommand(text, {
-      widthDots: Math.round(printableDots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
+      widthDots: PAPER_DOTS[mm], fontPx, bold, align: 'center', rtl: hasArabic(text),
     });
     if (raster) { w.push(raster); w.push([0x0a]); invalidateAlignAfterRaster(); } else {
       emitCenteredPlainText(text, bold);
@@ -587,7 +605,12 @@ export const emitEscPosBrandedHeader = async (w, {
   // some clones).
   if (showLogo && logoDataUrl) {
     try {
-      const raster = await ditherImageToRasterCommand(logoDataUrl, Math.round(printableDots * 0.6));
+      // Padded to the FULL paper dot span so the logo is centred by the bitmap
+      // itself: exact whether or not the controller honours ESC a 1 for rasters
+      // (a full-width raster can't be shifted by the alignment register).
+      const raster = await ditherImageToRasterCommand(logoDataUrl, Math.round(printableDots * 0.6), {
+        padToWidthDots: PAPER_DOTS[mm],
+      });
       w.line(' ');
       w.push(raster);
       w.push([0x0a]);
@@ -714,8 +737,10 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     const text = String(str ?? '');
     if (!text) return;
     if (!hasNonPrintableLatin(text)) { w.line(text); return; }
+    // Full paper width so align:'center' centres inside the bitmap rather than
+    // relying on ESC a 1, which this hardware ignores (see emitEscPosBrandedHeader).
     const raster = renderTextLineToRasterCommand(text, {
-      widthDots: Math.round(printableDots * 0.92), fontPx, bold, align: 'center', rtl: hasArabic(text),
+      widthDots: PAPER_DOTS[mm], fontPx, bold, align: 'center', rtl: hasArabic(text),
     });
     if (raster) { w.push(raster); w.push([0x0a]); } else { w.line(text); }
   };
@@ -976,7 +1001,11 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
       // through the same proven-clean GS v 0 raster path used for the logo.
       try {
         w.push(CMD.ALIGN_CENTER);
-        const stampRaster = await ditherImageToRasterCommand(stampDataUrl, Math.round(printableDots * 0.5));
+        // Full-paper-width pad → centred by the bitmap, not by ESC a 1 (see the
+        // logo in emitEscPosBrandedHeader).
+        const stampRaster = await ditherImageToRasterCommand(stampDataUrl, Math.round(printableDots * 0.5), {
+          padToWidthDots: PAPER_DOTS[mm],
+        });
         w.line(' '); // flush line before raster (POS-80C raster-first workaround)
         w.push(stampRaster);
         w.push([0x0a]);
