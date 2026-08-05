@@ -110,6 +110,7 @@ export const TradePOSTouchScreen = React.memo((props) => {
     selectedFocusItemId,
     setSelectedFocusItemId,
     formatCurrency,
+    posSettings,
     handleCheckout,
     onEditItem: handleEditItem,
     updateQuantity,
@@ -120,7 +121,7 @@ export const TradePOSTouchScreen = React.memo((props) => {
     setShowCashDropDialog
   }), [
     currentInvoice, selectedCustomerData, selectedFocusItemId, setSelectedFocusItemId,
-    formatCurrency, handleCheckout, handleEditItem,
+    formatCurrency, posSettings, handleCheckout, handleEditItem,
     updateQuantity, guardedRemoveFromInvoice, guardedClearInvoice,
     holdInvoice, openDeliveryModal, setShowCashDropDialog
   ]);

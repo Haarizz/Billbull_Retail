@@ -23,7 +23,7 @@ export const TradeCartList = React.memo(({
 
   if (!items || items.length === 0) {
     return (
-      <div className="h-full w-full flex items-center justify-center bg-gray-50/50">
+      <div className="flex-1 w-full flex items-center justify-center bg-gray-50/50 min-h-0">
         <TradeEmptyState
           icon={<ShoppingCart />}
           title="Cart is empty"
@@ -36,7 +36,7 @@ export const TradeCartList = React.memo(({
   return (
     <div 
       ref={listRef}
-      className="flex-1 overflow-y-auto no-scrollbar bg-white"
+      className="flex-1 overflow-y-auto no-scrollbar bg-white min-h-0"
     >
       <div className="flex flex-col">
         {items.map((item) => (
