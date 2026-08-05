@@ -11,6 +11,7 @@ import { Label } from '../../../components/ui/label';
 import { Input } from '../../../components/ui/input';
 import { A4LivePreview, A4PreviewFrame, ThermalMock, PaperSizePicker } from './POSPrintPreview';
 import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml, buildServiceJobA4Html, buildThermalJobCardHtml, buildThermalTestReceiptText, buildPosPrintData, applyTaxAwareDisplayOptions, USE_NEW_POS_PRINT_TEMPLATE } from './posPrintUtils';
+import { mergeSavedPosSettings } from './posUtils';
 import { printHtml } from '../../../utils/printGenerator';
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { RECEIPT_TEMPLATES, getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './receiptTemplates';
@@ -707,7 +708,7 @@ const POSConsole = React.memo((props) => {
                       t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
                     });
                     const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
-                    setPosSettings(saved);
+                    setPosSettings(prev => mergeSavedPosSettings(prev, saved));
                     setSettingsSavedFlash(true);
                     setTimeout(()=>setSettingsSavedFlash(false), 2000);
                   } catch(e){ console.warn('Template save failed',e); } finally { setSettingsSaving(false); }
@@ -727,7 +728,7 @@ const POSConsole = React.memo((props) => {
                       layoutHideItemsPanel: hideItemsPanel,
                       layoutHiddenPanelButtons: [...hiddenPanelButtons].join(','),
                     });
-                    setPosSettings(saved);
+                    setPosSettings(prev => mergeSavedPosSettings(prev, saved));
                     setSettingsSavedFlash(true);
                     setTimeout(()=>setSettingsSavedFlash(false), 2000);
                   } catch(e){ console.warn('Layout save failed',e); } finally { setSettingsSaving(false); }
@@ -2312,7 +2313,7 @@ const POSConsole = React.memo((props) => {
                         t2InvoiceShowVatSummary,t2InvoiceShowPaymentDetails,t2InvoiceShowLoyalty,t2InvoiceShowQRCode,t2InvoiceShowFooterText,t2InvoiceShowBarcode,
                       });
                       const saved = await savePosSettings({ ...(posSettings||{}), printTemplateConfig: tplConfig });
-                      setPosSettings(saved);
+                      setPosSettings(prev => mergeSavedPosSettings(prev, saved));
                       setSettingsSavedFlash(true);
                       setTimeout(()=>setSettingsSavedFlash(false), 2000);
                     } catch(e){ console.warn('Template save failed',e); } finally { setSettingsSaving(false); }
@@ -2524,7 +2525,7 @@ const POSConsole = React.memo((props) => {
               if (autoArchiveConfigInvalid) return;
               try {
                 const saved = await savePosSettings({ ...(posSettings || {}) });
-                setPosSettings(saved);
+                setPosSettings(prev => mergeSavedPosSettings(prev, saved));
               } catch (e) {
                 window.alert(e?.response?.data?.message || 'Failed to save Terminal Auto Archive settings.');
               }

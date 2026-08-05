@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
 import { ShoppingCart, ChevronRight, PauseCircle, Truck, ArrowUpCircle } from 'lucide-react';
 import { TradeCartList } from './TradeCartList';
+import { getPosVatLabel } from '../../../posUtils';
 
 export const TradeCartPanel = React.memo(({
   currentInvoice,
@@ -8,6 +9,7 @@ export const TradeCartPanel = React.memo(({
   selectedFocusItemId,
   setSelectedFocusItemId,
   formatCurrency,
+  posSettings,
   handleCheckout,
   onEditItem,
   updateQuantity,
@@ -94,7 +96,7 @@ export const TradeCartPanel = React.memo(({
       </div>
 
       {/* Main Cart Area */}
-      <div className="flex-1 min-h-0 relative">
+      <div className="flex-1 min-h-0 relative flex flex-col">
         <TradeCartList
           items={currentInvoice?.items}
           selectedItemId={selectedFocusItemId}
@@ -107,33 +109,47 @@ export const TradeCartPanel = React.memo(({
       </div>
 
       {/* Footer / Summary Area */}
-      <div className="shrink-0 p-3 sm:p-5 bg-white border-t border-gray-100 flex flex-col gap-3 sm:gap-4">
-
-        {/* Meta info row */}
-        <div className="flex justify-between items-center text-xs font-semibold text-slate-400 gap-2">
-          <span className="shrink-0">{totalUnits} units total</span>
-          <span className="truncate">{customerName || 'Walk-in Customer'}</span>
-        </div>
-
-        {/* Totals & Checkout */}
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-3">
-          <div className="flex flex-col">
-            <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              Grand Total
-            </span>
-            <span className="text-2xl sm:text-3xl font-black text-slate-900 leading-none">
-              {formatCurrency ? formatCurrency(currentInvoice?.total || 0) : `AED ${Number(currentInvoice?.total || 0).toFixed(2)}`}
-            </span>
+      <div className="shrink-0 bg-white border-t border-slate-200 shadow-[0_-4px_15px_-3px_rgba(0,0,0,0.05)] z-10 flex flex-col">
+        
+        <div className="p-4 sm:p-5 flex flex-col gap-3 sm:gap-4">
+          {/* Meta info row */}
+          <div className="flex justify-between items-center text-xs font-semibold text-slate-500 gap-2">
+            <span className="shrink-0">{totalUnits} units total</span>
+            <span className="truncate">{customerName || 'Walk-in Customer'}</span>
           </div>
 
-          <button
-            onClick={() => handleCheckout && handleCheckout()}
-            disabled={!currentInvoice?.items || currentInvoice.items.length === 0}
-            className="h-12 sm:h-14 px-6 sm:px-8 w-full sm:w-auto bg-primary hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 rounded-xl text-slate-900 font-black tracking-wide text-base sm:text-lg transition-colors shadow-sm"
-          >
-            Checkout
-            <ChevronRight className="w-5 h-5" />
-          </button>
+          {/* Subtotal & VAT info */}
+          <div className="flex flex-col gap-1 pb-3 border-b border-slate-100">
+            <div className="flex justify-between items-center text-xs font-semibold text-slate-500">
+              <span>Subtotal</span>
+              <span>{formatCurrency ? formatCurrency(currentInvoice?.subtotal || 0) : `AED ${Number(currentInvoice?.subtotal || 0).toFixed(2)}`}</span>
+            </div>
+            <div className="flex justify-between items-center text-xs font-semibold text-slate-500">
+              <span>{getPosVatLabel(currentInvoice, posSettings)}</span>
+              <span>{formatCurrency ? formatCurrency(currentInvoice?.tax || 0) : `AED ${Number(currentInvoice?.tax || 0).toFixed(2)}`}</span>
+            </div>
+          </div>
+
+          {/* Totals & Checkout */}
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4">
+            <div className="flex flex-col">
+              <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1">
+                Grand Total
+              </span>
+              <span className="text-3xl sm:text-4xl lg:text-[40px] font-black text-slate-900 leading-none tracking-tight">
+                {formatCurrency ? formatCurrency(currentInvoice?.total || 0) : `AED ${Number(currentInvoice?.total || 0).toFixed(2)}`}
+              </span>
+            </div>
+
+            <button
+              onClick={() => handleCheckout && handleCheckout()}
+              disabled={!hasItems}
+              className="h-14 sm:h-16 px-8 sm:px-10 w-full sm:w-auto bg-primary hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 rounded-xl text-slate-900 font-black tracking-wide text-lg sm:text-xl transition-colors shadow-sm shrink-0"
+            >
+              Checkout
+              <ChevronRight className="w-6 h-6" />
+            </button>
+          </div>
         </div>
       </div>
     </div>

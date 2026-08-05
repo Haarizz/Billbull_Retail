@@ -3,7 +3,7 @@ import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, S
 import { Button } from '../../../components/ui/button';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
-import { toNumber, getCartPriceWarning } from './posUtils';
+import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
 
 const POSTouchScreen = React.memo((props) => {
@@ -444,7 +444,8 @@ const POSTouchScreen = React.memo((props) => {
                     taxPercent: taxRate,
                     vatMode: posSettings?.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE',
                   });
-                  const stockQty = matchingProduct?.stock ?? 25;
+                  const stockQty = cartItem?.stock ?? matchingProduct?.stock;
+                  const displayStock = stockQty != null ? `${stockQty} units` : '--';
 
                   return (
                     <div className="bg-gradient-to-br from-[#FFF8E7] to-white p-5 flex-1 flex flex-col justify-between text-[#1E293B] border-l-4 border-[#F5C742]">
@@ -495,7 +496,7 @@ const POSTouchScreen = React.memo((props) => {
                         </div>
                         <div className="bg-white border border-[#327F74]/15 rounded-xl p-2.5 text-center shadow-sm">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500">Stock</p>
-                          <p className="text-sm font-bold text-[#1E293B] mt-1">{stockQty} units</p>
+                          <p className="text-sm font-bold text-[#1E293B] mt-1">{displayStock}</p>
                         </div>
                       </div>
                     </div>
@@ -694,6 +695,18 @@ const POSTouchScreen = React.memo((props) => {
                   className="h-12 text-sm font-bold text-white bg-[#F5C742] hover:opacity-90 rounded-xl transition-all shadow-sm">
                   Enter ↵
                 </button>
+              </div>
+            </div>
+
+            {/* Cart Focus totals */}
+            <div className="border-t border-[#327F74]/20 bg-white shrink-0">
+              <div className="px-4 py-2 space-y-1">
+                <div className="flex justify-between text-xs font-semibold text-gray-500">
+                  <span>Subtotal</span><span>{formatCurrency(currentInvoice.subtotal)}</span>
+                </div>
+                <div className="flex justify-between text-xs font-semibold text-gray-500">
+                  <span>{getPosVatLabel(currentInvoice, posSettings)}</span><span>{formatCurrency(currentInvoice.tax)}</span>
+                </div>
               </div>
             </div>
 
@@ -1045,11 +1058,7 @@ const POSTouchScreen = React.memo((props) => {
                   </div>
                 )}
                 <div className="flex justify-between text-xs text-gray-500">
-                  <span>{(() => {
-                    const rates = [...new Set(currentInvoice.items.filter(i => !i.isVoided).map(i => toNumber(i.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0))))];
-                    const base = rates.length === 1 ? `VAT (${rates[0]}%)` : 'VAT';
-                    return currentInvoice.taxInclusive ? `${base} incl.` : base;
-                  })()}</span><span>{formatCurrency(currentInvoice.tax)}</span>
+                  <span>{getPosVatLabel(currentInvoice, posSettings)}</span><span>{formatCurrency(currentInvoice.tax)}</span>
                 </div>
                 {/* Informational: voided lines excluded from TOTAL, shown only
                     when at least one line was voided. */}
