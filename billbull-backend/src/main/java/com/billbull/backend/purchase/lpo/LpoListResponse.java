@@ -9,7 +9,7 @@ public class LpoListResponse {
 
     // LPO number
     private String id;
-
+    private Long vendorId;
     private String vendorName;
     private String vendorCode;
 
@@ -95,6 +95,14 @@ public class LpoListResponse {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    public Long getVendorId() {
+        return vendorId;
+    }
+
+    public void setVendorId(Long vendorId) {
+        this.vendorId = vendorId;
     }
 
     public String getVendorName() {

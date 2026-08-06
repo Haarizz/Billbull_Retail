@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../../api/axiosConfig';
 import {
@@ -133,12 +133,25 @@ const isOverlayInvoiceTemplate = (tpl) => {
 // 1. CONFIGURATION
 // ==========================================
 
+import {
+    buildPaymentBlockFromRecords,
+    matchesPaymentFilter,
+    paymentDetailsForExport,
+    summaryLabelForModes,
+    PAYMENT_FILTERS,
+} from './POS/payments/paymentPresentation';
+import PaymentDetailsPanel from './POS/payments/PaymentDetailsPanel';
+import { getInvoicePaymentSummaries } from '../../api/salesPaymentApi';
+
 const SALES_INVOICE_COLUMNS = [
     { header: 'S.No.', key: 'sNo', width: 8 },
     { header: 'Invoice No', key: 'invoiceNumber', width: 15 },
     { header: 'Date', key: 'invoiceDate', width: 12 },
     { header: 'Customer', key: 'customerName', width: 25 },
-    { header: 'Pay Mode', key: 'paymentMode', width: 12 },
+    { header: 'Pay Mode', key: 'paymentMode', width: 18 },
+    // The per-tender breakdown the receipt showed ("Cash 80.00 | Visa 10.00"), so an
+    // exported sheet can be reconciled against the drawer without opening each invoice.
+    { header: 'Payment Details', key: 'paymentDetails', width: 32 },
     { header: 'Total', key: 'invoiceTotal', width: 15 },
     { header: 'Paid', key: 'amountPaid', width: 15 },
     { header: 'Balance', key: 'balance', width: 15 },
@@ -238,6 +251,32 @@ const SalesInvoice = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('All');
     const [filterPayMode, setFilterPayMode] = useState('All');
+
+    // How each listed invoice was actually paid, keyed by invoice number. Reconstructed from
+    // the recorded tender rows rather than read off the invoice's paymentMode text, which
+    // cannot say how much went on each tender and, for older sales, may only say "Mixed".
+    // Fetched for the whole page in one request; a failure leaves this empty and every
+    // consumer falls back to the stored text.
+    const [paymentBlocks, setPaymentBlocks] = useState({});
+
+    useEffect(() => {
+        const numbers = invoicesList.map(inv => inv.invoiceNumber).filter(Boolean);
+        if (numbers.length === 0) { setPaymentBlocks({}); return undefined; }
+        let cancelled = false;
+        getInvoicePaymentSummaries(numbers).then(summaries => {
+            if (cancelled) return;
+            const blocks = {};
+            Object.entries(summaries).forEach(([invoiceNumber, summary]) => {
+                const invoice = invoicesList.find(i => i.invoiceNumber === invoiceNumber);
+                const block = buildPaymentBlockFromRecords(summary.allocations, {
+                    invoiceTotal: Number(invoice?.invoiceTotal) || 0,
+                });
+                if (block) blocks[invoiceNumber] = block;
+            });
+            setPaymentBlocks(blocks);
+        });
+        return () => { cancelled = true; };
+    }, [invoicesList]);
     const _today = new Date().toISOString().slice(0, 10);
     const [dateRange, setDateRange] = useState({ fromDate: _today, toDate: _today });
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'desc' });
@@ -259,10 +298,12 @@ const SalesInvoice = () => {
         }
 
         if (filterPayMode !== 'All') {
-            data = data.filter(inv => {
-                const mode = inv.paymentMode || '';
-                return mode === filterPayMode;
-            });
+            // Matched against the sale's allocations, not an equality test on its stored
+            // payment-mode text: a sale settled Cash + Visa belongs under both Cash and
+            // Card, and is stored as neither.
+            data = data.filter(inv => matchesPaymentFilter(
+                filterPayMode, paymentBlocks[inv.invoiceNumber], inv.paymentMode,
+            ));
         }
 
         if (searchTerm) {
@@ -302,7 +343,7 @@ const SalesInvoice = () => {
         }
 
         return data;
-    }, [invoicesList, searchTerm, filterStatus, filterPayMode, sortConfig]);
+    }, [invoicesList, searchTerm, filterStatus, filterPayMode, sortConfig, paymentBlocks]);
 
     const handleSort = (key) => {
         if (sortConfig.key === key) {
@@ -1065,6 +1106,13 @@ const SalesInvoice = () => {
 
     // Reset to page 0 when filters change.
     useEffect(() => { setListPage(0); }, [searchTerm, filterStatus, filterPayMode]);
+
+    /** Adds the per-tender breakdown column to exported rows, from the same source the
+     *  screen and the receipt use. */
+    const withPaymentDetails = useCallback((rows) => rows.map(row => ({
+        ...row,
+        paymentDetails: paymentDetailsForExport(paymentBlocks[row.invoiceNumber], row.paymentMode),
+    })), [paymentBlocks]);
 
     // Refetch on list tab + page + filter change.
     useEffect(() => {
@@ -2398,7 +2446,7 @@ const SalesInvoice = () => {
             // Build combined label upfront (e.g. "Cash + Card") so the backend can
             // stamp it on the invoice without relying on a mid-transaction DB query.
             const combinedPaymentMode = splitGroupId
-                ? paidEntries.map(e => e.mode).join(' + ')
+                ? summaryLabelForModes(paidEntries)
                 : null;
 
             // Post each real-money entry through /payment-detailed
@@ -3408,23 +3456,23 @@ const SalesInvoice = () => {
                                     <>
                                         <ExportDropdown
                                             onExportExcel={() => exportToExcel(
-                                                withListSerialNumbers(filteredInvoices, {
+                                                withPaymentDetails(withListSerialNumbers(filteredInvoices, {
                                                     documentNumberSelector: (inv) => inv.invoiceNumber,
                                                     page: listPageMeta.page,
                                                     size: listPageMeta.size,
                                                     totalElements: listPageMeta.totalElements,
-                                                }),
+                                                })),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales_Invoices',
                                                 { companyProfile: company, branch: activeBranch?.name || '' }
                                             )}
                                             onExportPdf={() => exportToPDF(
-                                                withListSerialNumbers(filteredInvoices, {
+                                                withPaymentDetails(withListSerialNumbers(filteredInvoices, {
                                                     documentNumberSelector: (inv) => inv.invoiceNumber,
                                                     page: listPageMeta.page,
                                                     size: listPageMeta.size,
                                                     totalElements: listPageMeta.totalElements,
-                                                }),
+                                                })),
                                                 SALES_INVOICE_COLUMNS,
                                                 'Sales Invoices',
                                                 'Sales_Invoices',
@@ -3527,11 +3575,9 @@ const SalesInvoice = () => {
                                     </div>
                                     <div className="relative w-full md:w-auto">
                                         <select value={filterPayMode} onChange={(e) => setFilterPayMode(e.target.value)} className="pl-3 pr-8 py-2 border border-slate-200 rounded-md text-xs bg-white focus:outline-none appearance-none w-full cursor-pointer">
-                                            <option value="All">All Pay Modes</option>
-                                            <option value="Cash">Cash</option>
-                                            <option value="Bank Transfer">Bank Transfer</option>
-                                            <option value="Cheque">Cheque</option>
-                                            <option value="Credit Card">Credit Card</option>
+                                            {PAYMENT_FILTERS.map(f => (
+                                                <option key={f} value={f}>{f === 'All' ? 'All Pay Modes' : f}</option>
+                                            ))}
                                         </select>
                                         <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                     </div>
@@ -3713,6 +3759,7 @@ const SalesInvoice = () => {
                             listLoading={isListLoading}
                             searchTerm={searchTerm}
                             onSearchChange={setSearchTerm}
+                            paymentBlocks={paymentBlocks}
                             customersList={customersList}
                             invoiceCurrency={invoiceCurrency}
                             isPrinting={isPrinting}

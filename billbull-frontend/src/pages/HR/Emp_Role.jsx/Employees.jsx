@@ -166,6 +166,7 @@ const buildInitialEmployeeForm = (defaultBranchName = '') => ({
   joinDate: new Date().toISOString().split('T')[0],
   probationPeriod: '3',
   confirmationDate: '',
+  status: 'Active',
   // Access
   posAccess: true,
   posPin: '',
@@ -1198,9 +1199,9 @@ const AddEmployeeModal = ({
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Status *</label>
                   <div className="relative">
-                    <select className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
-                      <option>Draft</option>
-                      <option>Active</option>
+                    <select name="status" value={formData.status} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-600">
+                      <option value="Draft">Draft</option>
+                      <option value="Active">Active</option>
                     </select>
                     <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                   </div>

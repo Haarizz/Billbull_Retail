@@ -183,7 +183,7 @@ public class Employee {
     public void setPhone(String phone) { this.phone = phone; }
 
     public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email; }
+    public void setEmail(String email) { this.email = (email != null && email.isBlank()) ? null : email; }
 
     public String getCurrentAddress() { return currentAddress; }
     public void setCurrentAddress(String currentAddress) { this.currentAddress = currentAddress; }

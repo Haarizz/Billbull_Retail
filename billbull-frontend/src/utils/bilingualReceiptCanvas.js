@@ -14,6 +14,7 @@
 // cannot blur them.
 import QRCode from 'qrcode';
 import { RECEIPT_LABELS as L, RECEIPT_FONT_EN, RECEIPT_FONT_AR } from './receiptLabels.js';
+import { paymentBlockRows } from '../pages/Sales/POS/payments/paymentPresentation';
 
 const PAPER_DOTS = { 58: 384, 80: 576 };
 
@@ -97,10 +98,8 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   depositApplied = null, balanceDue = null,
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
-  mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
-  // Dynamic payment-leg list (e.g. multi-card split) — takes precedence over the
-  // legacy mixedCashGiven/mixedCardGiven two-slot rendering below when present.
-  paymentLines = null,
+  // Payment block built from the sale's allocations. Null for a historical reprint.
+  paymentBlock = null,
   showCreditBalance = false,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
@@ -191,19 +190,27 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
 
   // Bilingual key/value row: EN label + AR label stacked left, value right
   // (on the EN label's line, like the approved template's .kv2 layout).
+  // `lbl.enLines` (optional) carries an already-wrapped English label — see
+  // paymentPresentation.paymentBlockRows. Extra lines print above, and the value stays
+  // right-aligned on the LAST one, so a long tender label never pushes the amount off paper.
   const kv2 = (lbl, value, { bold = false, size = 21 } = {}) => {
-    const startY = y;
-    drawEn(lbl.en, M, size, { bold });
-    ctx.font = fontEn(size, bold); // measure with the same font just drawn
-    const enLabelW = ctx.measureText(String(lbl.en)).width;
-    y += lineH(size);
+    const enLines = (lbl.enLines && lbl.enLines.length > 0) ? lbl.enLines : [lbl.en];
+    let valueLineY = y;
+    let enLabelW = 0;
+    enLines.forEach((line, i) => {
+      if (i === enLines.length - 1) valueLineY = y;
+      drawEn(line, M, size, { bold });
+      ctx.font = fontEn(size, bold); // measure with the same font just drawn
+      if (i === enLines.length - 1) enLabelW = ctx.measureText(String(line)).width;
+      y += lineH(size);
+    });
     if (showArabic && lbl.ar) { drawAr(lbl.ar, M, size - 1, { align: 'left', bold: false }); y += lineH(size - 1); }
     const rowEnd = y;
     // Value: right-aligned on the EN label's line; shrink it (never below 12px
     // design size) rather than let it collide with the label.
     const gap = Math.round(8 * S);
     const maxValW = CW - enLabelW - gap;
-    y = startY + Math.round(px(size) * 0.1);
+    y = valueLineY + Math.round(px(size) * 0.1);
     ctx.direction = 'ltr'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
     let vSize = size;
     ctx.font = fontEn(vSize, true);
@@ -458,30 +465,29 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (showPaymentDetails) {
     y += Math.round(6 * S);
     if (invoice.paymentMode) kv2(L.PAYMENT_MODE, String(invoice.paymentMode).toUpperCase());
-    // Mixed (cash + card) split — surface how much was tendered on each tender so
-    // the receipt reconciles with the drawer + card batch. Card row label carries
-    // the card brand when known (e.g. "Card Paid (VISA)").
-    const validPaymentLines = Array.isArray(paymentLines)
-      ? paymentLines.filter(l => l && parseFloat(l.amount) > 0)
-      : [];
-    const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
-      (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
-    if (validPaymentLines.length > 0) {
-      for (const line of validPaymentLines) {
-        kv2({ en: line.label, ar: line.label }, fmt(line.amount));
+    // Payment details — one row per tender, then the totals footer. Same rows as
+    // every other renderer, drawn bilingually.
+    // Column budget in characters for this canvas: the content width divided by the width of
+    // one digit at the row font size. Feeding it to the shared row builder means the canvas
+    // breaks a long tender label at the same word boundaries the paper receipt does.
+    ctx.font = fontEn(21, false);
+    const canvasCols = Math.max(16, Math.floor(CW / Math.max(1, ctx.measureText('0').width)));
+    const blockRows = paymentBlockRows(paymentBlock, {
+      width: canvasCols,
+      formatAmount: (r) => fmt(r.amount),
+    });
+    if (blockRows.length > 0) {
+      for (const row of blockRows) {
+        kv2({ en: row.label, enLines: row.labelLines, ar: row.labelAr || row.label }, fmt(row.amount), { bold: row.emphasis });
       }
-    } else if (hasMixedSplit) {
-      if (parseFloat(mixedCashGiven) > 0) kv2(L.CASH_PAID, fmt(mixedCashGiven));
-      if (parseFloat(mixedCardGiven) > 0) {
-        const cardLabel = mixedCardType
-          ? { en: `${L.CARD_PAID.en} (${mixedCardType})`, ar: L.CARD_PAID.ar }
-          : L.CARD_PAID;
-        kv2(cardLabel, fmt(mixedCardGiven));
+      if (paymentBlock.hasReceivable) {
+        kv2({ en: 'Invoice Total', ar: 'إجمالي الفاتورة' }, fmt(paymentBlock.invoiceTotal));
       }
     } else if (cashGiven != null && parseFloat(cashGiven) > 0) {
+      // Reprint of a historical invoice with no recorded allocations.
       kv2(L.CASH_RECEIVED, fmt(cashGiven));
+      if (changeAmount != null && parseFloat(changeAmount) > 0) kv2(L.CHANGE, fmt(changeAmount), { bold: true });
     }
-    if (changeAmount != null && parseFloat(changeAmount) > 0) kv2(L.CHANGE, fmt(changeAmount), { bold: true });
   }
 
   // ── Credit account ────────────────────────────────────────────────────────

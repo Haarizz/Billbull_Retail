@@ -847,6 +847,7 @@ const POSConsole = React.memo((props) => {
           {consoleTab==='behavior' && canManageBehaviorSettings && (() => {
             const d = settingsDraft || {
               requireSupervisorForVoid: !!posSettings?.requireSupervisorForVoid,
+              requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
               supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
               requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
               // Write-only field — the backend never returns the raw PIN (see supervisorPinSet below).
@@ -1111,6 +1112,28 @@ const POSConsole = React.memo((props) => {
                     </p>
                   </>
                 )}
+              </div>
+
+              {/* Business Day Closing */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Lock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Business Day Closing
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">Control who is allowed to perform the Business Day (Z Report) closing.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
+                  {[
+                    [false, 'All Users', 'Any authenticated POS user may perform Business Day Close.'],
+                    [true, 'Supervisor Privilege Required', 'Business Day Close requires supervisor authorization.'],
+                  ].map(([val, label, desc]) => (
+                    <button key={String(val)} type="button" onClick={() => patch({ requireSupervisorForDayClose: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.requireSupervisorForDayClose === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.requireSupervisorForDayClose === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
+                      {d.requireSupervisorForDayClose === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
+                    </button>
+                  ))}
+                </div>
               </div>
 
             </div>

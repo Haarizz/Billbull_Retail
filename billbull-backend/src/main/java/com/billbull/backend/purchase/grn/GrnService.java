@@ -65,6 +65,7 @@ public class GrnService {
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
     private final com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService;
+    private final com.billbull.backend.purchase.vendor.VendorValidationService vendorValidationService;
 
     public GrnService(
             StockMovementService stockMovementService,
@@ -87,7 +88,8 @@ public class GrnService {
             SerialMasterRepository serialMasterRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService,
-            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService) {
+            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService,
+            com.billbull.backend.purchase.vendor.VendorValidationService vendorValidationService) {
         this.stockMovementService = stockMovementService;
         this.grnRepo = grnRepo;
         this.warehouseRepo = warehouseRepo;
@@ -110,6 +112,7 @@ public class GrnService {
         this.notifPublisher = notifPublisher;
         this.documentNumberingService = documentNumberingService;
         this.purchaseTaxResolutionService = purchaseTaxResolutionService;
+        this.vendorValidationService = vendorValidationService;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -140,7 +143,7 @@ public class GrnService {
     /* ================= CREATE / UPDATE ================= */
 
     public GrnDetailResponse saveOrUpdate(Long id, GrnSaveRequest req) {
-
+        vendorValidationService.validateVendorEligibleForPurchasing(req.vendorId());
         GrnEntity grn = (id == null)
                 ? new GrnEntity()
                 : grnRepo.findById(id)
@@ -157,6 +160,7 @@ public class GrnService {
 
         grn.setGrnDate(req.date());
         grn.setVendorName(req.vendor());
+        grn.setVendorId(req.vendorId());
 
         // 🔓 PARTIAL GRN SUPPORT: Removed "GRN already exists" check to allow multiple
         // GRNs per LPO.
@@ -321,9 +325,7 @@ public class GrnService {
         grn.setTaxAmount(tax);
         grn.setGrandTotal(subtotal.add(tax));
 
-        return
-
-        mapDetail(grnRepo.save(grn));
+        return mapDetail(grnRepo.save(grn));
     }
 
     /* ================= READ ================= */
@@ -365,6 +367,7 @@ public class GrnService {
                     g.getId(),
                     g.getGrnNo(),
                     g.getGrnDate(),
+                    g.getVendorId(),
                     g.getVendorName(),
                     getDocRef(g),
                     g.getWarehouse() != null ? g.getWarehouse().getName() : null,
@@ -385,8 +388,6 @@ public class GrnService {
     @Transactional(readOnly = true)
     public GrnDetailResponse get(Long id) {
         GrnEntity grn = getScopedGrn(id);
-        branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
-        ownershipAccessService.assertCanAccessRecord(grn.getCreatedByUserId(), "GRN");
         return mapDetail(grn);
     }
 
@@ -394,8 +395,7 @@ public class GrnService {
 
     public void delete(Long id) {
 
-        GrnEntity grn = grnRepo.findById(id)
-                .orElseThrow(() -> new RuntimeException("GRN not found"));
+        GrnEntity grn = getScopedGrn(id);
 
         if (grn.isStockPosted()) {
             throw new IllegalStateException("Cannot delete posted GRN");
@@ -407,37 +407,37 @@ public class GrnService {
     /* ================= QC FLOW ================= */
 
     public void submitQc(Long id) {
+        GrnEntity grn = getScopedGrn(id);
+        vendorValidationService.validateVendorEligibleForPurchasing(grn.getVendorId());
 
-        GrnEntity g = getScopedGrn(id);
-
-        if (g.getStatus() != GrnStatus.DRAFT) {
+        if (grn.getStatus() != GrnStatus.DRAFT) {
             throw new IllegalStateException("Only DRAFT GRN can be submitted for QC");
         }
 
-        if (g.getZone() == null) {
+        if (grn.getZone() == null) {
             throw new IllegalArgumentException("Zone is required before submitting GRN for QC");
         }
-        if (g.getLocator() == null) {
+        if (grn.getLocator() == null) {
             throw new IllegalArgumentException("Locator is required before submitting GRN for QC");
         }
-        if (g.getBin() == null) {
+        if (grn.getBin() == null) {
             throw new IllegalArgumentException("Bin is required before submitting GRN for QC");
         }
 
-        g.setStatus(GrnStatus.QC_PENDING);
-        g.setQcStatus(QcStatus.IN_PROGRESS);
+        grn.setStatus(GrnStatus.QC_PENDING);
+        grn.setQcStatus(QcStatus.IN_PROGRESS);
     }
 
     public void approveQc(Long id) {
+        GrnEntity grn = getScopedGrn(id);
+        vendorValidationService.validateVendorEligibleForPurchasing(grn.getVendorId());
 
-        GrnEntity g = getScopedGrn(id);
-
-        if (g.getQcStatus() != QcStatus.IN_PROGRESS) {
+        if (grn.getQcStatus() != QcStatus.IN_PROGRESS) {
             throw new IllegalStateException("QC not in progress");
         }
 
-        g.setStatus(GrnStatus.QC_COMPLETED);
-        g.setQcStatus(QcStatus.COMPLETED);
+        grn.setStatus(GrnStatus.QC_COMPLETED);
+        grn.setQcStatus(QcStatus.COMPLETED);
     }
 
     /* ================= POST STOCK (ONLY PLACE) ================= */
@@ -446,8 +446,8 @@ public class GrnService {
         @CacheEvict(value = "productList", allEntries = true)
     })
     public void postGrn(Long grnId, GrnPostRequest postReq) {
-
         GrnEntity grn = getScopedGrn(grnId);
+        vendorValidationService.validateVendorEligibleForPurchasing(grn.getVendorId());
 
         if (grn.isStockPosted()) {
             throw new IllegalStateException("GRN already posted");
@@ -616,6 +616,7 @@ public class GrnService {
                 g.getId(),
                 g.getGrnNo(),
                 g.getGrnDate(),
+                g.getVendorId(),
                 g.getVendorName(),
                 getDocRef(g),
                 g.getStatus().name(),

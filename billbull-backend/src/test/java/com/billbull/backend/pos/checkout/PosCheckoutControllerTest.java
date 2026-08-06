@@ -3,6 +3,7 @@ package com.billbull.backend.pos.checkout;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -70,6 +71,9 @@ class PosCheckoutControllerTest {
     @Mock private PosSettingsService posSettingsService;
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
+    /** Real instance, not a mock: the resolver is pure logic and these tests assert on the
+     *  payment legs/labels it produces from the legacy request fields. */
+    @org.mockito.Spy private PosPaymentAllocationResolver allocationResolver = new PosPaymentAllocationResolver();
 
     @InjectMocks private PosCheckoutController controller;
 
@@ -483,5 +487,24 @@ class PosCheckoutControllerTest {
 
         verify(permissionService, never()).currentUserCanEdit(any());
         verify(posSettingsService, never()).verifyPin(any());
+    }
+
+    // ── Checkout capability advertisement ──────────────────────────────────────
+
+    @Test
+    void capabilitiesEndpointAdvertisesPaymentAllocationSupport() {
+        PosCheckoutCapabilitiesResponse caps = controller.getCapabilities();
+
+        // A terminal refuses to settle unless this is true, so it must never regress:
+        // a server that quietly stopped honouring allocations would drop the tender.
+        assertTrue(caps.isPaymentAllocations());
+        assertTrue(caps.isLegacyPaymentScalars());
+        assertEquals(2, caps.getCheckoutApiVersion());
+        assertEquals(PosPaymentAllocationResolver.MAX_CARD_LEGS, caps.getMaxCardAllocations());
+        assertEquals(java.util.List.of("CASH", "CARD", "ONLINE", "CREDIT"),
+                caps.getSupportedAllocationTypes());
+        // Customer Advance is a customer-ledger operation, not a checkout tender — a terminal
+        // must not discover it here and offer it as a payment button.
+        assertTrue(!caps.getSupportedAllocationTypes().contains("ADVANCE"));
     }
 }

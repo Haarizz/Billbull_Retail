@@ -1165,9 +1165,9 @@ const CreateTransferView = ({ warehouses, onSubmit }) => {
                                                             className="w-full h-8 bg-slate-50 border border-slate-100 rounded px-2 text-[11px] font-mono focus:bg-white transition-all outline-none"
                                                         >
                                                             <option value="">— select batch —</option>
-                                                            {opts.map(b => (
-                                                                <option key={b.batchNumber} value={b.batchNumber}>
-                                                                    {b.batchNumber} · {b.availableQty} {item.uom || 'pcs'}{b.expiryDate ? ` · exp ${b.expiryDate}` : ''}
+                                                            {opts.map((b, idx) => (
+                                                                <option key={b.batchNumber || `batch-${idx}`} value={b.batchNumber || ""}>
+                                                                    {b.batchNumber || 'No Batch'} · {b.availableQty} {item.uom || 'pcs'}{b.expiryDate ? ` · exp ${b.expiryDate}` : ''}
                                                                 </option>
                                                             ))}
                                                         </select>

@@ -5,6 +5,7 @@ import java.util.List;
 
 public class LpoRequest {
 
+    private Long vendorId;
     private String vendorName;
     private String vendorCode;
 
@@ -24,6 +25,14 @@ public class LpoRequest {
     private String referenceDocument;
 
     private List<LpoItemRequest> items;
+
+    public Long getVendorId() {
+        return vendorId;
+    }
+
+    public void setVendorId(Long vendorId) {
+        this.vendorId = vendorId;
+    }
 
     public String getVendorName() {
         return vendorName;

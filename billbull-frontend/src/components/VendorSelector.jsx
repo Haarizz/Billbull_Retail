@@ -61,10 +61,14 @@ const VendorSelector = ({
     const filtered = useMemo(() => {
         let list = [...vendors];
 
-        // Ensure a default Cash Vendor always exists for quick non-credit purchases
-        const hasCashVendor = list.some(v => (v.name || '').toLowerCase().includes('cash vendor') || (v.code || '') === 'CASH_VENDOR');
-        if (!hasCashVendor) {
-            list = [{
+        // Ensure Cash Vendor is always at the top of the list
+        const cashVendorIndex = list.findIndex(v => (v.name || '').toLowerCase().includes('cash vendor') || (v.code || '') === 'CASH_VENDOR');
+        
+        let cashVendor = null;
+        if (cashVendorIndex !== -1) {
+            cashVendor = list.splice(cashVendorIndex, 1)[0];
+        } else {
+            cashVendor = {
                 id: 'CASH-VENDOR-ID',
                 code: 'CASH_VENDOR',
                 name: 'Cash Vendor',
@@ -75,8 +79,10 @@ const VendorSelector = ({
                 balance: 0,
                 creditStatus: 'Good',
                 groupType: 'Supplier'
-            }, ...list];
+            };
         }
+        
+        list.unshift(cashVendor);
 
         if (!debouncedQuery.trim()) return list;
         const q = debouncedQuery.toLowerCase();
@@ -120,12 +126,18 @@ const VendorSelector = ({
     }, [highlightedIndex]);
 
     const handleSelect = (vendor) => {
+        const s = (vendor.status || vendor.creditStatus || '').toLowerCase();
+        if (s === 'blocked') {
+            toast.error('This vendor is blocked and cannot be selected.');
+            return;
+        }
         onSelect(vendor);
         onClose();
     };
 
     const getCreditBadge = (status) => {
         const s = (status || '').toLowerCase();
+        if (s === 'blocked') return <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">Blocked</span>;
         if (s === 'good' || s === 'active') return <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">Active</span>;
         if (s === 'hold' || s === 'on hold' || s === 'inactive') return <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">Inactive</span>;
         if (s === 'medium' || s === 'warning') return <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-yellow-100 text-yellow-700 border border-yellow-200">Review</span>;

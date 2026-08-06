@@ -74,6 +74,7 @@ public class PurchaseInvoiceService {
     private final SerialMasterRepository serialMasterRepository;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
     private final com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService;
+    private final com.billbull.backend.purchase.vendor.VendorValidationService vendorValidationService;
 
     public PurchaseInvoiceService(PurchaseInvoiceRepository repository, GrnRepository grnRepo,
             PostingEngineService postingEngineService, StockMovementService stockService,
@@ -90,7 +91,8 @@ public class PurchaseInvoiceService {
             PurchaseSerialService purchaseSerialService,
             SerialMasterRepository serialMasterRepository,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService,
-            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService) {
+            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService,
+            com.billbull.backend.purchase.vendor.VendorValidationService vendorValidationService) {
         super();
         this.repository = repository;
         this.grnRepo = grnRepo;
@@ -115,6 +117,7 @@ public class PurchaseInvoiceService {
         this.serialMasterRepository = serialMasterRepository;
         this.documentNumberingService = documentNumberingService;
         this.purchaseTaxResolutionService = purchaseTaxResolutionService;
+        this.vendorValidationService = vendorValidationService;
     }
 
     /* ================= UOM CONVERSION HELPERS ================= */
@@ -204,6 +207,7 @@ public class PurchaseInvoiceService {
     /* ================= CREATE (DRAFT) ================= */
 
     public PurchaseInvoice createDraft(PurchaseInvoiceRequest req) {
+        vendorValidationService.validateVendorEligibleForPurchasing(req.getVendorId());
         validateVendorInvoiceNo(req.getVendorName(), req.getVendorInvoiceNo(), null);
         PurchaseInvoice invoice = mapToEntity(req);
         invoice.setStatus(InvoiceStatus.DRAFT);
@@ -214,8 +218,8 @@ public class PurchaseInvoiceService {
     }
 
     public PurchaseInvoiceResponse createDraftFromLpo(Long lpoId) {
-        Lpo lpo = lpoRepository.findById(lpoId)
-                .orElseThrow(() -> new IllegalArgumentException("LPO not found"));
+        Lpo lpo = lpoRepository.findById(lpoId).orElseThrow(() -> new RuntimeException("LPO not found"));
+        vendorValidationService.validateVendorEligibleForPurchasing(lpo.getVendorId());
         branchAccessService.assertTransactionBranchAccessible(lpo.getBranchId(), "LPO");
 
         List<LpoStatus> allowed = List.of(
@@ -229,6 +233,7 @@ public class PurchaseInvoiceService {
         dto.setInvoiceDate(LocalDate.now());
         dto.setVendorInvoiceDate(LocalDate.now());
         dto.setVendorName(lpo.getVendorName());
+        dto.setVendorId(lpo.getVendorId());
         if (lpo.getWarehouse() != null) {
             dto.setWarehouseName(lpo.getWarehouse().getName());
             dto.setWarehouseId(lpo.getWarehouse().getId());
@@ -315,9 +320,8 @@ public class PurchaseInvoiceService {
     }
 
     public PurchaseInvoiceResponse createDraftFromGrn(Long grnId) {
-
-        GrnEntity grn = grnRepo.findById(grnId)
-                .orElseThrow(() -> new IllegalArgumentException("GRN not found"));
+        GrnEntity grn = grnRepo.findById(grnId).orElseThrow(() -> new RuntimeException("GRN not found"));
+        vendorValidationService.validateVendorEligibleForPurchasing(grn.getVendorId());
         branchAccessService.assertTransactionBranchAccessible(grn.getBranchId(), "GRN");
 
         if (!grn.isStockPosted()) {
@@ -330,6 +334,7 @@ public class PurchaseInvoiceService {
         dto.setInvoiceDate(LocalDate.now());
         dto.setVendorInvoiceDate(LocalDate.now());
         dto.setVendorName(grn.getVendorName());
+        dto.setVendorId(grn.getVendorId());
         dto.setWarehouseName(grn.getWarehouse().getName());
         dto.setWarehouseId(grn.getWarehouse().getId());
         if (grn.getZone() != null) dto.setZoneId(grn.getZone().getId());
@@ -430,6 +435,7 @@ public class PurchaseInvoiceService {
     /* ================= UPDATE (DRAFT ONLY) ================= */
 
     public PurchaseInvoice update(Long id, PurchaseInvoiceRequest req) {
+        vendorValidationService.validateVendorEligibleForPurchasing(req.getVendorId());
         PurchaseInvoice invoice = getEntity(id);
 
         if (invoice.getStatus() != InvoiceStatus.DRAFT) {
@@ -454,6 +460,7 @@ public class PurchaseInvoiceService {
 
     public PurchaseInvoiceResponse submitForApproval(Long id, String username) {
         PurchaseInvoice invoice = getEntity(id);
+        vendorValidationService.validateVendorEligibleForPurchasing(invoice.getVendorId());
 
         if (invoice.getStatus() != InvoiceStatus.DRAFT) {
             throw new IllegalStateException("Only DRAFT invoices can be submitted");
@@ -490,8 +497,8 @@ public class PurchaseInvoiceService {
         @CacheEvict(value = "productList", allEntries = true)
     })
     public PurchaseInvoice approve(Long id, String approver) {
-
         PurchaseInvoice invoice = getEntity(id);
+        vendorValidationService.validateVendorEligibleForPurchasing(invoice.getVendorId());
 
         if (invoice.getStatus() != InvoiceStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Invoice is not pending approval");
@@ -823,6 +830,7 @@ public class PurchaseInvoiceService {
         }
         invoice.setInvoiceDate(req.getInvoiceDate());
         invoice.setVendorName(req.getVendorName());
+        invoice.setVendorId(req.getVendorId());
         invoice.setVendorInvoiceNo(req.getVendorInvoiceNo());
         invoice.setVendorInvoiceDate(req.getVendorInvoiceDate() != null ? req.getVendorInvoiceDate() : req.getInvoiceDate());
         invoice.setSourceType(req.getSourceType());
@@ -975,6 +983,7 @@ public class PurchaseInvoiceService {
         dto.setInvoiceDate(invoice.getInvoiceDate());
 
         dto.setVendorName(invoice.getVendorName());
+        dto.setVendorId(invoice.getVendorId());
         dto.setVendorInvoiceNo(invoice.getVendorInvoiceNo());
         dto.setVendorInvoiceDate(invoice.getVendorInvoiceDate() != null ? invoice.getVendorInvoiceDate() : invoice.getInvoiceDate());
 

@@ -8,7 +8,7 @@ import { getInvoiceStatusBadge } from '../utils/invoiceStatusBadge';
 // lighter than the list table (which stays the system of record for scanning
 // many columns) — this is a switcher: enough to recognise the invoice you want
 // while the preview panel holds focus on the right.
-function InvoiceCard({ inv, selected, onSelect, currency }) {
+function InvoiceCard({ inv, selected, onSelect, currency, paymentBlocks }) {
     const status = getInvoiceStatusBadge(inv.status, inv);
     const balance = Number(inv.balance ?? 0);
     const isSettled = balance <= 0;
@@ -63,11 +63,13 @@ function InvoiceCard({ inv, selected, onSelect, currency }) {
 
             <div className="flex items-center gap-1.5">
                 <span className={status.colorClasses}>{status.label}</span>
-                {inv.paymentMode && (
+                {/* Prefer the allocation-derived summary ("Cash + Visa"); fall back to the
+                    invoice's stored label for sales with no recorded tender. */}
+                {(paymentBlocks?.[inv.invoiceNumber]?.summaryLabel || inv.paymentMode) && (
                     <>
                         <span className="text-slate-300 text-[10px]">•</span>
                         <span className="border border-slate-200 px-1.5 py-0.5 rounded-full text-[10px] bg-white text-slate-600">
-                            {inv.paymentMode}
+                            {paymentBlocks?.[inv.invoiceNumber]?.summaryLabel || inv.paymentMode}
                         </span>
                     </>
                 )}
@@ -84,6 +86,10 @@ export default function InvoiceCardList({
     searchTerm,
     onSearchChange,
     loading = false,
+    // Allocation-derived payment summaries keyed by invoice number, supplied by the parent
+    // which already loads them for the page. Optional: without them each card falls back to
+    // the invoice's stored payment-mode label.
+    paymentBlocks = null,
 }) {
     return (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm flex flex-col max-h-[calc(100vh-9rem)]">
@@ -123,6 +129,7 @@ export default function InvoiceCardList({
                         selected={inv.id === selectedId}
                         onSelect={onSelect}
                         currency={currency}
+                        paymentBlocks={paymentBlocks}
                     />
                 ))}
             </div>

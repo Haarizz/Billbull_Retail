@@ -962,6 +962,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     lpoNumber: '',
     vendorName: "",
     vendorCode: "",
+    vendorId: "",
     date: new Date().toISOString().split('T')[0],
     status: "DRAFT",
     expectedDeliveryDate: "",
@@ -1383,6 +1384,12 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       setLoading(true);
 
       // ✅ VALIDATION (ADD HERE)
+      if (formData.expectedDeliveryDate && formData.date && formData.expectedDeliveryDate < formData.date) {
+        toast.error("Expected Delivery Date cannot be earlier than PO Date.");
+        setLoading(false);
+        return;
+      }
+
       const hasInvalidItem = formData.items.some(i => !i.productId);
       if (hasInvalidItem) {
         alert("Please select a product for all items before saving.");
@@ -1395,6 +1402,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       const payload = {
         vendorName: formData.vendorName || '',
         vendorCode: selectedVendor?.code || '',
+        vendorId: selectedVendor?.id || formData.vendorId || null,
         source: 'MANUAL',
         expectedDeliveryDate: formData.expectedDeliveryDate || null,
         purchaseType: formData.purchaseType || 'REGULAR',
@@ -1448,6 +1456,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       const payload = {
         vendorName: formData.vendorName || '',
         vendorCode: selectedVendor?.code || '',
+        vendorId: selectedVendor?.id || formData.vendorId || null,
         source: 'MANUAL',
         expectedDeliveryDate: formData.expectedDeliveryDate || null,
         purchaseType: formData.purchaseType || 'REGULAR',
@@ -1487,7 +1496,8 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
     setFormData(prev => ({
       ...prev,
       vendorName: vendor?.name || '',
-      vendorCode: vendor?.code || ''
+      vendorCode: vendor?.code || '',
+      vendorId: vendor?.id || ''
     }));
   };
 
@@ -1600,6 +1610,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                 <input
                   type="date"
                   value={formData.expectedDeliveryDate}
+                  min={formData.date}
                   onChange={(e) => setFormData(prev => ({
                     ...prev,
                     expectedDeliveryDate: e.target.value

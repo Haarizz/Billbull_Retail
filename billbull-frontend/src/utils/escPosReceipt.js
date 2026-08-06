@@ -5,6 +5,8 @@
 // font-table control — they just rasterize whatever the OS driver defaults to,
 // which is what was producing faint, inconsistent output.
 
+import { paymentBlockRows } from '../pages/Sales/POS/payments/paymentPresentation';
+
 const ESC = 0x1b;
 const GS = 0x1d;
 
@@ -692,12 +694,9 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   depositApplied = null, balanceDue = null,
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
-  mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
-  // Dynamic payment-leg list (e.g. multi-card split: Visa/Mastercard/Amex each
-  // printed on its own line). When provided and non-empty, this takes precedence
-  // over the legacy two-slot mixedCashGiven/mixedCardGiven rendering below —
-  // callers that still pass only the legacy fields keep working unchanged.
-  paymentLines = null,
+  // Payment block built from the sale's allocations (POS/payments/paymentPresentation).
+  // Null when reprinting a historical invoice that predates allocations.
+  paymentBlock = null,
   showCreditBalance = false,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
@@ -935,27 +934,30 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
 
   if (showPaymentDetails) {
     if (invoice.paymentMode) w.gline(gutter, buildFixedWidthLine('Payment Mode:', invoice.paymentMode, width));
-    // Dynamic payment-leg list (multi-card split, or any other N-way split) — one
-    // line per leg (e.g. "Visa ... AED 300", "Mastercard ... AED 450") instead of
-    // the fixed Cash/Card two-slot layout below.
-    const validPaymentLines = Array.isArray(paymentLines)
-      ? paymentLines.filter(l => l && parseFloat(l.amount) > 0)
-      : [];
-    // Mixed (cash + card) split — each tender's portion so the receipt reconciles
-    // with the drawer + card batch. Otherwise fall back to Cash Received.
-    const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
-      (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
-    if (validPaymentLines.length > 0) {
-      for (const line of validPaymentLines) {
-        w.gline(gutter, buildFixedWidthLine(`${line.label}:`, fmt(line.amount), width));
+    // Payment details — one line per tender, then the totals footer. Same rows as the
+    // HTML/canvas/A4 renderers; only the drawing differs.
+    const blockRows = paymentBlockRows(paymentBlock, {
+      width,
+      labelSuffix: ':',
+      formatAmount: (r) => fmt(r.amount),
+    });
+    if (blockRows.length > 0) {
+      for (const row of blockRows) {
+        // A label too long for the column (e.g. "Transferred to Accounts Receivable:")
+        // arrives pre-wrapped at word boundaries; the leading lines print on their own and
+        // the amount right-aligns against the last one, so its column never shifts.
+        const lines = row.labelLines;
+        for (const line of lines.slice(0, -1)) w.gline(gutter, line);
+        w.gline(gutter, buildFixedWidthLine(lines[lines.length - 1], fmt(row.amount), width));
       }
-    } else if (hasMixedSplit) {
-      if (parseFloat(mixedCashGiven) > 0) w.gline(gutter, buildFixedWidthLine('Cash Paid:', fmt(mixedCashGiven), width));
-      if (parseFloat(mixedCardGiven) > 0) w.gline(gutter, buildFixedWidthLine(`Card Paid${mixedCardType ? ` (${mixedCardType})` : ''}:`, fmt(mixedCardGiven), width));
+      if (paymentBlock.hasReceivable) {
+        w.gline(gutter, buildFixedWidthLine('Invoice Total:', fmt(paymentBlock.invoiceTotal), width));
+      }
     } else if (cashGiven != null && parseFloat(cashGiven) > 0) {
+      // Reprint of a historical invoice with no recorded allocations.
       w.gline(gutter, buildFixedWidthLine('Cash Received:', fmt(cashGiven), width));
+      if (changeAmount != null && parseFloat(changeAmount) > 0) w.gline(gutter, buildFixedWidthLine('Change Returned:', fmt(changeAmount), width));
     }
-    if (changeAmount != null && parseFloat(changeAmount) > 0) w.gline(gutter, buildFixedWidthLine('Change Returned:', fmt(changeAmount), width));
     emitDivider(w, gutter, hr);
   }
 

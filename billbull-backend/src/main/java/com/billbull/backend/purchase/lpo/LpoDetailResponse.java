@@ -10,7 +10,7 @@ public class LpoDetailResponse {
     private Long dbId; // For consistency with LpoListResponse
     private String lpoNumber;
     private LocalDate lpoDate;
-
+    private Long vendorId;
     private String vendorName;
     private String vendorCode;
 
@@ -71,6 +71,14 @@ public class LpoDetailResponse {
 
     public void setLpoDate(LocalDate lpoDate) {
         this.lpoDate = lpoDate;
+    }
+
+    public Long getVendorId() {
+        return vendorId;
+    }
+
+    public void setVendorId(Long vendorId) {
+        this.vendorId = vendorId;
     }
 
     public String getVendorName() {

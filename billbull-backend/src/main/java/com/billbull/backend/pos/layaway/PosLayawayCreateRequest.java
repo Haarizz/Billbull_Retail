@@ -22,6 +22,11 @@ public class PosLayawayCreateRequest {
 
     private Double depositAmount;
     private String depositPaymentMode;
+    /** Progressive payment allocations for the deposit — the canonical shape, same as
+     *  checkout and delivery settlement. When present it is the source of truth for both the
+     *  deposit amount and its mode label; depositAmount/depositPaymentMode above are only
+     *  consulted when it is absent (a terminal that has not reloaded since deploy). */
+    private java.util.List<com.billbull.backend.pos.checkout.PosPaymentAllocation> paymentAllocations;
     private Boolean depositRequired;
     private LocalDate dueDate;
     private String remarks;
@@ -93,6 +98,8 @@ public class PosLayawayCreateRequest {
     public void setDepositAmount(Double depositAmount) { this.depositAmount = depositAmount; }
     public String getDepositPaymentMode() { return depositPaymentMode; }
     public void setDepositPaymentMode(String depositPaymentMode) { this.depositPaymentMode = depositPaymentMode; }
+    public java.util.List<com.billbull.backend.pos.checkout.PosPaymentAllocation> getPaymentAllocations() { return paymentAllocations; }
+    public void setPaymentAllocations(java.util.List<com.billbull.backend.pos.checkout.PosPaymentAllocation> paymentAllocations) { this.paymentAllocations = paymentAllocations; }
     public Boolean getDepositRequired() { return depositRequired; }
     public void setDepositRequired(Boolean depositRequired) { this.depositRequired = depositRequired; }
     public LocalDate getDueDate() { return dueDate; }

@@ -27,6 +27,8 @@ import com.billbull.backend.pos.terminal.PosTerminal;
 import com.billbull.backend.pos.terminal.PosTerminalActivityService;
 import com.billbull.backend.pos.terminal.PosTerminalHostingService;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
+import com.billbull.backend.pos.checkout.PosPaymentAllocationType;
+import com.billbull.backend.sales.payment.TenderBucket;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
@@ -1131,32 +1133,59 @@ public class PosSessionService {
                 .orElse(false);
     }
 
+    /**
+     * Records a settled invoice against the session's running tender counters, splitting the
+     * money across buckets by the checkout's actual payment allocations.
+     *
+     * <p>This used to classify the whole invoice total into a single bucket by pattern-matching
+     * {@code invoice.paymentMode} ("does the string contain 'cash' and 'card'?"). That could
+     * only ever be wrong for a sale paid more than one way: a 200 Cash+Card sale put 200 into
+     * {@code totalMixedSales} and nothing into cash or card, so the drawer expectation the
+     * cashier is counted against excluded cash the cashier was actually holding. Allocations
+     * carry the per-tender amount, so each bucket now receives exactly what that tender took —
+     * and the bucket sum reconciles with the {@code sales_payments} rows the X/Z reports
+     * aggregate.
+     *
+     * @param plan the resolved settlement plan; when null (or empty) the legacy paymentMode
+     *             classification is used, which is what historical/replayed callers still need
+     */
     @Transactional
-    public void recordInvoiceOnSession(Long sessionId, SalesInvoice invoice) {
+    public void recordInvoiceOnSession(Long sessionId, SalesInvoice invoice,
+                                       com.billbull.backend.pos.checkout.PosPaymentPlan plan) {
         if (sessionId == null) return;
 
         BigDecimal total = nz(invoice.getInvoiceTotal());
-        String mode = invoice.getPaymentMode() != null ? invoice.getPaymentMode().toLowerCase() : "";
 
-        // Classify into buckets — only one bucket receives the total.
         BigDecimal cashDelta   = BigDecimal.ZERO;
         BigDecimal cardDelta   = BigDecimal.ZERO;
         BigDecimal creditDelta = BigDecimal.ZERO;
-        BigDecimal mixedDelta  = BigDecimal.ZERO;
         BigDecimal onlineDelta = BigDecimal.ZERO;
+        // Always zero for a new sale: a multi-tender checkout is now split across the real
+        // buckets instead of being lumped into the deprecated "mixed" counter.
+        BigDecimal mixedDelta  = BigDecimal.ZERO;
 
-        if (mode.contains("cash") && mode.contains("card")) {
-            mixedDelta = total;
-        } else if (mode.contains("cash")) {
-            cashDelta = total;
-        } else if (mode.contains("card") || mode.contains("credit card")) {
-            cardDelta = total;
-        } else if (mode.contains("credit")) {
-            creditDelta = total;
-        } else if (mode.contains("online") || mode.contains("bank") || mode.contains("transfer")) {
-            onlineDelta = total;
+        if (plan != null && !plan.getAllocations().isEmpty()) {
+            cashDelta   = allocated(plan, PosPaymentAllocationType.CASH);
+            cardDelta   = allocated(plan, PosPaymentAllocationType.CARD);
+            onlineDelta = allocated(plan, PosPaymentAllocationType.ONLINE);
+            creditDelta = allocated(plan, PosPaymentAllocationType.CREDIT);
         } else {
-            cashDelta = total; // default fallback (Voucher, etc.) treated as cash
+            // Compatibility path — no allocations available (historical replay, or a credit sale
+            // that tendered nothing). Falls back to the stored label, as before.
+            String mode = invoice.getPaymentMode() != null ? invoice.getPaymentMode().toLowerCase() : "";
+            if (mode.contains("cash") && mode.contains("card")) {
+                mixedDelta = total;
+            } else if (mode.contains("cash")) {
+                cashDelta = total;
+            } else if (mode.contains("card") || mode.contains("credit card")) {
+                cardDelta = total;
+            } else if (mode.contains("credit")) {
+                creditDelta = total;
+            } else if (mode.contains("online") || mode.contains("bank") || mode.contains("transfer")) {
+                onlineDelta = total;
+            } else {
+                cashDelta = total; // default fallback (Voucher, etc.) treated as cash
+            }
         }
 
         // Count voided lines on this invoice for the session's running void tally.
@@ -1171,6 +1200,17 @@ public class PosSessionService {
         repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, onlineDelta, voidDelta);
         // Reset the idle clock so a cashier actively ringing sales is never auto-suspended.
         repo.touchLastActivity(sessionId, LocalDateTime.now());
+    }
+
+    /** Backward-compatible overload for callers with no settlement plan to hand. */
+    @Transactional
+    public void recordInvoiceOnSession(Long sessionId, SalesInvoice invoice) {
+        recordInvoiceOnSession(sessionId, invoice, null);
+    }
+
+    private static BigDecimal allocated(com.billbull.backend.pos.checkout.PosPaymentPlan plan,
+                                        PosPaymentAllocationType type) {
+        return BigDecimal.valueOf(plan.amountFor(type)).setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
     /** Explicit shift X-Report run by an open terminal. Stamps {@code xReportGeneratedAt}
@@ -1641,11 +1681,10 @@ public class PosSessionService {
         result.put("cashiers", buildCashierAttribution(invoices, tender));
         result.put("sessionInfo", sessions.stream().map(this::buildSessionInfo).toList());
         result.put("topSellingItems", buildTopSellingItems(invoices, 5));
-        // Cashier-wise breakdown keyed by the session owner (not the payment processor),
-        // with cash/card/credit split from actual tender — correctly attributes split
-        // (mixed Cash+Card) payments to both buckets instead of the session's running
-        // totalCashSales/totalCardSales counters, which never see "mixed" sales at all
-        // (recordInvoiceOnSession buckets mixed payments into totalMixedSales only).
+        // Cashier-wise breakdown keyed by the session owner (not the payment processor), with
+        // cash/card/credit split from the recorded Payment rows. Aggregating the tender rather
+        // than the session's running counters is what makes this reconcile exactly with the
+        // X/Z report tender block, whatever the sale's combined mode label happens to read.
         result.put("cashierWiseSummary", buildCashierWiseSummary(invoices, advances, sessions));
         result.put("isDayClosed", false);
         return result;
@@ -2238,22 +2277,11 @@ public class PosSessionService {
         return "Night";
     }
 
-    /** Maps a free-text payment mode (Cash / Visa / Card / Credit / Bank Transfer / …)
-     *  to one of the canonical report buckets. Order matters: "credit card" must
-     *  resolve to CARD, not CREDIT. */
+    /** Maps a free-text payment mode to a canonical report bucket. Delegates to the shared
+     *  {@link TenderBucket} so the X/Z reports, the sales reports and the dashboards all agree
+     *  on which column a given tender lands in. */
     private static String tenderBucket(String mode) {
-        String m = mode == null ? "" : mode.toLowerCase();
-        if (m.contains("card") || m.contains("visa") || m.contains("master")
-                || m.contains("amex") || m.contains("mada")) return "card";
-        if (m.contains("cash")) return "cash";
-        if (m.contains("credit")) return "credit";
-        if (m.contains("bank") || m.contains("transfer") || m.contains("online")) return "bankTransfer";
-        if (m.contains("wallet") || m.contains("apple") || m.contains("google")) return "wallet";
-        if (m.contains("voucher") || m.contains("gift")) return "voucher";
-        if (m.contains("cheque") || m.contains("check")) return "cheque";
-        if (m.contains("loyalty") || m.contains("points")) return "loyalty";
-        if (m.contains("store") ) return "storeCredit";
-        return "other";
+        return TenderBucket.of(mode);
     }
 
     /** Holds tender (actual collected) split by canonical bucket plus raw lines. */
@@ -2270,18 +2298,10 @@ public class PosSessionService {
         BigDecimal total = BigDecimal.ZERO;
     }
 
-    /** Normalizes a raw card paymentMode label into a display card-type name
-     *  (e.g. "VISA DEBIT" -&gt; "Visa"). Falls back to the trimmed raw label,
-     *  or "Card" if blank, so unrecognized brands still get their own row. */
+    /** Normalizes a raw card tender label into a display card-network name
+     *  (e.g. "VISA DEBIT" -&gt; "Visa"). Delegates to the shared {@link TenderBucket}. */
     private static String cardTypeLabel(String rawMode) {
-        String m = rawMode == null ? "" : rawMode.trim();
-        String lower = m.toLowerCase();
-        if (lower.contains("visa")) return "Visa";
-        if (lower.contains("master")) return "Mastercard";
-        if (lower.contains("amex")) return "Amex";
-        if (lower.contains("mada")) return "Mada";
-        if (m.isEmpty() || lower.equals("card")) return "Card";
-        return m;
+        return TenderBucket.cardNetwork(rawMode);
     }
 
     /** Aggregates actual RECEIVED tender for the given invoices from sales_payments.

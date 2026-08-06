@@ -28,6 +28,12 @@ public class PaymentController {
     @Autowired
     private ModulePermissionService modulePermissionService;
 
+    @Autowired
+    private InvoicePaymentSummaryService invoicePaymentSummaryService;
+
+    @Autowired
+    private PaymentReconciliationService paymentReconciliationService;
+
     // ==========================================
     // GET ALL
     // ==========================================
@@ -75,6 +81,64 @@ public class PaymentController {
     public List<Payment> getPaymentsByInvoice(@PathVariable String invoiceNumber) {
         modulePermissionService.requireCanView(MODULE);
         return paymentService.getPaymentsByInvoice(invoiceNumber);
+    }
+
+    /**
+     * How the given invoices were actually paid, as payment allocations reconstructed from the
+     * recorded tender rows. Back-office screens use this instead of pattern-matching an
+     * invoice's stored paymentMode text, which cannot say how much went on each tender and,
+     * for older sales, may only say "Mixed".
+     *
+     * <p>Batched deliberately: a sales list needs the breakdown for a whole page of invoices,
+     * and one request per row would be a query storm.
+     *
+     * GET /api/payments/invoice-summary?invoiceNumbers=INV-1,INV-2
+     */
+    @GetMapping("/invoice-summary")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, InvoicePaymentSummary> getInvoicePaymentSummaries(
+            @RequestParam List<String> invoiceNumbers) {
+        modulePermissionService.requireCanView(MODULE);
+        return invoicePaymentSummaryService.summariesFor(invoiceNumbers);
+    }
+
+    /**
+     * Read-only payment diagnostics for one invoice: what the invoice says, what the tender
+     * rows say, what follows arithmetically, and every way they disagree.
+     *
+     * <p>Admin-only, and it never writes: a diagnostic that silently repaired data would
+     * destroy the evidence of how the data got that way. Intended for support engineers
+     * investigating a till/ledger discrepancy.
+     *
+     * GET /api/sales/payments/diagnostics/{invoiceNumber}
+     */
+    @GetMapping("/diagnostics/{invoiceNumber}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public InvoicePaymentDiagnostics getPaymentDiagnostics(@PathVariable String invoiceNumber) {
+        try {
+            return paymentReconciliationService.diagnose(invoiceNumber);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage());
+        }
+    }
+
+    /**
+     * The same diagnosis across many invoices, for a bulk health check. Runs in a fixed
+     * number of queries regardless of how many invoices are asked about.
+     *
+     * <p>Returns only the inconsistent ones by default — a health check wants the exceptions,
+     * not a listing of everything that is fine. Pass {@code includeConsistent=true} to see all.
+     *
+     * GET /api/sales/payments/diagnostics?invoiceNumbers=INV-1,INV-2
+     */
+    @GetMapping("/diagnostics")
+    @PreAuthorize("hasRole('ADMIN')")
+    public List<InvoicePaymentDiagnostics> getPaymentDiagnosticsBatch(
+            @RequestParam List<String> invoiceNumbers,
+            @RequestParam(defaultValue = "false") boolean includeConsistent) {
+        List<InvoicePaymentDiagnostics> all = paymentReconciliationService.diagnoseAll(invoiceNumbers);
+        if (includeConsistent) return all;
+        return all.stream().filter(d -> !d.isConsistent() || d.isHasWarnings()).toList();
     }
 
     @GetMapping("/next-number")

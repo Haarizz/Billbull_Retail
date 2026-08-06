@@ -247,6 +247,9 @@ public class StockTransferService {
         updateTransferTotals(st);
 
         for (StockTransferItem item : st.getItems()) {
+            if (item.getBatchNumber() != null && item.getBatchNumber().trim().startsWith("·")) {
+                item.setBatchNumber(null);
+            }
             BigDecimal available = resolveAvailableQty(st.getFromWarehouse().getId(), item);
             if (available.compareTo(BigDecimal.valueOf(item.getQuantity())) < 0) {
                 String batchSuffix = item.getBatchNumber() != null ? " (batch " + item.getBatchNumber() + ")" : "";
@@ -391,6 +394,9 @@ public class StockTransferService {
             return null;
         }
         String trimmed = batchNumber.trim();
+        if (trimmed.startsWith("·")) {
+            return null;
+        }
         return trimmed.isEmpty() || "-".equals(trimmed) ? null : trimmed;
     }
 
