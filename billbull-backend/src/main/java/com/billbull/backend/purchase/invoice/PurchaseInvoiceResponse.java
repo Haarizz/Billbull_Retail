@@ -10,6 +10,7 @@ public class PurchaseInvoiceResponse {
     private String invoiceNumber;
     private LocalDate invoiceDate;
 
+    private Long vendorId;
     private String vendorName;
     private String sourceType;
     private String referenceNo;
@@ -120,6 +121,14 @@ public class PurchaseInvoiceResponse {
 
     public void setInvoiceDate(LocalDate invoiceDate) {
         this.invoiceDate = invoiceDate;
+    }
+
+    public Long getVendorId() {
+        return vendorId;
+    }
+
+    public void setVendorId(Long vendorId) {
+        this.vendorId = vendorId;
     }
 
     public String getVendorName() {

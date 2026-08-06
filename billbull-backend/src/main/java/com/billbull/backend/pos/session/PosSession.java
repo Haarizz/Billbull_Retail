@@ -152,6 +152,16 @@ public class PosSession extends BaseEntity {
     @Column(name = "total_credit_sales", precision = 15, scale = 2)
     private BigDecimal totalCreditSales = BigDecimal.ZERO;
 
+    /**
+     * @deprecated Historical only. Under the payment-allocation architecture a sale paid more
+     *     than one way is split across {@code totalCashSales} / {@code totalCardSales} /
+     *     {@code totalOnlineSales} / {@code totalCreditSales} by the amount each tender took, so
+     *     nothing increments this counter any more (see
+     *     {@code PosSessionService.recordInvoiceOnSession}). It is kept, and kept readable, only
+     *     so sessions closed before Phase 10 still report the totals they were closed with.
+     *     Never read it to build a new figure — aggregate the {@code sales_payments} rows.
+     */
+    @Deprecated
     @Column(name = "total_mixed_sales", precision = 15, scale = 2)
     private BigDecimal totalMixedSales = BigDecimal.ZERO;
 
@@ -306,7 +316,11 @@ public class PosSession extends BaseEntity {
     public BigDecimal getTotalCreditSales() { return totalCreditSales; }
     public void setTotalCreditSales(BigDecimal totalCreditSales) { this.totalCreditSales = totalCreditSales; }
 
+    /** @deprecated see {@link #totalMixedSales} — historical sessions only. */
+    @Deprecated
     public BigDecimal getTotalMixedSales() { return totalMixedSales; }
+    /** @deprecated see {@link #totalMixedSales} — historical sessions only. */
+    @Deprecated
     public void setTotalMixedSales(BigDecimal totalMixedSales) { this.totalMixedSales = totalMixedSales; }
 
     public BigDecimal getTotalOnlineSales() { return totalOnlineSales; }

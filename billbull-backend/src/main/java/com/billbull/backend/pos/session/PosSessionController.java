@@ -29,17 +29,20 @@ public class PosSessionController {
     private final PosDayStatusService dayStatusService;
     private final PosPendingDayCloseResolver pendingDayCloseResolver;
     private final BranchAccessService branchAccessService;
+    private final PosAuthorizationService authorizationService;
 
     public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
                                  PosDayStatusService dayStatusService,
                                  PosPendingDayCloseResolver pendingDayCloseResolver,
-                                 BranchAccessService branchAccessService) {
+                                 BranchAccessService branchAccessService,
+                                 PosAuthorizationService authorizationService) {
         this.service = service;
         this.syncService = syncService;
         this.objectMapper = objectMapper;
         this.dayStatusService = dayStatusService;
         this.pendingDayCloseResolver = pendingDayCloseResolver;
         this.branchAccessService = branchAccessService;
+        this.authorizationService = authorizationService;
     }
 
     /** Default {@code date} for endpoints that don't receive an explicit one: the next
@@ -222,13 +225,14 @@ public class PosSessionController {
     }
 
     @PostMapping("/close-day")
-    @PreAuthorize("hasAnyAuthority('SUPERVISOR', 'MANAGER', 'ADMIN', 'ROLE_SUPERVISOR', 'ROLE_MANAGER', 'ROLE_ADMIN')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> closeDay(
             @RequestParam Long branchId,
             @RequestParam(required = false) String date,
             @RequestParam(required = false) Long startSessionId,
             @RequestParam(required = false) Long endSessionId,
             @RequestParam(required = false, defaultValue = "false") boolean acknowledgeExclusions) {
+        authorizationService.authorizeDayClose(branchId);
         LocalDate reportDate = date != null ? LocalDate.parse(date) : resolveDefaultDate(branchId);
         return ResponseEntity.ok(service.closeDay(branchId, reportDate, startSessionId, endSessionId, acknowledgeExclusions));
     }

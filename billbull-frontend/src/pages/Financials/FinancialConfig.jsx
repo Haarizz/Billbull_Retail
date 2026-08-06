@@ -16,7 +16,8 @@ import {
 import {
     getAllAccountingPeriods,
     createAccountingPeriod,
-    closeAccountingPeriod
+    closeAccountingPeriod,
+    reopenAccountingPeriod
 } from '../../api/accountingPeriodApi';
 import * as backendApi from '../../api/financialReportsBackendApi';
 import { getAccounts, getOpeningBalanceLocks, saveOpeningBalances } from '../../api/ledgerApi';
@@ -33,6 +34,7 @@ const FinancialConfig = () => {
     const [accounts, setAccounts] = useState([]);
     const [expandedNodes, setExpandedNodes] = useState(new Set());
     const [periods, setPeriods] = useState([]);
+    const [processingPeriodId, setProcessingPeriodId] = useState(null);
 
     // Create Period Modal
     const [isPeriodModalOpen, setIsPeriodModalOpen] = useState(false);
@@ -553,13 +555,31 @@ const FinancialConfig = () => {
 
     const handleClosePeriod = async (id) => {
         if (!window.confirm("Are you sure you want to close this period? This action cannot be reversed, and no further postings will be allowed in this timeframe.")) return;
+        setProcessingPeriodId(id);
         try {
             await closeAccountingPeriod(id);
             toast.success("Period closed successfully");
             fetchData();
         } catch (e) {
             console.error(e);
-            toast.error("Failed to close period");
+            toast.error(e?.response?.data?.message || "Failed to close period");
+        } finally {
+            setProcessingPeriodId(null);
+        }
+    };
+
+    const handleReopenPeriod = async (id) => {
+        if (!window.confirm("This will reopen the accounting period and allow new financial transactions dated within this period to be posted. Existing financial records will not be modified.")) return;
+        setProcessingPeriodId(id);
+        try {
+            await reopenAccountingPeriod(id);
+            toast.success("Period reopened successfully");
+            fetchData();
+        } catch (e) {
+            console.error(e);
+            toast.error(e?.response?.data?.message || "Failed to reopen period");
+        } finally {
+            setProcessingPeriodId(null);
         }
     };
 
@@ -599,20 +619,30 @@ const FinancialConfig = () => {
                                     <td className="px-6 py-3 text-xs text-slate-600">{period.startDate}</td>
                                     <td className="px-6 py-3 text-xs text-slate-600">{period.endDate}</td>
                                     <td className="px-6 py-3 text-center">
-                                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${period.status === 'OPEN' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${period.status?.toUpperCase() === 'OPEN' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
                                             {period.status || 'OPEN'}
                                         </span>
                                     </td>
                                     <td className="px-6 py-3 text-right">
-                                        {period.status === 'OPEN' ? (
+                                        {period.status?.toUpperCase() === 'OPEN' ? (
                                             <button
                                                 onClick={() => handleClosePeriod(period.id)}
-                                                className="px-3 py-1 bg-white border border-slate-200 text-red-600 text-[10px] font-bold rounded hover:bg-red-50"
+                                                disabled={processingPeriodId === period.id}
+                                                className="px-3 py-1 bg-white border border-slate-200 text-red-600 text-[10px] font-bold rounded hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                                             >
-                                                Close Period
+                                                {processingPeriodId === period.id ? 'Closing...' : 'Close Period'}
                                             </button>
                                         ) : (
-                                            <span className="text-[10px] text-slate-400 font-medium">Closed by {period.closedBy || 'Admin'}</span>
+                                            <div className="flex items-center justify-end gap-2">
+                                                <span className="text-[10px] text-slate-400 font-medium">Closed by {period.closedBy || 'Admin'}</span>
+                                                <button
+                                                    onClick={() => handleReopenPeriod(period.id)}
+                                                    disabled={processingPeriodId === period.id}
+                                                    className="px-3 py-1 bg-white border border-slate-200 text-emerald-600 text-[10px] font-bold rounded hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {processingPeriodId === period.id ? 'Reopening...' : 'Reopen Period'}
+                                                </button>
+                                            </div>
                                         )}
                                     </td>
                                 </tr>

@@ -1299,6 +1299,10 @@ const CreateVendorWizard = ({ onBack, onSave, initialData }) => {
         alert("Please enter Vendor Name to proceed.");
         return;
       }
+      if (!formData.category) {
+        alert("Category is required.");
+        return;
+      }
       if (!formData.branch) {
         alert("Please select a Default Branch to proceed.");
         return;

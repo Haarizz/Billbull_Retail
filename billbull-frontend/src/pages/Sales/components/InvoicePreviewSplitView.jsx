@@ -19,6 +19,9 @@ export default function InvoicePreviewSplitView({
     listLoading,
     searchTerm,
     onSearchChange,
+    // Allocation-derived payment summaries for the listed invoices, loaded once by the
+    // parent so each card can show "Cash + Visa" instead of a stored label.
+    paymentBlocks,
     ...previewProps
 }) {
     const [drawerOpen, setDrawerOpen] = useState(false);
@@ -47,6 +50,7 @@ export default function InvoicePreviewSplitView({
             searchTerm={searchTerm}
             onSearchChange={onSearchChange}
             loading={listLoading}
+            paymentBlocks={paymentBlocks}
         />
     );
 

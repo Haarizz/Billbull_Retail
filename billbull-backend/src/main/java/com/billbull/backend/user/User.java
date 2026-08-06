@@ -113,7 +113,7 @@ public class User extends BaseEntity {
     }
 
     public void setEmail(String email) {
-        this.email = email;
+        this.email = (email != null && email.isBlank()) ? null : email;
     }
 
     public String getPhone() {

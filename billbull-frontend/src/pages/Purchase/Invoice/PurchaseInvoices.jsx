@@ -1065,13 +1065,17 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         };
       });
 
+      const editVendorName = editInvoice.vendor || "";
+      const mappedVendorId = editInvoice.vendorId || vendorList.find(v => v.name.toLowerCase() === editVendorName.toLowerCase())?.id || "";
+
       // 3. Set Form Data
       setFormData({
         dbId: editInvoice.dbId || null,
         id: editInvoice.id,
         date: editInvoice.documentDate || editInvoice.date || todayAsInputDate(),
-        vendor: editInvoice.vendor,
-        vendorInvoiceNo: editInvoice.vendorInvoiceNo || editInvoice.vendorId || "",
+        vendor: editVendorName,
+        vendorId: mappedVendorId,
+        vendorInvoiceNo: editInvoice.vendorInvoiceNo || "",
         vendorInvoiceDate: editInvoice.vendorInvoiceDate || editInvoice.documentDate || editInvoice.date || todayAsInputDate(),
         dueDate: editInvoice.dueDate,
         status: editInvoice.status || "Draft",
@@ -1245,9 +1249,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         }
 
         // 1. Map Fields
+        const lpoVendorName = lpo.vendorName || lpo.vendor || "";
+        const matchedVendor = vendorList.find(v => v.name.toLowerCase() === lpoVendorName.toLowerCase());
+
         setFormData(prev => ({
           ...prev,
-          vendor: lpo.vendorName,
+          vendor: lpoVendorName,
+          vendorId: matchedVendor?.id || lpo.vendorId || "",
           status: "Draft",
           warehouse: lpo.warehouseName,
           warehouseId: whId,
@@ -1445,9 +1453,13 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       }
 
       // 7. Update State
+      const grnVendorName = grnDetail.vendor || grnDetail.vendorName || "";
+      const matchedVendor = vendorList.find(v => v.name.toLowerCase() === grnVendorName.toLowerCase());
+
       setFormData(prev => ({
         ...prev,
-        vendor: grnDetail.vendor || grnDetail.vendorName || "",
+        vendor: grnVendorName,
+        vendorId: matchedVendor?.id || grnDetail.vendorId || "",
         warehouse: grnDetail.warehouseName || "Main Warehouse",
         warehouseId: whId,
         zoneId: grnZoneId,
@@ -1783,6 +1795,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     invoiceNumber: formData.id,
     invoiceDate: formData.date,
     vendorName: formData.vendor,
+    vendorId: formData.vendorId,
     vendorInvoiceNo: formData.vendorInvoiceNo,
     vendorInvoiceDate: formData.vendorInvoiceDate,
     sourceType: invoiceType, // Matches Enum directly
@@ -1940,6 +1953,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               setFormData(prev => ({
                 ...prev,
                 vendor: "",
+                vendorId: "",
                 warehouse: "",
                 warehouseId: null,
                 zoneId: null,
@@ -2005,7 +2019,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               value={formData.vendorInvoiceNo}
               readOnly={isInvoiceLocked}
               onChange={(e) => setFormData({ ...formData, vendorInvoiceNo: e.target.value })}
-              className={`w-36 text-sm p-1.5 border rounded text-slate-700 focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 ${!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked
+              className={`w-36 text-sm p-1.5 border rounded text-slate-700 focus:outline-none focus:border-[#F5C742] read-only:bg-slate-50 ${!String(formData.vendorInvoiceNo || '').trim() && !isInvoiceLocked
                 ? "border-red-300 bg-red-50"
                 : "border-slate-200"
                 }`}
@@ -2035,7 +2049,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           />
         </div>
       </div>
-      {!formData.vendorInvoiceNo?.trim() && !isInvoiceLocked && (
+      {!String(formData.vendorInvoiceNo || '').trim() && !isInvoiceLocked && (
         <p className="text-[11px] text-red-500 -mt-2 px-1">Vendor invoice number is required</p>
       )}
 
@@ -2070,10 +2084,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             <div>
               <label className="text-xs font-medium text-slate-500 mb-1 block">Vendor Name</label>
               {formData.vendor ? (
-                <div className={`bg-slate-50 border border-slate-200 rounded-md p-4 relative group ${isFormLocked ? 'opacity-70 pointer-events-none' : ''}`}>
+                <div className={`bg-slate-50 border border-slate-200 rounded-md p-4 relative group ${(isFormLocked && !!formData.vendorId) ? 'opacity-70 pointer-events-none' : ''}`}>
                   <button
-                    onClick={() => !isFormLocked && setIsVendorSearchOpen(true)}
-                    disabled={isFormLocked}
+                    onClick={() => !(isFormLocked && !!formData.vendorId) && setIsVendorSearchOpen(true)}
+                    disabled={isFormLocked && !!formData.vendorId}
                     className="absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 hover:bg-slate-200 rounded-md transition-all text-slate-500"
                     title="Change Vendor"
                   >
@@ -2083,9 +2097,9 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                 </div>
               ) : (
                 <button
-                  onClick={() => !isFormLocked && setIsVendorSearchOpen(true)}
-                  disabled={isFormLocked}
-                  className={`w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors ${isFormLocked ? 'opacity-50 pointer-events-none' : ''}`}
+                  onClick={() => !(isFormLocked && !!formData.vendorId) && setIsVendorSearchOpen(true)}
+                  disabled={isFormLocked && !!formData.vendorId}
+                  className={`w-full flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white hover:bg-slate-50 transition-colors ${(isFormLocked && !!formData.vendorId) ? 'opacity-50 pointer-events-none' : ''}`}
                 >
                   <span className="text-slate-400">Select Vendor...</span>
                   <Search className="h-4 w-4 text-slate-400" />
@@ -2095,7 +2109,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               <VendorSelector
                 isOpen={isVendorSearchOpen}
                 onClose={() => setIsVendorSearchOpen(false)}
-                onSelect={(v) => setFormData({ ...formData, vendor: v?.name || '' })}
+                onSelect={(v) => setFormData({ ...formData, vendor: v?.name || '', vendorId: v?.id || '' })}
                 vendors={vendorList}
                 selectedCode={''}
               />
@@ -2591,7 +2605,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
               <>
                 <button
                   onClick={() => {
-                    if (!formData.vendorInvoiceNo?.trim()) {
+                    if (!String(formData.vendorInvoiceNo || '').trim()) {
                       alert("Vendor invoice number is required.");
                       return;
                     }
@@ -2622,7 +2636,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                     }
 
                     // 3. Vendor Invoice Number Guard
-                    if (!formData.vendorInvoiceNo?.trim()) {
+                    if (!String(formData.vendorInvoiceNo || '').trim()) {
                       alert("Vendor invoice number is required.");
                       return;
                     }

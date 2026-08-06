@@ -33,6 +33,8 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.pos.audit.PosAuditLogRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.pos.settings.PosSettingsRepository;
+import com.billbull.backend.pos.checkout.PosPaymentAllocationResolver;
+import com.billbull.backend.pos.checkout.PosPaymentPlan;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
@@ -1186,8 +1188,57 @@ class PosSessionServiceTest {
                 eq(0));               // voidDelta
     }
 
+    /**
+     * The allocation path is what every live checkout now takes: each tender's own amount goes
+     * to its own bucket, and the deprecated "mixed" counter never moves. Before Phase 10 this
+     * same 200 sale put the whole 200 into totalMixedSales and nothing into cash or card, so
+     * the drawer expectation excluded cash the cashier was actually holding.
+     */
     @Test
-    void recordInvoiceClassifiesMixedWhenCashAndCard() {
+    void recordInvoiceSplitsSessionTotalsAcrossTendersFromTheAllocationPlan() {
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
+
+        PosPaymentPlan plan = new PosPaymentAllocationResolver().resolveAllocations(
+                java.util.List.of(
+                        allocationOf("CASH", 120.0),
+                        allocationOf("CARD", 50.0),
+                        allocationOf("ONLINE", 30.0)),
+                200.0, null, "Cash");
+
+        service.recordInvoiceOnSession(1L, invoice(200.0, "Cash + Card + Online"), plan);
+
+        verify(repo).incrementSessionTotals(
+                eq(1L),
+                eq(bd("200.0")),      // totalSales — still the invoice value
+                eq(bd("120.00")),     // cashDelta
+                eq(bd("50.00")),      // cardDelta
+                eq(bd("0.00")),       // creditDelta
+                eq(BigDecimal.ZERO),  // mixedDelta — never incremented again
+                eq(bd("30.00")),      // onlineDelta
+                eq(0));
+    }
+
+    /** A part-credit sale puts only the receivable portion in the credit bucket. */
+    @Test
+    void recordInvoiceSendsOnlyTheReceivablePortionToTheCreditBucket() {
+        lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
+
+        PosPaymentPlan plan = new PosPaymentAllocationResolver().resolveAllocations(
+                java.util.List.of(allocationOf("CASH", 40.0), allocationOf("CREDIT", 60.0)),
+                100.0, null, "Cash");
+
+        service.recordInvoiceOnSession(1L, invoice(100.0, "Cash + Credit"), plan);
+
+        verify(repo).incrementSessionTotals(
+                eq(1L), eq(bd("100.0")),
+                eq(bd("40.00")), eq(bd("0.00")), eq(bd("60.00")),
+                eq(BigDecimal.ZERO), eq(bd("0.00")), eq(0));
+    }
+
+    /** Legacy/replayed callers with no plan keep the old label classification, so historical
+     *  reprocessing still produces the totals those sessions were closed with. */
+    @Test
+    void recordInvoiceWithoutAPlanFallsBackToTheStoredLabelClassification() {
         lenient().when(repo.incrementSessionTotals(anyLong(), any(), any(), any(), any(), any(), any(), anyInt())).thenReturn(1);
 
         service.recordInvoiceOnSession(1L, invoice(200.0, "Cash + Card"));
@@ -2154,6 +2205,14 @@ class PosSessionServiceTest {
         m.setAmount(amount);
         m.setStatus(PosCashMovementStatus.ACTIVE);
         return m;
+    }
+
+    private com.billbull.backend.pos.checkout.PosPaymentAllocation allocationOf(String type, double amount) {
+        com.billbull.backend.pos.checkout.PosPaymentAllocation a =
+                new com.billbull.backend.pos.checkout.PosPaymentAllocation();
+        a.setType(type);
+        a.setAmount(amount);
+        return a;
     }
 
     private SalesInvoice invoice(double total, String mode) {

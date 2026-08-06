@@ -204,6 +204,12 @@ public class PosSettings extends BaseEntity {
     @Column(name = "terminal_archive_warning_days")
     private Integer terminalArchiveWarningDays = 5;
 
+    /** Controls who is authorized to perform the Business Day (Z Report) closing.
+     *  false (default) = any authenticated POS user may close the day.
+     *  true  = supervisor authorization required (same flow as void/price-override). */
+    @Column(name = "require_supervisor_for_day_close")
+    private Boolean requireSupervisorForDayClose = false;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -355,4 +361,7 @@ public class PosSettings extends BaseEntity {
 
     public Integer getTerminalArchiveWarningDays() { return terminalArchiveWarningDays; }
     public void setTerminalArchiveWarningDays(Integer terminalArchiveWarningDays) { this.terminalArchiveWarningDays = terminalArchiveWarningDays; }
+
+    public Boolean getRequireSupervisorForDayClose() { return requireSupervisorForDayClose; }
+    public void setRequireSupervisorForDayClose(Boolean requireSupervisorForDayClose) { this.requireSupervisorForDayClose = requireSupervisorForDayClose; }
 }

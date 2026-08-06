@@ -1,8 +1,9 @@
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
 import { ROBOTO_MONO_FONT_FACE } from '../../../utils/receiptFont';
-import { buildFixedWidthLine, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
+import { buildFixedWidthLine, escPosUsableCols, resolveLineDiscount, wrapToWidth } from '../../../utils/escPosReceipt';
 import { voidedLineNet } from '../../../utils/documentSummaryUtils';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../../utils/documentTaxType';
+import { paymentBlockRows } from './payments/paymentPresentation';
 
 /**
  * Build-time cutover switch for the POS <-> Back Office PrintTemplate unification
@@ -270,12 +271,11 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   showLoyaltyPoints = false, showCreditBalance = false, showFooterText = true,
   outletAddress = '', outletPhone = '',
   cashGiven = null, changeAmount = null,
-  // Mixed (cash + card) split — how much was tendered on each tender.
-  mixedCashGiven = null, mixedCardGiven = null, mixedCardType = null,
-  // Dynamic payment-leg list (e.g. multi-card split: Visa/Mastercard/Amex each on
-  // their own line). Takes precedence over the legacy mixedCashGiven/mixedCardGiven
-  // two-slot rendering below when present and non-empty.
-  paymentLines = null,
+  // Payment block built by POS/payments/paymentPresentation from the sale's payment
+  // allocations — one row per tender, in the order the cashier took them, plus the
+  // totals footer. Null when reprinting a historical invoice that predates allocations,
+  // in which case the cashGiven fallback below still renders.
+  paymentBlock = null,
   // Layaway/Hold deposit already collected, shown as a reduction with the remaining
   // balance due, when this sale settles a reserved order (§Layaway conversion).
   depositApplied = null, balanceDue = null,
@@ -447,27 +447,31 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   // ── Payment details (§4): mode, cash received, change (only when change > 0) ──
   if (showPaymentDetails) {
     if (payMode) html += `<div class="row"><span class="lbl">${isReturn ? 'Refund Method:' : 'Payment Mode:'}</span><span class="val">${esc(payMode)}</span></div>`;
-    // Dynamic payment-leg list (multi-card split, or any other N-way split) — one
-    // row per leg instead of the fixed Cash/Card two-slot layout below.
-    const validPaymentLines = Array.isArray(paymentLines)
-      ? paymentLines.filter(l => l && parseFloat(l.amount) > 0)
-      : [];
-    // Mixed (cash + card) split — surface each tender's portion so the receipt
-    // reconciles with the drawer + card batch. Otherwise fall back to Cash Received.
-    const hasMixedSplit = (mixedCashGiven != null && parseFloat(mixedCashGiven) > 0) ||
-      (mixedCardGiven != null && parseFloat(mixedCardGiven) > 0);
-    if (validPaymentLines.length > 0) {
-      for (const line of validPaymentLines) {
-        html += `<div class="row"><span class="lbl">${esc(line.label)}:</span><span class="num">${cur} ${fmt(line.amount)}</span></div>`;
+    // Payment details — one row per tender the cashier allocated, then the totals
+    // footer. Identical rows to every other renderer (see paymentBlockRows).
+    // Wrapped against the same column grid the ESC/POS printer uses, so the preview and the
+    // paper break a long tender label ("Transferred to Accounts Receivable") identically.
+    const blockRows = paymentBlockRows(paymentBlock, {
+      width: escPosUsableCols(paperSize),
+      labelSuffix: ':',
+      formatAmount: (r) => `${cur} ${fmt(r.amount)}`,
+    });
+    if (blockRows.length > 0) {
+      for (const row of blockRows) {
+        const lines = row.labelLines;
+        for (const line of lines.slice(0, -1)) html += `<div class="row"><span class="lbl">${esc(line)}</span></div>`;
+        html += `<div class="row"><span class="lbl">${esc(lines[lines.length - 1])}</span><span class="num">${row.emphasis ? '<b>' : ''}${cur} ${fmt(row.amount)}${row.emphasis ? '</b>' : ''}</span></div>`;
       }
-    } else if (hasMixedSplit) {
-      if (parseFloat(mixedCashGiven) > 0) html += `<div class="row"><span class="lbl">Cash Paid:</span><span class="num">${cur} ${fmt(mixedCashGiven)}</span></div>`;
-      if (parseFloat(mixedCardGiven) > 0) html += `<div class="row"><span class="lbl">Card Paid${mixedCardType ? ` (${esc(mixedCardType)})` : ''}:</span><span class="num">${cur} ${fmt(mixedCardGiven)}</span></div>`;
+      if (paymentBlock.hasReceivable) {
+        html += `<div class="row"><span class="lbl">Invoice Total:</span><span class="num">${cur} ${fmt(paymentBlock.invoiceTotal)}</span></div>`;
+      }
     } else if (cashGiven != null && parseFloat(cashGiven) > 0) {
+      // Reprint of a historical invoice — no allocations recorded, so all we know is
+      // the mode and what was tendered.
       html += `<div class="row"><span class="lbl">Cash Received:</span><span class="num">${cur} ${fmt(cashGiven)}</span></div>`;
+      if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">${cur} ${fmt(changeAmount)}</span></div>`;
     }
-    if (changeAmount != null && parseFloat(changeAmount) > 0) html += `<div class="row"><span class="lbl">Change Returned:</span><span class="num">${cur} ${fmt(changeAmount)}</span></div>`;
-    if (payMode || validPaymentLines.length > 0 || hasMixedSplit || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
+    if (payMode || blockRows.length > 0 || (cashGiven != null && parseFloat(cashGiven) > 0)) html += D;
   }
 
   // ── QR / Stamp / footer image (§4+§5) ──

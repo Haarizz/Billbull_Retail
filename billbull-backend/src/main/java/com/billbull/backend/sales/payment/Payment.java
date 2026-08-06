@@ -9,7 +9,12 @@ import java.time.LocalDate;
 
 @Entity
 @Table(name = "sales_payments", indexes = {
-    @Index(name = "idx_sales_payment_branch", columnList = "branch_id")
+    @Index(name = "idx_sales_payment_branch", columnList = "branch_id"),
+    // Reconstructing an invoice's payment allocations filters on linked_invoice +
+    // payment_type (see PaymentRepository.findTenderForInvoices); without this every
+    // back-office screen that shows a payment breakdown scans the whole table.
+    // Also created explicitly by Flyway V71 for tenants on ddl-auto=validate.
+    @Index(name = "idx_sales_payment_linked_invoice", columnList = "linked_invoice, payment_type")
 })
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })
 @jakarta.persistence.EntityListeners(com.billbull.backend.common.ownership.OwnershipAuditListener.class)

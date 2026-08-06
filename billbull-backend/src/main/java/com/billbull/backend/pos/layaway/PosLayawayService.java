@@ -8,6 +8,7 @@ import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.reservation.PosStockReservationService;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
+import com.billbull.backend.pos.checkout.PosPaymentAllocationResolver;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -42,6 +43,7 @@ public class PosLayawayService {
     private final BatchSelectionService batchSelectionService;
     private final PosStockReservationService stockReservationService;
     private final RolePermissionService permissionService;
+    private final PosPaymentAllocationResolver allocationResolver;
     private final PostingEngineService postingEngine;
     private final BranchRepository branchRepository;
     private final WarehouseRepository warehouseRepository;
@@ -54,6 +56,7 @@ public class PosLayawayService {
                              BatchSelectionService batchSelectionService,
                              PosStockReservationService stockReservationService,
                              RolePermissionService permissionService,
+                             PosPaymentAllocationResolver allocationResolver,
                              PostingEngineService postingEngine,
                              BranchRepository branchRepository,
                              WarehouseRepository warehouseRepository,
@@ -65,6 +68,7 @@ public class PosLayawayService {
         this.batchSelectionService = batchSelectionService;
         this.stockReservationService = stockReservationService;
         this.permissionService = permissionService;
+        this.allocationResolver = allocationResolver;
         this.postingEngine = postingEngine;
         this.branchRepository = branchRepository;
         this.warehouseRepository = warehouseRepository;
@@ -172,10 +176,23 @@ public class PosLayawayService {
         layaway.setTaxTotal(round2(taxTotal));
         layaway.setSaleTotal(round2(saleTotal));
 
-        // Holds never carry a deposit; a normal layaway takes the requested deposit (capped at total).
-        BigDecimal deposit = isHold ? BigDecimal.ZERO : nz(req.getDepositAmount()).min(layaway.getSaleTotal());
+        // Holds never carry a deposit; a normal layaway takes the requested deposit (capped at
+        // total). The deposit is settled through the same allocation engine as every other POS
+        // payment, so its validation, cash capping and mode label are identical to checkout's.
+        BigDecimal deposit;
+        String depositMode;
+        if (!isHold && req.getPaymentAllocations() != null && !req.getPaymentAllocations().isEmpty()) {
+            var plan = allocationResolver.resolveAllocations(
+                    req.getPaymentAllocations(), layaway.getSaleTotal().doubleValue(),
+                    req.getDepositPaymentMode(), "Cash");
+            deposit = round2(BigDecimal.valueOf(plan.getSettledAmount()));
+            depositMode = plan.getCombinedPaymentMode();
+        } else {
+            deposit = isHold ? BigDecimal.ZERO : nz(req.getDepositAmount()).min(layaway.getSaleTotal());
+            depositMode = isHold ? null : req.getDepositPaymentMode();
+        }
         layaway.setDepositAmount(round2(deposit));
-        layaway.setDepositPaymentMode(isHold ? null : req.getDepositPaymentMode());
+        layaway.setDepositPaymentMode(isHold ? null : depositMode);
         layaway.setDepositRequired(!isHold && req.getDepositRequired() != null && req.getDepositRequired());
         layaway.setBalanceAmount(round2(layaway.getSaleTotal().subtract(deposit).max(BigDecimal.ZERO)));
         layaway.setStatus(deriveStatus(layaway.getSaleTotal(), deposit));

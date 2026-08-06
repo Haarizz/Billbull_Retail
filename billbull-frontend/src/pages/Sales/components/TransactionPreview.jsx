@@ -10,6 +10,9 @@ import PrintTemplateMenu from './PrintTemplateMenu';
 import InvoiceHistoryModal from './InvoiceHistoryModal';
 import InvoiceItemsTable from './InvoiceItemsTable';
 import { getSalesInvoiceById } from '../../../api/salesInvoiceApi';
+import { getInvoicePaymentSummaries } from '../../../api/salesPaymentApi';
+import { buildPaymentBlockFromRecords } from '../../Sales/POS/payments/paymentPresentation';
+import PaymentDetailsPanel from '../../Sales/POS/payments/PaymentDetailsPanel';
 import { useInvoicePaymentHistory } from '../../../hooks/useInvoicePaymentHistory';
 import { useInvoiceThermalPrint } from '../../../hooks/useInvoiceThermalPrint';
 import { getInvoiceStatusBadge, resolveInvoiceSourceType, getInvoiceTypeBadge } from '../utils/invoiceStatusBadge';
@@ -177,6 +180,27 @@ export default function TransactionPreview({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     useEffect(() => { fetchInvoice(); setActiveTab('payments'); }, [fetchInvoice]);
 
+    // How this sale was actually paid, reconstructed from its recorded tender rows. The
+    // invoice's own paymentMode text is only a label — it cannot say how much went on each
+    // tender, and older sales may just say "Mixed". Loaded here rather than passed down so
+    // the preview stays self-contained.
+    const [paymentBlock, setPaymentBlock] = useState(null);
+    const invoiceNumber = invoice?.invoiceNumber;
+    const invoiceTotalForPayments = Number(invoice?.invoiceTotal) || 0;
+
+    useEffect(() => {
+        if (!invoiceNumber) return undefined;
+        let cancelled = false;
+        getInvoicePaymentSummaries([invoiceNumber]).then(summaries => {
+            if (cancelled) return;
+            const summary = summaries[invoiceNumber];
+            setPaymentBlock(summary
+                ? buildPaymentBlockFromRecords(summary.allocations, { invoiceTotal: invoiceTotalForPayments })
+                : null);
+        });
+        return () => { cancelled = true; };
+    }, [invoiceNumber, invoiceTotalForPayments]);
+
     const { payments, loading: paymentsLoading, error: paymentsError, refetch: refetchPayments } = useInvoicePaymentHistory(invoice);
 
     const timeline = useMemo(() => buildInvoiceTimeline(invoice, payments), [invoice, payments]);
@@ -272,7 +296,7 @@ export default function TransactionPreview({
                         {invoice.dueDate && <><span className="text-slate-300">•</span><span className="whitespace-nowrap">Due {formatDisplayDate(invoice.dueDate)}</span></>}
                         {invoice.branch && <><span className="text-slate-300">•</span><span className="truncate max-w-55" title={invoice.branch}>{invoice.branch}</span></>}
                         {invoice.salesperson && <><span className="text-slate-300">•</span><span className="truncate max-w-45" title={invoice.salesperson}>{invoice.salesperson}</span></>}
-                        {invoice.paymentMode && <><span className="text-slate-300">•</span><span className="border border-slate-200 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 text-slate-600 whitespace-nowrap">{invoice.paymentMode}</span></>}
+                        {(paymentBlock?.summaryLabel || invoice.paymentMode) && <><span className="text-slate-300">•</span><span className="border border-slate-200 px-1.5 py-0.5 rounded text-[10px] bg-slate-50 text-slate-600 whitespace-nowrap">{paymentBlock?.summaryLabel || invoice.paymentMode}</span></>}
                     </div>
                 </div>
 
@@ -405,6 +429,14 @@ export default function TransactionPreview({
 
             <div role="tabpanel">
                 {effectiveTab === 'payments' && (
+                    <>
+                    {/* The tender breakdown exactly as the receipt printed it — same rows,
+                        same order, same labels, from the shared presentation layer. */}
+                    {paymentBlock && (
+                        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                            <PaymentDetailsPanel block={paymentBlock} storedMode={invoice.paymentMode} />
+                        </div>
+                    )}
                     <PaymentHistorySection
                         payments={payments}
                         loading={paymentsLoading}
@@ -417,6 +449,7 @@ export default function TransactionPreview({
                         onDownloadPdf={() => onDownload?.(invoice)}
                         onEmailVoucher={() => onOpenEmailModal?.(invoice)}
                     />
+                    </>
                 )}
                 {effectiveTab === 'timeline' && (
                     <div className="p-4 md:p-5">

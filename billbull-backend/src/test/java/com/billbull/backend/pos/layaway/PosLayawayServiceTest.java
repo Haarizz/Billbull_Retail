@@ -54,7 +54,11 @@ class PosLayawayServiceTest {
     @BeforeEach
     void setUp() {
         service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService,
-                stockReservationService, permissionService, postingEngine, branchRepository, warehouseRepository,
+                stockReservationService, permissionService,
+                // Real resolver, not a mock: the deposit runs through the same pure allocation
+                // engine as every other POS payment and these tests assert on its output.
+                new com.billbull.backend.pos.checkout.PosPaymentAllocationResolver(),
+                postingEngine, branchRepository, warehouseRepository,
                 auditService, branchTaxResolutionService);
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(java.math.BigDecimal.ZERO);

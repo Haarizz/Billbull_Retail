@@ -127,6 +127,8 @@ import {
   Upload,
   Heart,
   Coins,
+  Mail,
+  MessageCircle,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -158,10 +160,17 @@ import {
   ThermalMock, useA4BlobUrl, A4PreviewFrame, A4LivePreview,
   ServiceJobA4Preview, PaperSizePicker, ImageUploadBox, A4ScaledPreview, ThermalScaledPreview,
 } from './POS/POSPrintPreview';
+import { usePaymentManager } from './POS/payments/usePaymentManager';
+import { buildCheckoutPaymentFields, buildSettlementPaymentFields } from './POS/payments/paymentPayloadAdapter';
+import { buildPaymentBlock, paymentBlockRows, matchesPaymentFilter, PAYMENT_FILTERS, reconcilePaymentBlock, paymentAuditSnapshot } from './POS/payments/paymentPresentation';
+import { useCheckoutCapabilities } from './POS/payments/useCheckoutCapabilities';
+import PaymentAllocationPanel from './POS/payments/PaymentAllocationPanel';
+import { PAYMENT_TYPES } from './POS/payments/paymentModel';
 import CustomerPicker from './POS/CustomerPicker';
 import { formatUserDisplayName } from '../../utils/displayName';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
+import { usePermissions } from '../../context/PermissionContext';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
@@ -174,12 +183,19 @@ import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
+import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
 import { buildEscPosReceiptBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
 import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
 import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
 import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
+
+/** Tenders offered when settling a delivery balance. CREDIT is excluded: putting the amount
+ *  back on the customer's account is not a settlement, it is leaving the balance outstanding. */
+const DELIVERY_SETTLE_METHODS = [
+  PAYMENT_TYPES.CASH, PAYMENT_TYPES.CARD, PAYMENT_TYPES.ONLINE,
+];
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 const buildPosScannerStorageKey = (branchId, terminalId) => {
@@ -415,6 +431,7 @@ export default function POSSales() {
   // (X/Z report, cash drop/out, customer management) are locked until this is
   // true and re-enable automatically — no refresh — when a session is opened.
   const isSessionActive = currentSession?.status === 'active' || currentSession?.status === 'OPEN';
+  const { hasAnyRole } = usePermissions();
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
   const [posSettings, setPosSettings] = useState(null);
   // Behavior-settings editor (Console → Behavior tab)
@@ -463,7 +480,6 @@ export default function POSSales() {
             setCurrentSession(null);
             setCurrentInvoice({ items: [], subtotal: 0, totalDiscount: 0, tax: 0, total: 0, billDiscountAmount: 0 });
             setSelectedCustomer(WALK_IN_CUSTOMER.id);
-            setCheckoutPayMode('cash');
             setShowPaymentDialog(false);
             setShowCloseSessionDialog(false);
             setShowCashDropDialog(false);
@@ -534,8 +550,9 @@ export default function POSSales() {
   //   { type: 'ADD_ITEM', product, quantity, batch, serial, expiry, overrides, minPrice, attemptedPrice }
   //   { type: 'UPDATE_PRICE', itemId, newPrice, itemName, minPrice }
   const [pendingPriceOverride, setPendingPriceOverride] = useState(null);
-  // Action pending supervisor approval during layaway conversion (Clear / Remove / Void)
   const [pendingLayawayAbortAction, setPendingLayawayAbortAction] = useState(null);
+  // Generic supervisor action for future reuse (replaces dedicated pending flags)
+  const [pendingSupervisorAction, setPendingSupervisorAction] = useState(null);
   // true = action is a full cart clear (should also reset layaway conversion state)
   const [pendingLayawayAbortIsFullClear, setPendingLayawayAbortIsFullClear] = useState(false);
   // X-Report / Z-Report live data
@@ -588,8 +605,6 @@ export default function POSSales() {
   const [discoverySupervisorPin, setDiscoverySupervisorPin] = useState('');
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
-  const [customerAdvanceSummary, setCustomerAdvanceSummary] = useState(null);
-  const [mixedAdvanceAmount, setMixedAdvanceAmount] = useState('');
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
   // Live Session quick-view — dashboard tile that pops the current session's
@@ -668,9 +683,6 @@ export default function POSSales() {
   const [deliverySettleSearch, setDeliverySettleSearch] = useState('');
   const [deliverySettlePersonFilter, setDeliverySettlePersonFilter] = useState('All Persons');
   const [deliverySettleSelected, setDeliverySettleSelected] = useState(null);
-  const [deliverySettlePayMode, setDeliverySettlePayMode] = useState('Cash');
-  const [deliverySettleMixCash, setDeliverySettleMixCash] = useState('');
-  const [deliverySettleMixCard, setDeliverySettleMixCard] = useState('');
   const [deliveryOrders, setDeliveryOrders] = useState([]);
   const [deliveryOrdersLoading, setDeliveryOrdersLoading] = useState(false);
   const [deliveryOutLoading, setDeliveryOutLoading] = useState(false);
@@ -683,50 +695,10 @@ export default function POSSales() {
   const [customerHistoryPreviewLoading, setCustomerHistoryPreviewLoading] = useState(false);
   const [customerHistoryPreviewError, setCustomerHistoryPreviewError] = useState('');
 
-  // Checkout pay mode
-  const [checkoutPayMode, setCheckoutPayMode] = useState('cash');
-  const [mixedCashAmount, setMixedCashAmount] = useState('');
-  const [mixedCardAmount, setMixedCardAmount] = useState('');
-  const [mixedCardType, setMixedCardType] = useState('');
-  // Checkout keypad
-  const [checkoutKeypadValue, setCheckoutKeypadValue] = useState('');
-  const [checkoutKeypadMode, setCheckoutKeypadMode] = useState('numeric');
-  const [checkoutKeypadTarget, setCheckoutKeypadTarget] = useState('tender');
-  const [checkoutKeypadVisible, setCheckoutKeypadVisible] = useState(false);
-  const [checkoutCardType, setCheckoutCardType] = useState('');
-  const [checkoutCardRef, setCheckoutCardRef] = useState('');
-  // Multi-card split (Card payment mode only): [] = single-card mode, driven by
-  // checkoutCardType/checkoutCardRef above (unchanged legacy behavior). A non-empty
-  // array is the source of truth instead — one row per card, sent to the backend
-  // as PosCheckoutRequest.cardLegs (generalized Mixed-payment-style split).
-  const [checkoutCardLegs, setCheckoutCardLegs] = useState([]);
-  // Display label for the Card payment mode — "Visa" for a single card, or
-  // "Visa + Mastercard + Amex" once split across multiple. Used everywhere a
-  // preview/payload needs a human-readable payment-mode string before checkout
-  // actually posts (the backend independently derives its own combined label
-  // from the real Payment rows once the sale is recorded).
-  const checkoutCardModeLabel = useMemo(() => {
-    if (checkoutCardLegs.length === 0) return checkoutCardType || 'Card';
-    const types = checkoutCardLegs.map(l => l.cardType).filter(Boolean);
-    return types.length > 0 ? types.join(' + ') : 'Card';
-  }, [checkoutCardType, checkoutCardLegs]);
   // Online payment mode — bank account linking for reconciliation/reporting
   const [checkoutOnlineBankAccounts, setCheckoutOnlineBankAccounts] = useState([]);
   const [checkoutOnlineBankAccountsLoading, setCheckoutOnlineBankAccountsLoading] = useState(false);
-  const [checkoutOnlineBankAccountId, setCheckoutOnlineBankAccountId] = useState('');
-  const [checkoutOnlineReference, setCheckoutOnlineReference] = useState('');
   const [checkoutRemarks, setCheckoutRemarks] = useState('');
-  const [checkoutCreditCustomerSearch, setCheckoutCreditCustomerSearch] = useState('');
-  const [checkoutCreditCustomer, setCheckoutCreditCustomer] = useState(null);
-  const [checkoutCreditDueDate, setCheckoutCreditDueDate] = useState('2026-06-28');
-  const [checkoutCreditTerms, setCheckoutCreditTerms] = useState('30');
-  // Partial receipt against a Credit sale — cashier can collect part of the bill now
-  // (Cash/Card/Online/Bank) while the remainder posts to the customer's receivable.
-  const [checkoutCreditReceivedMode, setCheckoutCreditReceivedMode] = useState('');
-  const [checkoutCreditReceivedAmount, setCheckoutCreditReceivedAmount] = useState('');
-  const [checkoutCreditReceivedCardType, setCheckoutCreditReceivedCardType] = useState('');
-  const [checkoutCreditReceivedRef, setCheckoutCreditReceivedRef] = useState('');
-  const [checkoutCreditReceivedBankAccountId, setCheckoutCreditReceivedBankAccountId] = useState('');
   // E-bill options (embedded in checkout)
   const [checkoutEbillPrint, setCheckoutEbillPrint] = useState(true);
   const [checkoutEbillSms, setCheckoutEbillSms] = useState(false);
@@ -755,9 +727,54 @@ export default function POSSales() {
   // Customer's outstanding balance for the checkout Thermal preview's Credit Account
   // section — fetched async (useMemo can't await), mirrors the lookup done at print time.
   const [checkoutPreviewCreditBalance, setCheckoutPreviewCreditBalance] = useState(null);
-  const [receiptSharePhone, setReceiptSharePhone] = useState('');
-  const [receiptShareEmail, setReceiptShareEmail] = useState('');
+  // Share Receipt: which channel dialog is open ('sms' | 'whatsapp' | 'email' | null)
+  // and the transient success/failure toast it raises.
+  const [receiptShareChannel, setReceiptShareChannel] = useState(null);
+  const [receiptShareFeedback, setReceiptShareFeedback] = useState(null);
   const [lastPaidInvoice, setLastPaidInvoice] = useState(null);
+
+  // Pre-fill the share dialog from the customer on the settled sale. A walk-in
+  // has neither, so the cashier gets an empty field to type into.
+  const receiptShareInitialValue = useMemo(() => {
+    const cust = lastPaidInvoice?.customer;
+    if (!cust || cust.id === WALK_IN_CUSTOMER.id) return '';
+    return (receiptShareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
+  }, [lastPaidInvoice, receiptShareChannel]);
+
+  // The three send paths are unchanged — WhatsApp still opens wa.me, Email still
+  // calls sendSalesInvoiceEmail with the same payload. Throwing here keeps the
+  // dialog open so the cashier can retry.
+  const handleReceiptShareSend = useCallback(async (value) => {
+    if (!lastPaidInvoice) return;
+    const summary = `Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`;
+    if (receiptShareChannel === 'whatsapp') {
+      const digits = value.replace(/\D/g, '');
+      window.open(`https://wa.me/${digits}?text=${encodeURIComponent(summary)}`, '_blank');
+      setReceiptShareFeedback({ type: 'success', message: 'WhatsApp opened with the receipt message.' });
+      return;
+    }
+    if (receiptShareChannel === 'sms') {
+      // No SMS gateway is wired up yet; this keeps the previous stub behaviour
+      // (which used alert()) and only swaps the notice for the standard toast.
+      setReceiptShareFeedback({ type: 'success', message: `${summary} — SMS queued for ${value}.` });
+      return;
+    }
+    if (receiptShareChannel === 'email') {
+      if (!lastPaidInvoice?.invoice?.id) throw new Error('Invoice is not available to email yet.');
+      await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, {
+        toEmail: value,
+        subject: `Receipt ${lastPaidInvoice.id}`,
+        htmlBody: `<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>`,
+      });
+      setReceiptShareFeedback({ type: 'success', message: `Receipt emailed to ${value}.` });
+    }
+  }, [lastPaidInvoice, receiptShareChannel]);
+
+  useEffect(() => {
+    if (!receiptShareFeedback) return undefined;
+    const t = setTimeout(() => setReceiptShareFeedback(null), 3500);
+    return () => clearTimeout(t);
+  }, [receiptShareFeedback]);
 
   // Touch screen POS states
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -807,7 +824,6 @@ export default function POSSales() {
   const [receivedAmount, setReceivedAmount] = useState('');
 
   // Enhanced payment states
-  const [tenderedAmount, setTenderedAmount] = useState('');
   const [showKeypad, setShowKeypad] = useState(false);
   const [selectedCardType, setSelectedCardType] = useState('');
   const [showCustomerSelector, setShowCustomerSelector] = useState(false);
@@ -939,8 +955,6 @@ export default function POSSales() {
   // Save Layaway modal
   const [showSaveLayaway, setShowSaveLayaway] = useState(false);
   const [saveLayawayDepositReq, setSaveLayawayDepositReq] = useState(true);
-  const [saveLayawayDeposit, setSaveLayawayDeposit] = useState('');
-  const [saveLayawayPayMode, setSaveLayawayPayMode] = useState('Cash');
   const [saveLayawayDueDate, setSaveLayawayDueDate] = useState('2026-06-28');
   const [saveLayawayRemarks, setSaveLayawayRemarks] = useState('');
   const [saveLayawayReserveStock, setSaveLayawayReserveStock] = useState(true);
@@ -1289,17 +1303,85 @@ export default function POSSales() {
 
   const customerOptions = useMemo(() => [WALK_IN_CUSTOMER, ...posCustomers], [posCustomers]);
 
-  // Single source of truth for "who is this sale's customer". In Credit mode the
-  // cashier picks in the dedicated credit search box (checkoutCreditCustomer),
-  // which lives in its own state; if that pick never mirrored back onto
-  // selectedCustomer, the preview, printed receipt AND the posted invoice all fell
-  // back to Walk-in even though a real customer was chosen. Resolve the effective
-  // customer here so every consumer (preview, print, backend payload) agrees:
-  // prefer the Credit-box selection when in Credit mode, else the main selection.
-  const effectiveCustomerId = useMemo(
-    () => (checkoutPayMode === 'credit' && checkoutCreditCustomer) ? checkoutCreditCustomer : selectedCustomer,
-    [checkoutPayMode, checkoutCreditCustomer, selectedCustomer]
+  // ══ Checkout Payment Manager ═══════════════════════════════════════════════
+  // Amount the cashier has to collect: cart total + shipping, less any layaway deposit
+  // already taken. Every payment figure on the checkout screen is measured against this.
+  const checkoutEffectiveDue = useMemo(() => {
+    const shippingChargeNum = Number(shippingCharge) || 0;
+    const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
+    const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
+    return Math.max(0, grandTotal - depositAmt);
+  }, [currentInvoice.total, shippingCharge, activeLayawayDeposit]);
+
+  // Sole owner of checkout payment state. POSSales no longer computes the remaining balance,
+  // allocated amount, change, payment summary or settlement readiness — it reads them from
+  // here, so screen and settlement can never disagree.
+  const checkoutPayment = usePaymentManager({
+    invoiceTotal: checkoutEffectiveDue,
+  });
+
+  // Balance still owed on the delivery order the cashier has open, and the Payment Manager
+  // that settles it. Same manager, selectors and validation as checkout -- one settlement
+  // architecture, not one per screen.
+  const deliverySettleBalance = useMemo(() => {
+    const sel = deliverySettleSelected;
+    if (!sel) return 0;
+    return Math.max(0, (sel.invoiceAmt + sel.deliveryCharge) - sel.paidAmt);
+  }, [deliverySettleSelected]);
+
+  const deliverySettlePayment = usePaymentManager({ invoiceTotal: deliverySettleBalance });
+  const { clearLines: clearDeliverySettleLines } = deliverySettlePayment;
+
+  const deliverySettleFields = useMemo(
+    () => buildSettlementPaymentFields(deliverySettlePayment.paymentLines, {
+      amountDue: deliverySettleBalance,
+    }),
+    [deliverySettlePayment.paymentLines, deliverySettleBalance],
   );
+
+  // Layaway deposit. A deposit is a payment like any other, so it is collected through the
+  // same manager, modals and validation as a till sale rather than a bespoke amount+mode pair.
+  const saveLayawayTotal = useMemo(() => currentInvoice.total || 0, [currentInvoice.total]);
+  const saveLayawayPayment = usePaymentManager({ invoiceTotal: saveLayawayTotal });
+  const { clearLines: clearSaveLayawayLines } = saveLayawayPayment;
+
+  const saveLayawayFields = useMemo(
+    () => buildSettlementPaymentFields(saveLayawayPayment.paymentLines, {
+      amountDue: saveLayawayTotal,
+    }),
+    [saveLayawayPayment.paymentLines, saveLayawayTotal],
+  );
+
+  // Confirms the server accepts progressive payment allocations before any sale is settled.
+  // Probed when the checkout opens; settlement stays blocked until it answers yes, because a
+  // server that ignores the field would post the invoice with no payment recorded.
+  const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog);
+
+  // The payment fields of the checkout payload, plus the post-checkout figures (change,
+  // credit carried forward, whether the drawer opens) — all projected from the allocations.
+  const checkoutPaymentFields = useMemo(
+    () => buildCheckoutPaymentFields(checkoutPayment.paymentLines, {
+      effectiveDue: checkoutEffectiveDue,
+      layawayDeposit: activeLayawayDeposit,
+    }),
+    [checkoutPayment.paymentLines, checkoutEffectiveDue, activeLayawayDeposit],
+  );
+
+
+  // Single source of truth for "who is this sale's customer". A credit allocation names the
+  // account it is charged to; if that pick never mirrored back onto selectedCustomer, the
+  // preview, printed receipt AND the posted invoice all fell back to Walk-in even though a
+  // real customer was chosen. Resolve the effective customer here so every consumer
+  // (preview, print, backend payload) agrees: prefer the credit allocation's customer, else
+  // the main selection.
+  const effectiveCustomerId = useMemo(() => {
+    const creditCode = checkoutPaymentFields.creditCustomer?.code;
+    if (creditCode) {
+      const match = customerOptions.find(c => (c.code || c.id) === creditCode);
+      if (match) return match.id;
+    }
+    return selectedCustomer;
+  }, [checkoutPaymentFields.creditCustomer, customerOptions, selectedCustomer]);
 
   const selectedCustomerData = useMemo(
     () => customerOptions.find(c => c.id === effectiveCustomerId) || WALK_IN_CUSTOMER,
@@ -1342,7 +1424,7 @@ export default function POSSales() {
         shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
         posCounterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? checkoutCardModeLabel : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
+        paymentMode: checkoutPaymentFields.paymentMode,
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
         taxInclusive: !!currentInvoice.taxInclusive,
@@ -1407,18 +1489,12 @@ export default function POSSales() {
             showFooterText: t2ReceiptShowFooterText, showBarcode: t2ReceiptShowBarcode,
           };
 
-      // Mixed (cash + card) split for the receipt preview — only when the mode is
-      // Mixed and both portions were entered, so cash/card/credit sales don't show
-      // an empty split. Passed to BOTH template renderers below.
-      const previewMixedCash = checkoutPayMode === 'mixed' ? (parseFloat(mixedCashAmount) || 0) : 0;
-      const previewMixedCard = checkoutPayMode === 'mixed' ? (parseFloat(mixedCardAmount) || 0) : 0;
-      const previewHasMixed = checkoutPayMode === 'mixed' && (previewMixedCash > 0 || previewMixedCard > 0);
-      // Multi-card split preview — mirrors the real print path's paymentLines.
-      const previewPaymentLines = checkoutPayMode === 'card' && checkoutCardLegs.length > 0
-        ? checkoutCardLegs
-            .filter(leg => leg.cardType && (parseFloat(leg.amount) || 0) > 0)
-            .map(leg => ({ label: leg.cardType, amount: parseFloat(leg.amount) || 0 }))
-        : null;
+      // The payment block the preview renders — built from the live allocations by the
+      // same function the printed receipt uses, so what the cashier sees on screen and
+      // what comes out of the printer cannot differ.
+      const previewPaymentBlock = buildPaymentBlock(checkoutPayment.paymentLines, {
+        invoiceTotal: checkoutEffectiveDue,
+      });
 
       // Template 2 (Arabic/bilingual) has its own HTML renderer — the checkout
       // preview must show whichever template is saved in Print Templates, same
@@ -1448,10 +1524,7 @@ export default function POSSales() {
           creditInvoiceCredit: previewGrand,
           creditAmountPaid: 0,
           creditUpdatedBalance: checkoutPreviewCreditBalance != null ? Number(checkoutPreviewCreditBalance) + previewGrand : null,
-          mixedCashGiven: previewHasMixed ? previewMixedCash : null,
-          mixedCardGiven: previewHasMixed ? previewMixedCard : null,
-          mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
-          paymentLines: previewPaymentLines,
+          paymentBlock: previewPaymentBlock,
         });
         const outlet = {
           name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
@@ -1486,10 +1559,7 @@ export default function POSSales() {
         creditPreviousBalance: checkoutPreviewCreditBalance,
         cashierName: cashierDisplayName, terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
         currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
-        mixedCashGiven: previewHasMixed ? previewMixedCash : null,
-        mixedCardGiven: previewHasMixed ? previewMixedCard : null,
-        mixedCardType: previewHasMixed ? (mixedCardType || 'Card') : null,
-        paymentLines: previewPaymentLines,
+        paymentBlock: previewPaymentBlock,
       });
 
       checkoutPreviewFreezeRef.current = html;
@@ -1499,7 +1569,7 @@ export default function POSSales() {
       return '';
     }
   }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
-    checkoutPayMode, checkoutCardType, checkoutCardLegs, checkoutCardModeLabel, mixedCashAmount, mixedCardAmount, mixedCardType, currentTerminal, cashierDisplayName, activeCurrency,
+    checkoutPayment, checkoutPaymentFields, currentTerminal, cashierDisplayName, activeCurrency,
     tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
@@ -1541,7 +1611,7 @@ export default function POSSales() {
         saleType: currentInvoice.saleType || '',
         terminalId: currentTerminal?.terminalId || '',
         counterName: currentTerminal?.counterName || '',
-        paymentMode: checkoutPayMode === 'cash' ? 'Cash' : checkoutPayMode === 'card' ? checkoutCardModeLabel : checkoutPayMode === 'credit' ? 'Credit' : checkoutPayMode === 'online' ? 'Online' : 'Cash + Card',
+        paymentMode: checkoutPaymentFields.paymentMode,
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
         taxInclusive: !!currentInvoice.taxInclusive,
@@ -1577,7 +1647,7 @@ export default function POSSales() {
       return '';
     }
   }, [showA4CheckoutPreview, checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, shippingCharge,
-    checkoutPayMode, checkoutCardType, checkoutCardModeLabel, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
+    checkoutPaymentFields, currentTerminal, currentSession, activeCurrency, resolveInvoiceA4Template,
     tplInvoiceFooter, tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, tplInvoiceShowStamp,
     tplInvoiceShowSignature, tplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode, tplInvoiceColItemImage,
@@ -1736,41 +1806,13 @@ export default function POSSales() {
     return list.slice(0, 30);
   }, [customerOptions, customerSearchQuery]);
 
-  const checkoutCreditCustomerOptions = useMemo(() => {
-    const query = checkoutCreditCustomerSearch.trim().toLowerCase();
-    const list = customerOptions.filter(c => c.id !== WALK_IN_CUSTOMER.id);
-    if (!query) return list.slice(0, 30);
-    return list.filter(c =>
-      [c.name, c.code, c.membershipId, c.phone, c.mobile, c.email, c.trn]
-        .filter(Boolean)
-        .some(value => String(value).toLowerCase().includes(query))
-    ).slice(0, 30);
-  }, [checkoutCreditCustomerSearch, customerOptions]);
-
-  const creditCustomerData = useMemo(
-    () => customerOptions.find(c => c.id === checkoutCreditCustomer) || null,
-    [checkoutCreditCustomer, customerOptions]
-  );
-
   useEffect(() => { currentInvoiceRef.current = currentInvoice; }, [currentInvoice]);
 
-  // When the checkout opens with a real customer already on the bill, carry that
-  // customer into the Credit-payment section so the cashier never has to
-  // re-select. Only seeds once per open and never overrides a manual pick.
+  // Lazily load configured bank accounts the first time the cashier opens checkout —
+  // the Online allocation modal needs them to offer a receiving account. Same
+  // list/endpoint Bank Reconciliation already uses.
   useEffect(() => {
     if (!showPaymentDialog) return;
-    if (checkoutCreditCustomer) return;
-    if (selectedCustomer && selectedCustomer !== WALK_IN_CUSTOMER.id) {
-      setCheckoutCreditCustomer(selectedCustomer);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPaymentDialog]);
-
-  // Lazily load configured bank accounts the first time the cashier opens checkout
-  // and switches to Online mode (or Credit mode, whose partial-receipt leg can also
-  // be received Online/Bank) — same list/endpoint Bank Reconciliation already uses.
-  useEffect(() => {
-    if (checkoutPayMode !== 'online' && checkoutPayMode !== 'credit') return;
     if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;
     let cancelled = false;
     setCheckoutOnlineBankAccountsLoading(true);
@@ -1780,7 +1822,7 @@ export default function POSSales() {
       .finally(() => { if (!cancelled) setCheckoutOnlineBankAccountsLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkoutPayMode]);
+  }, [showPaymentDialog]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300);
@@ -3161,6 +3203,13 @@ export default function POSSales() {
           setActiveLayawayDeposit(0);
         }
       }
+      if (pendingSupervisorAction) {
+        const action = pendingSupervisorAction;
+        setPendingSupervisorAction(null);
+        if (action.type === 'DAY_CLOSE') {
+          handleCloseDay(action.payload?.acknowledgeExclusions);
+        }
+      }
       setSupervisorPinValue('');
       setSupervisorPinEmail('');
       setSupervisorPinError('');
@@ -3216,6 +3265,7 @@ export default function POSSales() {
   const beginEditSettings = () => {
     setSettingsDraft({
       requireSupervisorForVoid: !!posSettings?.requireSupervisorForVoid,
+      requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
       supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
       requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
       // Write-only — the backend never returns the raw PIN (see supervisorPinSet on posSettings).
@@ -3409,6 +3459,16 @@ export default function POSSales() {
         : "Cannot close day while blocking validations exist. Please resolve all pending actions.");
       return;
     }
+
+    if (posSettings?.requireSupervisorForDayClose && !hasAnyRole('SUPERVISOR', 'ROLE_SUPERVISOR', 'MANAGER', 'ROLE_MANAGER', 'ADMIN', 'ROLE_ADMIN', 'BRANCH_ADMIN', 'ROLE_BRANCH_ADMIN')) {
+      setPendingSupervisorAction({ type: 'DAY_CLOSE', payload: { acknowledgeExclusions } });
+      setSupervisorPinValue('');
+      setSupervisorPinEmail('');
+      setSupervisorPinError('');
+      setShowSupervisorPin(true);
+      return;
+    }
+
     try {
       setZReportLoading(true);
       const data = await closePosDay(
@@ -3526,9 +3586,7 @@ export default function POSSales() {
       setDeliverySettleSearch('');
       setDeliverySettlePersonFilter('All Persons');
       setDeliverySettleSelected(null);
-      setDeliverySettlePayMode('Cash');
-      setDeliverySettleMixCash('');
-      setDeliverySettleMixCard('');
+      clearDeliverySettleLines();
       loadDeliveryOrders();
     }
   }, [showDeliverySettleModal]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3588,10 +3646,9 @@ export default function POSSales() {
       const payload = {
         customerCode: customer.id !== 'walk-in' ? (customer.code || customer.id) : 'WALK-IN',
         customerName: customer.name,
+        // A delivery order posts unpaid — no allocations, so no payment is recorded. The
+        // balance is collected later through the delivery-settle flow.
         paymentMode: 'Delivery',
-        amountTendered: 0,
-        cashAmount: 0,
-        cardAmount: 0,
         sessionId: currentSession?.id || null,
         terminalId: currentTerminal?.terminalId || null,
         counterName: currentTerminal?.counterName || null,
@@ -3949,8 +4006,11 @@ export default function POSSales() {
         terminalId: currentTerminal?.terminalId || null,
         counterName: currentTerminal?.counterName || null,
         depositRequired: saveLayawayDepositReq,
-        depositAmount: saveLayawayDepositReq ? (parseFloat(saveLayawayDeposit) || 0) : 0,
-        depositPaymentMode: saveLayawayDepositReq ? saveLayawayPayMode : null,
+        // The allocations are the source of truth for the deposit; the scalars below are
+        // derived from them and kept so an older server still records the right figures.
+        paymentAllocations: saveLayawayDepositReq ? saveLayawayFields.paymentAllocations : [],
+        depositAmount: saveLayawayDepositReq ? saveLayawayFields.amountTendered : 0,
+        depositPaymentMode: saveLayawayDepositReq ? saveLayawayFields.paymentMode : null,
         dueDate: saveLayawayDueDate || null,
         remarks: saveLayawayRemarks || null,
         reserveStockRequested: saveLayawayReserveStock,
@@ -4008,7 +4068,7 @@ export default function POSSales() {
       clearInvoice();
       syncPosData();
       setShowSaveLayaway(false);
-      setSaveLayawayDeposit('');
+      clearSaveLayawayLines();
       setSaveLayawayRemarks('');
       // Surface it immediately if the list is open behind the modal.
       loadLayaways();
@@ -4230,13 +4290,11 @@ export default function POSSales() {
     isReprint = false,
     cashGiven = null,
     changeAmount = null,
-    mixedCashGiven = null,
-    mixedCardGiven = null,
-    mixedCardType = null,
-    // Dynamic payment-leg list (multi-card split) — [{label, amount}], one row per
-    // card. Takes precedence over mixedCashGiven/mixedCardGiven in every renderer
-    // when present and non-empty; null/absent falls back to the legacy fields.
-    paymentLines = null,
+    // Allocation-driven payment block (POS/payments/paymentPresentation) — one row per
+    // tender in the order the cashier took them, plus the totals footer. Every renderer
+    // prints the same rows from it. Null when reprinting a historical invoice that has
+    // no recorded allocations, where the cashGiven fallback still applies.
+    paymentBlock = null,
     customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
@@ -4368,10 +4426,7 @@ export default function POSSales() {
       deliveryAddress: full.shippingAddress || null,
       cashGiven,
       changeAmount,
-      mixedCashGiven,
-      mixedCardGiven,
-      mixedCardType,
-      paymentLines,
+      paymentBlock,
       depositApplied,
       balanceDue,
       shippingCharge,
@@ -4531,6 +4586,35 @@ export default function POSSales() {
   // instead of only the pos_price_override role-permission check.
   const processPayment = async (overrideCreds = null) => {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
+    // Refuse to post a payment the server would not record. Reaching here means the button
+    // was driven by something other than a click (a stale render, a keyboard shortcut), so
+    // fail loudly rather than posting a sale whose tender would be silently dropped.
+    if (!checkoutCompatibility.canSettle) {
+      setCheckoutError(checkoutCompatibility.message
+        || 'Server compatibility could not be verified. Payment was not taken.');
+      return;
+    }
+    if (checkoutPayment.paymentLines.length === 0) {
+      setCheckoutError('Add at least one payment before settling.');
+      return;
+    }
+    // Last cheap point to catch a payment that does not add up. Reaching here with an
+    // inconsistent block would post figures the receipt and the ledger then disagree about,
+    // so refuse and say exactly which identity failed rather than continuing silently.
+    const preflight = reconcilePaymentBlock(buildPaymentBlock(checkoutPayment.paymentLines, {
+      invoiceTotal: checkoutEffectiveDue,
+    }));
+    if (!preflight.consistent) {
+      const detail = preflight.findings.filter(f => f.severity === 'error').map(f => f.message).join(' ');
+      console.error('POS settlement blocked — payment does not reconcile', {
+        invoiceTotal: checkoutEffectiveDue,
+        audit: paymentAuditSnapshot(buildPaymentBlock(checkoutPayment.paymentLines, {
+          invoiceTotal: checkoutEffectiveDue,
+        })),
+      });
+      setCheckoutError(`Payment does not reconcile and was not taken. ${detail}`);
+      return;
+    }
     setCheckoutLoading(true);
     setCheckoutError(null);
     // Freeze the A4 preview on its current render BEFORE we touch the cart, so the
@@ -4543,69 +4627,25 @@ export default function POSSales() {
       // Shipping is an untaxed flat add on top of the product total (not a cart line).
       const shippingChargeNum = Number(shippingCharge) || 0;
       const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-      const tenderedNum = parseFloat(tenderedAmount) || 0;
-      const mixedCashNum = parseFloat(mixedCashAmount) || 0;
-      const mixedCardNum = parseFloat(mixedCardAmount) || 0;
-      const mixedAdvanceNum = parseFloat(mixedAdvanceAmount) || 0;
-      // Multi-card split (Card payment mode only) — when the cashier used
-      // "+ Split across multiple cards", this array is the source of truth for
-      // the card portion; checkoutCardType/checkoutCardRef drive it otherwise.
-      const activeCardLegs = checkoutPayMode === 'card' ? checkoutCardLegs : [];
-      const cardLegsPayload = activeCardLegs
-        .filter(leg => leg.cardType && (parseFloat(leg.amount) || 0) > 0)
-        .map(leg => ({
-          cardType: leg.cardType,
-          amount: parseFloat(leg.amount) || 0,
-          referenceNumber: leg.reference || null,
-        }));
       const depositSnapshot = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
       const effectiveDueAmt = Math.max(0, grandTotal - depositSnapshot);
-      // Partial receipt against a Credit sale — the amount collected now (if any);
-      // the remainder posts to the customer's receivable balance.
-      const creditReceivedNum = checkoutPayMode === 'credit'
-        ? Math.min(parseFloat(checkoutCreditReceivedAmount) || 0, effectiveDueAmt)
-        : 0;
 
-      // Build payment mode string
-      let paymentMode = checkoutPayMode === 'cash' ? 'Cash'
-        : checkoutPayMode === 'card' ? checkoutCardModeLabel
-          : checkoutPayMode === 'credit' ? 'Credit'
-            : checkoutPayMode === 'online' ? 'Online'
-              : checkoutPayMode === 'advance' ? 'Advance'
-                : 'Mixed';
-      
-      let combinedModes = [];
-      if (mixedCashNum > 0) combinedModes.push('Cash');
-      if (mixedCardNum > 0) combinedModes.push(mixedCardType || 'Card');
-      if (mixedAdvanceNum > 0) combinedModes.push('Advance');
-      let combinedPaymentMode = checkoutPayMode === 'mixed' ? combinedModes.join(' + ') : null;
+      // Every payment figure comes from the cashier's allocations — one projection, so the
+      // amounts posted are exactly the ones the Remaining-To-Allocate panel was showing.
+      // Each allocation becomes its own backend payment record (Payment row + Receipt
+      // Voucher + GL posting), which is what makes several cards, or a cash overpayment
+      // alongside a credit balance, expressible at all.
+      const {
+        paymentAllocations, paymentMode, combinedPaymentMode,
+        changeDue, paidAmount, creditBalance, creditAppliedAmount,
+        cashTaken,
+      } = checkoutPaymentFields;
 
-      let amountTendered = checkoutPayMode === 'cash' ? tenderedNum
-        : checkoutPayMode === 'card' ? grandTotal
-          : checkoutPayMode === 'credit' ? creditReceivedNum
-            : checkoutPayMode === 'online' ? grandTotal
-              : checkoutPayMode === 'advance' ? grandTotal
-                : mixedCashNum + mixedCardNum + mixedAdvanceNum;
-
-      // Selected bank account — for Online mode, or a Credit sale's partial receipt
-      // when it was collected Online/Bank — formatted "{code} - {name}" so the
-      // backend's resolveSelectedPaymentAccount() can resolve it to the exact
-      // Chart-of-Accounts row for GL posting + reconciliation.
-      const selectedOnlineAccount = checkoutPayMode === 'online'
-        ? checkoutOnlineBankAccounts.find(a => String(a.id) === String(checkoutOnlineBankAccountId))
-        : (checkoutPayMode === 'credit' && (checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank'))
-          ? checkoutOnlineBankAccounts.find(a => String(a.id) === String(checkoutCreditReceivedBankAccountId))
-          : null;
-      const bankAccountName = selectedOnlineAccount
-        ? `${selectedOnlineAccount.code || selectedOnlineAccount.accountCode || ''} - ${selectedOnlineAccount.name}`.trim()
-        : null;
-
-      // Layaway conversion: the deposit was collected at layaway creation (not yet
-      // posted), so it's pre-credited here as already-paid tender. The cashier only
-      // collects the remaining balance now; recorded payment = deposit + balance.
-      if (activeLayawayId && activeLayawayDeposit > 0) {
-        amountTendered += activeLayawayDeposit;
-      }
+      // The payment block every renderer prints, and the same rows the success screen
+      // shows — built once from the allocations that were actually settled.
+      const settledPaymentBlock = buildPaymentBlock(checkoutPayment.paymentLines, {
+        invoiceTotal: effectiveDueAmt,
+      });
 
       const customer = selectedCustomerData;
 
@@ -4645,27 +4685,13 @@ export default function POSSales() {
         customerName: customer.name,
         paymentMode,
         combinedPaymentMode,
-        amountTendered,
-        cashAmount: checkoutPayMode === 'mixed' ? mixedCashNum
-          : checkoutPayMode === 'cash' ? amountTendered
-            : (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash') ? creditReceivedNum
-              : 0,
-        cardAmount: checkoutPayMode === 'mixed' ? mixedCardNum
-          : checkoutPayMode === 'card' ? grandTotal
-            : (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Card') ? creditReceivedNum
-              : 0,
-        onlineAmount: (checkoutPayMode === 'credit' && (checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank'))
-          ? creditReceivedNum : 0,
-        advanceAmount: checkoutPayMode === 'advance' ? grandTotal : (checkoutPayMode === 'mixed' ? mixedAdvanceNum : 0),
-        cardReference: checkoutPayMode === 'credit' ? (checkoutCreditReceivedRef || null)
-          : checkoutPayMode === 'online' ? (checkoutOnlineReference || null)
-            : (checkoutCardRef || null),
-        cardType: checkoutPayMode === 'credit' ? (checkoutCreditReceivedCardType || null) : (checkoutCardType || mixedCardType || null),
-        // Additive multi-card split — when present, the backend treats this as the
-        // source of truth for the card portion instead of cardAmount/cardType/
-        // cardReference above (kept populated for older-client compatibility).
-        cardLegs: cardLegsPayload.length > 0 ? cardLegsPayload : undefined,
-        bankAccountName,
+        // Ordered tender allocations — the backend's source of truth for the payment
+        // (PosCheckoutRequest.paymentAllocations). Each becomes its own Payment row,
+        // Receipt Voucher and GL posting. The legacy per-mode scalars are not sent: the
+        // backend ignores them whenever allocations are present, and they cannot express
+        // several cards, repeated tenders of one type, or a cash overpayment alongside a
+        // credit balance — all of which the allocation UI allows.
+        paymentAllocations,
         sessionId: currentSession?.id || null,
         terminalId: currentTerminal?.terminalId || null,
         counterName: currentTerminal?.counterName || null,
@@ -4695,14 +4721,11 @@ export default function POSSales() {
       // the await above resolves; a rejection skips straight to catch().
       const savedInvoice = await posCheckout(payload);
 
-      const changeDue = checkoutPayMode === 'cash' ? Math.max(0, tenderedNum - effectiveDueAmt) : 0;
-
       // Credit account posting for THIS invoice — same formula for every payment
       // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
       // already collected), Amount Paid is what was actually received against it now.
       // A fully-settled cash/card/online/mixed sale nets to 0 (balance unchanged);
       // an unpaid or partially-paid Credit sale carries the remainder forward.
-      const creditAppliedAmount = checkoutPayMode === 'credit' ? creditReceivedNum : effectiveDueAmt;
       const creditInvoiceCreditAuto = creditPrevBalAuto != null ? effectiveDueAmt : null;
       const creditAmountPaidAuto = creditPrevBalAuto != null ? creditAppliedAmount : null;
       const creditUpdatedBalanceAuto = creditPrevBalAuto != null
@@ -4718,11 +4741,11 @@ export default function POSSales() {
         customer,
         paymentMode,
         depositAmount: depositSnapshot,
-        paidAmount: checkoutPayMode === 'cash' ? tenderedNum
-          : checkoutPayMode === 'mixed' ? mixedCashNum + mixedCardNum + mixedAdvanceNum
-            : checkoutPayMode === 'credit' ? creditReceivedNum
-              : effectiveDueAmt,
-        creditBalance: checkoutPayMode === 'credit' ? Math.max(0, effectiveDueAmt - creditReceivedNum) : 0,
+        paidAmount,
+        creditBalance,
+        // The same block the receipt prints, so the success screen and the paper the
+        // customer walks away with cannot state different figures.
+        paymentBlock: settledPaymentBlock,
         // Snapshotted here so the "Print Receipt" / "Last Receipt" reprint actions
         // (which reuse lastPaidInvoice) show the same correct figures instead of
         // re-querying the customer's balance, which by then already reflects this
@@ -4737,8 +4760,6 @@ export default function POSSales() {
       // state resets below wipe the React state it was reading from (customer,
       // amounts, layaway id). savedInvoice/paid/changeDue etc. are already locals.
       const layawayIdSnapshot = activeLayawayId;
-      const cashTaken = checkoutPayMode === 'cash' || (checkoutPayMode === 'mixed' && mixedCashNum > 0)
-        || (checkoutPayMode === 'credit' && checkoutCreditReceivedMode === 'Cash' && creditReceivedNum > 0);
       const printPaper = tplInvoicePaper;
 
       // ── Show success immediately, then finalize in the background ───────────
@@ -4752,32 +4773,16 @@ export default function POSSales() {
       clearInvoice();
       syncPosData();
       setReceivedAmount('');
-      setTenderedAmount('');
       setSelectedCardType('');
       setSelectedCreditCustomer('');
       setLastScannedItem(null);
-      setMixedCashAmount('');
-      setMixedCardAmount('');
-      setMixedCardType('');
-      setCheckoutPayMode('cash');
-      setCheckoutKeypadValue('');
-      setCheckoutCardType('');
-      setCheckoutCardRef('');
-      setCheckoutCardLegs([]);
-      setCheckoutOnlineBankAccountId('');
-      setCheckoutOnlineReference('');
       setCheckoutRemarks('');
-      setCheckoutCreditCustomer(null);
-      setCheckoutCreditCustomerSearch('');
-      setCheckoutCreditReceivedMode('');
-      setCheckoutCreditReceivedAmount('');
-      setCheckoutCreditReceivedCardType('');
-      setCheckoutCreditReceivedRef('');
-      setCheckoutCreditReceivedBankAccountId('');
+      // Drop the allocations so the next sale starts from an empty payment panel.
+      checkoutPayment.clearLines();
       if (layawayIdSnapshot) { setActiveLayawayId(null); setActiveLayawayDeposit(0); }
       // Transition the checkout overlay to the "complete" screen in-place.
       // Deferred to a separate React commit (queueMicrotask) so the state
-      // resets above (clearInvoice, setCheckoutPayMode, etc.) are committed
+      // resets above (clearInvoice, clearLines, etc.) are committed
       // and painted BEFORE React unmounts the payment form subtree and mounts
       // the complete screen. Without this, React 18's automatic batching
       // tries to reconcile DOM changes inside the payment-form buttons (e.g.
@@ -4815,22 +4820,12 @@ export default function POSSales() {
               // other three fields stay on the pre-sale snapshot made the printed math
               // contradict itself (Previous showed the post-sale balance, Updated the
               // pre-sale one).
-              // Dynamic payment-leg list — only populated for an actual multi-card
-              // split, so a plain single Cash/Card/Online/Credit sale still falls
-              // back to the legacy cashGiven/mixedCashGiven/mixedCardGiven fields.
-              const paymentLinesForReceipt = cardLegsPayload.length > 0
-                ? cardLegsPayload.map(leg => ({ label: leg.cardType, amount: leg.amount }))
-                : null;
+
               const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                 full: savedInvoice,
                 cashGiven: paid.paidAmount,
                 changeAmount: changeDue,
-                // Mixed (cash + card) split — only for a genuine mixed payment where
-                // both portions were entered, so cash/card/credit sales stay clean.
-                mixedCashGiven: checkoutPayMode === 'mixed' && mixedCashNum > 0 ? mixedCashNum : null,
-                mixedCardGiven: checkoutPayMode === 'mixed' && mixedCardNum > 0 ? mixedCardNum : null,
-                mixedCardType: checkoutPayMode === 'mixed' ? (mixedCardType || 'Card') : null,
-                paymentLines: paymentLinesForReceipt,
+                paymentBlock: settledPaymentBlock,
                 // Print the actual selected customer's name (client item 3) — the same
                 // `customer` object the checkout preview rendered. Walk-in stays null so
                 // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
@@ -4883,8 +4878,13 @@ export default function POSSales() {
       // and throws "Failed to execute 'removeChild' on 'Node'". The freeze is
       // released safely when the payment dialog closes (effect on showPaymentDialog),
       // so the cashier can read the error / retry against the still-frozen preview.
+      // The allocations are deliberately left intact on every failure path — the cashier
+      // retries the same payment rather than re-entering every tender from scratch.
+      const isNetworkFailure = !err?.response;
       const msg = err?.response?.data?.message || err?.response?.data || err?.message || 'Checkout failed. Please try again.';
-      const msgStr = typeof msg === 'string' ? msg : 'Checkout failed. Please try again.';
+      const msgStr = isNetworkFailure
+        ? 'Could not reach the server. The sale was NOT recorded — check the connection and settle again. Your payment entries have been kept.'
+        : (typeof msg === 'string' ? msg : 'Checkout failed. Please try again.');
       // Backend §2.4 gate (PosCheckoutController) rejected a below-minimum line because the
       // cashier lacks the pos_price_override permission — route into the same supervisor-
       // approval dialog used at cart-add time instead of a dead-end error, so the checkout can
@@ -4900,20 +4900,6 @@ export default function POSSales() {
       }
     } finally {
       setCheckoutLoading(false);
-    }
-  };
-
-  const handleKeypadInput = (value) => {
-    if (value === 'C') {
-      setTenderedAmount('');
-    } else if (value === '←') {
-      setTenderedAmount(tenderedAmount.slice(0, -1));
-    } else if (value === '.') {
-      if (!tenderedAmount.includes('.')) {
-        setTenderedAmount(tenderedAmount + '.');
-      }
-    } else {
-      setTenderedAmount(tenderedAmount + value);
     }
   };
 
@@ -5479,7 +5465,7 @@ export default function POSSales() {
                 <label className="text-xs text-gray-400">Payment Mode</label>
                 <select value={analyticsPayMode} onChange={e => setAnalyticsPayMode(e.target.value)}
                   className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 text-[#1E293B] bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#F5C742]/40">
-                  {['All', 'Cash', 'Card', 'Credit', 'Mixed'].map(m => <option key={m}>{m}</option>)}
+                  {PAYMENT_FILTERS.map(m => <option key={m}>{m}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1">
@@ -7724,10 +7710,10 @@ export default function POSSales() {
           })()}
 
           {/* Section 10: Cashier Wise Summary — backend-aggregated per session owner, with
-          cash/card/credit split from actual tender (sales_payments), so a split
-          Cash+Card sale correctly shows in both columns instead of landing nowhere
-          (the per-session totalCashSales/totalCardSales counters never see "mixed"
-          sales — those are bucketed into a separate totalMixedSales counter only). */}
+          cash/card/credit split from the recorded tender rows (sales_payments), so a sale
+          settled Cash+Card contributes to both columns for the amount each tender took.
+          Aggregating the tender rather than any mode label is what makes this reconcile
+          exactly with the tender block above. */}
           {(() => {
             const cashierWise = Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : [];
             const cashierRows = cashierWise.map((c, i) => [
@@ -8804,11 +8790,6 @@ export default function POSSales() {
       // creditCustomerData silently miss and the UI falls back to Walk-in.
       const newCustId = String(newCust.id);
       setSelectedCustomer(newCustId);
-      if (quickCustomerCreditCtxRef.current) {
-        setCheckoutCreditCustomer(newCustId);
-        setCheckoutCreditCustomerSearch('');
-        quickCustomerCreditCtxRef.current = false;
-      }
       if (showDeliveryModal) {
         setDeliveryCustomerId(String(newCust.id));
         if (newCust.billingAddress || newCust.address) {
@@ -8926,17 +8907,11 @@ export default function POSSales() {
   }, [quickProductForm, loadPosProducts, handleProductSelection, showFeedback]);
 
   const handleCheckout = useCallback(() => {
-    const grandWithShip = (currentInvoice?.total || 0) + (Number(shippingCharge) || 0);
-    const balanceDue = activeLayawayId && activeLayawayDeposit > 0
-      ? Math.max(0, grandWithShip - activeLayawayDeposit)
-      : grandWithShip;
-    setCheckoutPhase('payment'); 
+    setCheckoutPhase('payment');
     setShowPaymentDialog(true);
-    setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
-    setCheckoutKeypadVisible(false); 
-    setCheckoutKeypadMode('numeric'); 
-    setCheckoutKeypadTarget('tender');
-  }, [currentInvoice, shippingCharge, activeLayawayId, activeLayawayDeposit]);
+    // The Payment Manager starts with no allocations — the cashier picks a method and
+    // enters an amount, so there is nothing to pre-seed here any more.
+  }, []);
 
   const touchScreenProps = {
     handleCheckout,
@@ -8970,8 +8945,7 @@ export default function POSSales() {
     rightPanelTab, setRightPanelTab, hiddenPanelButtons, hideCategoriesPanel, hideItemsPanel,
     posTemplate,
     cartViewDetailed, cartLineDetails,
-    setShowPaymentDialog, setTenderedAmount, setCheckoutPhase, setCheckoutKeypadMode,
-    setCheckoutKeypadTarget, setCheckoutKeypadVisible,
+    setShowPaymentDialog, setCheckoutPhase,
     setShowPOSConfig, setShowCashDropDialog, setShowLastReceiptDialog,
     setShowReprintModal, setShowSaveOrderDialog, setShowLayawaysList, setShowSaveLayaway,
     setShowOrdersListDialog: async () => {
@@ -8995,7 +8969,7 @@ export default function POSSales() {
     setReturnInvoiceFound, setReturnSelectedItems, setReturnReasons, setShowAddShippingDialog,
     setShowAddCustomerDialog, setShowDeliveryModal, setDeliveryModalTab, setDeliveryCustomerId,
     setShowDeliverySettleModal, setDeliverySettleSearch, setDeliverySettlePersonFilter,
-    setDeliverySettleSelected, setDeliverySettlePayMode, setShowLockPOS,
+    setDeliverySettleSelected, setShowLockPOS,
     openDeliveryModal,
     formatCurrency, showFeedback,
     favouriteProductIds, toggleFavourite,
@@ -9931,8 +9905,7 @@ export default function POSSales() {
             // Clear the finalize indicator on close — the receipt print is a
             // fire-and-forget background task and doesn't need to block closing.
             setCheckoutFinalizing(false);
-            setReceiptSharePhone('');
-            setReceiptShareEmail('');
+            setReceiptShareChannel(null);
             setSelectedCustomer(WALK_IN_CUSTOMER.id);
           };
           return (
@@ -9991,48 +9964,65 @@ export default function POSSales() {
                     )}
                   </div>
                 )}
+                {/* Payment Details — the same rows, in the same order, as the printed
+                    receipt (paymentBlockRows), so the screen and the paper agree. */}
+                {lastPaidInvoice.paymentBlock && (
+                  <div className="px-6 pt-4 space-y-1.5">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Payment Details</p>
+                    {paymentBlockRows(lastPaidInvoice.paymentBlock).map((row, i) => (
+                      <div key={`${row.label}-${i}`} className="flex justify-between items-end gap-3 text-sm">
+                        {/* Long tender labels wrap at word boundaries; the amount can't
+                            shrink, so it stays right-aligned in its column. */}
+                        <span className="min-w-0 break-words text-gray-500">{row.label}</span>
+                        <span className={`shrink-0 whitespace-nowrap font-bold ${row.emphasis ? 'text-emerald-600' : 'text-[#1E293B]'}`}>
+                          {formatCurrencyStr(row.amount)}
+                        </span>
+                      </div>
+                    ))}
+                    {lastPaidInvoice.paymentBlock.hasReceivable && (
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-gray-500">Invoice Total</span>
+                        <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.paymentBlock.invoiceTotal)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {/* Summary */}
                 <div className="px-6 py-4 space-y-2.5">
                   {[
                     ['Sale Amount', formatCurrencyStr(lastPaidInvoice.total)],
                     ...(lastPaidInvoice.depositAmount > 0 ? [['Deposit Applied', `−${formatCurrencyStr(lastPaidInvoice.depositAmount)}`]] : []),
-                    ['Paid Amount', formatCurrencyStr(lastPaidInvoice.paidAmount ?? 0)],
-                    ['Change Returned', formatCurrencyStr(lastPaidInvoice.changeAmount || 0)],
-                    ...(lastPaidInvoice.creditBalance > 0 ? [['This Invoice Balance', formatCurrencyStr(lastPaidInvoice.creditBalance)]] : []),
                     ...(lastPaidInvoice.creditBalance > 0 && lastPaidInvoice.creditUpdatedBalance != null
                       ? [['Customer Total Outstanding', formatCurrencyStr(lastPaidInvoice.creditUpdatedBalance)]] : []),
-                    ['Pay Mode', lastPaidInvoice.paymentMode],
+                    ['Payment Mode', lastPaidInvoice.paymentMode],
                   ].map(([label, value]) => (
                     <div key={label} className="flex justify-between items-center text-sm">
                       <span className="text-gray-500">{label}</span>
                       <span className={`font-bold ${label === 'Deposit Applied' ? 'text-[#327F74]' : label === 'Change Returned' && (lastPaidInvoice.changeAmount || 0) > 0 ? 'text-emerald-600' : 'text-[#1E293B]'}`}>{value}</span>
                     </div>
                   ))}
-                  {/* Share */}
+                  {/* ── Share Receipt ──────────────────────────────────────
+                      Each channel opens the shared ReceiptShareModal, pre-filled
+                      from the customer on the sale. The send calls themselves are
+                      unchanged; only the way the value is collected moved. */}
                   <div className="pt-2 border-t border-gray-100">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Send Receipt</p>
-                    <input
-                      placeholder="+971 50 000 0000 or email"
-                      value={receiptSharePhone}
-                      onChange={e => setReceiptSharePhone(e.target.value)}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#327F74] mb-2"
-                    />
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Share Receipt</p>
                     <div className="grid grid-cols-3 gap-2">
-                      <button type="button"
-                        onClick={() => { const ph = receiptSharePhone.replace(/\D/g, ''); if (!ph) return; window.open(`https://wa.me/${ph}?text=${encodeURIComponent(`Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`)}`, '_blank'); }}
-                        className="flex flex-col items-center gap-1 py-2.5 rounded-xl border border-gray-200 hover:bg-green-50 hover:border-green-300 transition-all text-xs font-semibold text-gray-600">
-                        <Smartphone className="h-4 w-4 text-green-600" />WhatsApp
-                      </button>
-                      <button type="button"
-                        onClick={() => { const ph = receiptSharePhone.replace(/\D/g, ''); if (!ph) return; alert(`SMS to ${ph}: Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`); }}
-                        className="flex flex-col items-center gap-1 py-2.5 rounded-xl border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition-all text-xs font-semibold text-gray-600">
-                        <Smartphone className="h-4 w-4 text-blue-500" />SMS
-                      </button>
-                      <button type="button"
-                        onClick={async () => { const email = receiptSharePhone.includes('@') ? receiptSharePhone : receiptShareEmail; if (!email || !lastPaidInvoice?.invoice?.id) return; try { await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, { toEmail: email, subject: `Receipt ${lastPaidInvoice.id}`, htmlBody: `<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>` }); } catch { alert('Failed to send email.'); } }}
-                        className="flex flex-col items-center gap-1 py-2.5 rounded-xl border border-gray-200 hover:bg-[#327F74]/5 hover:border-[#327F74]/40 transition-all text-xs font-semibold text-gray-600">
-                        <FileText className="h-4 w-4 text-[#327F74]" />Email
-                      </button>
+                      {[
+                        { key: 'sms', label: 'SMS', Icon: Smartphone, tone: 'border-green-200 bg-green-50/60 text-green-700 hover:bg-green-100 hover:border-green-300 focus-visible:ring-green-500' },
+                        { key: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle, tone: 'border-green-200 bg-green-50/60 text-green-700 hover:bg-green-100 hover:border-green-300 focus-visible:ring-green-500' },
+                        { key: 'email', label: 'Email', Icon: Mail, tone: 'border-blue-200 bg-blue-50/60 text-blue-700 hover:bg-blue-100 hover:border-blue-300 focus-visible:ring-blue-500' },
+                      ].map(({ key, label, Icon, tone }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setReceiptShareChannel(key)}
+                          className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl border text-xs font-bold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${tone}`}
+                        >
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                          {label}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 </div>
@@ -10088,170 +10078,35 @@ export default function POSSales() {
                   <p className="text-center text-[10px] text-gray-400">Scan next item to start a new sale automatically</p>
                 </div>
               </div>
+
+              {/* Share Receipt dialog — one component, three configured channels. */}
+              {receiptShareChannel && (
+                <ReceiptShareModal
+                  key={receiptShareChannel}
+                  channel={receiptShareChannel}
+                  initialValue={receiptShareInitialValue}
+                  onClose={() => setReceiptShareChannel(null)}
+                  onSend={handleReceiptShareSend}
+                />
+              )}
             </div>
           );
         }
 
         const shippingChargeNum = Number(shippingCharge) || 0;
         const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-        const subtotal = currentInvoice.subtotal;
-        const totalDisc = currentInvoice.totalDiscount;
-        const totalVat = currentInvoice.tax;
         const depositAmt = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
-        const effectiveDue = Math.max(0, grandTotal - depositAmt);
+        // Owned by the Payment Manager (checkoutEffectiveDue) so the screen and the manager
+        // measure every allocation against exactly the same amount due.
+        const effectiveDue = checkoutEffectiveDue;
         // Real next number from the backend sequence (fetched when the dialog
         // opened); blank until it lands so no fabricated number is shown.
         const invoiceNo = previewInvoiceNo || '';
-        const now = new Date();
-        const dateStr = now.toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' });
-        const timeStr = now.toLocaleTimeString('en-AE', { hour: '2-digit', minute: '2-digit', hour12: true });
-        const customer = selectedCustomerData;
 
-        // Strip an amount string down to digits + a single decimal point, so both
-        // physical-keyboard typing (onChange) and the on-screen keypad (handleKpad)
-        // produce the same shape of value.
-        const sanitizeAmountInput = (raw) => {
-          let next = String(raw).replace(/[^\d.]/g, '');
-          const dot = next.indexOf('.');
-          if (dot !== -1) next = next.slice(0, dot + 1) + next.slice(dot + 1).replace(/\./g, '');
-          return next;
-        };
-
-        // Mixed-payment fields (mixed-cash / mixed-card / mixed-advance) auto-balance each other.
-        const applyMixedAmount = (field, rawValue) => {
-          const next = sanitizeAmountInput(rawValue);
-          const drivingNum = parseFloat(next) || 0;
-          if (field === 'cash') {
-            setMixedCashAmount(next);
-            const advNum = parseFloat(mixedAdvanceAmount) || 0;
-            const remaining = Math.max(0, effectiveDue - drivingNum - advNum).toFixed(2);
-            setMixedCardAmount(remaining);
-          } else if (field === 'card') {
-            setMixedCardAmount(next);
-            const advNum = parseFloat(mixedAdvanceAmount) || 0;
-            const remaining = Math.max(0, effectiveDue - drivingNum - advNum).toFixed(2);
-            setMixedCashAmount(remaining);
-          } else if (field === 'advance') {
-            const avail = customerAdvanceSummary?.availableAdvanceBalance || 0;
-            const finalNum = drivingNum > avail ? avail : drivingNum;
-            const validNext = drivingNum > avail ? String(avail.toFixed(2)) : next;
-            setMixedAdvanceAmount(validNext);
-            const cashNum = parseFloat(mixedCashAmount) || 0;
-            const remaining = Math.max(0, effectiveDue - finalNum - cashNum).toFixed(2);
-            setMixedCardAmount(remaining);
-          }
-        };
-
-        // ── Multi-card split (Card payment mode) ──────────────────────────────
-        // Splitting a Card payment across N cards reuses the same "sum of legs
-        // must equal the amount due" idea as the Cash/Card Mixed split above,
-        // generalized to N rows instead of a fixed 2-way complement.
-        const cardLegsTotal = checkoutCardLegs.reduce((sum, leg) => sum + (parseFloat(leg.amount) || 0), 0);
-        const cardLegsRemaining = Math.max(0, effectiveDue - cardLegsTotal);
-        const cardLegsValid = checkoutCardLegs.length > 0
-          && checkoutCardLegs.every(leg => !!leg.cardType && (parseFloat(leg.amount) || 0) > 0)
-          && Math.abs(cardLegsTotal - effectiveDue) < 0.01;
-        const cardLegDuplicateRefs = (() => {
-          const seen = new Set();
-          const dupes = new Set();
-          checkoutCardLegs.forEach(leg => {
-            const ref = (leg.reference || '').trim().toLowerCase();
-            if (!ref) return;
-            if (seen.has(ref)) dupes.add(ref); else seen.add(ref);
-          });
-          return dupes;
-        })();
-
-        const startCardSplit = () => {
-          setCheckoutCardLegs([
-            { id: 1, cardType: checkoutCardType || '', amount: effectiveDue > 0 ? effectiveDue.toFixed(2) : '', reference: checkoutCardRef || '' },
-            { id: 2, cardType: '', amount: '', reference: '' },
-          ]);
-        };
-        const addCardLeg = () => {
-          setCheckoutCardLegs(prev => {
-            const nextId = (prev.reduce((max, l) => Math.max(max, l.id), 0) || 0) + 1;
-            const remaining = Math.max(0, effectiveDue - prev.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0));
-            return [...prev, { id: nextId, cardType: '', amount: remaining > 0 ? remaining.toFixed(2) : '', reference: '' }];
-          });
-        };
-        const removeCardLeg = (id) => {
-          setCheckoutCardLegs(prev => {
-            const next = prev.filter(l => l.id !== id);
-            // Dropping back to a single row collapses back to plain single-card mode
-            // (legacy checkoutCardType/checkoutCardRef fields) rather than a 1-row split.
-            if (next.length <= 1) return [];
-            return next;
-          });
-        };
-        const updateCardLeg = (id, field, rawValue) => {
-          setCheckoutCardLegs(prev => prev.map(l => {
-            if (l.id !== id) return l;
-            if (field === 'amount') return { ...l, amount: sanitizeAmountInput(rawValue) };
-            return { ...l, [field]: rawValue };
-          }));
-        };
-        const fillRemainingOnLeg = (id) => {
-          setCheckoutCardLegs(prev => {
-            const others = prev.filter(l => l.id !== id).reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
-            const remaining = Math.max(0, effectiveDue - others);
-            return prev.map(l => l.id === id ? { ...l, amount: remaining.toFixed(2) } : l);
-          });
-        };
-
-        // On-screen keypad handler (touch terminals). Physical-keyboard typing is
-        // wired directly on each <input>'s onChange via sanitizeAmountInput /
-        // applyMixedAmount so both input methods work on the same POS screen.
-        const handleKpad = (key) => {
-          if (checkoutKeypadTarget === 'mixed-cash' || checkoutKeypadTarget === 'mixed-card' || checkoutKeypadTarget === 'mixed-advance') {
-            const field = checkoutKeypadTarget === 'mixed-cash' ? 'cash' : checkoutKeypadTarget === 'mixed-card' ? 'card' : 'advance';
-            const cur = field === 'cash' ? mixedCashAmount : field === 'card' ? mixedCardAmount : mixedAdvanceAmount;
-            let next = cur;
-            if (key === 'C') next = '';
-            else if (key === '⌫') next = cur.slice(0, -1);
-            else if (key === '.' && cur.includes('.')) { /* noop */ }
-            else if (key === 'EXACT') next = effectiveDue > 0 ? String(effectiveDue.toFixed(2)) : '';
-            else next = cur + key;
-            applyMixedAmount(field, next);
-            return;
-          }
-
-          const setter = checkoutKeypadTarget === 'tender' ? setTenderedAmount : setCheckoutCardRef;
-          const cur = checkoutKeypadTarget === 'tender' ? tenderedAmount : checkoutCardRef;
-          if (key === 'C') { setter(''); }
-          else if (key === '⌫') { setter(cur.slice(0, -1)); }
-          else if (key === '.' && cur.includes('.')) { /* noop */ }
-          else if (key === 'EXACT') { setter(effectiveDue > 0 ? String(effectiveDue.toFixed(2)) : ''); }
-          else { setter(cur + key); }
-        };
-
-        const tenderedNum = parseFloat(tenderedAmount) || 0;
-        const mixedCashNum = parseFloat(mixedCashAmount) || 0;
-        const mixedCardNum = parseFloat(mixedCardAmount) || 0;
-        const mixedAdvanceNum = parseFloat(mixedAdvanceAmount) || 0;
-        const change = tenderedNum - effectiveDue;
-        const mixedDiff = Math.abs(mixedCashNum + mixedCardNum + mixedAdvanceNum - effectiveDue);
-
-        // Partial receipt against a Credit sale — amount collected now is capped at
-        // the bill total; whatever's left posts to the customer's credit balance.
-        const creditReceivedNum = Math.min(parseFloat(checkoutCreditReceivedAmount) || 0, effectiveDue);
-        const creditBalanceNum = Math.max(0, effectiveDue - creditReceivedNum);
-        const creditReceivedModeReady =
-          !checkoutCreditReceivedMode || creditReceivedNum <= 0 ||
-          (checkoutCreditReceivedMode === 'Card' && !!checkoutCreditReceivedCardType) ||
-          ((checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank') && !!checkoutCreditReceivedBankAccountId) ||
-          checkoutCreditReceivedMode === 'Cash';
-
-        const canSettle =
-          (checkoutPayMode === 'cash' && tenderedNum >= effectiveDue) ||
-          (checkoutPayMode === 'card' && (checkoutCardLegs.length === 0 ? !!checkoutCardType : (cardLegsValid && cardLegDuplicateRefs.size === 0))) ||
-          (checkoutPayMode === 'credit' && !!checkoutCreditCustomer && creditReceivedModeReady) ||
-          (checkoutPayMode === 'mixed' && mixedDiff < 0.01 && (mixedCardNum === 0 || !!mixedCardType)) ||
-          (checkoutPayMode === 'advance' && customerAdvanceSummary?.availableAdvanceBalance >= effectiveDue) ||
-          (checkoutPayMode === 'online' && !!checkoutOnlineBankAccountId);
-
-        const numKeys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '⌫'];
-        const alphaRows = [['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'], ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'], ['Z', 'X', 'C', 'V', 'B', 'N', 'M', '⌫']];
+        // Every payment figure below comes from the Payment Manager, which owns the
+        // cashier's allocations. See CheckoutPaymentManager for the allocation UI itself.
+        // Settlement needs both a fully-allocated bill and a server that will record it.
+        const canSettle = checkoutPayment.canSettle && checkoutCompatibility.canSettle;
 
         return (
           <div className="fixed inset-0 z-[60] flex flex-col lg:flex-row bg-[#1a1f2e]">
@@ -10342,590 +10197,26 @@ export default function POSSales() {
                     </div>
                   )}
 
-                  {/* ── Pay Mode ── */}
-                  <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Payment Mode</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                      {([
-                        ['cash', 'Cash', Banknote, '#16a34a'],
-                        ['card', 'Card', CreditCard, '#2563eb'],
-                        ['credit', 'Credit', Users, '#9333ea'],
-                        ['mixed', 'Mixed', Wallet, '#ea580c'],
-                        ['online', 'Online', Landmark, '#0891b2'],
-                        ['advance', 'Advance', Coins, '#F5C742'],
-                      ]).map(([id, label, Icon, color]) => (
-                        <button key={id} type="button" onClick={() => { setCheckoutPayMode(id); setCheckoutKeypadTarget(id === 'mixed' ? 'mixed-cash' : id === 'card' ? 'ref' : 'tender'); }}
-                          className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border-2 transition-all ${checkoutPayMode === id ? 'border-[#F5C742] bg-[#F5C742]/10' : 'border-gray-200 hover:border-[#F5C742]/50 bg-gray-50'}`}>
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutPayMode === id ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
-                            <Icon className={`h-4 w-4 ${checkoutPayMode === id ? 'text-[#1E293B]' : 'text-gray-500'}`} />
-                          </div>
-                          <span className={`text-xs font-bold ${checkoutPayMode === id ? 'text-[#1E293B]' : 'text-gray-500'}`}>{label}</span>
-                          <div className={`w-4 h-1 rounded-full bg-[#F5C742] transition-opacity ${checkoutPayMode === id ? 'opacity-100' : 'opacity-0'}`} />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {/* ══ Progressive Payment Allocation ══════════════════════
+                      Pick a method, enter an amount, confirm — repeat until Remaining
+                      reaches zero. There is no "Mixed" mode: a sale settled two ways is
+                      simply a sale with two allocations. */}
+                  <PaymentAllocationPanel
+                    payment={checkoutPayment}
+                    compatibility={checkoutCompatibility}
+                    customers={customerOptions}
+                    onCustomerCreated={loadPosCustomers}
+                    selectedCustomerId={selectedCustomer}
+                    selectedCustomerName={selectedCustomerData?.name}
+                    bankAccounts={checkoutOnlineBankAccounts}
+                    bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                  />
 
-                  {/* ── Cash section ── */}
-                  {checkoutPayMode === 'cash' && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Cash Payment</p>
-                      {/* Smart dynamic tender buttons based on invoice amount */}
-                      <div className="flex flex-wrap gap-1.5">
-                        {(() => {
-                          // Generate smart denominations based on the amount actually due now.
-                          // Every suggestion must be >= total (equal only for "Exact"); round-ups
-                          // snap to practical AED note denominations (50/100/200/500/1000), plus
-                          // one extra round-1000 note further out so a couple of real choices show up.
-                          const total = effectiveDue;
-                          const rounds = [total];
-                          for (const step of [50, 100, 200, 500, 1000]) {
-                            const rounded = Math.ceil(total / step) * step;
-                            if (rounded > total && !rounds.includes(rounded)) rounds.push(rounded);
-                          }
-                          const nearestAbove = Math.min(...rounds.filter(r => r > total));
-                          const nextThousand = Math.ceil((nearestAbove + 1) / 1000) * 1000;
-                          if (nextThousand > nearestAbove && !rounds.includes(nextThousand)) rounds.push(nextThousand);
-                          // Always offer at least one note above the exact amount, even for tiny totals.
-                          if (rounds.length === 1) rounds.push(Math.ceil((total + 1) / 50) * 50);
-                          return [...new Set(rounds)].sort((a, b) => a - b).slice(0, 6).map(d => (
-                            <button key={d} type="button" onClick={() => { setTenderedAmount(d === total ? String(total.toFixed(2)) : String(d)); setCheckoutKeypadTarget('tender'); }}
-                              className={`px-3 py-1.5 text-sm font-bold rounded-lg border-2 transition-all ${parseFloat(tenderedAmount) === d ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-[#F5C742]/40 text-gray-700 hover:bg-[#F5C742]/10'}`}>
-                              {d === total ? 'Exact' : d}
-                            </button>
-                          ));
-                        })()}
-                      </div>
-                      {/* Tendered display — real input so it accepts both physical
-                          keyboard typing (desktop tills) and the on-screen keypad. */}
-                      <label className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between gap-2 cursor-text">
-                        <span className="text-xs font-bold text-gray-500 uppercase shrink-0">Tendered</span>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <DirhamSymbol />
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            autoComplete="off"
-                            value={tenderedAmount}
-                            placeholder="0.00"
-                            onFocus={() => { setCheckoutKeypadTarget('tender'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                            onChange={e => setTenderedAmount(sanitizeAmountInput(e.target.value))}
-                            className="w-28 bg-transparent text-2xl font-black text-[#1E293B] text-right outline-none"
-                          />
-                        </div>
-                      </label>
-                      {/* Change / Balance */}
-                      {tenderedNum > 0 && Math.round((tenderedNum - effectiveDue) * 100) / 100 > 0 && (
-                        <div className="flex justify-between items-center px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl">
-                          <span className="text-sm font-semibold text-green-700">Change Return</span>
-                          <span className="text-lg font-black text-green-700"><CurrencyAmount amount={Math.round((tenderedNum - effectiveDue) * 100) / 100} /></span>
-                        </div>
-                      )}
-                      {tenderedNum > 0 && Math.round((effectiveDue - tenderedNum) * 100) / 100 > 0 && (
-                        <div className="flex justify-between items-center px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl">
-                          <span className="text-sm font-semibold text-red-600">Balance Due</span>
-                          <span className="text-lg font-black text-red-600"><CurrencyAmount amount={Math.round((effectiveDue - tenderedNum) * 100) / 100} /></span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Card section ── */}
-                  {checkoutPayMode === 'card' && checkoutCardLegs.length === 0 && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment</p>
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                        {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => (
-                          <button key={ct} type="button" onClick={() => setCheckoutCardType(ct)}
-                            className={`py-2.5 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
-                            {ct}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer" onClick={() => setCheckoutKeypadTarget('ref')}>
-                        <span className="text-xs font-bold text-gray-500 uppercase">Amount</span>
-                        <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={effectiveDue} /></span>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Reference No. (optional)</label>
-                        <input
-                          type="text"
-                          autoComplete="off"
-                          value={checkoutCardRef}
-                          placeholder="Enter reference…"
-                          onFocus={() => { setCheckoutKeypadTarget('ref'); setCheckoutKeypadMode('alpha'); setCheckoutKeypadVisible(true); }}
-                          onChange={e => setCheckoutCardRef(e.target.value)}
-                          className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
-                        />
-                      </div>
-                      {!checkoutCardType && <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a card type to proceed</span></div>}
-                      <button type="button" onClick={startCardSplit}
-                        className="w-full py-2 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:border-[#F5C742] hover:text-[#1E293B] transition-all">
-                        + Split across multiple cards
-                      </button>
-                    </div>
-                  )}
-
-                  {/* ── Card section: multi-card split ── */}
-                  {checkoutPayMode === 'card' && checkoutCardLegs.length > 0 && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Card Payment — Split</p>
-                        <button type="button" onClick={() => setCheckoutCardLegs([])}
-                          className="text-[10px] font-bold text-gray-400 hover:text-gray-600 underline">Use single card</button>
-                      </div>
-                      {checkoutCardLegs.map((leg, idx) => (
-                        <div key={leg.id} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[11px] font-bold text-gray-500 uppercase">Card {idx + 1}</span>
-                            <button type="button" onClick={() => removeCardLeg(leg.id)}
-                              className="text-gray-400 hover:text-red-500 transition-colors" aria-label={`Remove card ${idx + 1}`}>
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <select value={leg.cardType} onChange={e => updateCardLeg(leg.id, 'cardType', e.target.value)}
-                              className="rounded-lg border border-gray-200 bg-white px-2 py-2 text-xs font-bold text-gray-700 outline-none focus:border-[#F5C742]">
-                              <option value="">Card type…</option>
-                              {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => <option key={ct} value={ct}>{ct}</option>)}
-                            </select>
-                            <div className="flex items-center rounded-lg border border-gray-200 bg-white px-2 py-1">
-                              <span className="text-[10px] font-bold text-gray-400 mr-1"><DirhamSymbol /></span>
-                              <input type="text" inputMode="decimal" autoComplete="off" value={leg.amount}
-                                placeholder="0.00"
-                                onFocus={() => setCheckoutKeypadVisible(false)}
-                                onChange={e => updateCardLeg(leg.id, 'amount', e.target.value)}
-                                className="w-full text-sm font-bold text-gray-800 outline-none bg-transparent" />
-                              <button type="button" onClick={() => fillRemainingOnLeg(leg.id)}
-                                className="text-[9px] font-bold text-[#F5C742] uppercase shrink-0 ml-1">Fill</button>
-                            </div>
-                          </div>
-                          <input type="text" autoComplete="off" value={leg.reference}
-                            placeholder="Reference no. (optional)"
-                            onChange={e => updateCardLeg(leg.id, 'reference', e.target.value)}
-                            className={`w-full rounded-lg border px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-[#F5C742] ${
-                              leg.reference && cardLegDuplicateRefs.has(leg.reference.trim().toLowerCase()) ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white'
-                            }`} />
-                        </div>
-                      ))}
-                      <button type="button" onClick={addCardLeg}
-                        className="w-full py-2 rounded-xl border-2 border-dashed border-gray-300 text-xs font-bold text-gray-500 hover:border-[#F5C742] hover:text-[#1E293B] transition-all">
-                        + Add Another Card
-                      </button>
-                      <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${cardLegsRemaining < 0.01 ? 'bg-green-50 border-2 border-green-200' : 'bg-[#F5C742]/10 border-2 border-[#F5C742]'}`}>
-                        <span className="text-xs font-bold text-gray-500 uppercase">Remaining Balance</span>
-                        <span className="text-xl font-black text-[#1E293B]"><CurrencyAmount amount={cardLegsRemaining} /></span>
-                      </div>
-                      {cardLegDuplicateRefs.size > 0 && (
-                        <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
-                          <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
-                          <span className="text-xs text-red-700">Duplicate reference number across cards.</span>
-                        </div>
-                      )}
-                      {!cardLegsValid && cardLegDuplicateRefs.size === 0 && (
-                        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
-                          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
-                          <span className="text-xs text-amber-700">Every card needs a type and amount, and the total must equal the amount due.</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Credit section ── */}
-                  {checkoutPayMode === 'credit' && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Credit Payment</p>
-                      {!checkoutCreditCustomer && (
-                        <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-300 rounded-xl">
-                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                          <div>
-                            <p className="text-xs font-bold text-amber-800">Customer Required</p>
-                            <p className="text-[10px] text-amber-700">Credit payment requires a registered customer account.</p>
-                          </div>
-                        </div>
-                      )}
-                      {/* Customer search */}
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase mb-1.5 block">Search Customer</label>
-                        <div className="relative">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                          <input value={checkoutCreditCustomerSearch} onChange={e => setCheckoutCreditCustomerSearch(e.target.value)}
-                            placeholder="Name, mobile, code…"
-                            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-[#F5C742] bg-gray-50" />
-                        </div>
-                        {checkoutCreditCustomerSearch && (
-                          <div className="mt-1 border border-gray-200 rounded-xl overflow-hidden bg-white shadow-md max-h-36 overflow-y-auto">
-                            {checkoutCreditCustomerOptions.map(c => (
-                              <button key={c.id} type="button" onClick={() => { setCheckoutCreditCustomer(c.id); setSelectedCustomer(c.id); setCheckoutCreditCustomerSearch(''); }}
-                                className="w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5C742]/10 text-left border-b border-gray-50 last:border-0 transition-colors">
-                                <div className="w-7 h-7 rounded-full bg-[#F5C742] flex items-center justify-center text-xs font-bold text-[#1E293B]">{c.name.charAt(0)}</div>
-                                <div><p className="text-sm font-medium text-[#1E293B]">{c.name}</p><p className="text-[10px] text-gray-400">{c.membershipId}</p></div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      {/* Selected customer card */}
-                      {creditCustomerData && (
-                        <div className="flex items-center justify-between px-3 py-2.5 bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl">
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-[#F5C742] flex items-center justify-center text-sm font-black text-[#1E293B]">{creditCustomerData.name.charAt(0)}</div>
-                            <div>
-                              <p className="text-sm font-bold text-[#1E293B]">{creditCustomerData.name}</p>
-                              <p className="text-[10px] text-gray-500">{creditCustomerData.membershipId}</p>
-                            </div>
-                          </div>
-                          <button type="button" onClick={() => setCheckoutCreditCustomer(null)} className="text-gray-400 hover:text-red-500"><X className="h-4 w-4" /></button>
-                        </div>
-                      )}
-                      {/* Add new customer shortcut */}
-                      {!creditCustomerData && (
-                        <button type="button" onClick={() => { openQuickCustomerModal(checkoutCreditCustomerSearch); quickCustomerCreditCtxRef.current = true; }} className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-[#F5C742]/50 text-[#b8920e] text-sm font-semibold hover:bg-[#F5C742]/5 transition-colors">
-                          <UserPlus className="h-4 w-4" />
-                          Add New Customer
-                        </button>
-                      )}
-                      {/* Credit terms */}
-                      {creditCustomerData && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-[10px] font-bold text-gray-400 uppercase">Credit Terms (Days)</label>
-                            <select value={checkoutCreditTerms} onChange={e => setCheckoutCreditTerms(e.target.value)} className="mt-1 w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-[#F5C742]">
-                              {['7', '14', '30', '45', '60', '90'].map(d => <option key={d}>{d}</option>)}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-[10px] font-bold text-gray-400 uppercase">Due Date</label>
-                            <input type="date" value={checkoutCreditDueDate} onChange={e => setCheckoutCreditDueDate(e.target.value)} className="mt-1 w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-[#F5C742]" />
-                          </div>
-                        </div>
-                      )}
-                      {/* Partial receipt — collect part of the bill now, rest posts to receivable */}
-                      {creditCustomerData && (
-                        <div className="space-y-3 border-t border-gray-100 pt-3">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Received Now (optional)</p>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {['Cash', 'Card', 'Online', 'Bank'].map(m => (
-                              <button key={m} type="button"
-                                onClick={() => setCheckoutCreditReceivedMode(prev => prev === m ? '' : m)}
-                                className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCreditReceivedMode === m ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
-                                {m}
-                              </button>
-                            ))}
-                          </div>
-                          {checkoutCreditReceivedMode && (
-                            <>
-                              <div>
-                                <label className="text-[10px] font-bold text-gray-400 uppercase">Amount Received</label>
-                                <div className="mt-1 border-2 border-gray-200 rounded-xl px-3 py-2.5 flex items-center gap-2 focus-within:border-[#F5C742]">
-                                  <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
-                                  <input
-                                    type="text"
-                                    inputMode="decimal"
-                                    autoComplete="off"
-                                    value={checkoutCreditReceivedAmount}
-                                    placeholder="0.00"
-                                    onChange={e => {
-                                      const next = sanitizeAmountInput(e.target.value);
-                                      const num = parseFloat(next) || 0;
-                                      setCheckoutCreditReceivedAmount(num > effectiveDue ? String(effectiveDue.toFixed(2)) : next);
-                                    }}
-                                    className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
-                                  />
-                                  <button type="button" onClick={() => setCheckoutCreditReceivedAmount(effectiveDue > 0 ? String(effectiveDue.toFixed(2)) : '0')}
-                                    className="text-[10px] font-bold text-[#b8920e] shrink-0">FULL</button>
-                                </div>
-                              </div>
-                              {checkoutCreditReceivedMode === 'Card' && (
-                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                                  {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => (
-                                    <button key={ct} type="button" onClick={() => setCheckoutCreditReceivedCardType(ct)}
-                                      className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${checkoutCreditReceivedCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
-                                      {ct}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                              {(checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank') && (
-                                <div>
-                                  <label className="text-[10px] font-bold text-gray-400 uppercase">Bank Account</label>
-                                  <select
-                                    value={checkoutCreditReceivedBankAccountId}
-                                    onChange={e => setCheckoutCreditReceivedBankAccountId(e.target.value)}
-                                    className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
-                                  >
-                                    <option value="" disabled>
-                                      {checkoutOnlineBankAccountsLoading
-                                        ? 'Loading bank accounts…'
-                                        : checkoutOnlineBankAccounts.length === 0
-                                          ? 'No bank accounts configured'
-                                          : 'Select bank account…'}
-                                    </option>
-                                    {checkoutOnlineBankAccounts.map(acc => (
-                                      <option key={acc.id} value={acc.id}>{acc.name} ({acc.code || acc.accountCode || '-'})</option>
-                                    ))}
-                                  </select>
-                                </div>
-                              )}
-                              <div>
-                                <label className="text-[10px] font-bold text-gray-400 uppercase">Reference (optional)</label>
-                                <input
-                                  type="text"
-                                  autoComplete="off"
-                                  value={checkoutCreditReceivedRef}
-                                  placeholder="Enter reference…"
-                                  onChange={e => setCheckoutCreditReceivedRef(e.target.value)}
-                                  className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
-                                />
-                              </div>
-                              {checkoutCreditReceivedMode === 'Card' && !checkoutCreditReceivedCardType && (
-                                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a card type to proceed</span></div>
-                              )}
-                              {(checkoutCreditReceivedMode === 'Online' || checkoutCreditReceivedMode === 'Bank') && !checkoutCreditReceivedBankAccountId && (
-                                <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg"><AlertCircle className="h-4 w-4 text-amber-500 shrink-0" /><span className="text-xs text-amber-700">Please select a bank account to proceed</span></div>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      )}
-                      {creditReceivedNum > 0 && (
-                        <div className="flex justify-between items-center px-4 py-2.5 bg-green-50 border border-green-200 rounded-xl">
-                          <span className="text-sm font-semibold text-green-700">Received Now ({checkoutCreditReceivedMode})</span>
-                          <span className="text-lg font-black text-green-700"><CurrencyAmount amount={creditReceivedNum} /></span>
-                        </div>
-                      )}
-                      <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between">
-                        <span className="text-xs font-bold text-gray-500 uppercase">Credit Balance</span>
-                        <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={creditBalanceNum} /></span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── Mixed section ── */}
-                  {checkoutPayMode === 'mixed' && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Mixed Payment</p>
-                      <p className="text-[10px] text-gray-400 -mt-1">Enter amounts — the balance is applied to the card mode automatically.</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Cash</label>
-                          <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-cash' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
-                            <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              autoComplete="off"
-                              value={mixedCashAmount}
-                              placeholder="0.00"
-                              onFocus={() => { setCheckoutKeypadTarget('mixed-cash'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                              onChange={e => applyMixedAmount('cash', e.target.value)}
-                              className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
-                            />
-                          </label>
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase truncate">Advance {customerAdvanceSummary ? `(Max ${customerAdvanceSummary.availableAdvanceBalance.toFixed(2)})` : ''}</label>
-                          <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-advance' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
-                            <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              autoComplete="off"
-                              value={mixedAdvanceAmount}
-                              placeholder="0.00"
-                              onFocus={() => { setCheckoutKeypadTarget('mixed-advance'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                              onChange={e => applyMixedAmount('advance', e.target.value)}
-                              disabled={!customerAdvanceSummary || customerAdvanceSummary.availableAdvanceBalance <= 0}
-                              className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none disabled:opacity-50"
-                            />
-                          </label>
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase">Card{mixedCardAmount ? ' (bal)' : ''}</label>
-                          <label className={`mt-1 border-2 rounded-xl px-3 py-2.5 flex items-center gap-2 cursor-text ${checkoutKeypadTarget === 'mixed-card' ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 bg-gray-50'}`}>
-                            <span className="text-xs text-gray-400 shrink-0"><DirhamSymbol /></span>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              autoComplete="off"
-                              value={mixedCardAmount}
-                              placeholder="0.00"
-                              onFocus={() => { setCheckoutKeypadTarget('mixed-card'); setCheckoutKeypadMode('numeric'); setCheckoutKeypadVisible(true); }}
-                              onChange={e => applyMixedAmount('card', e.target.value)}
-                              className="w-full min-w-0 bg-transparent text-lg font-black text-[#1E293B] outline-none"
-                            />
-                          </label>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-                        {['Visa', 'Mastercard', 'Amex', 'Other'].map(ct => (
-                          <button key={ct} type="button" onClick={() => setMixedCardType(ct)}
-                            className={`py-2 rounded-xl text-xs font-bold border-2 transition-all ${mixedCardType === ct ? 'bg-[#F5C742] border-[#F5C742] text-[#1E293B]' : 'border-gray-200 text-gray-600 hover:border-[#F5C742]/50'}`}>
-                            {ct}
-                          </button>
-                        ))}
-                      </div>
-                      {(mixedCashAmount || mixedCardAmount || mixedAdvanceAmount) && (
-                        <div className={`flex justify-between items-center px-4 py-2.5 rounded-xl border-2 ${mixedDiff < 0.01 ? 'bg-green-50 border-green-300' : 'bg-red-50 border-red-300'}`}>
-                          <span className={`text-sm font-bold ${mixedDiff < 0.01 ? 'text-green-700' : 'text-red-600'}`}>{mixedDiff < 0.01 ? '✓ Amounts Balanced' : <>Difference: <DirhamSymbol /> {mixedDiff.toFixed(2)}</>}</span>
-                          <span className="text-xs text-gray-500">Total: <DirhamSymbol /> {effectiveDue.toFixed(2)}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Online section ── */}
-                  {checkoutPayMode === 'online' && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Online Payment</p>
-                      <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between">
-                        <span className="text-xs font-bold text-gray-500 uppercase">Amount</span>
-                        <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={effectiveDue} /></span>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Bank Account</label>
-                        <select
-                          value={checkoutOnlineBankAccountId}
-                          onChange={e => setCheckoutOnlineBankAccountId(e.target.value)}
-                          className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
-                        >
-                          <option value="" disabled>
-                            {checkoutOnlineBankAccountsLoading
-                              ? 'Loading bank accounts…'
-                              : checkoutOnlineBankAccounts.length === 0
-                                ? 'No bank accounts configured'
-                                : 'Select bank account…'}
-                          </option>
-                          {checkoutOnlineBankAccounts.map(acc => (
-                            <option key={acc.id} value={acc.id}>{acc.name} ({acc.code || acc.accountCode || '-'})</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 uppercase">Transaction Reference (optional)</label>
-                        <input
-                          type="text"
-                          autoComplete="off"
-                          value={checkoutOnlineReference}
-                          placeholder="UTR / transfer ref…"
-                          onChange={e => setCheckoutOnlineReference(e.target.value)}
-                          className="mt-1 w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 outline-none focus:border-[#F5C742]"
-                        />
-                      </div>
-                      {!checkoutOnlineBankAccountId && (
-                        <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg">
-                          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
-                          <span className="text-xs text-amber-700">Please select a bank account to proceed</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── Advance section ── */}
-                  {checkoutPayMode === 'advance' && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm space-y-3">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Advance Payment</p>
-                      {!customerAdvanceSummary && selectedCustomerData?.id === 'walk-in' ? (
-                        <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-300 rounded-xl">
-                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                          <div>
-                            <p className="text-xs font-bold text-amber-800">Customer Required</p>
-                            <p className="text-[10px] text-amber-700">Advance payment requires a registered customer account.</p>
-                          </div>
-                        </div>
-                      ) : customerAdvanceSummary?.availableAdvanceBalance >= effectiveDue ? (
-                        <div className="bg-[#F5C742]/10 border-2 border-[#F5C742] rounded-xl px-4 py-3 flex items-center justify-between">
-                           <span className="text-xs font-bold text-gray-500 uppercase">Available Advance</span>
-                           <span className="text-2xl font-black text-[#1E293B]"><CurrencyAmount amount={customerAdvanceSummary.availableAdvanceBalance} /></span>
-                        </div>
-                      ) : (
-                        <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-300 rounded-xl">
-                          <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-                          <div>
-                            <p className="text-xs font-bold text-red-800">Insufficient Advance Balance</p>
-                            <p className="text-[10px] text-red-700">Available: {customerAdvanceSummary?.availableAdvanceBalance ? customerAdvanceSummary.availableAdvanceBalance.toFixed(2) : '0.00'}</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ── On-Demand Keypad ── */}
-                  {checkoutKeypadVisible && (
-                    <div className="bg-white rounded-2xl border-2 border-[#F5C742]/50 p-4 shadow-md">
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Keypad</p>
-                          <span className="text-[9px] text-gray-300">—</span>
-                          <span className="text-[10px] text-[#F5C742] font-semibold">
-                            {checkoutKeypadTarget === 'tender' ? 'Cash Tendered'
-                              : checkoutKeypadTarget === 'mixed-cash' ? 'Cash Amount'
-                                : checkoutKeypadTarget === 'mixed-card' ? 'Card Amount'
-                                  : checkoutKeypadTarget === 'mixed-advance' ? 'Advance Amount'
-                                    : 'Reference / Text'}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <div className="flex gap-0.5 bg-gray-100 p-0.5 rounded-lg">
-                            <button type="button" onClick={() => setCheckoutKeypadMode('numeric')}
-                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${checkoutKeypadMode === 'numeric' ? 'bg-[#F5C742] text-[#1E293B]' : 'text-gray-500'}`}>123</button>
-                            <button type="button" onClick={() => setCheckoutKeypadMode('alpha')}
-                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all ${checkoutKeypadMode === 'alpha' ? 'bg-[#F5C742] text-[#1E293B]' : 'text-gray-500'}`}>ABC</button>
-                          </div>
-                          <button type="button" onClick={() => setCheckoutKeypadVisible(false)}
-                            className="w-6 h-6 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors">
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                      {checkoutKeypadMode === 'numeric' ? (
-                        <div className="grid grid-cols-3 gap-2">
-                          {numKeys.map(k => (
-                            <button key={k} type="button" onClick={() => handleKpad(k)}
-                              className={`h-12 rounded-xl font-bold text-sm border-2 transition-all active:scale-95 ${k === '⌫' ? 'border-red-200 bg-red-50 text-red-500 hover:bg-red-100' : 'border-[#F5C742]/40 bg-[#F5C742]/5 text-[#1E293B] hover:bg-[#F5C742]/20'}`}>
-                              {k}
-                            </button>
-                          ))}
-                          <button type="button" onClick={() => handleKpad('EXACT')}
-                            className="col-span-2 h-12 rounded-xl font-bold text-xs border-2 border-[#327F74]/40 bg-[#327F74]/5 text-[#327F74] hover:bg-[#327F74]/10 transition-all">
-                            EXACT AMOUNT
-                          </button>
-                          <button type="button" onClick={() => handleKpad('C')}
-                            className="h-12 rounded-xl font-bold text-sm border-2 border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100 transition-all">
-                            CLR
-                          </button>
-                          <button type="button" onClick={() => setCheckoutKeypadVisible(false)}
-                            className="col-span-3 h-10 rounded-xl font-bold text-sm border-2 border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B] hover:bg-[#F5C742]/20 transition-all mt-1">
-                            Done ✓
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {alphaRows.map((row, ri) => (
-                            <div key={ri} className="flex gap-1 justify-center">
-                              {row.map(k => (
-                                <button key={k} type="button" onClick={() => handleKpad(k)}
-                                  className={`h-9 flex-1 rounded-lg font-bold text-xs border transition-all active:scale-95 ${k === '⌫' ? 'border-red-200 bg-red-50 text-red-500 hover:bg-red-100 px-3 flex-none' : 'border-[#F5C742]/40 bg-[#F5C742]/5 text-[#1E293B] hover:bg-[#F5C742]/20'}`}>
-                                  {k}
-                                </button>
-                              ))}
-                            </div>
-                          ))}
-                          <div className="flex gap-1.5 mt-1">
-                            <button type="button" onClick={() => handleKpad(' ')} className="flex-1 h-9 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs font-bold hover:bg-gray-100">SPACE</button>
-                            <button type="button" onClick={() => handleKpad('C')} className="flex-none px-4 h-9 rounded-lg border border-gray-200 bg-gray-50 text-gray-500 text-xs font-bold hover:bg-gray-100">CLR</button>
-                            <button type="button" onClick={() => setCheckoutKeypadVisible(false)} className="flex-none px-4 h-9 rounded-lg border-2 border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B] text-xs font-bold hover:bg-[#F5C742]/20">Done ✓</button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
 
                   {/* ── Remarks ── */}
                   <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
                     <label className="text-[10px] font-bold text-gray-400 uppercase">Remarks / Reference</label>
                     <input value={checkoutRemarks} onChange={e => setCheckoutRemarks(e.target.value)}
-                      onFocus={() => { setCheckoutKeypadMode('alpha'); setCheckoutKeypadTarget('ref'); setCheckoutKeypadVisible(true); }}
                       placeholder="Tap to enter note…"
                       className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />
                   </div>
@@ -10955,7 +10246,7 @@ export default function POSSales() {
                           </div>
                           <input type="checkbox" checked={checkoutEbillSms} onChange={e => setCheckoutEbillSms(e.target.checked)} className="w-4 h-4 accent-[#F5C742]" />
                         </label>
-                        {checkoutEbillSms && <input value={checkoutEbillPhone} onChange={e => setCheckoutEbillPhone(e.target.value)} onFocus={() => { setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('ref'); setCheckoutKeypadVisible(true); }} placeholder="+971 5X XXX XXXX" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
+                        {checkoutEbillSms && <input value={checkoutEbillPhone} onChange={e => setCheckoutEbillPhone(e.target.value)} placeholder="+971 5X XXX XXXX" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
                       </div>
                       {/* WhatsApp */}
                       <div>
@@ -10968,7 +10259,7 @@ export default function POSSales() {
                           </div>
                           <input type="checkbox" checked={checkoutEbillWhatsapp} onChange={e => setCheckoutEbillWhatsapp(e.target.checked)} className="w-4 h-4 accent-[#F5C742]" />
                         </label>
-                        {checkoutEbillWhatsapp && <input value={checkoutEbillPhone} onChange={e => setCheckoutEbillPhone(e.target.value)} onFocus={() => { setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('ref'); setCheckoutKeypadVisible(true); }} placeholder="+971 5X XXX XXXX" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
+                        {checkoutEbillWhatsapp && <input value={checkoutEbillPhone} onChange={e => setCheckoutEbillPhone(e.target.value)} placeholder="+971 5X XXX XXXX" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
                       </div>
                       {/* Email */}
                       <div>
@@ -10981,7 +10272,7 @@ export default function POSSales() {
                           </div>
                           <input type="checkbox" checked={checkoutEbillEmail} onChange={e => setCheckoutEbillEmail(e.target.checked)} className="w-4 h-4 accent-[#F5C742]" />
                         </label>
-                        {checkoutEbillEmail && <input type="email" value={checkoutEbillEmailAddr} onChange={e => setCheckoutEbillEmailAddr(e.target.value)} onFocus={() => { setCheckoutKeypadMode('alpha'); setCheckoutKeypadTarget('ref'); setCheckoutKeypadVisible(true); }} placeholder="customer@email.com" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
+                        {checkoutEbillEmail && <input type="email" value={checkoutEbillEmailAddr} onChange={e => setCheckoutEbillEmailAddr(e.target.value)} placeholder="customer@email.com" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
                       </div>
                     </div>
                   </div>
@@ -11001,15 +10292,11 @@ export default function POSSales() {
                   <div className={`rounded-xl p-3 text-center border ${canSettle ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
                     <p className="text-[9px] text-gray-500 uppercase font-bold">Paid</p>
                     <p className={`text-base font-black ${canSettle ? 'text-green-700' : 'text-gray-400'}`}>
-                      <DirhamSymbol /> {checkoutPayMode === 'cash' ? (tenderedNum > 0 ? tenderedNum.toFixed(2) : '0.00')
-                        : checkoutPayMode === 'mixed' ? (mixedCashNum + mixedCardNum + mixedAdvanceNum).toFixed(2)
-                          : canSettle ? effectiveDue.toFixed(2) : '0.00'}
+                      <DirhamSymbol /> {checkoutPaymentFields.amountReceived.toFixed(2)}
                     </p>
                   </div>
                   {(() => {
-                    const changeAmt = checkoutPayMode === 'cash'
-                      ? Math.round(Math.max(0, tenderedNum - effectiveDue) * 100) / 100
-                      : 0;
+                    const changeAmt = checkoutPaymentFields.changeDue;
                     return (
                       <div className={`rounded-xl p-3 text-center border ${changeAmt > 0 ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
                         <p className="text-[9px] text-gray-500 uppercase font-bold">{changeAmt > 0 ? 'Change' : 'Balance'}</p>
@@ -11029,7 +10316,7 @@ export default function POSSales() {
                 )}
                 {/* Action buttons */}
                 <div className="flex gap-2 sm:gap-3">
-                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); setTenderedAmount(''); setCheckoutCardType(''); setMixedCashAmount(''); setMixedCardAmount(''); setMixedAdvanceAmount(''); setMixedCardType(''); setCheckoutOnlineBankAccountId(''); setCheckoutOnlineReference(''); setCheckoutKeypadValue(''); setCheckoutKeypadVisible(false); setCheckoutCreditReceivedMode(''); setCheckoutCreditReceivedAmount(''); setCheckoutCreditReceivedCardType(''); setCheckoutCreditReceivedRef(''); setCheckoutCreditReceivedBankAccountId(''); }}
+                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); checkoutPayment.clearLines(); }}
                     className="flex-none px-3 sm:px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
                     Cancel
                   </button>
@@ -11064,6 +10351,8 @@ export default function POSSales() {
                       ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve the below-minimum price override and complete checkout`
                       : pendingPriceOverride
                       ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve price override${pendingPriceOverride.itemName ? ` for ${pendingPriceOverride.itemName}` : ''} (below min ${pendingPriceOverride.minPrice})`
+                      : pendingSupervisorAction?.type === 'DAY_CLOSE'
+                      ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize Business Day Close' : 'Enter PIN to authorize Business Day Close')
                       : pendingLayawayAbortAction
                       ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to clear layaway cart' : 'Enter PIN to clear layaway cart')
                       : (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize void' : 'Enter PIN to authorize void')}
@@ -11813,13 +11102,22 @@ export default function POSSales() {
           if (reprintFilterInvoiceNo && !inv.id?.toLowerCase().includes(reprintFilterInvoiceNo.toLowerCase())) return false;
           if (reprintFilterCustomer && !inv.customer.toLowerCase().includes(reprintFilterCustomer.toLowerCase())) return false;
           if (reprintFilterCashier && !inv.cashier.toLowerCase().includes(reprintFilterCashier.toLowerCase())) return false;
-          if (reprintFilterPayMode !== 'All' && inv.payMode !== reprintFilterPayMode) return false;
+          // Matched against the sale's tenders, not an equality test on its stored label:
+          // a sale settled Cash + Visa belongs under both Cash and Card.
+          if (!matchesPaymentFilter(reprintFilterPayMode, null, inv.payMode)) return false;
           if (reprintFilterStatus !== 'All' && inv.status !== reprintFilterStatus) return false;
           return true;
         });
         const selected = filtered.find(inv => inv.id === reprintSelectedInvoice) || null;
         const statusColor = (s) => s === 'Completed' ? 'bg-green-100 text-green-700' : s === 'Returned' ? 'bg-blue-100 text-blue-700' : s === 'Cancelled' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700';
-        const payModeColor = (p) => p === 'Cash' ? 'bg-emerald-50 text-emerald-700' : p === 'Card' ? 'bg-sky-50 text-sky-700' : p === 'Mixed' ? 'bg-purple-50 text-purple-700' : 'bg-orange-50 text-orange-700';
+        // Colour by the leading tender; a split sale ("Cash + Visa") reads as multi-tender.
+        const payModeColor = (p) => {
+          const label = String(p || '');
+          if (label.includes('+') || /mixed/i.test(label)) return 'bg-purple-50 text-purple-700';
+          if (/cash/i.test(label)) return 'bg-emerald-50 text-emerald-700';
+          if (/card|visa|master|amex|jcb/i.test(label)) return 'bg-sky-50 text-sky-700';
+          return 'bg-orange-50 text-orange-700';
+        };
         return (
           <div className="fixed inset-0 z-50 flex">
             <div className="absolute inset-0 bg-black/50" onClick={() => setShowReprintModal(false)} />
@@ -11847,7 +11145,7 @@ export default function POSSales() {
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Cashier</label><input value={reprintFilterCashier} onChange={e => setReprintFilterCashier(e.target.value)} placeholder="Cashier" className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-[#F5C742]" /></div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Payment Mode</label>
                     <select value={reprintFilterPayMode} onChange={e => setReprintFilterPayMode(e.target.value)} className="border border-[#F5C742]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#F5C742]">
-                      {['All', 'Cash', 'Card', 'Mixed', 'Credit'].map(o => <option key={o}>{o}</option>)}
+                      {PAYMENT_FILTERS.map(o => <option key={o}>{o}</option>)}
                     </select>
                   </div>
                   <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-500">Status</label>
@@ -12049,6 +11347,17 @@ export default function POSSales() {
         <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium transition-all ${cashDropFeedback.type === 'success' ? 'bg-[#327F74] text-white' : 'bg-red-500 text-white'}`}>
           {cashDropFeedback.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
           {cashDropFeedback.message}
+        </div>
+      )}
+
+      {/* Share Receipt feedback toast */}
+      {receiptShareFeedback && (
+        <div
+          role="status"
+          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[220] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium ${receiptShareFeedback.type === 'success' ? 'bg-[#327F74] text-white' : 'bg-red-500 text-white'}`}
+        >
+          {receiptShareFeedback.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
+          {receiptShareFeedback.message}
         </div>
       )}
 
@@ -13140,7 +12449,7 @@ export default function POSSales() {
           );
         }
         const total = currentInvoice.total || 0;
-        const dep = saveLayawayDepositReq ? (parseFloat(saveLayawayDeposit) || 0) : 0;
+        const dep = saveLayawayDepositReq ? saveLayawayFields.amountTendered : 0;
         const balance = Math.max(0, total - dep);
         const hasCustomer = !!selectedCustomerData && selectedCustomerData.id !== WALK_IN_CUSTOMER.id;
         const activeCartItems = currentInvoice.items.filter(i => !i.isVoided);
@@ -13220,16 +12529,19 @@ export default function POSSales() {
                       </div>
                       {saveLayawayDepositReq && (
                         <>
-                          <div>
-                            <label className="text-xs text-gray-500 block mb-0.5">Deposit Amount (<DirhamSymbol />)</label>
-                            <input type="number" value={saveLayawayDeposit} onChange={e => setSaveLayawayDeposit(e.target.value)} placeholder="0.00" className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-500 block mb-0.5">Deposit Payment Mode</label>
-                            <select value={saveLayawayPayMode} onChange={e => setSaveLayawayPayMode(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                              {['Cash', 'Card', 'Bank Transfer', 'Wallet'].map(o => <option key={o}>{o}</option>)}
-                            </select>
-                          </div>
+                          {/* A deposit is collected exactly like any other POS payment, with
+                              the same panel, modals and validation. Unlike a sale it need not
+                              cover the full amount -- whatever is allocated becomes the deposit
+                              and the rest stays as the layaway balance. */}
+                          <PaymentAllocationPanel
+                            payment={saveLayawayPayment}
+                            compatibility={checkoutCompatibility}
+                            bankAccounts={checkoutOnlineBankAccounts}
+                            bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                            selectedCustomerName={selectedCustomerData?.name}
+                            methods={DELIVERY_SETTLE_METHODS}
+                            compact
+                          />
                         </>
                       )}
                       <div className="flex justify-between items-center py-1 bg-[#FFF8DC] rounded px-2">
@@ -15403,23 +14715,16 @@ export default function POSSales() {
         const selTotal = sel ? sel.invoiceAmt + sel.deliveryCharge : 0;
         const selBalance = sel ? Math.max(0, selTotal - sel.paidAmt) : 0;
 
-        const mixCash = parseFloat(deliverySettleMixCash) || 0;
-        const mixCard = parseFloat(deliverySettleMixCard) || 0;
-        const mixTotal = mixCash + mixCard;
-        const mixBalanced = deliverySettlePayMode === 'Mix' ? Math.abs(mixTotal - selBalance) < 0.01 : true;
+        const canFinalizeSettlement = deliverySettlePayment.canSettle
+          && deliverySettlePayment.paymentLines.length > 0;
+        const displayPaymentMode = deliverySettleFields.paymentSummary;
 
         const handleFinalize = async () => {
-          if (!sel || selBalance <= 0 || deliverySettleLoading || !mixBalanced) return;
+          if (!sel || selBalance <= 0 || deliverySettleLoading || !canFinalizeSettlement) return;
           setDeliverySettleLoading(true);
           try {
-            const cashAmt = deliverySettlePayMode === 'Cash' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCash : 0;
-            const cardAmt = deliverySettlePayMode === 'Card' ? selBalance : deliverySettlePayMode === 'Mix' ? mixCard : 0;
-            const displayPaymentMode = deliverySettlePayMode === 'Mix' ? 'Cash + Card' : deliverySettlePayMode;
             const settledInvoice = await settleDeliveryOrder(sel.id, {
-              paymentMode: displayPaymentMode,
-              amountTendered: selBalance,
-              cashAmount: cashAmt,
-              cardAmount: cardAmt,
+              ...deliverySettleFields,
               sessionId: currentSession?.id || null,
               terminalId: currentTerminal?.terminalId || null,
               branchId: currentTerminal?.branchId || null,
@@ -15484,8 +14789,7 @@ export default function POSSales() {
             }
 
             setDeliverySettleSelected(null);
-            setDeliverySettleMixCash('');
-            setDeliverySettleMixCard('');
+            deliverySettlePayment.clearLines();
             await loadDeliveryOrders();
             syncPosData();
           } catch (err) {
@@ -15553,7 +14857,7 @@ export default function POSSales() {
                       const isSelected = sel?.id === o.id;
                       return (
                         <div key={o.id}>
-                          <button type="button" onClick={() => { setDeliverySettleSelected(isSelected ? null : o); setDeliverySettlePayMode('Cash'); setDeliverySettleMixCash(''); setDeliverySettleMixCard(''); }}
+                          <button type="button" onClick={() => { setDeliverySettleSelected(isSelected ? null : o); deliverySettlePayment.clearLines(); }}
                             className={`w-full grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-3 border-b border-gray-100 text-left transition-colors ${isSelected ? 'bg-[#FFF8E7] border-[#FDE6A9]' : 'hover:bg-gray-50'}`}>
                             <div>
                               <p className="text-sm font-semibold text-[#1E293B]">{o.customer}</p>
@@ -15591,52 +14895,23 @@ export default function POSSales() {
                                   </div>
                                 ))}
                               </div>
+                              {/* The same allocation panel the till uses. A delivery balance
+                                  cannot be settled by putting it back on account -- that is
+                                  simply leaving it unpaid -- so CREDIT is not offered here. */}
                               <div className="mb-3">
-                                <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 mb-2">Payment Mode</p>
-                                <div className="flex gap-2">
-                                  {['Cash', 'Card', 'Credit', 'Mix'].map(m => (
-                                    <button key={m} type="button" onClick={() => { setDeliverySettlePayMode(m); setDeliverySettleMixCash(''); setDeliverySettleMixCard(''); }}
-                                      className={`flex-1 py-2 rounded-xl text-sm font-semibold border transition-all ${deliverySettlePayMode === m ? 'border-[#F5C742] bg-[#F5C742]/20 text-[#1E293B]' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
-                                      {m}
-                                    </button>
-                                  ))}
-                                </div>
+                                <PaymentAllocationPanel
+                                  payment={deliverySettlePayment}
+                                  compatibility={checkoutCompatibility}
+                                  bankAccounts={checkoutOnlineBankAccounts}
+                                  bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                                  selectedCustomerName={o.customer}
+                                  methods={DELIVERY_SETTLE_METHODS}
+                                  compact
+                                />
                               </div>
 
-                              {deliverySettlePayMode === 'Credit' && (
-                                <div className="mb-3 rounded-xl bg-purple-50 border border-purple-200 px-4 py-3">
-                                  <p className="text-sm font-semibold text-purple-800">Credit Settlement</p>
-                                  <p className="text-xs text-purple-600 mt-0.5">Balance of AED {selBalance.toFixed(2)} will be posted to {o.customer}'s credit account.</p>
-                                </div>
-                              )}
-
-                              {deliverySettlePayMode === 'Mix' && (
-                                <div className="mb-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
-                                    <div>
-                                      <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 block mb-1">Cash (AED)</label>
-                                      <input type="number" min="0" step="0.01" value={deliverySettleMixCash}
-                                        onChange={e => setDeliverySettleMixCash(e.target.value)}
-                                        placeholder="0.00"
-                                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#327F74]" />
-                                    </div>
-                                    <div>
-                                      <label className="text-[10px] font-bold uppercase tracking-wide text-gray-500 block mb-1">Card (AED)</label>
-                                      <input type="number" min="0" step="0.01" value={deliverySettleMixCard}
-                                        onChange={e => setDeliverySettleMixCard(e.target.value)}
-                                        placeholder="0.00"
-                                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#327F74]" />
-                                    </div>
-                                  </div>
-                                  <div className={`flex items-center justify-between text-xs font-semibold ${mixBalanced ? 'text-[#327F74]' : 'text-red-500'}`}>
-                                    <span>{mixBalanced ? '✓ Amount balanced' : 'Total must equal balance due'}</span>
-                                    <span>AED {mixTotal.toFixed(2)} / AED {selBalance.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                              )}
-
                               <button type="button"
-                                disabled={selBalance === 0 || deliverySettleLoading || !mixBalanced}
+                                disabled={selBalance === 0 || deliverySettleLoading || !canFinalizeSettlement}
                                 onClick={handleFinalize}
                                 className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors">
                                 <CheckCircle className="h-4 w-4" />

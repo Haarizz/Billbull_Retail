@@ -12,6 +12,9 @@ import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
+import com.billbull.backend.sales.payment.Payment;
+import com.billbull.backend.sales.payment.PaymentRepository;
+import com.billbull.backend.sales.payment.TenderBucket;
 import com.billbull.backend.sales.returns.SalesReturn;
 import com.billbull.backend.sales.returns.SalesReturnItem;
 import com.billbull.backend.sales.returns.SalesReturnRepository;
@@ -44,6 +47,7 @@ public class SalesReportDataService {
     private final DeliveryNoteRepository deliveryNoteRepository;
     private final CustomerRepository customerRepository;
     private final ProductRepository productRepository;
+    private final PaymentRepository paymentRepository;
 
     public SalesReportDataService(
             SalesInvoiceRepository invoiceRepository,
@@ -51,13 +55,15 @@ public class SalesReportDataService {
             SalesOrderRepository orderRepository,
             DeliveryNoteRepository deliveryNoteRepository,
             CustomerRepository customerRepository,
-            ProductRepository productRepository) {
+            ProductRepository productRepository,
+            PaymentRepository paymentRepository) {
         this.invoiceRepository = invoiceRepository;
         this.returnRepository = returnRepository;
         this.orderRepository = orderRepository;
         this.deliveryNoteRepository = deliveryNoteRepository;
         this.customerRepository = customerRepository;
         this.productRepository = productRepository;
+        this.paymentRepository = paymentRepository;
     }
 
     @Transactional(readOnly = true)
@@ -180,7 +186,74 @@ public class SalesReportDataService {
                 .filter(note -> matchesSearch(search, note.getDnNumber(), note.getCustomerName(), note.getCustomerCode(), note.getDriverName(), note.getVehicleNo()))
                 .collect(Collectors.toList());
 
+        data.tendersByInvoice = loadTenders(data.invoices);
+
         return data;
+    }
+
+    /**
+     * Fetches the recorded tenders for the dataset's invoices in one query, grouped by invoice.
+     * Loaded eagerly with the dataset (rather than per report) because several reports need it
+     * and the alternative is a payment lookup per invoice row.
+     */
+    private Map<String, List<Payment>> loadTenders(List<SalesInvoice> invoices) {
+        List<String> numbers = invoices.stream()
+                .map(SalesInvoice::getInvoiceNumber)
+                .filter(number -> number != null && !number.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+        if (numbers.isEmpty()) return Map.of();
+
+        // findTenderForInvoices returns latest-first; reverse so each invoice's breakdown reads
+        // in the order the cashier actually took the tenders, matching the receipt.
+        List<Payment> rows = new ArrayList<>(paymentRepository.findTenderForInvoices(numbers));
+        java.util.Collections.reverse(rows);
+        return TenderBucket.byInvoice(rows);
+    }
+
+    /** The tenders recorded against an invoice; empty when none were (unpaid credit sale, or a
+     *  sale predating payment recording). */
+    private List<Payment> tendersFor(SalesDataset data, SalesInvoice invoice) {
+        if (invoice == null || invoice.getInvoiceNumber() == null) return List.of();
+        return data.tendersByInvoice.getOrDefault(invoice.getInvoiceNumber(), List.of());
+    }
+
+    /**
+     * The payment-mode label to display for one invoice.
+     *
+     * <p>Derived from the recorded tenders ("Cash + Card") whenever there are any, so a sale
+     * settled two ways reads as both. Only an invoice with no tender rows at all falls back to
+     * its stored {@code paymentMode} — that is the historical-compatibility path, and it is also
+     * the only way a legacy "Mixed" can still surface.
+     */
+    private String paymentModeLabel(SalesDataset data, SalesInvoice invoice) {
+        String derived = TenderBucket.summaryLabel(tendersFor(data, invoice));
+        return derived != null ? derived : fallback(invoice.getPaymentMode(), "Unspecified");
+    }
+
+    /**
+     * Collections split by tender bucket across the filtered invoices.
+     *
+     * <p>Each tender contributes its own amount to its own bucket, so a 200 sale taken as
+     * 150 cash + 50 card adds 150 to Cash and 50 to Card — instead of 200 to a "Cash + Card"
+     * (or "Mixed") pseudo-bucket that reconciles with nothing. Invoices with no recorded tender
+     * fall back to their stored label so historical rows still appear.
+     */
+    private Map<String, Double> tenderTotals(SalesDataset data, Predicate<SalesInvoice> invoiceFilter) {
+        Map<String, Double> totals = new LinkedHashMap<>();
+        for (SalesInvoice invoice : data.invoices) {
+            if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
+            List<Payment> tenders = tendersFor(data, invoice);
+            if (tenders.isEmpty()) {
+                totals.merge(fallback(invoice.getPaymentMode(), "Unspecified"), paidAmount(invoice), Double::sum);
+                continue;
+            }
+            for (Payment tender : tenders) {
+                totals.merge(TenderBucket.displayNameOf(tender.getPaymentMode()),
+                        n(tender.getAmount()), Double::sum);
+            }
+        }
+        return totals;
     }
 
     private SalesReportDataResponse salesSummary(SalesDataset data) {
@@ -310,7 +383,7 @@ public class SalesReportDataService {
                         "date", invoice.getInvoiceDate(),
                         "cashier", fallback(effectiveSalesperson(invoice), "Unassigned"),
                         "customer", fallback(invoice.getCustomerName(), "Walk-in"),
-                        "paymentMode", fallback(invoice.getPaymentMode(), "Unspecified"),
+                        "paymentMode", paymentModeLabel(data, invoice),
                         "items", items(invoice).size(),
                         "discount", invoiceDiscount(invoice),
                         "tax", invoice.getTaxTotal(),
@@ -374,30 +447,61 @@ public class SalesReportDataService {
     private SalesReportDataResponse posPaymentMode(SalesDataset data) {
         SalesReportDataResponse report = base("pos-payment-mode", "POS Payment Mode Report",
                 "POS collections split by cash, card, wallet, credit and split payment modes.");
-        Map<String, List<SalesInvoice>> byMode = data.invoices.stream()
-                .filter(this::isPosInvoice)
-                .filter(this::isRecognizedInvoice)
-                .collect(Collectors.groupingBy(invoice -> fallback(invoice.getPaymentMode(), "Unspecified"), LinkedHashMap::new, Collectors.toList()));
+        // Built from the tender rows, not by grouping invoices on their mode label. A sale taken
+        // partly on cash and partly on card belongs in both rows for the amount each tender
+        // took; grouping by label instead invented a "Cash + Card" mode whose totals matched
+        // neither the cash drawer nor the card settlement.
+        //
+        // "bills" therefore counts invoices that *touched* the mode, so the column sums to more
+        // than the transaction count when sales were split — that is the honest figure, and the
+        // Bills card below reports the distinct transaction count separately.
+        Map<String, PosTenderAgg> byMode = new LinkedHashMap<>();
+        java.util.Set<String> distinctBills = new java.util.LinkedHashSet<>();
+        for (SalesInvoice invoice : data.invoices) {
+            if (!isPosInvoice(invoice) || !isRecognizedInvoice(invoice)) continue;
+            distinctBills.add(invoice.getInvoiceNumber());
+            List<Payment> tenders = tendersFor(data, invoice);
+            if (tenders.isEmpty()) {
+                // Historical compatibility: no tender rows, so the stored label is all there is.
+                PosTenderAgg agg = byMode.computeIfAbsent(
+                        fallback(invoice.getPaymentMode(), "Unspecified"), key -> new PosTenderAgg());
+                agg.bills++;
+                agg.collected += paidAmount(invoice);
+                agg.outstanding += outstandingAmount(invoice);
+                continue;
+            }
+            java.util.Set<String> modesOnThisInvoice = new java.util.LinkedHashSet<>();
+            for (Payment tender : tenders) {
+                String mode = TenderBucket.displayNameOf(tender.getPaymentMode());
+                PosTenderAgg agg = byMode.computeIfAbsent(mode, key -> new PosTenderAgg());
+                agg.collected += n(tender.getAmount());
+                if (modesOnThisInvoice.add(mode)) agg.bills++;
+            }
+            // The unsettled remainder is receivable regardless of how the settled part was
+            // tendered, so it is attributed once, to the first tender on the invoice.
+            String firstMode = modesOnThisInvoice.iterator().next();
+            byMode.get(firstMode).outstanding += outstandingAmount(invoice);
+        }
         List<Map<String, Object>> rows = byMode.entrySet().stream()
                 .map(entry -> {
-                    List<SalesInvoice> invoices = entry.getValue();
-                    double gross = sumInvoices(invoices, true, true);
-                    double collected = paidAmount(invoices);
+                    PosTenderAgg agg = entry.getValue();
                     return row(
                             "paymentMode", entry.getKey(),
-                            "bills", invoices.size(),
-                            "grossSales", gross,
+                            "bills", agg.bills,
+                            "grossSales", agg.collected,
                             "refunds", 0,
-                            "collected", collected,
-                            "outstanding", outstandingAmount(invoices),
-                            "netAmount", gross);
+                            "collected", agg.collected,
+                            "outstanding", agg.outstanding,
+                            "netAmount", agg.collected);
                 })
                 .sorted(byDoubleDesc("netAmount"))
                 .collect(Collectors.toList());
         report.setCards(List.of(
                 card("Payment Modes", rows.size(), "number", "active"),
                 card("Collected", rows.stream().mapToDouble(row -> n(row.get("collected"))).sum(), "currency", "POS"),
-                card("Bills", rows.stream().mapToDouble(row -> n(row.get("bills"))).sum(), "number", "transactions"),
+                // Distinct invoices, not the sum of the per-mode Bills column — a split sale
+                // appears in two rows but is still one transaction.
+                card("Bills", distinctBills.size(), "number", "transactions"),
                 card("Outstanding", rows.stream().mapToDouble(row -> n(row.get("outstanding"))).sum(), "currency", "pending")
         ));
         report.setCharts(List.of(
@@ -477,7 +581,7 @@ public class SalesReportDataService {
                         "customer", fallback(invoice.getCustomerName(), "Walk-in"),
                         "reason", fallback(invoice.getInternalNotes(), "Cancelled POS bill"),
                         "value", invoiceTotal(invoice),
-                        "paymentMode", fallback(invoice.getPaymentMode(), "Unspecified"),
+                        "paymentMode", paymentModeLabel(data, invoice),
                         "status", "Cancelled"))
                 .collect(Collectors.toList());
         report.setCards(List.of(
@@ -1450,12 +1554,7 @@ public class SalesReportDataService {
     }
 
     private List<Map<String, Object>> paymentModeRows(SalesDataset data, Predicate<SalesInvoice> invoiceFilter) {
-        Map<String, Double> totals = new LinkedHashMap<>();
-        for (SalesInvoice invoice : data.invoices) {
-            if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
-            totals.merge(fallback(invoice.getPaymentMode(), "Unspecified"), paidAmount(invoice), Double::sum);
-        }
-        return totals.entrySet().stream()
+        return tenderTotals(data, invoiceFilter).entrySet().stream()
                 .map(entry -> row("name", entry.getKey(), "value", entry.getValue()))
                 .collect(Collectors.toList());
     }
@@ -1913,6 +2012,15 @@ public class SalesReportDataService {
         private List<DeliveryNote> deliveries = List.of();
         private List<Customer> customers = List.of();
         private Map<String, ProductInfo> products = Map.of();
+        /**
+         * Recorded tenders for {@link #invoices}, keyed by invoice number, oldest-first within
+         * each invoice. This — not {@code SalesInvoice.paymentMode} — is what every payment
+         * breakdown in this service aggregates: the mode column on an invoice is one display
+         * label for the whole sale ("Cash + Visa", historically "Mixed") and cannot say how much
+         * went on each tender. An invoice absent from this map has no recorded tender, and falls
+         * back to its stored label.
+         */
+        private Map<String, List<Payment>> tendersByInvoice = Map.of();
     }
 
     private static class ProductInfo {
@@ -1943,6 +2051,13 @@ public class SalesReportDataService {
 
     private static String fallbackStatic(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    /** Per-tender-mode running totals for the POS Payment Mode report. */
+    private static class PosTenderAgg {
+        private int bills;
+        private double collected;
+        private double outstanding;
     }
 
     private static class SalesAgg {

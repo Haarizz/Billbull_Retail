@@ -7,6 +7,7 @@ public record GrnListResponse(
         Long id,
         String idDisplay,
         LocalDate date,
+        Long vendorId,
         String vendor,
         String docRef,
         String warehouse,

@@ -16,3 +16,8 @@ export const closeAccountingPeriod = async (id) => {
     const res = await api.post(`${BASE_URL}/${id}/close`);
     return res.data;
 };
+
+export const reopenAccountingPeriod = async (id) => {
+    const res = await api.post(`${BASE_URL}/${id}/reopen`);
+    return res.data;
+};

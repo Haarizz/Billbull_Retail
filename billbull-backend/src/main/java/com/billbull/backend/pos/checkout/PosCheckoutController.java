@@ -24,7 +24,6 @@ import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.sales.invoice.SalesType;
 import com.billbull.backend.sales.payment.Payment;
 import com.billbull.backend.sales.payment.PaymentRepository;
-import com.billbull.backend.sales.advance.AdvanceApplicationService;
 import com.billbull.backend.security.RolePermissionService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.HttpStatus;
@@ -54,6 +53,10 @@ import java.util.stream.Collectors;
 @CrossOrigin
 public class PosCheckoutController {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(PosCheckoutController.class);
+
+
     private final SalesInvoiceService invoiceService;
     private final PosSessionService sessionService;
     private final SalesInvoiceRepository invoiceRepository;
@@ -68,9 +71,9 @@ public class PosCheckoutController {
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
     private final PaymentRepository paymentRepository;
-    private final AdvanceApplicationService advanceApplicationService;
     private final com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
+    private final PosPaymentAllocationResolver allocationResolver;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -83,9 +86,9 @@ public class PosCheckoutController {
                                   ProductService productService,
                                   EmployeeRepository employeeRepository,
                                   PaymentRepository paymentRepository,
-                                  AdvanceApplicationService advanceApplicationService,
                                   com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService,
-                                  com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService) {
+                                  com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService,
+                                  PosPaymentAllocationResolver allocationResolver) {
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -100,9 +103,9 @@ public class PosCheckoutController {
         this.productService = productService;
         this.employeeRepository = employeeRepository;
         this.paymentRepository = paymentRepository;
-        this.advanceApplicationService = advanceApplicationService;
         this.terminalActivityService = terminalActivityService;
         this.branchTaxResolutionService = branchTaxResolutionService;
+        this.allocationResolver = allocationResolver;
     }
 
     @PostMapping
@@ -117,10 +120,10 @@ public class PosCheckoutController {
             }
         }
 
-        // Structural validation of the multi-card split (if any) fails fast, before any
-        // invoice row is created — same validation whether this is a pure Card checkout
-        // split across N cards or a Mixed (Cash + N cards) checkout.
-        List<PosCheckoutRequest.PosCardLeg> cardLegs = resolveCardLegs(request);
+        // Structural validation of the payment (allocation list or legacy multi-card split)
+        // fails fast, before any invoice row is created — a malformed payment must never leave
+        // a stranded DRAFT invoice behind.
+        allocationResolver.validateStructure(request);
 
         SalesInvoice invoice = buildInvoice(request);
 
@@ -131,42 +134,35 @@ public class PosCheckoutController {
         SalesInvoice saved = invoiceService.save(invoice);
 
         double invoiceTotal = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal().doubleValue() : 0.0;
-        boolean useCardLegs = !cardLegs.isEmpty();
-        double cashAmt = request.getCashAmount() != null ? request.getCashAmount() : 0.0;
-        // Additive multi-card split: when cardLegs is present it is the source of truth for the
-        // card portion of the payment (see PosCheckoutRequest.cardLegs javadoc) — the legacy
-        // scalar cardAmount/cardType/cardReference fields are only consulted when it's absent,
-        // so old API clients keep working unchanged.
-        double cardAmt = useCardLegs
-                ? cardLegs.stream().mapToDouble(PosCheckoutRequest.PosCardLeg::getAmount).sum()
-                : (request.getCardAmount() != null ? request.getCardAmount() : 0.0);
-        double onlineAmt = request.getOnlineAmount() != null ? request.getOnlineAmount() : 0.0;
-        double advanceAmt = request.getAdvanceAmount() != null ? request.getAdvanceAmount() : 0.0;
-        boolean hasSplitAmounts = cashAmt > 0.001 || cardAmt > 0.001 || onlineAmt > 0.001 || advanceAmt > 0.001;
-        double paymentAmount = hasSplitAmounts
-                ? Math.min(cashAmt + cardAmt + onlineAmt + advanceAmt, invoiceTotal)
-                : Math.min(request.getAmountTendered() != null ? request.getAmountTendered() : 0.0, invoiceTotal);
-        // A Credit checkout with a partial receipt (cashAmt/cardAmt/onlineAmt/advanceAmt < invoiceTotal) must
-        // keep the invoice's paymentMode stamped "Credit" — the leg mode (Cash/Card/Online/Advance) belongs
-        // on the Payment/Receipt row, not on the invoice, so the remaining balance still reads as
-        // outstanding credit rather than looking like a plain Cash/Card sale.
-        boolean isCreditCheckout = "credit".equalsIgnoreCase(request.getPaymentMode());
-        String creditStamp = isCreditCheckout ? "Credit" : null;
+
+        // Normalise the payment into an ordered allocation list. Whether the client sent the new
+        // progressive-payment `paymentAllocations` array or the legacy scalars/cardLegs, the rest
+        // of this method sees exactly one shape.
+        PosPaymentPlan plan;
+        try {
+            plan = allocationResolver.resolve(request, invoiceTotal);
+        } catch (RuntimeException ex) {
+            deleteQuietly(saved.getId());
+            log.warn("POS settlement rejected invoice={} reason=invalid-allocations: {}",
+                    saved.getInvoiceNumber(), ex.getMessage());
+            throw ex;
+        }
+        double paymentAmount = plan.getSettledAmount();
+        boolean isCreditCheckout = allocationResolver.isCreditCheckout(request);
 
         // Explicit multi-card split on a non-credit checkout must fully settle the invoice —
         // there's no "change" concept for card tenders the way there is for cash overpayment,
         // so unlike the legacy cash/card scalars (which silently cap at invoiceTotal), a
         // mismatched card-leg total is rejected rather than silently truncated.
-        if (useCardLegs && !isCreditCheckout && invoiceTotal > 0
-                && Math.abs((cashAmt + cardAmt + onlineAmt + advanceAmt) - invoiceTotal) > ROUNDING_TOLERANCE) {
-            try {
-                invoiceService.delete(saved.getId());
-            } catch (RuntimeException cleanupEx) {
-                // Best-effort cleanup — don't mask the real validation error.
-            }
+        if (plan.isUsesCardLegs() && !isCreditCheckout && invoiceTotal > 0
+                && Math.abs(plan.getTenderTotal() - invoiceTotal) > ROUNDING_TOLERANCE) {
+            deleteQuietly(saved.getId());
+            log.warn("POS settlement rejected invoice={} reason=card-legs-do-not-total tender={} total={}",
+                    saved.getInvoiceNumber(), String.format("%.2f", plan.getTenderTotal()),
+                    String.format("%.2f", invoiceTotal));
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, String.format(
                     "Total of all payment legs (%.2f) must equal the invoice total (%.2f).",
-                    cashAmt + cardAmt + onlineAmt + advanceAmt, invoiceTotal));
+                    plan.getTenderTotal(), invoiceTotal));
         }
 
         // Step 2: transition status while the invoice is still DRAFT so that
@@ -183,11 +179,7 @@ public class PosCheckoutController {
         try {
             invoiceService.updateStatus(saved.getId(), intendedStatus);
         } catch (RuntimeException ex) {
-            try {
-                invoiceService.delete(saved.getId());
-            } catch (RuntimeException cleanupEx) {
-                // Best-effort cleanup — don't mask the original posting failure.
-            }
+            deleteQuietly(saved.getId());
             throw ex;
         }
 
@@ -199,62 +191,32 @@ public class PosCheckoutController {
         // traced back to one logical transaction; a single-leg checkout gets none (unchanged
         // from prior behavior).
         if (paymentAmount > 0) {
-            int legCount = (cashAmt > 0.001 ? 1 : 0)
-                    + (useCardLegs ? cardLegs.size() : (cardAmt > 0.001 ? 1 : 0))
-                    + (onlineAmt > 0.001 ? 1 : 0)
-                    + (advanceAmt > 0.001 ? 1 : 0);
+            int legCount = plan.getLegCount();
             String splitGroupId = legCount > 1 ? java.util.UUID.randomUUID().toString() : null;
             // Each recordPayment call re-stamps invoice.paymentMode, so every leg must carry
             // the same combined label (e.g. "Cash + Visa + Mastercard") — otherwise the last
             // call silently overwrites the invoice's displayed mode with just its own leg.
-            String combinedMode = buildCombinedPaymentMode(request, cashAmt, cardLegs, useCardLegs, cardAmt, onlineAmt, advanceAmt, creditStamp);
+            String combinedMode = plan.getCombinedPaymentMode();
 
-            if (cashAmt > 0.001) {
-                // Cash tender natively accepts overpayment (change), so we must cap it to the
-                // remaining invoice balance after non-cash legs to avoid voucher overpayment errors.
-                double appliedCash = Math.min(cashAmt, Math.max(0, paymentAmount - cardAmt - onlineAmt - advanceAmt));
-                if (appliedCash > 0.001) {
-                    invoiceService.recordPayment(saved.getId(), appliedCash, "Cash",
-                            null, LocalDate.now(), null, null, splitGroupId, combinedMode);
+            for (ResolvedPaymentAllocation allocation : plan.getAllocations()) {
+                if (allocation.getAmount() <= 0.001) continue; // cash trimmed to zero by the balance cap
+                if (allocation.isReceipt()) {
+                    invoiceService.recordPayment(saved.getId(), allocation.getAmount(),
+                            allocation.getModeLabel(), allocation.getReference(), LocalDate.now(),
+                            allocation.getBankAccountName(), null, splitGroupId, combinedMode);
                 }
+                // CREDIT allocations intentionally record nothing: the amount stays outstanding
+                // on the customer's A/R ledger, which the invoice balance already represents.
             }
-            if (useCardLegs) {
-                for (PosCheckoutRequest.PosCardLeg leg : cardLegs) {
-                    invoiceService.recordPayment(saved.getId(), leg.getAmount(), leg.getCardType(),
-                            leg.getReferenceNumber(), LocalDate.now(), null, null, splitGroupId, combinedMode);
-                }
-            } else if (cardAmt > 0.001) {
-                invoiceService.recordPayment(saved.getId(), cardAmt, resolveCardMode(request),
-                        request.getCardReference(), LocalDate.now(), null, null, splitGroupId, combinedMode);
-            }
-            if (onlineAmt > 0.001) {
-                invoiceService.recordPayment(saved.getId(), onlineAmt, "Online",
-                        null, LocalDate.now(), request.getBankAccountName(), null, splitGroupId, combinedMode);
-            }
-            if (advanceAmt > 0.001) {
-                // Apply the advance against the invoice
-                advanceApplicationService.applyAvailableAdvancesToInvoice(
-                        saved.getCustomerCode(), saved.getInvoiceNumber(), BigDecimal.valueOf(advanceAmt), LocalDate.now());
-                
-                // If it was just an advance (no other legs), we need to ensure the payment mode reflects it
-                if (legCount == 1) {
-                    saved.setPaymentMode(combinedMode != null ? combinedMode : "Customer Advance");
-                } else if (combinedMode != null) {
-                    saved.setPaymentMode(combinedMode);
-                }
-            }
-            if (legCount == 0) {
-                // Legacy path: no cash/card/online scalars or legs at all — a plain single-leg
-                // payment driven entirely by paymentMode + amountTendered, exactly as before.
-                invoiceService.recordPayment(saved.getId(), paymentAmount, resolvePaymentMode(request),
-                        request.getCardReference(), LocalDate.now(),
-                        request.getBankAccountName(), null, null, combinedMode);
-            }
+
+            logSettlement(saved.getInvoiceNumber(), plan, invoiceTotal, splitGroupId);
         }
 
         // Update session totals
         if (request.getSessionId() != null) {
-            sessionService.recordInvoiceOnSession(request.getSessionId(), saved);
+            // Pass the plan so the session's tender counters are split by what each allocation
+            // actually took, rather than re-derived from the invoice's combined mode label.
+            sessionService.recordInvoiceOnSession(request.getSessionId(), saved, plan);
         }
 
         // Mark serial numbers as SOLD for serialized-product line items
@@ -335,6 +297,32 @@ public class PosCheckoutController {
 
         return ResponseEntity.ok(invoiceService.getById(saved.getId()));
     }
+
+    /**
+     * Advertises what this build's checkout endpoint accepts, so a POS terminal can confirm
+     * the server understands progressive payment allocations before it tries to settle.
+     * A server predating them would ignore the field and post the invoice with no payment
+     * recorded; the terminal checks here and refuses to settle instead of losing the tender.
+     *
+     * <p>Deliberately unauthenticated-cheap and side-effect free — it is a static description
+     * of the contract, safe to call on every checkout open.
+     *
+     * GET /api/pos/checkout/capabilities
+     */
+    @GetMapping("/capabilities")
+    @PreAuthorize("isAuthenticated()")
+    public PosCheckoutCapabilitiesResponse getCapabilities() {
+        return new PosCheckoutCapabilitiesResponse(
+                true,   // paymentAllocations — see PosPaymentAllocationResolver
+                true,   // legacy scalars still accepted when no allocations are sent
+                PosPaymentAllocationResolver.MAX_CARD_LEGS,
+                java.util.Arrays.stream(PosPaymentAllocationType.values()).map(Enum::name).toList(),
+                CHECKOUT_API_VERSION);
+    }
+
+    /** Bumped whenever the accepted checkout request shape changes. 1 = legacy scalars only;
+     *  2 = progressive payment allocations. */
+    private static final int CHECKOUT_API_VERSION = 2;
 
     /**
      * Look up a single POS invoice by invoice number (exact) for the Sales Return flow.
@@ -551,30 +539,24 @@ public class PosCheckoutController {
         double balanceDue  = Math.max(0, invoiceTotal - alreadyPaid);
         if (balanceDue <= 0.001) return ResponseEntity.ok(invoiceService.getById(id));
 
-        double cashAmt = req.getCashAmount() != null ? req.getCashAmount() : 0.0;
-        double cardAmt = req.getCardAmount() != null ? req.getCardAmount() : 0.0;
-        boolean hasSplit = cashAmt > 0.001 || cardAmt > 0.001;
-        double paymentAmount = hasSplit
-                ? Math.min(cashAmt + cardAmt, balanceDue)
-                : Math.min(req.getAmountTendered() != null ? req.getAmountTendered() : balanceDue, balanceDue);
+        // Delivery settlement runs through the same allocation engine as checkout: same
+        // over-allocation guard, same cash capping, same summary label. There is one
+        // settlement architecture, not one per screen.
+        PosPaymentPlan plan = resolveDeliverySettlementPlan(req, balanceDue);
+        double paymentAmount = plan.getSettledAmount();
         if (paymentAmount <= 0.001)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero");
 
-        if (hasSplit && cashAmt > 0.001 && cardAmt > 0.001) {
-            double cardPayment = Math.min(cardAmt, balanceDue);
-            double cashPayment = Math.max(0, Math.min(balanceDue - cardPayment, cashAmt));
-            String cardMode = (req.getCardType() != null && !req.getCardType().isBlank()) ? req.getCardType() : "Card";
-            // Same combined label must be passed to both legs, or the second recordPayment
-            // call overwrites invoice.paymentMode with just its own leg mode.
-            String splitCombinedMode = "Cash + " + cardMode;
-            if (cardPayment > 0) invoiceService.recordPayment(id, cardPayment, cardMode, req.getCardReference(), LocalDate.now(), null, null, null, splitCombinedMode);
-            if (cashPayment > 0) invoiceService.recordPayment(id, cashPayment, "Cash", null, LocalDate.now(), null, null, null, splitCombinedMode);
-        } else {
-            String mode = hasSplit && cardAmt > 0.001
-                    ? (req.getCardType() != null && !req.getCardType().isBlank() ? req.getCardType() : "Card")
-                    : hasSplit ? "Cash"
-                    : (req.getPaymentMode() != null && !req.getPaymentMode().isBlank() ? req.getPaymentMode() : "Cash");
-            invoiceService.recordPayment(id, paymentAmount, mode, req.getCardReference(), LocalDate.now(), null, null, null, null);
+        // Every leg carries the same combined label, or the last recordPayment call would
+        // overwrite the invoice's displayed mode with just its own leg.
+        String combinedMode = plan.getCombinedPaymentMode();
+        String splitGroupId = plan.getLegCount() > 1 ? java.util.UUID.randomUUID().toString() : null;
+        for (ResolvedPaymentAllocation allocation : plan.getAllocations()) {
+            if (allocation.getAmount() <= 0.001) continue;
+            if (!allocation.isReceipt()) continue; // credit stays on the customer's ledger
+            invoiceService.recordPayment(id, allocation.getAmount(), allocation.getModeLabel(),
+                    allocation.getReference(), LocalDate.now(), allocation.getBankAccountName(),
+                    null, splitGroupId, combinedMode);
         }
 
         auditService.logCheckoutCompleted(req.getSessionId(), req.getTerminalId(),
@@ -582,6 +564,50 @@ public class PosCheckoutController {
                 id, invoice.getInvoiceNumber());
         terminalActivityService.recordActivity(req.getTerminalId(), "CHECKOUT");
         return ResponseEntity.ok(invoiceService.getById(id));
+    }
+
+    /**
+     * Resolves a delivery settlement into the same {@link PosPaymentPlan} a checkout produces.
+     * Prefers the progressive {@code paymentAllocations} list; falls back to the legacy
+     * cash/card scalars for a terminal whose browser tab has not been reloaded since deploy
+     * (dropping that path would make those tills settle a delivery with no payment recorded).
+     */
+    private PosPaymentPlan resolveDeliverySettlementPlan(DeliverySettleRequest req, double balanceDue) {
+        if (req.getPaymentAllocations() != null && !req.getPaymentAllocations().isEmpty()) {
+            return allocationResolver.resolveAllocations(
+                    req.getPaymentAllocations(), balanceDue, req.getPaymentMode(), "Cash");
+        }
+        // Legacy scalars, expressed as allocations so the settlement loop stays single-path.
+        java.util.List<PosPaymentAllocation> legacy = new java.util.ArrayList<>();
+        double cashAmt = req.getCashAmount() != null ? req.getCashAmount() : 0.0;
+        double cardAmt = req.getCardAmount() != null ? req.getCardAmount() : 0.0;
+        if (cashAmt <= 0.001 && cardAmt <= 0.001) {
+            double tendered = req.getAmountTendered() != null ? req.getAmountTendered() : balanceDue;
+            legacy.add(legacyAllocation(
+                    req.getPaymentMode() != null && !req.getPaymentMode().isBlank() ? req.getPaymentMode() : "Cash",
+                    Math.min(tendered, balanceDue), req.getCardReference()));
+        } else {
+            if (cardAmt > 0.001) {
+                legacy.add(legacyAllocation(
+                        req.getCardType() != null && !req.getCardType().isBlank() ? req.getCardType() : "Card",
+                        cardAmt, req.getCardReference()));
+            }
+            if (cashAmt > 0.001) legacy.add(legacyAllocation("Cash", cashAmt, null));
+        }
+        return allocationResolver.resolveAllocations(legacy, balanceDue, null, "Cash");
+    }
+
+    /** Builds one allocation from a legacy mode label, inferring its type from the label. */
+    private PosPaymentAllocation legacyAllocation(String modeLabel, double amount, String reference) {
+        PosPaymentAllocation a = new PosPaymentAllocation();
+        PosPaymentAllocationType parsed = PosPaymentAllocationType.parse(modeLabel);
+        // An unrecognised label is a card network name ("Visa", "Mastercard"), which is the
+        // only mode the legacy delivery-settle UI could send besides Cash.
+        a.setType((parsed != null ? parsed : PosPaymentAllocationType.CARD).name());
+        a.setSubtype(parsed == null || parsed == PosPaymentAllocationType.CARD ? modeLabel : null);
+        a.setAmount(amount);
+        a.setReference(reference);
+        return a;
     }
 
     public static class DeliverySettleRequest {
@@ -594,6 +620,11 @@ public class PosCheckoutController {
         private Long sessionId;
         private String terminalId;
         private Long branchId;
+        /** Progressive payment allocations — the canonical shape, same as checkout. */
+        private List<PosPaymentAllocation> paymentAllocations;
+
+        public List<PosPaymentAllocation> getPaymentAllocations() { return paymentAllocations; }
+        public void setPaymentAllocations(List<PosPaymentAllocation> paymentAllocations) { this.paymentAllocations = paymentAllocations; }
 
         public String getPaymentMode() { return paymentMode; }
         public void setPaymentMode(String paymentMode) { this.paymentMode = paymentMode; }
@@ -830,84 +861,49 @@ public class PosCheckoutController {
         return auth != null ? auth.getName() : "system";
     }
 
-    /** Returns the card network name to use as payment mode (e.g. "Visa", "Card"). */
-    private String resolveCardMode(PosCheckoutRequest req) {
-        if (req.getCardType() != null && !req.getCardType().isBlank()) return req.getCardType();
-        return "Card";
-    }
-
+    /** Single-mode label for invoice creation / delivery detection — see the resolver. */
     private String resolvePaymentMode(PosCheckoutRequest req) {
-        if (req.getCombinedPaymentMode() != null && !req.getCombinedPaymentMode().isBlank()) {
-            return req.getCombinedPaymentMode();
-        }
-        if (req.getPaymentMode() != null) return req.getPaymentMode();
-        return "Cash";
+        return allocationResolver.resolvePaymentMode(req);
     }
 
     /** Currency rounding tolerance used when comparing a payment-leg total against the invoice total. */
-    private static final double ROUNDING_TOLERANCE = 0.01;
-    /** Cap on how many card legs one checkout may itemize — a UI/receipt-layout sanity limit, not a technical one. */
-    private static final int MAX_CARD_LEGS = 5;
+    private static final double ROUNDING_TOLERANCE = PosPaymentAllocationResolver.ROUNDING_TOLERANCE;
 
     /**
-     * Validates and returns the multi-card split (if any) on the request. Returns an empty list
-     * when {@code cardLegs} is absent/empty, in which case the legacy scalar cardAmount/cardType/
-     * cardReference fields drive the (single) card leg instead — see the class javadoc on
-     * {@link PosCheckoutRequest#getCardLegs()}.
+     * One line per settled sale, carrying what a support engineer needs when a till total and
+     * a ledger total disagree: how many tenders, in what order, how much was received versus
+     * carried on account, and the label stamped on the invoice.
+     *
+     * <p>Deliberately a single INFO line rather than one per allocation — a busy till writes
+     * thousands of these a day, and a log that is expensive to keep is a log that gets turned
+     * off. The splitGroupId is included because it is the key that ties the resulting Payment
+     * rows back to this one checkout.
      */
-    private List<PosCheckoutRequest.PosCardLeg> resolveCardLegs(PosCheckoutRequest request) {
-        List<PosCheckoutRequest.PosCardLeg> legs = request.getCardLegs();
-        if (legs == null || legs.isEmpty()) return List.of();
-
-        if (legs.size() > MAX_CARD_LEGS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "A single payment can include at most " + MAX_CARD_LEGS + " card legs.");
+    private void logSettlement(String invoiceNumber, PosPaymentPlan plan,
+                               double invoiceTotal, String splitGroupId) {
+        if (!log.isInfoEnabled()) return;
+        StringBuilder tenders = new StringBuilder();
+        for (ResolvedPaymentAllocation a : plan.getAllocations()) {
+            if (a.getAmount() <= ROUNDING_TOLERANCE) continue;
+            if (tenders.length() > 0) tenders.append(", ");
+            tenders.append(a.getModeLabel()).append(' ').append(String.format("%.2f", a.getAmount()));
         }
-
-        java.util.Set<String> seenReferences = new java.util.HashSet<>();
-        for (PosCheckoutRequest.PosCardLeg leg : legs) {
-            if (leg.getCardType() == null || leg.getCardType().isBlank()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Card type is required for every card leg.");
-            }
-            if (leg.getAmount() == null || leg.getAmount() <= 0.001) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Each card leg amount must be greater than zero.");
-            }
-            String ref = leg.getReferenceNumber();
-            if (ref != null && !ref.isBlank()) {
-                String normalized = ref.trim().toLowerCase();
-                if (!seenReferences.add(normalized)) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                            "Duplicate reference number \"" + ref.trim() + "\" across card legs.");
-                }
-            }
-        }
-        return legs;
+        log.info("POS settlement invoice={} total={} allocations={} [{}] received={} receivable={} "
+                        + "mode='{}' splitGroup={}",
+                invoiceNumber, String.format("%.2f", invoiceTotal), plan.getLegCount(), tenders,
+                String.format("%.2f", plan.getSettledAmount()),
+                String.format("%.2f", plan.getCreditAmount()),
+                plan.getCombinedPaymentMode(), splitGroupId != null ? splitGroupId : "-");
     }
 
-    /** Builds the invoice-level combined payment-mode label (e.g. "Cash + Visa + Mastercard")
-     *  from whichever legs are actually present, unless the caller already supplied one. */
-    private String buildCombinedPaymentMode(PosCheckoutRequest request, double cashAmt,
-                                            List<PosCheckoutRequest.PosCardLeg> cardLegs, boolean useCardLegs,
-                                            double cardAmt, double onlineAmt, double advanceAmt, String creditStamp) {
-        if (creditStamp != null) return creditStamp;
-        if (request.getCombinedPaymentMode() != null && !request.getCombinedPaymentMode().isBlank()) {
-            return request.getCombinedPaymentMode(); // Front-end provided override
+    /** Best-effort rollback of a DRAFT invoice whose payment could not be completed —
+     *  never masks the original failure with a cleanup error. */
+    private void deleteQuietly(Long invoiceId) {
+        try {
+            invoiceService.delete(invoiceId);
+        } catch (RuntimeException cleanupEx) {
+            // Intentionally swallowed: the caller is about to rethrow the real cause.
         }
-        java.util.List<String> modes = new java.util.ArrayList<>();
-        if (cashAmt > 0.001) modes.add("Cash");
-        if (useCardLegs) {
-            for (PosCheckoutRequest.PosCardLeg leg : cardLegs) {
-                String label = leg.getCardType() != null && !leg.getCardType().isBlank() ? leg.getCardType() : "Card";
-                if (!modes.contains(label)) modes.add(label);
-            }
-        } else if (cardAmt > 0.001) {
-            String label = resolveCardMode(request);
-            if (!modes.contains(label)) modes.add(label);
-        }
-        if (onlineAmt > 0.001) modes.add("Online");
-        if (advanceAmt > 0.001) modes.add("Customer Advance");
-        if (modes.isEmpty()) return resolvePaymentMode(request);
-        return String.join(" + ", modes);
     }
 
     /** Returns true when a BigDecimal value is non-null and strictly positive (> 0). */

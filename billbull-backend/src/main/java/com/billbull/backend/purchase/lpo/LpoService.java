@@ -68,6 +68,7 @@ public class LpoService {
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
     private final com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService;
+    private final com.billbull.backend.purchase.vendor.VendorValidationService vendorValidationService;
 
     public LpoService(
             LpoRepository repository,
@@ -88,7 +89,8 @@ public class LpoService {
             PaymentVoucherRepository paymentVoucherRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService,
-            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService) {
+            com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService,
+            com.billbull.backend.purchase.vendor.VendorValidationService vendorValidationService) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -108,6 +110,7 @@ public class LpoService {
         this.notifPublisher = notifPublisher;
         this.documentNumberingService = documentNumberingService;
         this.purchaseTaxResolutionService = purchaseTaxResolutionService;
+        this.vendorValidationService = vendorValidationService;
     }
 
     /* ================= CREATE ================= */
@@ -116,6 +119,7 @@ public class LpoService {
 
     @CacheEvict(value = "stockAvailability", allEntries = true)
     public LpoDetailResponse create(LpoRequest request) {
+        vendorValidationService.validateVendorEligibleForPurchasing(request.getVendorId());
         Lpo lpo = new Lpo();
         lpo.setLpoNumber(generateLpoNumber());
         lpo.setStatus(LpoStatus.DRAFT);
@@ -209,7 +213,7 @@ public class LpoService {
 
     @CacheEvict(value = "stockAvailability", allEntries = true)
     public LpoDetailResponse update(String lpoNumber, LpoRequest request) {
-
+        vendorValidationService.validateVendorEligibleForPurchasing(request.getVendorId());
         Lpo lpo = getEntityByNumber(lpoNumber);
 
         if (lpo.getStatus() != LpoStatus.DRAFT) {
@@ -245,6 +249,7 @@ public class LpoService {
     public void submitForApproval(Long id) {
 
         Lpo lpo = getScopedLpoById(id);
+        vendorValidationService.validateVendorEligibleForPurchasing(lpo.getVendorId());
 
         if (lpo.getStatus() != LpoStatus.DRAFT) {
             throw new IllegalStateException("Only DRAFT LPO can be submitted");
@@ -277,6 +282,7 @@ public class LpoService {
     public void approve(Long id, String username, List<String> roles, String remarks) {
 
         Lpo lpo = getScopedLpoById(id);
+        vendorValidationService.validateVendorEligibleForPurchasing(lpo.getVendorId());
 
         if (lpo.getStatus() != LpoStatus.PENDING_APPROVAL) {
             throw new IllegalStateException("Only PENDING_APPROVAL LPO can be approved");
@@ -331,8 +337,13 @@ public class LpoService {
 
     private void mapHeader(Lpo lpo, LpoRequest r) {
 
+        if (r.getExpectedDeliveryDate() != null && lpo.getLpoDate() != null && r.getExpectedDeliveryDate().isBefore(lpo.getLpoDate())) {
+            throw new IllegalArgumentException("Expected Delivery Date cannot be earlier than PO Date.");
+        }
+
         lpo.setVendorName(r.getVendorName());
         lpo.setVendorCode(r.getVendorCode());
+        lpo.setVendorId(r.getVendorId());
         lpo.setSource(r.getSource());
         lpo.setExpectedDeliveryDate(r.getExpectedDeliveryDate());
         lpo.setPurchaseType(
@@ -482,6 +493,7 @@ public class LpoService {
         res.setLpoNumber(lpo.getLpoNumber());
         res.setLpoDate(lpo.getLpoDate());
         res.setVendorName(lpo.getVendorName());
+        res.setVendorId(lpo.getVendorId());
         res.setVendorCode(lpo.getVendorCode());
         res.setStatus(lpo.getStatus().name());
         res.setWarehouseName(lpo.getDeliveryLocation());

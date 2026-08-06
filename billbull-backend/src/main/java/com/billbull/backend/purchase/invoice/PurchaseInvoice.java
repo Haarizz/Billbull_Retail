@@ -49,6 +49,8 @@ public class PurchaseInvoice extends BaseEntity {
 	private LocalDate invoiceDate;
 
 	// TEMP vendor (as per your decision)
+	@Column(name = "vendor_id")
+	private Long vendorId;
 	private String vendorName;
 	private String vendorInvoiceNo;
 	private LocalDate vendorInvoiceDate;
@@ -174,6 +176,14 @@ public class PurchaseInvoice extends BaseEntity {
 
 	public void setInvoiceDate(LocalDate invoiceDate) {
 		this.invoiceDate = invoiceDate;
+	}
+
+	public Long getVendorId() {
+		return vendorId;
+	}
+
+	public void setVendorId(Long vendorId) {
+		this.vendorId = vendorId;
 	}
 
 	public String getVendorName() {

@@ -108,8 +108,8 @@ public class PosSettingsService {
         }
     }
 
-    /** Roles allowed to change supervisor-approval configuration (void gate, mode, PIN). */
-    private static final List<String> SUPERVISOR_CONFIG_ROLES = List.of(
+    /** Roles allowed to act as a supervisor (for configuration, day close, void gate, mode, PIN). */
+    public static final List<String> SUPERVISOR_ROLES = List.of(
             "ADMIN", "ROLE_ADMIN", "BRANCH_ADMIN", "ROLE_BRANCH_ADMIN",
             "MANAGER", "ROLE_MANAGER", "SUPERVISOR", "ROLE_SUPERVISOR");
 
@@ -118,7 +118,7 @@ public class PosSettingsService {
         if (auth == null) return false;
         return auth.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
-                .anyMatch(SUPERVISOR_CONFIG_ROLES::contains);
+                .anyMatch(SUPERVISOR_ROLES::contains);
     }
 
     @Transactional
@@ -138,6 +138,7 @@ public class PosSettingsService {
                             !Objects.equals(existing.getRequireSupervisorForVoid(), settings.getRequireSupervisorForVoid())
                             || !Objects.equals(existing.getSupervisorApprovalMode(), settings.getSupervisorApprovalMode())
                             || !Objects.equals(existing.getRequirePriceOverrideApproval(), settings.getRequirePriceOverrideApproval())
+                            || !Objects.equals(existing.getRequireSupervisorForDayClose(), settings.getRequireSupervisorForDayClose())
                             || (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank());
                     if (changesSupervisorConfig && !currentUserCanConfigureSupervisorSettings()) {
                         throw new AccessDeniedException(
@@ -145,6 +146,7 @@ public class PosSettingsService {
                     }
                     existing.setMaxTerminalsPerBranch(settings.getMaxTerminalsPerBranch());
                     existing.setRequireSupervisorForVoid(settings.getRequireSupervisorForVoid());
+                    existing.setRequireSupervisorForDayClose(settings.getRequireSupervisorForDayClose());
                     existing.setRequireCashMovementCategory(settings.getRequireCashMovementCategory());
                     existing.setSupervisorApprovalMode(settings.getSupervisorApprovalMode());
                     existing.setRequirePriceOverrideApproval(settings.getRequirePriceOverrideApproval());

@@ -5,6 +5,7 @@ import java.util.List;
 
 public record GrnSaveRequest(
         LocalDate date,
+        Long vendorId,
         String vendor,
         String lpo,
         Long warehouseId,

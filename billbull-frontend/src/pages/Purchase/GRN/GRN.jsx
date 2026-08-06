@@ -819,10 +819,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         }))
       );
 
-      // Find vendor from vendors list (LpoDetailResponse has no vendorId — match by code then name)
+      // Find vendor from vendors list (match by code then name, case-insensitive)
       const vendor = vendors.find(v =>
         (lpo.vendorCode && v.code === lpo.vendorCode) ||
-        (lpo.vendorName && v.name === lpo.vendorName)
+        (lpo.vendorName && v.name.toLowerCase() === lpo.vendorName.toLowerCase())
       );
 
       // Find warehouse from warehouses list
@@ -1652,7 +1652,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
             )}
           </div>
 
-          {(grnType === "Direct GRN" || grnType === "Direct Return") ? (
+          {(grnType === "Direct GRN" || grnType === "Direct Return" || !formData.vendorId) ? (
             formData.vendor ? (
               <div className={`bg-slate-50 border border-slate-200 rounded-md p-3 relative group ${isLocked ? 'opacity-70 pointer-events-none' : ''}`}>
                 <button
@@ -2553,6 +2553,7 @@ const GRN = () => {
     const payload = {
       date: formData.date,
       vendor: formData.vendor,
+      vendorId: formData.vendorId || null,
       lpo: formData.lpo || null,
       warehouseId: formData.warehouseId ? Number(formData.warehouseId) : null,
       // ✅ Send location hierarchy so GRN stores full zone/locator/bin

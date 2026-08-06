@@ -1,5 +1,7 @@
 import React from "react";
 import { code128Svg } from "../../../../utils/bilingualReceiptCanvas";
+import { escPosUsableCols } from "../../../../utils/escPosReceipt";
+import { paymentBlockRows } from "../payments/paymentPresentation";
 
 /**
  * BillBull Retail OS — 80mm Thermal Tax Invoice Receipt (EN / AR)  [TEMPLATE 2]
@@ -108,13 +110,26 @@ export const SAMPLE_DATA = {
 
 const fmt = (n) => Number(n || 0).toFixed(2);
 
-const KV = ({ en, ar, value, className }) => (
-  <div className={`kv2${className ? ` ${className}` : ""}`}>
+// `enLines` (optional) is an already-wrapped English label from paymentPresentation: the
+// extra lines stack above and the value aligns to the bottom, so the amount stays in its
+// column instead of being pushed off a narrow receipt by a long tender name.
+const KV = ({ en, ar, value, className, enLines }) => (
+  <div className={`kv2${enLines && enLines.length > 1 ? " wrapped" : ""}${className ? ` ${className}` : ""}`}>
     <div className="lbl">
-      <span className="en">{en}</span>
+      <span className="en">
+        {enLines && enLines.length > 1
+          ? enLines.map((line, i) => <span key={i} className="en-line">{line}</span>)
+          : en}
+      </span>
       {ar && <span className="ar">{ar}</span>}
     </div>
-    <div className="val">{value}</div>
+    <div
+      className="val"
+      // Drop the amount to sit beside the label's last line (13.5px per label line).
+      style={enLines && enLines.length > 1 ? { marginTop: `${(enLines.length - 1) * 13.5}px` } : undefined}
+    >
+      {value}
+    </div>
   </div>
 );
 
@@ -194,7 +209,9 @@ export const TEMPLATE2_CSS = `
   }
   .bb-receipt .kv2 .lbl .en { color: var(--gray); font-size: 10px; }
   .bb-receipt .kv2 .lbl .ar { color: var(--gray); font-size: 10px; display: block; margin-top: 0.2mm; }
-  .bb-receipt .kv2 .val { text-align: right; font-weight: 600; white-space: nowrap; padding-top: 0.3mm; }
+  .bb-receipt .kv2 .val { text-align: right; font-weight: 600; white-space: nowrap; padding-top: 0.3mm; flex: 0 0 auto; }
+  .bb-receipt .kv2 .lbl { min-width: 0; }
+  .bb-receipt .kv2 .lbl .en .en-line { display: block; line-height: 13.5px; }
   .bb-receipt .kv2.bold .lbl .en,
   .bb-receipt .kv2.bold .lbl .ar,
   .bb-receipt .kv2.bold .val { font-weight: 700; }
@@ -562,27 +579,36 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
               <span className="pay-mode">{payment.mode}</span>
             </div>
           </div>
-          {/* Mixed (cash + card) split — show each tender's portion so the receipt
-              reconciles with the drawer + card batch. Falls back to a single
-              "Paid Amount" row for non-mixed payments. */}
-          {(payment.mixedCashGiven > 0 || payment.mixedCardGiven > 0) ? (
+          {/* Payment details — one row per tender the cashier allocated, then the
+              totals footer. Same rows as every other renderer; only the bilingual
+              layout differs. A reprint of a historical invoice has no allocations,
+              so it falls back to the single Paid Amount row. */}
+          {payment.paymentBlock ? (
             <>
-              {payment.mixedCashGiven > 0 && (
-                <KV en="Cash Paid" ar="المبلغ النقدي المدفوع" value={`${currency} ${fmt(payment.mixedCashGiven)}`} />
-              )}
-              {payment.mixedCardGiven > 0 && (
+              {paymentBlockRows(payment.paymentBlock, {
+                width: escPosUsableCols(paperSize),
+                formatAmount: (r) => `${currency} ${fmt(r.amount)}`,
+              }).map((row, i) => (
                 <KV
-                  en={`Card Paid${payment.mixedCardType ? ` (${payment.mixedCardType})` : ""}`}
-                  ar="المبلغ المدفوع بالبطاقة"
-                  value={`${currency} ${fmt(payment.mixedCardGiven)}`}
+                  key={`${row.label}-${i}`}
+                  className={row.emphasis ? "bold" : undefined}
+                  en={row.label}
+                  enLines={row.labelLines}
+                  ar={row.labelAr}
+                  value={`${currency} ${fmt(row.amount)}`}
                 />
+              ))}
+              {payment.paymentBlock.hasReceivable && (
+                <KV en="Invoice Total" ar="إجمالي الفاتورة" value={`${currency} ${fmt(payment.paymentBlock.invoiceTotal)}`} />
               )}
             </>
           ) : (
-            <KV en="Paid Amount" ar="المبلغ المدفوع" value={`${currency} ${fmt(payment.paidAmount)}`} />
-          )}
-          {!!payment.changeReturned && (
-            <KV className="bold" en="Change Returned" ar="المبلغ المرتجع" value={`${currency} ${fmt(payment.changeReturned)}`} />
+            <>
+              <KV en="Paid Amount" ar="المبلغ المدفوع" value={`${currency} ${fmt(payment.paidAmount)}`} />
+              {!!payment.changeReturned && (
+                <KV className="bold" en="Change Returned" ar="المبلغ المرتجع" value={`${currency} ${fmt(payment.changeReturned)}`} />
+              )}
+            </>
           )}
           {payment.cardRef && (
             <div className="kv2 small muted">

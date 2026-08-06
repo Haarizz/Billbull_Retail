@@ -8,6 +8,7 @@ public record GrnDetailResponse(
         Long id,
         String grnNo,
         LocalDate date,
+        Long vendorId,
         String vendor,
         String docRef,
         String status,

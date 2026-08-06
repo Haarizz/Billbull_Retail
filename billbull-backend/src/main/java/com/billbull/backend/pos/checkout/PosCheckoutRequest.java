@@ -54,6 +54,15 @@ public class PosCheckoutRequest {
      *  existing Cash+Card Mixed-payment split, just generalized to N card legs. */
     private List<PosCardLeg> cardLegs;
 
+    /** Progressive-payment model: an ordered list of tender allocations that settle the invoice
+     *  one after another until the remaining balance is zero (Cash 80 → Card 10 → Online 50 →
+     *  Credit 16.45). When present and non-empty this is the sole source of truth for the
+     *  payment and every legacy scalar above (cashAmount/cardAmount/cardLegs/onlineAmount/
+     *  advanceAmount/amountTendered) is ignored. When absent, those scalars are normalised into
+     *  the equivalent allocations by {@link PosPaymentAllocationResolver}, so old clients are
+     *  unaffected. */
+    private List<PosPaymentAllocation> paymentAllocations;
+
     /** One card leg of a (possibly multi-card) Card payment. */
     public static class PosCardLeg {
         private String cardType;
@@ -183,4 +192,6 @@ public class PosCheckoutRequest {
     public void setItems(List<PosCheckoutItem> items) { this.items = items; }
     public List<PosCardLeg> getCardLegs() { return cardLegs; }
     public void setCardLegs(List<PosCardLeg> cardLegs) { this.cardLegs = cardLegs; }
+    public List<PosPaymentAllocation> getPaymentAllocations() { return paymentAllocations; }
+    public void setPaymentAllocations(List<PosPaymentAllocation> paymentAllocations) { this.paymentAllocations = paymentAllocations; }
 }

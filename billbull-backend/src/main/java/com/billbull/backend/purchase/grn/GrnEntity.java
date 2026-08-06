@@ -25,6 +25,8 @@ public class GrnEntity extends BaseEntity {
     private String grnNo;
 
     private LocalDate grnDate;
+    @Column(name = "vendor_id")
+    private Long vendorId;
     private String vendorName;
 
     /* ===== LPO LINK (ONLY FOR LPO-BASED GRNs) ===== */
@@ -191,6 +193,14 @@ public class GrnEntity extends BaseEntity {
 
     public void setGrnDate(LocalDate grnDate) {
         this.grnDate = grnDate;
+    }
+
+    public Long getVendorId() {
+        return vendorId;
+    }
+
+    public void setVendorId(Long vendorId) {
+        this.vendorId = vendorId;
     }
 
     public String getVendorName() {

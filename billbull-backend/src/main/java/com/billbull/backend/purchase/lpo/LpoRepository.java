@@ -37,8 +37,8 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
             + "AND (:status IS NULL OR l.status = :status) "
             + "AND (:search = '' OR LOWER(l.lpoNumber) LIKE CONCAT('%', :search, '%') "
             + "OR LOWER(l.vendorName) LIKE CONCAT('%', :search, '%')) "
-            + "AND (:dateFrom IS NULL OR l.lpoDate >= :dateFrom) "
-            + "AND (:dateTo IS NULL OR l.lpoDate <= :dateTo) "
+            + "AND (CAST(:dateFrom AS date) IS NULL OR l.lpoDate >= :dateFrom) "
+            + "AND (CAST(:dateTo AS date) IS NULL OR l.lpoDate <= :dateTo) "
             + "AND (:vendor = '' OR l.vendorName = :vendor OR l.vendorCode = :vendor) "
             + "ORDER BY l.id DESC")
     Page<Lpo> searchPage(@Param("allBranches") boolean allBranches,

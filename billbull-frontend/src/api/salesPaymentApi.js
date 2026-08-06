@@ -89,3 +89,34 @@ export const updateSalesPaymentStatus = async (id, status) => {
 export const deleteSalesPayment = async (id) => {
     await api.delete(`${BASE_URL}/${id}`);
 };
+
+// ----------------------------------------------------------------------
+// ALLOCATION-DERIVED PAYMENT BREAKDOWN
+// ----------------------------------------------------------------------
+
+/**
+ * How the given invoices were actually paid, as payment allocations reconstructed from the
+ * recorded tender rows — one entry per tender, with its own amount, reference and bank.
+ *
+ * Back-office screens use this instead of reading an invoice's `paymentMode` text. That text
+ * is a label: it cannot say how much went on each tender, and for older sales it may only say
+ * "Mixed". Batched because a sales list needs the breakdown for a whole page at once.
+ *
+ * @param {string[]} invoiceNumbers
+ * @returns {Promise<Object>} keyed by invoice number; invoices with no recorded tender are absent
+ */
+export const getInvoicePaymentSummaries = async (invoiceNumbers) => {
+    const numbers = (invoiceNumbers || []).filter(Boolean);
+    if (numbers.length === 0) return {};
+    try {
+        const res = await api.get(`${BASE_URL}/invoice-summary`, {
+            params: { invoiceNumbers: numbers.join(",") },
+        });
+        return res.data || {};
+    } catch (err) {
+        // A breakdown is enrichment, never the reason a list fails to load — the screen
+        // falls back to the invoice's stored payment mode.
+        console.warn("Failed to load payment breakdowns", err);
+        return {};
+    }
+};

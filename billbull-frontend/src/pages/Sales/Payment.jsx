@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { summaryLabelForModes } from './POS/payments/paymentPresentation';
 import {
     DollarSign,
     Search,
@@ -755,11 +756,11 @@ const Payment = () => {
                 continue;
             }
             const totalAmount = members.reduce((s, m) => s + (Number(m.amount) || 0), 0);
-            const modes = [...new Set(members.map(m => m.mode).filter(Boolean))];
             result.push({
                 ...members[0],
                 amount: totalAmount,
-                mode: modes.join(' + '),
+                // Same combined-label rule the POS and the settlement modal use.
+                mode: summaryLabelForModes(members) || '',
                 status: totalAmount >= (members[0].invoiceAmount || totalAmount) - 0.01 ? 'Completed' : 'Partial',
                 _splitEntries: members,
                 _isSplit: true,

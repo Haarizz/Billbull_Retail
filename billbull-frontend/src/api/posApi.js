@@ -358,6 +358,28 @@ export const posCheckout = async (payload) => {
   return res.data;
 };
 
+/**
+ * What the server's checkout endpoint accepts. Used to confirm it understands progressive
+ * `paymentAllocations` before a sale is settled — a server predating them would ignore the
+ * field and post the invoice with no payment recorded, so the terminal must not guess.
+ *
+ * A 404/405 means the endpoint itself predates this contract, which is itself the answer:
+ * that server does not support allocations. Any other failure is reported as unknown so the
+ * caller can distinguish "old server" from "server unreachable".
+ */
+export const getPosCheckoutCapabilities = async () => {
+  try {
+    const res = await api.get(`${BASE}/checkout/capabilities`);
+    return { ok: true, capabilities: res.data };
+  } catch (err) {
+    const status = err?.response?.status;
+    if (status === 404 || status === 405) {
+      return { ok: true, capabilities: { paymentAllocations: false, checkoutApiVersion: 1 } };
+    }
+    return { ok: false, error: err };
+  }
+};
+
 // ── Layaways ────────────────────────────────────────────────────────────────
 
 /** Create a layaway (reserved sale) from the current cart. Returns the saved PosLayaway. */

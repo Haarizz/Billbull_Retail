@@ -33,7 +33,8 @@ public class Lpo extends BaseEntity {
 
 	@Column(unique = true, nullable = false)
 	private String lpoNumber;
-
+	@Column(name = "vendor_id")
+	private Long vendorId;
 	private String vendorName;
 	private String vendorCode;
 
@@ -183,6 +184,14 @@ public class Lpo extends BaseEntity {
 
 	public void setItems(List<LpoItem> items) {
 		this.items = items;
+	}
+
+	public Long getVendorId() {
+		return vendorId;
+	}
+
+	public void setVendorId(Long vendorId) {
+		this.vendorId = vendorId;
 	}
 
 	public String getVendorName() {
