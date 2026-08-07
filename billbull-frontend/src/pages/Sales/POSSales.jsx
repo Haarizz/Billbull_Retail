@@ -700,12 +700,7 @@ export default function POSSales() {
   const [checkoutOnlineBankAccountsLoading, setCheckoutOnlineBankAccountsLoading] = useState(false);
   const [checkoutRemarks, setCheckoutRemarks] = useState('');
   // E-bill options (embedded in checkout)
-  const [checkoutEbillPrint, setCheckoutEbillPrint] = useState(true);
-  const [checkoutEbillSms, setCheckoutEbillSms] = useState(false);
-  const [checkoutEbillWhatsapp, setCheckoutEbillWhatsapp] = useState(false);
-  const [checkoutEbillEmail, setCheckoutEbillEmail] = useState(false);
-  const [checkoutEbillPhone, setCheckoutEbillPhone] = useState('');
-  const [checkoutEbillEmailAddr, setCheckoutEbillEmailAddr] = useState('');
+
   // Receipt sharing — 'payment' shows the checkout form, 'complete' shows the
   // payment-done screen in the SAME overlay (avoids simultaneous unmount+mount).
   const [checkoutPhase, setCheckoutPhase] = useState('payment'); // 'payment' | 'complete'
@@ -9908,104 +9903,189 @@ export default function POSSales() {
             setReceiptShareChannel(null);
             setSelectedCustomer(WALK_IN_CUSTOMER.id);
           };
+          
+          const paymentRows = lastPaidInvoice.paymentBlock ? paymentBlockRows(lastPaidInvoice.paymentBlock) : [];
+          const usedMethods = paymentRows.filter(r => r.label !== 'Total Received' && r.label !== 'Change Returned');
+
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden">
-                {/* Header */}
-                <div className="bg-gradient-to-b from-[#F5C742] to-[#E5B532] px-6 pt-8 pb-6 text-center">
-                  <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center mx-auto mb-3">
-                    <CheckCircle className="h-9 w-9 text-white" />
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col max-h-[90vh]">
+                
+                {/* 1. Redesigned Success Header */}
+                <div className="bg-gradient-to-b from-[#F5C742] to-[#E5B532] px-6 pt-5 pb-4 text-center shrink-0">
+                  <div className="w-11 h-11 rounded-full bg-white/25 flex items-center justify-center mx-auto mb-2">
+                    <CheckCircle className="h-6 w-6 text-white" />
                   </div>
-                  <p className="text-white/70 text-[10px] font-bold uppercase tracking-widest mb-1">Payment Complete</p>
-                  <p className="text-white font-black text-lg">{lastPaidInvoice.id}</p>
+                  <p className="text-white/80 text-[10px] font-medium uppercase tracking-widest mb-0.5">Payment Complete</p>
+                  <p className="text-white font-bold text-lg">{lastPaidInvoice.id}</p>
                 </div>
-                {/* Main focal point: Total Paid */}
-                <div className="bg-[#F5C742]/10 border-b border-[#F5C742]/30 px-6 py-4 text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Amount Paid</p>
-                  <p className="text-4xl font-black text-[#1E293B]">
+
+                {/* 2. Amount Paid (Primary Financial Highlight) */}
+                <div className="bg-[#FFFBEB] border-b border-amber-100/50 px-6 py-4 text-center shrink-0">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-amber-700/60 mb-0.5">Amount Paid</p>
+                  <p className="text-3xl font-black text-[#1E293B]">
                     <DirhamSymbol /> {(lastPaidInvoice.paidAmount ?? lastPaidInvoice.total ?? 0).toFixed(2)}
                   </p>
-                  <p className="text-[10px] text-gray-500 mt-1 font-semibold">Successfully settled via {lastPaidInvoice.paymentMode || 'Cash'}</p>
                 </div>
-                {/* Background finalize indicator — subtle, non-blocking. The sale is
-                    already confirmed; this only reflects that the receipt is being
-                    sent to the printer. Disappears once printing/finalize completes. */}
+
+                {/* Background finalize indicator */}
                 {checkoutFinalizing && (
-                  <div className="bg-[#F5C742]/10 border-b border-[#F5C742]/25 px-6 py-2.5 flex items-center justify-center gap-2">
-                    <div className="w-3.5 h-3.5 border-2 border-[#F5C742]/50 border-t-[#B8942E] rounded-full animate-spin" />
-                    <span className="text-[11px] font-bold text-[#B8942E]">Printing receipt…</span>
+                  <div className="bg-amber-50 border-b border-amber-100 px-6 py-2 flex items-center justify-center gap-2 shrink-0">
+                    <div className="w-3.5 h-3.5 border-2 border-amber-200 border-t-amber-500 rounded-full animate-spin" />
+                    <span className="text-[11px] font-bold text-amber-600">Printing receipt…</span>
                   </div>
                 )}
-                {/* Change Due alert (only if change is > 0) */}
-                {(lastPaidInvoice.changeAmount || 0) > 0 && (
-                  <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-3 flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Change Due</span>
-                    <span className="text-lg font-black text-emerald-700">
-                      <DirhamSymbol /> {(lastPaidInvoice.changeAmount || 0).toFixed(2)}
-                    </span>
-                  </div>
-                )}
-                {/* Credit Balance alert (only for a Credit sale with a remaining receivable) */}
-                {(lastPaidInvoice.creditBalance || 0) > 0 && (
-                  <div className="bg-orange-50 border-b border-orange-200 px-6 py-3 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wider text-orange-800">This Invoice Balance</span>
-                      <span className="text-lg font-black text-orange-700">
-                        <DirhamSymbol /> {(lastPaidInvoice.creditBalance || 0).toFixed(2)}
+
+                <div className="flex-1 overflow-y-auto">
+                  {/* Change Due alert */}
+                  {(lastPaidInvoice.changeAmount || 0) > 0 && (
+                    <div className="bg-emerald-50 border-b border-emerald-100 px-6 py-3 flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Change Due</span>
+                      <span className="text-lg font-black text-emerald-700">
+                        <DirhamSymbol /> {(lastPaidInvoice.changeAmount || 0).toFixed(2)}
                       </span>
                     </div>
-                    {lastPaidInvoice.creditUpdatedBalance != null && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold uppercase tracking-wider text-orange-800">Customer Total Outstanding</span>
-                        <span className="text-base font-black text-orange-700">
-                          <DirhamSymbol /> {lastPaidInvoice.creditUpdatedBalance.toFixed(2)}
-                        </span>
+                  )}
+
+                  {/* 3. Accounts Receivable (Compact, aligned) */}
+                  {((lastPaidInvoice.creditBalance || 0) > 0 || (lastPaidInvoice.creditUpdatedBalance || 0) > 0) && (
+                    <div className="px-6 py-3 border-b border-gray-100">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Accounts Receivable</p>
+                      <div className="space-y-1">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-gray-600 font-medium">This Invoice</span>
+                          <span className="font-bold text-[#1E293B]">
+                            <DirhamSymbol /> {(lastPaidInvoice.creditBalance || 0).toFixed(2)}
+                          </span>
+                        </div>
+                        {lastPaidInvoice.creditUpdatedBalance != null && (
+                          <div className="flex justify-between items-center text-sm">
+                            <span className="text-gray-600 font-medium">Customer Outstanding</span>
+                            <span className="font-bold text-[#1E293B]">
+                              <DirhamSymbol /> {lastPaidInvoice.creditUpdatedBalance.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                )}
-                {/* Payment Details — the same rows, in the same order, as the printed
-                    receipt (paymentBlockRows), so the screen and the paper agree. */}
-                {lastPaidInvoice.paymentBlock && (
-                  <div className="px-6 pt-4 space-y-1.5">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Payment Details</p>
-                    {paymentBlockRows(lastPaidInvoice.paymentBlock).map((row, i) => (
-                      <div key={`${row.label}-${i}`} className="flex justify-between items-end gap-3 text-sm">
-                        {/* Long tender labels wrap at word boundaries; the amount can't
-                            shrink, so it stays right-aligned in its column. */}
-                        <span className="min-w-0 break-words text-gray-500">{row.label}</span>
-                        <span className={`shrink-0 whitespace-nowrap font-bold ${row.emphasis ? 'text-emerald-600' : 'text-[#1E293B]'}`}>
-                          {formatCurrencyStr(row.amount)}
-                        </span>
-                      </div>
-                    ))}
-                    {lastPaidInvoice.paymentBlock.hasReceivable && (
-                      <div className="flex justify-between items-center text-sm">
-                        <span className="text-gray-500">Invoice Total</span>
-                        <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.paymentBlock.invoiceTotal)}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-                {/* Summary */}
-                <div className="px-6 py-4 space-y-2.5">
-                  {[
-                    ['Sale Amount', formatCurrencyStr(lastPaidInvoice.total)],
-                    ...(lastPaidInvoice.depositAmount > 0 ? [['Deposit Applied', `−${formatCurrencyStr(lastPaidInvoice.depositAmount)}`]] : []),
-                    ...(lastPaidInvoice.creditBalance > 0 && lastPaidInvoice.creditUpdatedBalance != null
-                      ? [['Customer Total Outstanding', formatCurrencyStr(lastPaidInvoice.creditUpdatedBalance)]] : []),
-                    ['Payment Mode', lastPaidInvoice.paymentMode],
-                  ].map(([label, value]) => (
-                    <div key={label} className="flex justify-between items-center text-sm">
-                      <span className="text-gray-500">{label}</span>
-                      <span className={`font-bold ${label === 'Deposit Applied' ? 'text-[#327F74]' : label === 'Change Returned' && (lastPaidInvoice.changeAmount || 0) > 0 ? 'text-emerald-600' : 'text-[#1E293B]'}`}>{value}</span>
                     </div>
-                  ))}
-                  {/* ── Share Receipt ──────────────────────────────────────
-                      Each channel opens the shared ReceiptShareModal, pre-filled
-                      from the customer on the sale. The send calls themselves are
-                      unchanged; only the way the value is collected moved. */}
-                  <div className="pt-2 border-t border-gray-100">
+                  )}
+
+                  {/* 4. Payment Summary (Compact) */}
+                  {usedMethods.length > 0 && (
+                    <div className="px-6 py-3 border-b border-gray-50">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Payment Summary</p>
+                      <div className="space-y-1">
+                        {usedMethods.map((row, i) => {
+                          const lbl = String(row.label).toLowerCase();
+                          let Icon = Banknote;
+                          if (lbl.includes('card') || lbl.includes('mastercard') || lbl.includes('visa')) Icon = CreditCard;
+                          else if (lbl.includes('online') || lbl.includes('bank') || lbl.includes('transfer')) Icon = Landmark;
+                          else if (lbl.includes('credit')) Icon = User;
+
+                          return (
+                            <div key={`${row.label}-${i}`} className="flex justify-between items-center text-sm">
+                              <div className="flex items-center gap-2 text-gray-700 font-medium">
+                                <Icon className="h-4 w-4 text-gray-400" />
+                                <span>{row.label}</span>
+                              </div>
+                              <span className="font-bold text-[#1E293B]">
+                                {formatCurrencyStr(row.amount)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 5. Financial Details (Scrollable when expanded) */}
+                  <div className="px-6 py-3">
+                    <details className="group rounded-lg bg-gray-50 transition-all">
+                      <summary className="flex items-center justify-between px-3 py-2 text-[11px] font-bold text-gray-500 uppercase cursor-pointer list-none select-none hover:bg-gray-100 rounded-lg">
+                        <span className="group-open:hidden">▼ View Financial Details</span>
+                        <span className="hidden group-open:inline">▲ Hide Financial Details</span>
+                      </summary>
+                      <div className="px-4 py-2 space-y-1.5 border-t border-gray-100 text-sm max-h-[220px] overflow-y-auto mt-1">
+                        {lastPaidInvoice.paymentBlock && paymentRows.map((row, i) => (
+                          <div key={`detail-${row.label}-${i}`} className="flex justify-between items-end gap-3">
+                            <span className="text-gray-500">{row.label}</span>
+                            <span className={`font-bold ${row.emphasis ? 'text-emerald-600' : 'text-[#1E293B]'}`}>
+                              {formatCurrencyStr(row.amount)}
+                            </span>
+                          </div>
+                        ))}
+                        {lastPaidInvoice.paymentBlock?.hasReceivable && (
+                          <div className="flex justify-between items-center text-sm">
+                            <span className="text-gray-500">Invoice Total</span>
+                            <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.paymentBlock.invoiceTotal)}</span>
+                          </div>
+                        )}
+                        <div className="h-px bg-gray-100 my-1"></div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-500">Sale Amount</span>
+                          <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.total)}</span>
+                        </div>
+                        {lastPaidInvoice.depositAmount > 0 && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-500">Deposit Applied</span>
+                            <span className="font-bold text-[#327F74]">−{formatCurrencyStr(lastPaidInvoice.depositAmount)}</span>
+                          </div>
+                        )}
+                        {(lastPaidInvoice.creditBalance > 0 && lastPaidInvoice.creditUpdatedBalance != null) && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-500">Customer Total Outstanding</span>
+                            <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.creditUpdatedBalance)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-500">Payment Mode</span>
+                          <span className="font-bold text-[#1E293B]">{lastPaidInvoice.paymentMode}</span>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                </div>
+
+                {/* 6. Action Priority */}
+                <div className="px-6 pb-6 pt-4 bg-white border-t border-gray-50 shrink-0 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.02)]">
+                  {/* Primary Action */}
+                  <button type="button" onClick={closeComplete}
+                    className="w-full py-3.5 mb-3 rounded-xl bg-[#F5C742] hover:bg-[#E5B532] text-white font-black text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
+                    <ArrowRightCircle className="h-5 w-5" />New Sale
+                  </button>
+
+                  {/* Secondary Actions */}
+                  <div className="grid grid-cols-2 gap-2 mb-4">
+                    <button type="button" onClick={async () => {
+                      if (!lastPaidInvoice?.invoice?.id) return;
+                      try {
+                        const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
+                        if (tplInvoicePaper === 'A4') {
+                          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
+                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
+                          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+                          printHtml(generateDocumentPrintHtml(template, data, options));
+                        } else {
+                          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                            full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
+                          });
+                          await printThermalReceiptWithConfiguredPrinter({
+                            full, text, escPosBase64, title: `Receipt ${full.invoiceNumber || ''}`.trim(),
+                          });
+                        }
+                      } catch (err) { console.warn('POS print error', err); alert(`Print failed: ${err?.message || 'printer error'}.`); }
+                    }}
+                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors">
+                      <Printer className="h-4 w-4" />Print Receipt
+                    </button>
+                    <button type="button" onClick={() => { closeComplete(); setShowReprintModal(true); }}
+                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors">
+                      <RotateCcw className="h-4 w-4" />Reprint Inv.
+                    </button>
+                  </div>
+
+                  {/* Share Receipt - Tertiary (Figma style preserved) */}
+                  <div className="pt-3 border-t border-gray-100">
                     <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Share Receipt</p>
                     <div className="grid grid-cols-3 gap-2">
                       {[
@@ -10017,7 +10097,7 @@ export default function POSSales() {
                           key={key}
                           type="button"
                           onClick={() => setReceiptShareChannel(key)}
-                          className={`flex flex-col items-center justify-center gap-1.5 py-3 rounded-xl border text-xs font-bold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${tone}`}
+                          className={`flex flex-col items-center justify-center gap-1.5 py-2.5 rounded-xl border text-xs font-bold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${tone}`}
                         >
                           <Icon className="h-4 w-4" aria-hidden="true" />
                           {label}
@@ -10025,57 +10105,6 @@ export default function POSSales() {
                       ))}
                     </div>
                   </div>
-                </div>
-                {/* Actions */}
-                <div className="px-6 pb-6 space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={async () => {
-                      if (!lastPaidInvoice?.invoice?.id) return;
-                      try {
-                        const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                        if (tplInvoicePaper === 'A4') {
-                          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
-                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
-                          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                          printHtml(generateDocumentPrintHtml(template, data, options));
-                        } else {
-                          // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
-                          // rather than re-querying posCreditBalance — by now it already reflects
-                          // this invoice and would be mislabeled as "previous balance".
-                          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-                            full,
-                            cashGiven: lastPaidInvoice?.paidAmount,
-                            changeAmount: lastPaidInvoice?.changeAmount,
-                            customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null,
-                            customerPhone: lastPaidInvoice?.customer?.phone,
-                            customerEmail: lastPaidInvoice?.customer?.email,
-                            creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
-                            creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
-                            creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
-                            creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
-                          });
-                          await printThermalReceiptWithConfiguredPrinter({
-                            full,
-                            text,
-                            escPosBase64,
-                            title: `Receipt ${full.invoiceNumber || ''}`.trim(),
-                          });
-                        }
-                      } catch (err) { console.warn('POS print error', err); alert(`Print failed: ${err?.message || 'printer error'}.`); }
-                    }}
-                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors">
-                      <Printer className="h-4 w-4" />Print Receipt
-                    </button>
-                    <button type="button" onClick={() => { closeComplete(); setShowReprintModal(true); }}
-                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors">
-                      <RotateCcw className="h-4 w-4" />Reprint Inv.
-                    </button>
-                  </div>
-                  <button type="button" onClick={closeComplete}
-                    className="w-full py-3 rounded-xl bg-[#F5C742] hover:bg-[#E5B532] text-white font-black text-sm transition-colors flex items-center justify-center gap-2">
-                    <ArrowRightCircle className="h-5 w-5" />New Sale
-                  </button>
-                  <p className="text-center text-[10px] text-gray-400">Scan next item to start a new sale automatically</p>
                 </div>
               </div>
 
@@ -10221,61 +10250,7 @@ export default function POSSales() {
                       className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />
                   </div>
 
-                  {/* ── E-Bill / Receipt Sharing ── */}
-                  <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Print / E-Bill</p>
-                    <div className="space-y-2">
-                      {/* Print */}
-                      <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillPrint ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
-                            <Printer className={`h-4 w-4 ${checkoutEbillPrint ? 'text-[#1E293B]' : 'text-gray-400'}`} />
-                          </div>
-                          <span className="text-sm font-semibold text-[#1E293B]">Print Receipt</span>
-                        </div>
-                        <input type="checkbox" checked={checkoutEbillPrint} onChange={e => setCheckoutEbillPrint(e.target.checked)} className="w-4 h-4 accent-[#F5C742]" />
-                      </label>
-                      {/* SMS */}
-                      <div>
-                        <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
-                          <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillSms ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
-                              <Smartphone className={`h-4 w-4 ${checkoutEbillSms ? 'text-[#1E293B]' : 'text-gray-400'}`} />
-                            </div>
-                            <span className="text-sm font-semibold text-[#1E293B]">Send by SMS</span>
-                          </div>
-                          <input type="checkbox" checked={checkoutEbillSms} onChange={e => setCheckoutEbillSms(e.target.checked)} className="w-4 h-4 accent-[#F5C742]" />
-                        </label>
-                        {checkoutEbillSms && <input value={checkoutEbillPhone} onChange={e => setCheckoutEbillPhone(e.target.value)} placeholder="+971 5X XXX XXXX" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
-                      </div>
-                      {/* WhatsApp */}
-                      <div>
-                        <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
-                          <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillWhatsapp ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
-                              <Smartphone className={`h-4 w-4 ${checkoutEbillWhatsapp ? 'text-[#1E293B]' : 'text-gray-400'}`} />
-                            </div>
-                            <span className="text-sm font-semibold text-[#1E293B]">Send by WhatsApp</span>
-                          </div>
-                          <input type="checkbox" checked={checkoutEbillWhatsapp} onChange={e => setCheckoutEbillWhatsapp(e.target.checked)} className="w-4 h-4 accent-[#F5C742]" />
-                        </label>
-                        {checkoutEbillWhatsapp && <input value={checkoutEbillPhone} onChange={e => setCheckoutEbillPhone(e.target.value)} placeholder="+971 5X XXX XXXX" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
-                      </div>
-                      {/* Email */}
-                      <div>
-                        <label className="flex items-center justify-between py-2 px-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer">
-                          <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${checkoutEbillEmail ? 'bg-[#F5C742]' : 'bg-gray-100'}`}>
-                              <FileText className={`h-4 w-4 ${checkoutEbillEmail ? 'text-[#1E293B]' : 'text-gray-400'}`} />
-                            </div>
-                            <span className="text-sm font-semibold text-[#1E293B]">Send by Email</span>
-                          </div>
-                          <input type="checkbox" checked={checkoutEbillEmail} onChange={e => setCheckoutEbillEmail(e.target.checked)} className="w-4 h-4 accent-[#F5C742]" />
-                        </label>
-                        {checkoutEbillEmail && <input type="email" value={checkoutEbillEmailAddr} onChange={e => setCheckoutEbillEmailAddr(e.target.value)} placeholder="customer@email.com" className="mt-1 w-full border border-[#F5C742]/50 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />}
-                      </div>
-                    </div>
-                  </div>
+
 
                 </div>
               </div>
