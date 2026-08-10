@@ -4,6 +4,8 @@ import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.user.UserRepository;
+import com.billbull.backend.pos.auth.PosCredentialVerificationService;
+import com.billbull.backend.pos.auth.CredentialVerificationResult;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
@@ -24,16 +26,19 @@ public class PosSettingsService {
     private final UserRepository userRepository;
     private final AuditLogService auditLogService;
     private final PosSessionService posSessionService;
+    private final PosCredentialVerificationService credentialVerificationService;
 
     public PosSettingsService(PosSettingsRepository repo, BranchAccessService branchAccessService,
                               PasswordEncoder passwordEncoder, UserRepository userRepository,
-                              AuditLogService auditLogService, PosSessionService posSessionService) {
+                              AuditLogService auditLogService, PosSessionService posSessionService,
+                              PosCredentialVerificationService credentialVerificationService) {
         this.repo = repo;
         this.branchAccessService = branchAccessService;
         this.passwordEncoder = passwordEncoder;
         this.userRepository = userRepository;
         this.auditLogService = auditLogService;
         this.posSessionService = posSessionService;
+        this.credentialVerificationService = credentialVerificationService;
     }
 
     /** A stored PIN already BCrypt-hashed? BCrypt hashes start with $2a/$2b/$2y. */
@@ -232,26 +237,13 @@ public class PosSettingsService {
     @Transactional
     public SupervisorAuthResult verifySupervisorCredentials(String emailOrUsername, String password,
                                                             String terminalId, String lockedBy) {
-        if (emailOrUsername == null || emailOrUsername.isBlank()
-                || password == null || password.isBlank()) {
-            return SupervisorAuthResult.invalid("Email and password are required.");
+        CredentialVerificationResult result = credentialVerificationService.verifyCredentials(emailOrUsername, password);
+        
+        if (!result.valid()) {
+            return SupervisorAuthResult.invalid(result.message());
         }
 
-        // Accept email or username — same dual-lookup as AuthController login
-        var userOpt = userRepository.findByEmailAndIsActiveTrue(emailOrUsername);
-        if (userOpt.isEmpty()) {
-            userOpt = userRepository.findByUsernameAndIsActiveTrue(emailOrUsername);
-        }
-
-        if (userOpt.isEmpty()) {
-            return SupervisorAuthResult.invalid("Account not found or inactive.");
-        }
-
-        var user = userOpt.get();
-
-        if (!passwordEncoder.matches(password, user.getPassword())) {
-            return SupervisorAuthResult.invalid("Incorrect password.");
-        }
+        var user = result.user();
 
         boolean hasSupervisorRole = user.getRoles().stream()
                 .anyMatch(r -> List.of("ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR").contains(r.getName()));

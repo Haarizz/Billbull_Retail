@@ -46,13 +46,14 @@ class PosSettingsServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private AuditLogService auditLogService;
     @Mock private PosSessionService posSessionService;
+    @Mock private com.billbull.backend.pos.auth.PosCredentialVerificationService posCredentialVerificationService;
 
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private PosSettingsService service;
 
     @BeforeEach
     void setUp() {
-        service = new PosSettingsService(repo, branchAccessService, encoder, userRepository, auditLogService, posSessionService);
+        service = new PosSettingsService(repo, branchAccessService, encoder, userRepository, auditLogService, posSessionService, posCredentialVerificationService);
     }
 
     @AfterEach

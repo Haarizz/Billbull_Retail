@@ -25,6 +25,7 @@ import { fetchStatementOfAccount } from '../../api/financialsApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import {
   registerPosTerminal, getPosSettings, getPosSettingsForBranch, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
+  verifySessionClosurePermission,
   getPosSessionById,
   closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
@@ -129,6 +130,7 @@ import {
   Coins,
   Mail,
   MessageCircle,
+  Monitor,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -422,7 +424,7 @@ export default function POSSales() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [currentSession, setCurrentSession] = useState(null);
-
+  const [openSessionDropdownId, setOpenSessionDropdownId] = useState(null);
   // Phase 12 - Session synchronization lock state
   const [sessionInvalidated, setSessionInvalidated] = useState(false);
   const [sessionInvalidReason, setSessionInvalidReason] = useState(null);
@@ -604,6 +606,31 @@ export default function POSSales() {
   const [discoveryError, setDiscoveryError] = useState(null);
   const [discoverySupervisorPin, setDiscoverySupervisorPin] = useState('');
   const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
+  const [sessionToClose, setSessionToClose] = useState(null);
+  // The session the Session Owner Verification modal is currently authorizing.
+  // Captured at click time so authorization always targets the terminal card
+  // that was chosen, never whichever session state happens to be current.
+  const cashierAuthTargetRef = useRef(null);
+  // Single-use grant returned by /authorize-closure, keyed by the session it authorizes.
+  // Replayed on the close call so the backend accepts a close performed by someone other
+  // than the session owner (the owner's verified credentials are the authority, not the
+  // logged-in user). Cleared once consumed.
+  const closureAuthGrantRef = useRef(null);
+  const [closeSessionError, setCloseSessionError] = useState('');
+  // Force Close context carried from the Supervisor Approval modal to the close call,
+  // so the recorded reason survives the X-Report step in between.
+  const forceCloseContextRef = useRef(null);
+  const [closureAction, setClosureAction] = useState(null); // 'NORMAL_CLOSE' or 'FORCE_CLOSE'
+  const [forceCloseReason, setForceCloseReason] = useState('');
+  const [forceCloseAuditAcknowledged, setForceCloseAuditAcknowledged] = useState(false);
+  const [showSessionOwnerRequiredDialog, setShowSessionOwnerRequiredDialog] = useState(false);
+  const [closeSessionTab, setCloseSessionTab] = useState('cash'); // 'cash' | 'card'
+
+  const [showCashierAuthDialog, setShowCashierAuthDialog] = useState(false);
+  const [cashierAuthUsername, setCashierAuthUsername] = useState('');
+  const [cashierAuthPassword, setCashierAuthPassword] = useState('');
+  const [cashierAuthError, setCashierAuthError] = useState('');
+  const [cashierAuthLoading, setCashierAuthLoading] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
@@ -619,7 +646,6 @@ export default function POSSales() {
   const [closingDenominations, setClosingDenominations] = useState({
     '1000': 0, '500': 0, '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0, '0.50': 0, '0.25': 0
   });
-  const [closeSessionTab, setCloseSessionTab] = useState('cash');
   const [cardSettlementAmount, setCardSettlementAmount] = useState('');
 
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
@@ -2691,45 +2717,74 @@ export default function POSSales() {
   };
 
   const handleCloseSession = async () => {
-    if (currentSession) {
-      if (currentSession.status === 'CLOSED') {
+    const targetSession = sessionToClose || currentSession;
+    if (targetSession) {
+      if (targetSession.status === 'CLOSED') {
         setShowCloseSessionDialog(false);
-        setCurrentView('x-report');
+        setSessionToClose(null);
+        if (targetSession.id === currentSession?.id) {
+          setCurrentView('x-report');
+        } else {
+          loadDaySummary(zReportDate);
+        }
         return;
       }
+      setCloseSessionError('');
       try {
-        if (currentSession.id && typeof currentSession.id === 'number') {
+        if (targetSession.id && typeof targetSession.id === 'number') {
           const closingTotal = calculateDenominationTotal(closingDenominations);
-          const closed = await closePosSession(currentSession.id, {
+          const grant = closureAuthGrantRef.current;
+          const forceCtx = forceCloseContextRef.current?.sessionId === targetSession.id
+            ? forceCloseContextRef.current : null;
+          // A force close keeps its supervisor-stated reason on the session record.
+          const notes = forceCtx?.reason
+            ? [`Force Close: ${forceCtx.reason}`, xReportVarianceRemarks].filter(Boolean).join(' — ')
+            : xReportVarianceRemarks;
+          const closed = await closePosSession(targetSession.id, {
             closingCash: closingTotal,
             closingDenominations,
-            notes: xReportVarianceRemarks,
+            notes,
             cardBatchNo: xReportCardBatchNo,
             cardSettlementVerified: xReportCardVerified,
             cardClosingCash: cardSettlementAmount !== '' ? (parseFloat(cardSettlementAmount) || 0) : null,
             closingCashierName: xReportCashierName,
-            closingSupervisorName: xReportSupervisorName,
+            closingSupervisorName: xReportSupervisorName || forceCtx?.supervisor || null,
             closingRemarks: xReportClosingRemarks,
+            // Proof that the session owner's credentials were verified for THIS session.
+            closureAuthToken: grant?.sessionId === targetSession.id ? grant.token : undefined,
           });
-          setCurrentSession(closed);
-          // Arm the X-Report auto-print: the session is now closed & saved. The
-          // x-report view mounts below and loadXReport() populates xReportData;
-          // an effect fires the 80mm auto-print once that fresh data lands, so we
-          // print exactly what the X-Report preview shows. Dedupe is keyed on the
-          // session id so re-closing can't double-print.
-          pendingXAutoPrintRef.current = currentSession.id;
+          // The grant is single-use server-side; drop it either way.
+          closureAuthGrantRef.current = null;
+          forceCloseContextRef.current = null;
+
+          if (targetSession.id === currentSession?.id) {
+            setCurrentSession(closed);
+            // Arm the X-Report auto-print
+            pendingXAutoPrintRef.current = targetSession.id;
+          }
         } else {
-          setCurrentSession({ ...currentSession, status: 'CLOSED' });
+          if (targetSession.id === currentSession?.id) {
+            setCurrentSession({ ...currentSession, status: 'CLOSED' });
+          }
         }
       } catch (err) {
+        // The session is NOT closed if the server refused. Previously this fell through
+        // and marked it closed locally, so the close silently didn't stick and Day Close
+        // kept asking to close it again — surface the reason and stay in the dialog.
         console.warn('Close session API error', err);
-        // Close failed server-side — do NOT arm the auto-print (req: only print on
-        // a successful operation). The local CLOSED flag is UI-only.
-        setCurrentSession({ ...currentSession, status: 'CLOSED' });
+        const msg = err?.response?.data?.message || err?.response?.data?.error || err?.message;
+        setCloseSessionError(typeof msg === 'string' && msg ? msg : 'Failed to close the session. Please try again.');
+        return;
       }
       setShowCloseSessionDialog(false);
+      setSessionToClose(null);
       setSessionNowMs(Date.now());
-      setCurrentView('x-report');
+      if (targetSession.id === currentSession?.id) {
+        setCurrentView('x-report');
+      } else {
+        loadDaySummary(zReportDate);
+        setCurrentView('z-report');
+      }
       syncPosData();
     }
   };
@@ -2746,14 +2801,65 @@ export default function POSSales() {
     setXReportCardVerified(isSettled);
   }, [cardSettlementAmount, showCloseSessionDialog, xReportData]);
 
-  // Single entry point for opening the Close Session modal: always refreshes
-  // xReportData first so the modal's Expected/Actual/Variance match the X-Report
-  // page exactly, instead of relying on a possibly-stale cached xReportData.
-  const openCloseSessionDialog = () => {
-    if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
-      setCardSettlementAmount('');
-      setShowCloseSessionDialog(true);
-      loadXReport();
+  const proceedToCloseSessionDialog = () => {
+    setCloseSessionError('');
+    setCardSettlementAmount('');
+    setShowCloseSessionDialog(true);
+    loadXReport();
+  };
+
+  // Day Close Flow: Validates ownership before allowing entry into the X-Report UI
+  const handleDayCloseNormalClose = (target = null) => {
+    // If called directly via onClick, target may be a React SyntheticEvent. Ignore it.
+    const explicitTarget = (target && target.nativeEvent) ? null : target;
+    const targetSession = explicitTarget || sessionToClose || currentSession;
+    
+    if (targetSession?.status === 'active' || targetSession?.status === 'OPEN') {
+      // Any authorized user may *initiate* a normal close. The Session Owner
+      // Verification modal is itself the gate: the credentials typed there are
+      // checked against the target session by /authorize-closure. So we never
+      // pre-check "logged-in user === session owner" here.
+      // Starting a fresh normal close — drop anything left over from an earlier
+      // (possibly abandoned) close attempt.
+      closureAuthGrantRef.current = null;
+      forceCloseContextRef.current = null;
+      cashierAuthTargetRef.current = targetSession;
+      if (explicitTarget) setSessionToClose(explicitTarget);
+      setShowCashierAuthDialog(true);
+      // Prefill with the session's own owner, not the logged-in user.
+      setCashierAuthUsername(targetSession?.cashier || targetSession?.openedBy || '');
+      setCashierAuthPassword('');
+      setCashierAuthError('');
+    }
+  };
+
+  const handleCashierAuthSubmit = async () => {
+    if (!cashierAuthUsername || !cashierAuthPassword) {
+      setCashierAuthError('Please enter email/username and password');
+      return;
+    }
+    setCashierAuthLoading(true);
+    setCashierAuthError('');
+    try {
+      const targetSession = cashierAuthTargetRef.current || sessionToClose || currentSession;
+      const response = await verifySessionClosurePermission(targetSession.id, cashierAuthUsername, cashierAuthPassword);
+      if (response.authorized) {
+        closureAuthGrantRef.current = response.authorizationToken
+          ? { sessionId: targetSession.id, token: response.authorizationToken }
+          : null;
+        setShowCashierAuthDialog(false);
+        cashierAuthTargetRef.current = null;
+        setCashierAuthUsername('');
+        setCashierAuthPassword('');
+        // Owner verification successful! Navigate to the X-Report / Close Session page
+        setCurrentView('x-report');
+      } else {
+        setCashierAuthError(response.message || 'Not authorized to close this session');
+      }
+    } catch (err) {
+      setCashierAuthError(err.response?.data?.message || err.message || 'Authorization failed');
+    } finally {
+      setCashierAuthLoading(false);
     }
   };
 
@@ -3126,6 +3232,47 @@ export default function POSSales() {
   };
 
   const handleSupervisorPinSubmit = async () => {
+    if (pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION') {
+      try {
+        if (!supervisorPinEmail || !supervisorPinValue) {
+          setSupervisorPinError('Enter supervisor email/username and password.');
+          return;
+        }
+        if (!forceCloseReason || forceCloseReason === '') {
+          setSupervisorPinError('Please select a force close reason.');
+          return;
+        }
+        if (!forceCloseAuditAcknowledged) {
+          setSupervisorPinError('Please confirm that you understand this action will be recorded in the audit trail.');
+          return;
+        }
+        const targetSession = sessionToClose || currentSession;
+        const response = await verifySessionClosurePermission(targetSession.id, supervisorPinEmail, supervisorPinValue);
+        if (response.authorized) {
+          // Same shape as the normal-close flow: the verified supervisor's grant
+          // authorizes the eventual close, so the logged-in cashier can perform it.
+          closureAuthGrantRef.current = response.authorizationToken
+            ? { sessionId: targetSession.id, token: response.authorizationToken }
+            : null;
+          forceCloseContextRef.current = { sessionId: targetSession.id, reason: forceCloseReason, supervisor: supervisorPinEmail };
+          setShowSupervisorPin(false);
+          setPendingSupervisorAction(null);
+          setSupervisorPinValue('');
+          setSupervisorPinEmail('');
+          setSupervisorPinError('');
+          // Land on the X-Report for the target session — identical to Normal Close.
+          // The supervisor authorizes here; the count/settlement and the actual
+          // closure still happen on the X-Report page.
+          setCurrentView('x-report');
+        } else {
+          setSupervisorPinError(response.message || 'Not authorized to force close this session.');
+        }
+      } catch (err) {
+        setSupervisorPinError(err.response?.data?.message || err.message || 'Authorization failed');
+      }
+      return;
+    }
+
     // ARCHFIX S5: verified server-side — the PIN/password is never shipped to the client.
     // PASSWORD mode authenticates a specific supervisor account (needs email + password);
     // PIN mode just checks the branch-wide PIN against the BCrypt hash.
@@ -3309,12 +3456,13 @@ export default function POSSales() {
   // deliberate "Generate X Report" action). The dashboard preview passes false so
   // merely viewing the dashboard never satisfies the Z-Report end-of-day gate.
   const loadXReport = async (markGenerated = false) => {
-    if (!currentSession?.id || typeof currentSession.id !== 'number') return;
+    const targetSession = sessionToClose || currentSession;
+    if (!targetSession?.id || typeof targetSession.id !== 'number') return;
     setXReportLoading(true);
     try {
       const data = markGenerated
-        ? await generatePosXReport(currentSession.id)
-        : await getPosXReport(currentSession.id);
+        ? await generatePosXReport(targetSession.id)
+        : await getPosXReport(targetSession.id);
       setXReportData(data);
     } catch (err) {
       console.warn('X-Report load failed', err);
@@ -7205,7 +7353,10 @@ export default function POSSales() {
                   counter: s.counterName || '—',
                   cashier: s.cashier || s.openedBy || '—',
                   sessionNo: s.sessionNo || (s.sessionId ? `SESS-${s.sessionId}` : '—'),
-                  status: 'OPEN'
+                  totalSales: s.totalSales ?? s.sessionSalesAmount ?? 0,
+                  invoiceCount: s.invoiceCount ?? s.totalInvoices ?? 0,
+                  status: 'OPEN',
+                  session: { ...s, id: s.id || s.sessionId }
                 });
               }
             });
@@ -7223,7 +7374,10 @@ export default function POSSales() {
                   counter: t.counter || matchingSession?.counterName || '—',
                   cashier: t.openedBy || matchingSession?.cashier || matchingSession?.openedBy || '—',
                   sessionNo: matchingSession ? (matchingSession.sessionNo || (matchingSession.sessionId ? `SESS-${matchingSession.sessionId}` : '—')) : '—',
-                  status: 'MISSING X-REPORT'
+                  totalSales: matchingSession?.totalSales ?? matchingSession?.sessionSalesAmount ?? 0,
+                  invoiceCount: matchingSession?.invoiceCount ?? matchingSession?.totalInvoices ?? 0,
+                  status: 'MISSING X-REPORT',
+                  session: matchingSession ? { ...matchingSession, id: matchingSession.id || matchingSession.sessionId } : matchingSession
                 });
               }
             });
@@ -7246,37 +7400,105 @@ export default function POSSales() {
                   ))}
                 </div>
 
-                {/* Restored Day Close Blocking Details Table */}
+                {/* Restored Day Close Blocking Details Grid */}
                 {blockingTerminals.length > 0 && (
-                  <div className="bg-white border border-rose-200 rounded-lg overflow-hidden mt-4 shadow-sm">
-                    <table className="w-full text-left">
-                      <thead>
-                        <tr className="bg-rose-100/50 text-rose-800">
-                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Counter</th>
-                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Terminal</th>
-                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Cashier</th>
-                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Session No.</th>
-                          <th className="px-4 py-2 font-bold uppercase tracking-wider text-[10px]">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-rose-100">
-                        {blockingTerminals.map((bt, i) => (
-                          <tr key={i} className="hover:bg-rose-50/30 transition-colors text-xs">
-                            <td className="px-4 py-2.5 font-medium text-slate-800">{bt.counter}</td>
-                            <td className="px-4 py-2.5 text-slate-600">{bt.terminalName}</td>
-                            <td className="px-4 py-2.5 text-slate-600 flex items-center gap-1.5"><Users className="h-3 w-3 text-slate-400 shrink-0" />{bt.cashier}</td>
-                            <td className="px-4 py-2.5 text-slate-600">{bt.sessionNo}</td>
-                            <td className="px-4 py-2.5">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide ${
-                                bt.status === 'OPEN' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-amber-100 text-amber-700 border border-amber-200'
-                              }`}>
-                                {bt.status}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4 mt-4">
+                    {blockingTerminals.map((bt, i) => (
+                      <div key={i} className="bg-white border border-rose-200/60 rounded-xl overflow-hidden shadow-sm flex flex-col">
+                        <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between bg-slate-50/50">
+                          <div className="flex items-center gap-2">
+                            <Monitor className="h-4 w-4 text-slate-500" />
+                            <span className="font-bold text-slate-800 text-sm">{bt.terminalName}</span>
+                          </div>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                            bt.status === 'OPEN' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                          }`}>
+                            {bt.status}
+                          </span>
+                        </div>
+                        <div className="p-4 grid grid-cols-2 gap-y-4 gap-x-4 flex-1">
+                          <div>
+                            <p className="text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">Cashier</p>
+                            <div className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+                              <User className="h-3.5 w-3.5 text-slate-400" />
+                              <span className="truncate">{bt.cashier}</span>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">Counter</p>
+                            <p className="text-sm font-medium text-slate-700 truncate">{bt.counter}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">Session No.</p>
+                            <p className="text-sm font-medium text-slate-700 font-mono text-xs truncate">{bt.sessionNo}</p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase font-bold text-slate-400 mb-1 tracking-wider">Sales / Invoices</p>
+                            <p className="text-sm font-bold text-slate-700">
+                              {formatCurrency(bt.totalSales || 0)} <span className="text-slate-400 font-medium ml-0.5">({bt.invoiceCount || 0})</span>
+                            </p>
+                          </div>
+                        </div>
+                        <div className="p-3 border-t border-gray-50 bg-gray-50/50 relative">
+                          <button
+                            onClick={() => {
+                              if (openSessionDropdownId === bt.terminalId) {
+                                setOpenSessionDropdownId(null);
+                              } else {
+                                setOpenSessionDropdownId(bt.terminalId);
+                              }
+                            }}
+                            className="w-full py-2 bg-white border border-gray-200 rounded-lg text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                          >
+                            Close Session <ChevronDown className="h-3 w-3 text-slate-400" />
+                          </button>
+                          
+                          {openSessionDropdownId === bt.terminalId && (
+                            <>
+                              <div className="fixed inset-0 z-40" onClick={() => setOpenSessionDropdownId(null)}></div>
+                              <div className="absolute left-3 right-3 bottom-full mb-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden text-sm">
+                                <button
+                                  onClick={() => {
+                                    setOpenSessionDropdownId(null);
+                                    if (bt.session) {
+                                      setSessionToClose(bt.session);
+                                      setClosureAction('NORMAL_CLOSE');
+                                      handleDayCloseNormalClose(bt.session);
+                                    }
+                                  }}
+                                  className="w-full px-4 py-2 text-left hover:bg-slate-50 transition-colors border-b border-gray-100 flex flex-col"
+                                >
+                                  <span className="text-slate-700 font-semibold text-[13px]">Close Session</span>
+                                  <span className="text-[10px] text-slate-400 font-medium leading-tight">Normal session closure</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setOpenSessionDropdownId(null);
+                                    if (bt.session) {
+                                      setSessionToClose(bt.session);
+                                      setClosureAction('FORCE_CLOSE');
+                                      closureAuthGrantRef.current = null;
+                                      forceCloseContextRef.current = null;
+                                      setPendingSupervisorAction({ type: 'FORCE_CLOSE_SESSION' });
+                                      setSupervisorPinValue('');
+                                      setSupervisorPinEmail('');
+                                      setSupervisorPinError('');
+                                      setForceCloseReason('');
+                                      setForceCloseAuditAcknowledged(false);
+                                      setShowSupervisorPin(true);
+                                    }
+                                  }}
+                                  className="w-full px-4 py-2 text-left hover:bg-orange-50 transition-colors flex flex-col group"
+                                >
+                                  <span className="text-orange-600 font-semibold text-[13px] group-hover:text-orange-700 transition-colors">Force Close</span>
+                                  <span className="text-[10px] text-orange-400/80 font-medium leading-tight">Supervisor authorization</span>
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -7890,7 +8112,14 @@ export default function POSSales() {
     // Once closed, reportDenominations comes from the immutable backend snapshot and
     // ignores further local edits — disable the inputs so they can't be edited with
     // no visible effect.
-    const isSessionClosed = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase() === 'CLOSED';
+    // The X-Report can be opened for another terminal's session (Day Close →
+    // Close Session), in which case `currentSession` is unrelated (or null).
+    // Every status gate on this screen must follow the session actually being
+    // reported on, not this terminal's own session.
+    const xReportSession = sessionToClose || currentSession;
+    const xReportSessionStatus = (xReportData?.session?.status || xReportSession?.status || 'OPEN').toUpperCase();
+    const isSessionClosed = xReportSessionStatus === 'CLOSED';
+    const canCloseSession = xReportSessionStatus === 'OPEN' || xReportSessionStatus === 'ACTIVE';
 
     // Pull live figures from xReportData when available, fall back to session state
     const xSummary = xReportData?.summary || {};
@@ -7974,16 +8203,16 @@ export default function POSSales() {
                 {xReportLoading ? <><div className="w-3 h-3 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading...</> : <><FileBarChart className="h-3 w-3" />Generate X-Report</>}
               </button>
               <button
-                onClick={openCloseSessionDialog}
-                disabled={currentSession?.status !== 'OPEN'}
+                onClick={proceedToCloseSessionDialog}
+                disabled={!canCloseSession}
                 className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-4 py-1.5 rounded flex items-center gap-1">
-                <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
+                <Lock className="h-3 w-3" />{isSessionClosed ? 'Session Closed' : 'Close Session'}
               </button>
             </div>
           </div>
           {/* Status strip */}
           {(() => {
-            const sessStatus = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
+            const sessStatus = xReportSessionStatus;
             const sessId = xReportData?.session?.id || currentSession?.id;
             const reportNo = sessId ? `XR-${String(sessId).padStart(9, '0')}` : '—';
             const sessionStatusColor = sessStatus === 'OPEN' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600';
@@ -8062,7 +8291,7 @@ export default function POSSales() {
                   ['Business Date', xReportData?.session?.sessionDate || currentSession?.sessionDate || new Date().toLocaleDateString()],
                   ['Cashier', xReportData?.session?.openedBy || currentSession?.openedBy || '—'],
                   ['Opened At', xReportData?.session?.openedAt ? parseUTCDate(xReportData.session.openedAt)?.toLocaleTimeString() : currentSession?.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : '—'],
-                  ['Status', xReportData?.session?.status || currentSession?.status || 'OPEN'],
+                  ['Status', xReportData?.session?.status || xReportSession?.status || 'OPEN'],
                   ['Invoice Count', String(invoiceCount)],
                 ].map(([k, v]) => (
                   <div key={k} className="flex gap-2"><span className="text-gray-500 w-40 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
@@ -8256,7 +8485,7 @@ export default function POSSales() {
                 </div>
                 <div className="p-4 space-y-2">
                   {(() => {
-                    const sessionStatusNow = (xReportData?.session?.status || currentSession?.status || 'OPEN').toUpperCase();
+                    const sessionStatusNow = xReportSessionStatus;
                     const supervisorApprovalRequired = !isBalanced && actualCash > 0;
                     const closeChecklist = {
                       cashCount: actualCash > 0,
@@ -8573,15 +8802,15 @@ export default function POSSales() {
             <button onClick={handleXReportExportExcel} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to export the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Download className="h-3 w-3" />Export Excel</button>
             <button onClick={handleXReportPrint} disabled={!isSessionClosed} title={!isSessionClosed ? 'Close the session first to print the X-Report.' : undefined} className="border border-gray-300 text-gray-600 text-xs px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><Printer className="h-3 w-3" />Print X-Report</button>
             {!isBalanced && actualCash > 0 ? (
-              <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
+              <button onClick={proceedToCloseSessionDialog} disabled={!canCloseSession} className="bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs px-4 py-2 rounded flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Submit for Approval</button>
             ) : (
-              <button onClick={openCloseSessionDialog} disabled={currentSession?.status !== 'OPEN'} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
+              <button onClick={proceedToCloseSessionDialog} disabled={!canCloseSession} className="border border-[#327F74]/40 text-[#327F74] disabled:opacity-50 text-xs px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><FileBarChart className="h-3 w-3" />Submit for Approval</button>
             )}
             <button
-              onClick={openCloseSessionDialog}
-              disabled={currentSession?.status !== 'OPEN'}
+              onClick={proceedToCloseSessionDialog}
+              disabled={!canCloseSession}
               className="bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-50 text-[#1E293B] text-xs px-5 py-2 rounded flex items-center gap-1">
-              <Lock className="h-3 w-3" />{currentSession?.status === 'CLOSED' ? 'Session Closed' : 'Close Session'}
+              <Lock className="h-3 w-3" />{isSessionClosed ? 'Session Closed' : 'Close Session'}
             </button>
           </div>
         </div>
@@ -9641,12 +9870,158 @@ export default function POSSales() {
         </DialogContent>
       </Dialog>
 
+      {/* Session Owner Required Dialog */}
+      {showSessionOwnerRequiredDialog && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="bg-gradient-to-r from-red-500 to-red-600 px-6 py-4 flex items-center gap-3">
+              <div className="p-2 bg-white/20 rounded-xl">
+                <AlertTriangle className="h-5 w-5 text-white" />
+              </div>
+              <h2 className="text-base font-bold text-white">Session Owner Required</h2>
+            </div>
+            
+            <div className="p-6 space-y-4 text-sm text-slate-600">
+              <p>
+                This session can only be closed normally by the cashier who opened it.
+              </p>
+              
+              {(() => {
+                const tgt = sessionToClose || currentSession;
+                if (!tgt) return null;
+                return (
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 grid grid-cols-2 gap-2 text-xs">
+                    <div><span className="text-slate-500">Terminal:</span> <span className="font-semibold text-slate-800">{tgt.terminalName || tgt.terminalId}</span></div>
+                    <div><span className="text-slate-500">Session:</span> <span className="font-semibold text-slate-800">{tgt.sessionNo || (tgt.id ? `SESS-${tgt.id}` : '—')}</span></div>
+                    <div className="col-span-2"><span className="text-slate-500">Cashier:</span> <span className="font-semibold text-slate-800">{tgt.cashier || tgt.openedBy || tgt.userId || '—'}</span></div>
+                  </div>
+                );
+              })()}
+              
+              <p className="text-xs">
+                To close this session as a supervisor, please use the <strong>Force Close</strong> option from the menu.
+              </p>
+            </div>
+            
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+              <Button 
+                variant="default" 
+                className="w-full bg-slate-800 hover:bg-slate-700 text-white"
+                onClick={() => setShowSessionOwnerRequiredDialog(false)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cashier Auth Dialog */}
+      {showCashierAuthDialog && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[400px] flex flex-col max-h-[90vh]">
+            <div className="bg-gradient-to-r from-[#F5C742] to-[#E8B22E] rounded-t-2xl px-5 py-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-white/40">
+                  <User className="h-5 w-5 text-[#7A5B0B]" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-[#4A3708] leading-tight">Session Owner Verification</h2>
+                  <p className="text-[11px] text-[#7A5B0B] mt-0.5 leading-tight">Enter the credentials of the cashier who opened this session.</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-5 space-y-4 overflow-y-auto">
+              {(() => {
+                const targetSession = cashierAuthTargetRef.current || sessionToClose || currentSession;
+                if (!targetSession) return null;
+                return (
+                  <div className="bg-[#FFF8E7] p-3 rounded-lg border border-[#FDE6A9]">
+                    <p className="text-[10px] text-[#7A5B0B] font-bold mb-1.5 uppercase tracking-wide">Target Session</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <div className="flex justify-between"><span className="text-[#9A7B2B]">Terminal</span> <span className="font-semibold text-[#4A3708]">{targetSession.terminalName || targetSession.terminalId}</span></div>
+                      <div className="flex justify-between"><span className="text-[#9A7B2B]">Counter</span> <span className="font-semibold text-[#4A3708]">{targetSession.counterName || targetSession.counter || '—'}</span></div>
+                      <div className="flex justify-between"><span className="text-[#9A7B2B]">Session</span> <span className="font-semibold text-[#4A3708]">{targetSession.sessionNo || (targetSession.id ? `SESS-${targetSession.id}` : '—')}</span></div>
+                      <div className="flex justify-between"><span className="text-[#9A7B2B]">Cashier</span> <span className="font-semibold text-[#4A3708]">{targetSession.cashier || targetSession.openedBy || targetSession.userId || '—'}</span></div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
+                    Session Owner Email / Username
+                  </label>
+                  <input
+                    type="text"
+                    value={cashierAuthUsername}
+                    onChange={e => { setCashierAuthUsername(e.target.value); setCashierAuthError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleCashierAuthSubmit(); }}
+                    autoFocus
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
+                    Session Owner Password
+                  </label>
+                  <input
+                    type="password"
+                    value={cashierAuthPassword}
+                    onChange={e => { setCashierAuthPassword(e.target.value); setCashierAuthError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleCashierAuthSubmit(); }}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] focus:ring-1 focus:ring-[#F5C742]"
+                  />
+                  {cashierAuthError && (
+                    <p className="text-[11px] font-medium text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3 shrink-0" />{cashierAuthError}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-5 border-t border-gray-100 shrink-0 space-y-2">
+              <button
+                type="button"
+                onClick={handleCashierAuthSubmit}
+                disabled={cashierAuthLoading || !cashierAuthUsername || !cashierAuthPassword}
+                className="w-full py-2.5 rounded-lg bg-[#F5C742] hover:bg-[#E8B22E] disabled:opacity-50 disabled:cursor-not-allowed text-[#4A3708] text-sm font-bold transition-colors flex items-center justify-center gap-2"
+              >
+                {cashierAuthLoading ? 'Verifying...' : 'Authorize & Continue'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowCashierAuthDialog(false); cashierAuthTargetRef.current = null; setCashierAuthUsername(''); setCashierAuthPassword(''); setCashierAuthError(''); }}
+                className="w-full py-2.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Close Session Dialog */}
       <Dialog open={showCloseSessionDialog} onOpenChange={setShowCloseSessionDialog}>
         <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col border-0 shadow-xl bg-white">
           <DialogHeader className="flex-shrink-0">
             <DialogTitle className="text-[#1E293B]">Close POS Session</DialogTitle>
             <DialogDescription>Count closing cash and settle card payments before closing</DialogDescription>
+            {(() => {
+              const tgt = sessionToClose || currentSession;
+              if (!tgt) return null;
+              return (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-left grid grid-cols-2 gap-x-4 gap-y-1">
+                  <div><span className="text-blue-700/70">Terminal:</span> <span className="font-medium text-blue-900">{tgt.terminalName || tgt.terminalId}</span></div>
+                  <div><span className="text-blue-700/70">Counter:</span> <span className="font-medium text-blue-900">{tgt.counterName || tgt.counter || '—'}</span></div>
+                  <div><span className="text-blue-700/70">Session:</span> <span className="font-medium text-blue-900">{tgt.sessionNo || (tgt.id ? `SESS-${tgt.id}` : '—')}</span></div>
+                  <div><span className="text-blue-700/70">Cashier:</span> <span className="font-medium text-blue-900">{tgt.cashier || tgt.openedBy || tgt.userId || '—'}</span></div>
+                </div>
+              );
+            })()}
           </DialogHeader>
 
           {/* Tab switcher */}
@@ -9726,9 +10101,10 @@ export default function POSSales() {
                     // formula only while xReportData hasn't loaded yet — never the old
                     // simplified opening+totalCashSales calc, which ignored cash drops and
                     // caused the modal to disagree with the X-Report.
+                    const targetSession = sessionToClose || currentSession;
                     const xSummaryModal = xReportData?.summary || {};
                     const sessionExpectedCash = xSummaryModal.expectedCash ?? (
-                      (Number(currentSession?.openingCash) || 0)
+                      (Number(targetSession?.openingCash) || 0)
                       + (Number(xSummaryModal.cashSales) || 0)
                       + (Number(xSummaryModal.cashDropIn) || 0)
                       - (Number(xSummaryModal.cashDropOut) || 0)
@@ -9879,8 +10255,15 @@ export default function POSSales() {
             )}
           </div>
 
+          {closeSessionError && (
+            <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-600">
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>{closeSessionError}</span>
+            </div>
+          )}
+
           <DialogFooter className="flex-shrink-0 pt-3 border-t border-gray-100">
-            <Button variant="outline" onClick={() => setShowCloseSessionDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setShowCloseSessionDialog(false); setSessionToClose(null); setCloseSessionError(''); }}>Cancel</Button>
             <Button onClick={handleCloseSession} className="bg-[#E63946] hover:bg-[#d32f3d] text-white">
               <Lock className="h-4 w-4 mr-2" />
               Close Session & Print Report
@@ -10257,31 +10640,16 @@ export default function POSSales() {
 
               {/* ── Settlement footer ── */}
               <div className="bg-white border-t-2 border-[#F5C742]/30 px-3 sm:px-5 py-4 shrink-0">
-                {/* Summary row */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                  <div className="bg-[#F5C742]/10 border border-[#F5C742]/40 rounded-xl p-3 text-center">
-                    <p className="text-[9px] text-gray-500 uppercase font-bold">{depositAmt > 0 ? 'Balance Due' : 'Total'}</p>
-                    <p className="text-base font-black text-[#1E293B]"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
-                    {depositAmt > 0 && <p className="text-[8px] text-[#327F74] font-semibold mt-0.5">Deposit −{depositAmt.toFixed(2)}</p>}
+                {/* Change due — the only figure the cashier still needs at this point
+                    (total/paid/remaining already live in the allocation panel above). */}
+                {checkoutPaymentFields.changeDue > 0 && (
+                  <div className="mb-3 flex items-center justify-between gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+                    <span className="text-xs font-bold uppercase tracking-wide text-blue-700">Change Due</span>
+                    <span className="text-lg font-black text-blue-700 tabular-nums">
+                      <DirhamSymbol /> {checkoutPaymentFields.changeDue.toFixed(2)}
+                    </span>
                   </div>
-                  <div className={`rounded-xl p-3 text-center border ${canSettle ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
-                    <p className="text-[9px] text-gray-500 uppercase font-bold">Paid</p>
-                    <p className={`text-base font-black ${canSettle ? 'text-green-700' : 'text-gray-400'}`}>
-                      <DirhamSymbol /> {checkoutPaymentFields.amountReceived.toFixed(2)}
-                    </p>
-                  </div>
-                  {(() => {
-                    const changeAmt = checkoutPaymentFields.changeDue;
-                    return (
-                      <div className={`rounded-xl p-3 text-center border ${changeAmt > 0 ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'}`}>
-                        <p className="text-[9px] text-gray-500 uppercase font-bold">{changeAmt > 0 ? 'Change' : 'Balance'}</p>
-                        <p className={`text-base font-black ${changeAmt > 0 ? 'text-blue-700' : 'text-gray-400'}`}>
-                          <DirhamSymbol /> {changeAmt > 0 ? changeAmt.toFixed(2) : '0.00'}
-                        </p>
-                      </div>
-                    );
-                  })()}
-                </div>
+                )}
                 {/* Error display */}
                 {checkoutError && (
                   <div className="mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center gap-2">
@@ -10290,19 +10658,37 @@ export default function POSSales() {
                   </div>
                 )}
                 {/* Action buttons */}
-                <div className="flex gap-2 sm:gap-3">
-                  <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); checkoutPayment.clearLines(); }}
-                    className="flex-none px-3 sm:px-5 py-3.5 rounded-xl border-2 border-gray-300 text-gray-600 font-bold text-sm hover:bg-gray-50 transition-colors">
-                    Cancel
-                  </button>
-                  <button type="button" onClick={() => processPayment()} disabled={!canSettle || currentInvoice.items.length === 0 || checkoutLoading}
-                    className={`flex-1 min-w-0 py-3.5 rounded-xl font-black text-sm sm:text-base flex items-center justify-center gap-2 transition-all ${canSettle && currentInvoice.items.length > 0 && !checkoutLoading ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
-                    {checkoutLoading
-                      ? <><div className="w-5 h-5 border-2 border-gray-500 border-t-transparent rounded-full animate-spin shrink-0" />Processing...</>
-                      : <><CheckCircle className="h-5 w-5 shrink-0" /><span className="truncate">Settle Payment · <DirhamSymbol /> {effectiveDue.toFixed(2)}</span></>
-                    }
-                  </button>
-                </div>
+                {(() => {
+                  const settleReady = canSettle && currentInvoice.items.length > 0 && !checkoutLoading;
+                  return (
+                    <div className="flex items-stretch gap-3">
+                      <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); checkoutPayment.clearLines(); }}
+                        aria-label="Cancel checkout"
+                        className="flex-none w-28 sm:w-36 min-h-[64px] rounded-xl border-2 border-gray-300 bg-white text-gray-600 font-bold text-base transition-all duration-200 ease-out hover:bg-gray-100 hover:border-gray-400 hover:text-gray-800 active:scale-[0.98] focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 motion-reduce:transform-none">
+                        Cancel
+                      </button>
+                      <button type="button" onClick={() => processPayment()} disabled={!settleReady}
+                        aria-label={`Settle payment of ${effectiveDue.toFixed(2)}`}
+                        className={`flex-1 min-w-0 min-h-[64px] px-5 rounded-xl font-black flex items-center justify-center gap-3 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-4 focus-visible:ring-[#F5C742]/60 motion-reduce:transform-none ${
+                          settleReady
+                            ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30 hover:shadow-xl hover:shadow-[#F5C742]/40 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99]'
+                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
+                        {checkoutLoading
+                          ? <><div className="w-6 h-6 border-2 border-gray-500 border-t-transparent rounded-full animate-spin shrink-0" /><span className="text-lg">Processing…</span></>
+                          : <>
+                              <CheckCircle className="h-6 w-6 shrink-0" />
+                              <span className="text-base sm:text-lg truncate">Settle Payment</span>
+                              {/* The amount sits in its own pill so it stays readable at a
+                                  glance and never gets truncated with the label. */}
+                              <span className={`shrink-0 rounded-lg px-3 py-1 text-lg sm:text-2xl tabular-nums ${settleReady ? 'bg-white/40' : 'bg-white/50'}`}>
+                                <DirhamSymbol /> {effectiveDue.toFixed(2)}
+                              </span>
+                            </>
+                        }
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
 
             </div>
@@ -10313,21 +10699,23 @@ export default function POSSales() {
       {/* Supervisor PIN Dialog */}
       {showSupervisorPin && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
-            <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-t-2xl px-6 pt-6 pb-5">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[480px] flex flex-col max-h-[90vh]">
+            <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-t-2xl px-5 py-4 shrink-0">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-white/20">
+                <div className="p-2 rounded-lg bg-white/20">
                   <Shield className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <h2 className="text-base font-bold text-white">Supervisor Approval</h2>
-                  <p className="text-xs text-amber-100 mt-0.5">
+                  <h2 className="text-base font-bold text-white leading-tight">Supervisor Approval</h2>
+                  <p className="text-[11px] text-amber-100 mt-0.5 leading-tight">
                     {pendingPriceOverride?.type === 'CHECKOUT'
-                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve the below-minimum price override and complete checkout`
+                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve the below-minimum price override`
                       : pendingPriceOverride
                       ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve price override${pendingPriceOverride.itemName ? ` for ${pendingPriceOverride.itemName}` : ''} (below min ${pendingPriceOverride.minPrice})`
                       : pendingSupervisorAction?.type === 'DAY_CLOSE'
                       ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize Business Day Close' : 'Enter PIN to authorize Business Day Close')
+                      : pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION'
+                      ? 'Authorize force closure of this session.'
                       : pendingLayawayAbortAction
                       ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to clear layaway cart' : 'Enter PIN to clear layaway cart')
                       : (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize void' : 'Enter PIN to authorize void')}
@@ -10335,59 +10723,108 @@ export default function POSSales() {
                 </div>
               </div>
             </div>
-            <div className="p-6 space-y-4">
-              {supervisorApprovalMode === 'PASSWORD' && (
-                <div>
-                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
-                    Supervisor Email / Username
-                  </label>
-                  <input
-                    type="text"
-                    value={supervisorPinEmail}
-                    onChange={e => { setSupervisorPinEmail(e.target.value); setSupervisorPinError(''); }}
-                    onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
-                    autoFocus
-                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:border-amber-400"
-                    placeholder="manager@example.com"
-                  />
+            
+            <div className="p-4 space-y-3 overflow-y-auto">
+              {pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && sessionToClose && (
+                <div className="bg-amber-50/50 p-2.5 rounded-lg border border-amber-100">
+                  <p className="text-[9px] text-amber-800/80 font-bold mb-1 uppercase tracking-wide">Target Session</p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
+                    <div className="flex justify-between"><span className="text-amber-700/60">Terminal</span> <span className="font-semibold text-amber-900">{sessionToClose.terminalName || sessionToClose.terminalId}</span></div>
+                    <div className="flex justify-between"><span className="text-amber-700/60">Counter</span> <span className="font-semibold text-amber-900">{sessionToClose.counterName || sessionToClose.counter || '—'}</span></div>
+                    <div className="flex justify-between"><span className="text-amber-700/60">Session</span> <span className="font-semibold text-amber-900">{sessionToClose.sessionNo || (sessionToClose.id ? `SESS-${sessionToClose.id}` : '—')}</span></div>
+                    <div className="flex justify-between"><span className="text-amber-700/60">Cashier</span> <span className="font-semibold text-amber-900">{sessionToClose.cashier || sessionToClose.openedBy || sessionToClose.userId || '—'}</span></div>
+                  </div>
                 </div>
               )}
-              <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">
-                  {supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN'}
-                </label>
-                <input
-                  type="password"
-                  value={supervisorPinValue}
-                  onChange={e => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
-                  onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
-                  autoFocus={supervisorApprovalMode !== 'PASSWORD'}
-                  maxLength={supervisorApprovalMode === 'PASSWORD' ? 64 : 8}
-                  className={`w-full border-2 border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:border-amber-400 ${supervisorApprovalMode === 'PASSWORD' ? 'text-base' : 'text-center text-xl tracking-[0.5em]'}`}
-                  placeholder={supervisorApprovalMode === 'PASSWORD' ? 'Manager password' : '····'}
-                />
-                {supervisorPinError && (
-                  <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
-                    <AlertCircle className="h-3.5 w-3.5" />{supervisorPinError}
-                  </p>
+
+              {pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && (
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5 block">
+                      Force Close Reason <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={forceCloseReason}
+                      onChange={e => { setForceCloseReason(e.target.value); setSupervisorPinError(''); }}
+                      className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 bg-white"
+                    >
+                      <option value="" disabled>Select reason... ▼</option>
+                      <option value="Cashier unavailable">Cashier unavailable</option>
+                      <option value="Cashier forgot to close session">Cashier forgot to close session</option>
+                      <option value="Terminal malfunction">Terminal malfunction</option>
+                      <option value="Shift handover">Shift handover</option>
+                      <option value="Emergency closure">Emergency closure</option>
+                      <option value="Other operational reason">Other operational reason</option>
+                    </select>
+                  </div>
+                  
+                  <div className="bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input 
+                        type="checkbox" 
+                        checked={forceCloseAuditAcknowledged}
+                        onChange={e => { setForceCloseAuditAcknowledged(e.target.checked); setSupervisorPinError(''); }}
+                        className="h-3.5 w-3.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                      />
+                      <span className="text-[11px] font-medium text-amber-900 leading-none">
+                        I understand this Force Close will be recorded in the audit trail.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                {supervisorApprovalMode === 'PASSWORD' && (
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
+                      Supervisor Email / Username
+                    </label>
+                    <input
+                      type="text"
+                      value={supervisorPinEmail}
+                      onChange={e => { setSupervisorPinEmail(e.target.value); setSupervisorPinError(''); }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
+                      autoFocus
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                    />
+                  </div>
                 )}
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
+                    {supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN'}
+                  </label>
+                  <input
+                    type="password"
+                    value={supervisorPinValue}
+                    onChange={e => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
+                    onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
+                    autoFocus={supervisorApprovalMode !== 'PASSWORD'}
+                    maxLength={supervisorApprovalMode === 'PASSWORD' ? 64 : 8}
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ${supervisorApprovalMode === 'PASSWORD' ? 'text-sm' : 'text-center text-lg tracking-[0.5em]'}`}
+                    placeholder={supervisorApprovalMode === 'PASSWORD' ? '' : '····'}
+                  />
+                  {supervisorPinError && (
+                    <p className="text-[11px] font-medium text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3 shrink-0" />{supervisorPinError}
+                    </p>
+                  )}
+                </div>
               </div>
+
               {supervisorApprovalMode !== 'PASSWORD' && (
                 <div className="grid grid-cols-3 gap-2">
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, '✓'].map(k => (
                     <button
                       key={k}
                       type="button"
-                      // Keep focus on the PIN input so typing on a physical keyboard keeps
-                      // working after clicking a keypad button (a button click would otherwise
-                      // steal focus from the input, silently breaking further keyboard entry).
                       onMouseDown={e => e.preventDefault()}
                       onClick={() => {
                         if (k === 'C') { setSupervisorPinValue(''); setSupervisorPinError(''); }
                         else if (k === '✓') handleSupervisorPinSubmit();
                         else setSupervisorPinValue(p => (p + k).slice(0, 8));
                       }}
-                      className={`py-3 rounded-xl text-sm font-bold transition-colors ${k === '✓' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
+                      className={`py-2 rounded-lg text-sm font-bold transition-colors ${k === '✓' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
                           k === 'C' ? 'bg-red-100 hover:bg-red-200 text-red-600' :
                             'bg-gray-100 hover:bg-gray-200 text-[#1E293B]'
                         }`}
@@ -10395,17 +10832,26 @@ export default function POSSales() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="p-5 border-t border-gray-100 shrink-0 space-y-2">
               {supervisorApprovalMode === 'PASSWORD' && (
                 <button
                   type="button"
                   onClick={handleSupervisorPinSubmit}
-                  className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold transition-colors"
-                >Authorize</button>
+                  disabled={
+                    !supervisorPinEmail || !supervisorPinValue ||
+                    (pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && (!forceCloseReason || forceCloseReason === '' || !forceCloseAuditAcknowledged))
+                  }
+                  className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold transition-colors"
+                >
+                  {pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' ? 'Authorize Force Close' : 'Authorize'}
+                </button>
               )}
               <button
                 type="button"
                 onClick={() => { setShowSupervisorPin(false); setPendingVoidItemId(null); setPendingPriceOverride(null); setSupervisorPinValue(''); setSupervisorPinEmail(''); setSupervisorPinError(''); }}
-                className="w-full py-2.5 rounded-xl border border-gray-200 text-sm text-gray-500 hover:bg-gray-50"
+                className="w-full py-2.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
               >Cancel</button>
             </div>
           </div>
@@ -14933,3 +15379,4 @@ export default function POSSales() {
     </div>
   );
 }
+
