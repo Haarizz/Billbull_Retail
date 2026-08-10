@@ -162,10 +162,14 @@ export const syncPosSession = async (sessionId, terminalId) => {
 export const closePosSession = async (sessionId, {
   closingCash, notes, closingDenominations, supervisorApproved,
   cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
+  // Single-use grant from verifySessionClosurePermission. Required when the logged-in
+  // user isn't the session owner (Day Close closing another cashier's session).
+  closureAuthToken,
 } = {}) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/close`, {
     closingCash, notes, closingDenominations, supervisorApproved,
     cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
+    closureAuthToken,
   });
   return res.data;
 };
@@ -475,3 +479,8 @@ export const settleDeliveryOrder = async (invoiceId, payload) => {
   return res.data;
 };
 
+
+export const verifySessionClosurePermission = async (sessionId, usernameOrEmail, password) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/authorize-closure`, { usernameOrEmail, password });
+  return res.data;
+};

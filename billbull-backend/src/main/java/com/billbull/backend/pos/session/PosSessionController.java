@@ -13,6 +13,13 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.billbull.backend.pos.auth.PosCredentialVerificationService;
+import com.billbull.backend.pos.auth.PosSessionAuthorizationService;
+import com.billbull.backend.pos.auth.CredentialVerificationResult;
+import com.billbull.backend.pos.auth.AuthorizationResult;
+import com.billbull.backend.pos.auth.ClosureAuthorizationRequest;
+import com.billbull.backend.pos.auth.PosClosureAuthorizationRegistry;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Map;
@@ -30,12 +37,18 @@ public class PosSessionController {
     private final PosPendingDayCloseResolver pendingDayCloseResolver;
     private final BranchAccessService branchAccessService;
     private final PosAuthorizationService authorizationService;
+    private final PosCredentialVerificationService credentialVerificationService;
+    private final PosSessionAuthorizationService sessionAuthorizationService;
+    private final PosClosureAuthorizationRegistry closureAuthorizationRegistry;
 
     public PosSessionController(PosSessionService service, PosSessionSyncService syncService, ObjectMapper objectMapper,
                                  PosDayStatusService dayStatusService,
                                  PosPendingDayCloseResolver pendingDayCloseResolver,
                                  BranchAccessService branchAccessService,
-                                 PosAuthorizationService authorizationService) {
+                                 PosAuthorizationService authorizationService,
+                                 PosCredentialVerificationService credentialVerificationService,
+                                 PosSessionAuthorizationService sessionAuthorizationService,
+                                 PosClosureAuthorizationRegistry closureAuthorizationRegistry) {
         this.service = service;
         this.syncService = syncService;
         this.objectMapper = objectMapper;
@@ -43,6 +56,9 @@ public class PosSessionController {
         this.pendingDayCloseResolver = pendingDayCloseResolver;
         this.branchAccessService = branchAccessService;
         this.authorizationService = authorizationService;
+        this.credentialVerificationService = credentialVerificationService;
+        this.sessionAuthorizationService = sessionAuthorizationService;
+        this.closureAuthorizationRegistry = closureAuthorizationRegistry;
     }
 
     /** Default {@code date} for endpoints that don't receive an explicit one: the next
@@ -136,8 +152,33 @@ public class PosSessionController {
         String closingCashierName = body != null ? (String) body.get("closingCashierName") : null;
         String closingSupervisorName = body != null ? (String) body.get("closingSupervisorName") : null;
         String closingRemarks = body != null ? (String) body.get("closingRemarks") : null;
+        String closureAuthToken = body != null ? (String) body.get("closureAuthToken") : null;
         return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson,
-                cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks));
+                cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
+                closureAuthToken));
+    }
+
+    @PostMapping("/{id}/authorize-closure")
+    public ResponseEntity<AuthorizationResult> authorizeClosure(
+            @PathVariable Long id,
+            @RequestBody ClosureAuthorizationRequest request) {
+        
+        PosSession session = service.getById(id);
+        
+        CredentialVerificationResult cred = credentialVerificationService.verifyCredentials(
+                request.getUsernameOrEmail(), request.getPassword());
+                
+        if (!cred.valid()) {
+            return ResponseEntity.ok(AuthorizationResult.unauthorized("INVALID_CREDENTIALS", cred.message()));
+        }
+        
+        AuthorizationResult auth = sessionAuthorizationService.authorizeSessionClose(session, cred.user());
+        if (!auth.authorized()) {
+            return ResponseEntity.ok(auth);
+        }
+        // Hand back a single-use grant so the close call that follows can prove this
+        // verification happened, without the client re-sending the owner's password.
+        return ResponseEntity.ok(auth.withToken(closureAuthorizationRegistry.issue(id, cred.user().getId())));
     }
 
     private String toJson(Object value) {

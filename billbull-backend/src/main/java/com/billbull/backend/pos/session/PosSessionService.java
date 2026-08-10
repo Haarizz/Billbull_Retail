@@ -107,6 +107,12 @@ public class PosSessionService {
     private final jakarta.persistence.EntityManager entityManager;
     private final com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.pos.auth.PosSessionAuthorizationService posSessionAuthorizationService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.pos.auth.PosClosureAuthorizationRegistry closureAuthorizationRegistry;
+
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
     private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
@@ -690,12 +696,51 @@ public class PosSessionService {
                                    String cardBatchNo, Boolean cardSettlementVerified, BigDecimal cardClosingCash,
                                    String closingCashierName, String closingSupervisorName,
                                    String closingRemarks) {
+        return closeSession(sessionId, closingCash, notes, supervisorApproved, closingDenominationsJson,
+                cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName,
+                closingRemarks, null);
+    }
+
+    /**
+     * @param closureAuthToken optional single-use grant from POST /sessions/{id}/authorize-closure.
+     *        Day Close lets any authenticated user initiate a normal close of another cashier's
+     *        session; the owner's credentials typed into the Session Owner Verification modal are
+     *        what authorize it, and this token is the proof of that verification. The logged-in
+     *        user is still recorded as the operator who performed the close.
+     */
+    @Transactional
+    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
+                                   boolean supervisorApproved, String closingDenominationsJson,
+                                   String cardBatchNo, Boolean cardSettlementVerified, BigDecimal cardClosingCash,
+                                   String closingCashierName, String closingSupervisorName,
+                                   String closingRemarks, String closureAuthToken) {
         PosSession session = getById(sessionId);
         if (session.getStatus() == PosSessionStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
         }
         if (session.getStatus() != PosSessionStatus.OPEN && session.getStatus() != PosSessionStatus.SUSPENDED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session cannot be closed from status: " + session.getStatus());
+        }
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not authenticated");
+        }
+        String currentUsername = auth.getName();
+        com.billbull.backend.user.User currentUser = userRepository.findByUsername(currentUsername)
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+        
+        // A closure grant redeems to the user whose credentials were verified in the Session
+        // Owner Verification modal — that is the identity the close is authorized against.
+        // Without one, fall back to the logged-in user (the cashier closing their own session).
+        com.billbull.backend.user.User authorizingUser = closureAuthorizationRegistry
+                .consume(sessionId, closureAuthToken)
+                .flatMap(userRepository::findById)
+                .orElse(currentUser);
+
+        com.billbull.backend.pos.auth.AuthorizationResult authResult = posSessionAuthorizationService.authorizeSessionClose(session, authorizingUser);
+        if (!authResult.authorized()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, authResult.message());
         }
 
         // Expected cash uses the same actual-tender-collected formula as getXReport(), so the
@@ -2243,6 +2288,8 @@ public class PosSessionService {
         info.put("closingSupervisorName", s.getClosingSupervisorName());
         info.put("closingRemarks", s.getClosingRemarks());
         info.put("varianceRemarks", s.getNotes());
+        info.put("totalSales", nz(s.getTotalSales()));
+        info.put("invoiceCount", s.getInvoiceCount() != null ? s.getInvoiceCount() : 0);
         return info;
     }
 

@@ -330,6 +330,13 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
 .row .num{flex:1;min-width:0;text-align:right;white-space:nowrap}
+/* Long tender labels ("Transferred to Accounts Receivable:") are wrapped to the ESC/POS
+   column grid, but the preview renders that grid slightly wider than the paper, so a line
+   that fits 48 monospace columns can still overrun 72mm on screen. These two classes let
+   such a label soften-wrap instead of pushing the amount off the edge; the amount keeps
+   its own column. */
+.row .lblw{flex:1 1 auto;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;text-align:left}
+.row .numf{flex:0 0 auto;white-space:nowrap;text-align:right}
 .s{font-size:9px;text-transform:uppercase;color:#000;margin:3px 0 1px;letter-spacing:.08em}
 </style></head><body>`;
 
@@ -459,8 +466,8 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     if (blockRows.length > 0) {
       for (const row of blockRows) {
         const lines = row.labelLines;
-        for (const line of lines.slice(0, -1)) html += `<div class="row"><span class="lbl">${esc(line)}</span></div>`;
-        html += `<div class="row"><span class="lbl">${esc(lines[lines.length - 1])}</span><span class="num">${row.emphasis ? '<b>' : ''}${cur} ${fmt(row.amount)}${row.emphasis ? '</b>' : ''}</span></div>`;
+        for (const line of lines.slice(0, -1)) html += `<div class="row"><span class="lblw">${esc(line)}</span></div>`;
+        html += `<div class="row"><span class="lblw">${esc(lines[lines.length - 1])}</span><span class="numf">${row.emphasis ? '<b>' : ''}${cur} ${fmt(row.amount)}${row.emphasis ? '</b>' : ''}</span></div>`;
       }
       if (paymentBlock.hasReceivable) {
         html += `<div class="row"><span class="lbl">Invoice Total:</span><span class="num">${cur} ${fmt(paymentBlock.invoiceTotal)}</span></div>`;
@@ -605,6 +612,13 @@ body{width:${pw};max-width:${pw};overflow-x:hidden;margin:0 auto;font-family:'Ro
 .row .lbl{flex:0 0 auto;white-space:nowrap}
 .row .val{flex:1;min-width:0;text-align:right;word-break:break-word;overflow-wrap:anywhere}
 .row .num{flex:1;min-width:0;text-align:right;white-space:nowrap}
+/* Long tender labels ("Transferred to Accounts Receivable:") are wrapped to the ESC/POS
+   column grid, but the preview renders that grid slightly wider than the paper, so a line
+   that fits 48 monospace columns can still overrun 72mm on screen. These two classes let
+   such a label soften-wrap instead of pushing the amount off the edge; the amount keeps
+   its own column. */
+.row .lblw{flex:1 1 auto;min-width:0;white-space:normal;overflow-wrap:anywhere;word-break:break-word;text-align:left}
+.row .numf{flex:0 0 auto;white-space:nowrap;text-align:right}
 .s{font-size:9px;text-transform:uppercase;color:#000;margin:3px 0 1px;letter-spacing:.08em}
 </style></head><body>`;
 

@@ -151,12 +151,16 @@ export default function PaymentAllocationPanel({
           offeredMethods.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'
         }`}>
           {offeredMethods.map(({ type, label, hotkey, icon: Icon, accent }) => (
+            // Hover/press feedback is drawn from the method's own accent so the tile that
+            // lifts is unmistakably the one about to be charged. `group` drives the icon.
             <button key={type} type="button" onClick={() => openAdd(type)}
-              className="relative flex flex-col items-center gap-1.5 rounded-xl border-2 py-3 transition-all hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-1"
-              style={{ borderColor: `${accent}40` }}>
-              <span className="absolute right-1.5 top-1.5 rounded px-1 text-[9px] font-black uppercase"
+              className="group relative flex flex-col items-center gap-1.5 rounded-xl border-2 py-3 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 motion-reduce:transform-none motion-reduce:transition-none"
+              style={{ borderColor: `${accent}40` }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.backgroundColor = `${accent}0F`; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = `${accent}40`; e.currentTarget.style.backgroundColor = ''; }}>
+              <span className="absolute right-1.5 top-1.5 rounded px-1 text-[9px] font-black uppercase transition-transform duration-200 group-hover:scale-110"
                 style={{ backgroundColor: `${accent}1A`, color: accent }}>{hotkey}</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg"
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg transition-transform duration-200 ease-out group-hover:scale-110 motion-reduce:transform-none"
                 style={{ backgroundColor: `${accent}1A` }}>
                 <Icon className="h-4 w-4" style={{ color: accent }} />
               </div>
