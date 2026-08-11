@@ -19,15 +19,22 @@ public class PosSessionScheduler {
     private static final Logger log = LoggerFactory.getLogger(PosSessionScheduler.class);
 
     private final PosSessionRepository repo;
+    /** openedAt/lastActivityAt are stamped from the Business Day clock, so the cutoffs
+     *  compared against them must come from the same clock. Reading LocalDateTime.now()
+     *  here on a UTC host against Asia/Kolkata timestamps skewed every cutoff by the zone
+     *  offset — suspending fresh sessions or never suspending idle ones. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock clock;
 
-    public PosSessionScheduler(PosSessionRepository repo) {
+    public PosSessionScheduler(PosSessionRepository repo,
+                               com.billbull.backend.pos.businessdate.BusinessDayClock clock) {
         this.repo = repo;
+        this.clock = clock;
     }
 
     @Scheduled(fixedRate = 60_000)
     @Transactional
     public void suspendIdleSessions() {
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now = clock.now();
 
         // Hard wall-clock limit exceeded → suspend
         List<PosSession> timedOut = repo.findTimedOutSessions(now);

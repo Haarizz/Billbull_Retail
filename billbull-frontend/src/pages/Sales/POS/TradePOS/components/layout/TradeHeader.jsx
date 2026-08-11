@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Settings, ShoppingCart } from 'lucide-react';
+import BusinessDayStatusChip from '../../../../../../components/pos/BusinessDayStatusChip';
 
 export const TradeHeader = React.memo(({
   setCurrentView,
@@ -37,12 +38,16 @@ export const TradeHeader = React.memo(({
           </button>
         </div>
 
-        <div className="text-slate-500 font-medium text-xs sm:text-sm leading-snug">
-          <span>Session: <span className="font-semibold text-slate-600">{currentSession?.id || 'NO SESSION'}</span></span>
-          <span className="hidden sm:inline">
-            {' '}&bull;{' '}
-            {time.toLocaleDateString()} {time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
-          </span>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="text-slate-500 font-medium text-xs sm:text-sm leading-snug min-w-0 truncate">
+            <span>Session: <span className="font-semibold text-slate-600">{currentSession?.id || 'NO SESSION'}</span></span>
+            <span className="hidden sm:inline">
+              {' '}&bull;{' '}
+              {time.toLocaleDateString()} {time.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
+            </span>
+          </div>
+          {/* Business Day status — same compact chip as the standard template. */}
+          <BusinessDayStatusChip />
         </div>
       </div>
 

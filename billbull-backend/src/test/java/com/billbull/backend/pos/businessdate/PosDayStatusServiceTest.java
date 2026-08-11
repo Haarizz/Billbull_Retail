@@ -49,11 +49,20 @@ class PosDayStatusServiceTest {
     @Mock private BranchAccessService branchAccessService;
 
     private PosDayStatusService service;
+    private BusinessDayWindowService businessDayWindowService;
 
     @BeforeEach
     void setUp() {
+        // Real BusinessDayWindowService over mocked repositories: the window
+        // arithmetic under test must be the genuine one, and a fixed-zone clock keeps
+        // these assertions independent of the host's timezone.
+        businessDayWindowService = new BusinessDayWindowService(
+                new BusinessDayClock("Asia/Dubai"), settingsRepository);
+
         service = new PosDayStatusService(businessDateService, pendingDayCloseResolver, businessDayStateService,
-                sessionRepository, sessionResolutionStrategy, settingsRepository, terminalRepository, branchAccessService);
+                businessDayWindowService,
+                sessionRepository, sessionResolutionStrategy, settingsRepository, terminalRepository, branchAccessService,
+                new BusinessDayContinuationGate(businessDayWindowService));
 
         Branch branch = new Branch();
         branch.setId(1L);

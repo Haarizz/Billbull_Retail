@@ -21,11 +21,16 @@ public class CorrectionDashboardService {
 
     private final CorrectionRequestRepository repo;
     private final PosCashMovementCategoryRepository categoryRepository;
+    /** "Today" and "this month" on the correction dashboard are business periods — they
+     *  must match the Business Day the branch is actually trading in. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock clock;
 
     public CorrectionDashboardService(CorrectionRequestRepository repo,
-                                       PosCashMovementCategoryRepository categoryRepository) {
+                                       PosCashMovementCategoryRepository categoryRepository,
+                                      com.billbull.backend.pos.businessdate.BusinessDayClock clock) {
         this.repo = repo;
         this.categoryRepository = categoryRepository;
+        this.clock = clock;
     }
 
     @Transactional(readOnly = true)
@@ -47,8 +52,8 @@ public class CorrectionDashboardService {
         }
         resp.setCorrectionTypeCounts(typeCounts);
 
-        LocalDateTime startOfToday = LocalDate.now().atStartOfDay();
-        LocalDateTime startOfMonth = LocalDate.now().withDayOfMonth(1).atStartOfDay();
+        LocalDateTime startOfToday = clock.now().toLocalDate().atStartOfDay();
+        LocalDateTime startOfMonth = clock.now().toLocalDate().withDayOfMonth(1).atStartOfDay();
         resp.setTodayCount(repo.countRequestedSince(startOfToday));
         resp.setThisMonthCount(repo.countRequestedSince(startOfMonth));
 

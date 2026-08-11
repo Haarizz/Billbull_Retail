@@ -48,6 +48,7 @@ class PosLayawayServiceTest {
     @Mock private WarehouseRepository warehouseRepository;
     @Mock private PosAuditService auditService;
     @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
+    @Mock private com.billbull.backend.pos.session.PosSessionRepository sessionRepository;
 
     private PosLayawayService service;
 
@@ -59,7 +60,11 @@ class PosLayawayServiceTest {
                 // engine as every other POS payment and these tests assert on its output.
                 new com.billbull.backend.pos.checkout.PosPaymentAllocationResolver(),
                 postingEngine, branchRepository, warehouseRepository,
-                auditService, branchTaxResolutionService);
+                auditService, branchTaxResolutionService,
+                // Real clock on a non-JVM-default zone: layaway dates/timestamps must come
+                // from the Business Day timezone, never LocalDate(Time).now().
+                new com.billbull.backend.pos.businessdate.BusinessDayClock("Asia/Kolkata"),
+                sessionRepository);
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(java.math.BigDecimal.ZERO);
         // save() returns the same entity with ids assigned, so the reserve loop can run.

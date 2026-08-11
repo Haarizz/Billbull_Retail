@@ -10,6 +10,14 @@ public enum PosAuditAction {
 
     // Session lifecycle
     SESSION_OPENED,
+    /** An operator explicitly started the session's closure workflow ("Close Session").
+     *  The session stays OPEN; normal selling is locked until it is closed or a
+     *  supervisor cancels the closure. Distinct from SESSION_CLOSED, which is the
+     *  final act. */
+    SESSION_CLOSURE_STARTED,
+    /** A supervisor aborted a started closure workflow, returning the session to normal
+     *  operation. Never available to the cashier who started it. */
+    SESSION_CLOSURE_CANCELLED,
     SESSION_CLOSED,
 
     // Cash
@@ -35,6 +43,10 @@ public enum PosAuditAction {
 
     // Supervisor
     SUPERVISOR_OVERRIDE,
+
+    /** One pending checkout released by a supervisor after the Business Day closed.
+     *  This authorizes a single sale; it never reopens or extends the Business Day. */
+    BUSINESS_DAY_CLOSED_CHECKOUT_AUTHORIZED,
 
     // Receipt
     RECEIPT_REPRINTED,

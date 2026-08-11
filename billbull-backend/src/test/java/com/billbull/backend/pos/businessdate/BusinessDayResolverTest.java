@@ -81,10 +81,20 @@ class BusinessDayResolverTest {
     }
 
     @Test
-    void sameDayWindowBeforeStartTimeStillResolvesToCalendarDate() {
+    void sameDayWindowBeforeStartTimeBelongsToYesterdaysBusinessDay() {
+        // BEHAVIOR CHANGE (Business Day window/extension work): this previously
+        // returned the plain calendar date, 2026-07-29.
+        //
+        // 03:00 is before the window opens at 08:00, so the Business Day in force is
+        // still the one that began at 08:00 on 2026-07-28 — its extension may even
+        // still be running. Returning 07-29 here was the defect that let the Trading
+        // Date roll over at calendar midnight while the configured window said
+        // otherwise, splitting one continuous Business Day across two dates in Day
+        // Close. Same rule as the overnight case above, which is the point: the
+        // anchor is the most recent window start, regardless of window shape.
         BusinessDaySettings settings = new BusinessDaySettings(true, LocalTime.of(8, 0), LocalTime.of(22, 0));
         LocalDate result = BusinessDayResolver.resolve(at(2026, 7, 29, 3, 0), settings);
-        assertEquals(LocalDate.of(2026, 7, 29), result);
+        assertEquals(LocalDate.of(2026, 7, 28), result);
     }
 
     // ---------------------------------------------------------------------

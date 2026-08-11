@@ -194,6 +194,27 @@ public class PosSession extends BaseEntity {
     @Column(name = "x_report_generated_by_display_name")
     private String xReportGeneratedByDisplayName;
 
+    /** When the operator explicitly started this session's closure workflow, via
+     *  {@code POST /api/pos/sessions/{id}/begin-closure} — the "Close Session" action, and
+     *  nothing else. Null on a normal active session.
+     *
+     *  <p>While this is set the session is still genuinely {@link PosSessionStatus#OPEN} —
+     *  it must be, because the X-Report and every close validation operate on the open
+     *  session — but normal POS work (selling, checkout, cash movements, resume) is refused
+     *  by {@link PosSessionClosureWorkflowGate}. Everything the closure itself needs stays
+     *  available. Cleared only by the supervisor-authorized cancel-closure action.
+     *
+     *  <p>Deliberately NOT {@link #xReportGeneratedAt}: the X-Report is an informational,
+     *  optional, mid-shift read that must never lock a till. See V77 for the full rationale. */
+    @Column(name = "closing_started_at")
+    private LocalDateTime closingStartedAt;
+
+    /** Username of whoever started the closure workflow. Matches the identity convention of
+     *  {@code openedBy}/{@code closedBy}/{@code xReportGeneratedBy} (username, app-level
+     *  only). Never overwritten once set — a second begin-closure call is a no-op. */
+    @Column(name = "closing_started_by")
+    private String closingStartedBy;
+
     @Column(name = "z_report_printed")
     private Boolean zReportPrinted = false;
 
@@ -346,6 +367,30 @@ public class PosSession extends BaseEntity {
 
     public String getXReportGeneratedByDisplayName() { return xReportGeneratedByDisplayName; }
     public void setXReportGeneratedByDisplayName(String xReportGeneratedByDisplayName) { this.xReportGeneratedByDisplayName = xReportGeneratedByDisplayName; }
+
+    /** Display-only view for the POS dashboard: the operator has explicitly started this
+     *  session's closure workflow but it is not yet CLOSED, so it must be offered as
+     *  "Session Closure Required" rather than "Continue Session".
+     *
+     *  <p>Reads {@link #closingStartedAt} — never {@code xReportGeneratedAt}, which is an
+     *  informational mid-shift report and says nothing about closure.
+     *
+     *  <p>Serialized under a stable, explicit name so the frontend never has to guess how
+     *  Jackson decapitalizes the getter. Rendering convenience only —
+     *  {@code PosSessionClosureWorkflowGate} is the authority and is what actually refuses
+     *  the operation server-side. Kept in sync with that gate's {@code isInClosureWorkflow}. */
+    @Transient
+    @com.fasterxml.jackson.annotation.JsonProperty("awaitingClosure")
+    public boolean isAwaitingClosure() {
+        return (status == PosSessionStatus.OPEN || status == PosSessionStatus.SUSPENDED)
+                && closingStartedAt != null;
+    }
+
+    public LocalDateTime getClosingStartedAt() { return closingStartedAt; }
+    public void setClosingStartedAt(LocalDateTime closingStartedAt) { this.closingStartedAt = closingStartedAt; }
+
+    public String getClosingStartedBy() { return closingStartedBy; }
+    public void setClosingStartedBy(String closingStartedBy) { this.closingStartedBy = closingStartedBy; }
 
     public Boolean getZReportPrinted() { return zReportPrinted; }
     public void setZReportPrinted(Boolean zReportPrinted) { this.zReportPrinted = zReportPrinted; }

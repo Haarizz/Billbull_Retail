@@ -17,8 +17,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class PosAuditService {
 
     private final PosAuditLogRepository repo;
+    /** A POS audit entry records when a business operation happened, so it is stamped in
+     *  the Business Day timezone — the same clock as the session/checkout events it
+     *  describes. The entity's field initializer remains only as a safety default for rows
+     *  constructed outside this service. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock clock;
 
-    public PosAuditService(PosAuditLogRepository repo) {
+    public PosAuditService(PosAuditLogRepository repo,
+                           com.billbull.backend.pos.businessdate.BusinessDayClock clock) {
+        this.clock = clock;
         this.repo = repo;
     }
 
@@ -47,6 +54,36 @@ public class PosAuditService {
         save(sessionId, terminalId, branchId,
                 PosAuditAction.SESSION_OPENED, "SESSION", String.valueOf(sessionId),
                 "POS session opened on terminal " + terminalId, null, null);
+    }
+
+    /** Closure workflow started — the session is locked to closure operations but is still
+     *  OPEN. {@code startedBy} is the identity the closure was authorized against, which is
+     *  not necessarily the logged-in operator {@link #save} records. */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logSessionClosureStarted(Long sessionId, String terminalId, Long branchId,
+                                          String startedBy) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.SESSION_CLOSURE_STARTED, "SESSION", String.valueOf(sessionId),
+                "POS session closure workflow started by " + startedBy
+                        + ". Session remains OPEN; normal sales are locked until it is closed.",
+                null, null);
+    }
+
+    /** Closure workflow cancelled by a supervisor — the session returns to normal
+     *  operation. {@code reason} is free text from the supervisor; null when not supplied. */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logSessionClosureCancelled(Long sessionId, String terminalId, Long branchId,
+                                            String startedBy, String startedAt, String reason) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.SESSION_CLOSURE_CANCELLED, "SESSION", String.valueOf(sessionId),
+                "POS session closure cancelled by supervisor. Closure had been started by "
+                        + (startedBy != null ? startedBy : "—") + " at "
+                        + (startedAt != null ? startedAt : "—")
+                        + (reason != null && !reason.isBlank() ? ". Reason: " + reason : "")
+                        + ". Session returned to normal operation.",
+                startedAt, null);
     }
 
     @Async
@@ -121,6 +158,26 @@ public class PosAuditService {
         save(sessionId, terminalId, branchId,
                 PosAuditAction.RECEIPT_REPRINTED, "INVOICE", String.valueOf(invoiceId),
                 "Receipt reprinted for invoice: " + invoiceNumber, null, null);
+    }
+
+    /**
+     * A supervisor authorized one pending checkout to complete after the Business
+     * Day had already closed.
+     *
+     * <p>Synchronous and unconditional: a sale rung
+     * up after normal selling stopped must never be indistinguishable from one rung
+     * up during trading. Its invoice still carries the closed Business Day's Trading
+     * Date, so this entry is what explains, at Day Close or in a later audit, why a
+     * transaction exists past the closure time.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logBusinessDayClosedCheckoutAuthorized(Long branchId, Long sessionId, String terminalId,
+                                                        String tradingDate, String closedAt) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.BUSINESS_DAY_CLOSED_CHECKOUT_AUTHORIZED, "BUSINESS_DAY", tradingDate,
+                "Supervisor authorized a pending checkout after Business Day " + tradingDate
+                        + " closed at " + closedAt,
+                closedAt, null);
     }
 
     // ── Terminal Auto-Archive lifecycle ─────────────────────────────────────
@@ -207,6 +264,7 @@ public class PosAuditService {
             log.setDescription(description);
             log.setOldValueJson(oldJson);
             log.setNewValueJson(newJson);
+            log.setCreatedAt(clock.now());
             repo.save(log);
         } catch (Exception e) {
             // Audit failures must never propagate to the caller.

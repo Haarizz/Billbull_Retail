@@ -5,12 +5,18 @@ import com.billbull.backend.pos.businessdate.PosBusinessDateService;
 import com.billbull.backend.pos.businessdate.BusinessDayBlockingReason;
 import com.billbull.backend.pos.businessdate.BusinessDayFeatureFlagService;
 import com.billbull.backend.pos.businessdate.BusinessDayInfrastructureException;
+import com.billbull.backend.pos.businessdate.BusinessDayClosedException;
+import com.billbull.backend.pos.businessdate.BusinessDayContinuationGate;
+import com.billbull.backend.pos.businessdate.BusinessDayPhase;
 import com.billbull.backend.pos.businessdate.BusinessDayResolver;
 import com.billbull.backend.pos.businessdate.BusinessDaySettings;
+import com.billbull.backend.pos.businessdate.BusinessDayState;
 import com.billbull.backend.pos.businessdate.BusinessDayStateService;
+import com.billbull.backend.pos.businessdate.BusinessDayWindowService;
 import com.billbull.backend.pos.businessdate.BusinessDayValidationResult;
 import com.billbull.backend.pos.businessdate.BusinessDayValidationService;
 import com.billbull.backend.pos.businessdate.PosOperatingHoursCalculator;
+import com.billbull.backend.pos.businessdate.PreviousBusinessDaySessionException;
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherRepository;
@@ -91,6 +97,9 @@ public class PosSessionService {
     private final BusinessDayStateService businessDayStateService;
     private final BusinessDayValidationService businessDayValidationService;
     private final BusinessDayFeatureFlagService businessDayFeatureFlagService;
+    private final BusinessDayWindowService businessDayWindowService;
+    private final BusinessDayContinuationGate businessDayContinuationGate;
+    private final PosSessionClosureWorkflowGate closureWorkflowGate;
     private final PosCashMovementRepository cashMovementRepository;
     private final ReceiptVoucherRepository receiptVoucherRepository;
     private final PosXReportSnapshotRepository xReportSnapshotRepository;
@@ -112,6 +121,11 @@ public class PosSessionService {
 
     @org.springframework.beans.factory.annotation.Autowired
     private com.billbull.backend.pos.auth.PosClosureAuthorizationRegistry closureAuthorizationRegistry;
+
+    /** Verifies a second user's credentials at the till — the same service the Session Owner
+     *  Verification modal uses. Only consulted by {@code cancelClosure}. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.pos.auth.PosCredentialVerificationService credentialVerificationService;
 
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
@@ -139,6 +153,7 @@ public class PosSessionService {
                              BusinessDayStateService businessDayStateService,
                              BusinessDayValidationService businessDayValidationService,
                              BusinessDayFeatureFlagService businessDayFeatureFlagService,
+                             BusinessDayWindowService businessDayWindowService,
                              PosCashMovementRepository cashMovementRepository,
                              ReceiptVoucherRepository receiptVoucherRepository,
                              PosXReportSnapshotRepository xReportSnapshotRepository,
@@ -153,7 +168,9 @@ public class PosSessionService {
                              PosSessionTransferLogRepository transferLogRepository,
                              PosSessionTransferPolicy sessionTransferPolicy,
                              jakarta.persistence.EntityManager entityManager,
-                             com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService) {
+                             com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService,
+                             BusinessDayContinuationGate businessDayContinuationGate,
+                             PosSessionClosureWorkflowGate closureWorkflowGate) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -172,6 +189,7 @@ public class PosSessionService {
         this.businessDayStateService = businessDayStateService;
         this.businessDayValidationService = businessDayValidationService;
         this.businessDayFeatureFlagService = businessDayFeatureFlagService;
+        this.businessDayWindowService = businessDayWindowService;
         this.cashMovementRepository = cashMovementRepository;
         this.receiptVoucherRepository = receiptVoucherRepository;
         this.xReportSnapshotRepository = xReportSnapshotRepository;
@@ -187,6 +205,8 @@ public class PosSessionService {
         this.sessionTransferPolicy = sessionTransferPolicy;
         this.entityManager = entityManager;
         this.effectiveCorrectionViewService = effectiveCorrectionViewService;
+        this.businessDayContinuationGate = businessDayContinuationGate;
+        this.closureWorkflowGate = closureWorkflowGate;
     }
 
     private String currentUser() {
@@ -289,7 +309,16 @@ public class PosSessionService {
             settingsFailure = failure;
         }
         BusinessDaySettings businessDaySettings = BusinessDaySettings.from(settings);
-        LocalDateTime now = LocalDateTime.now();
+        // The Business Day clock, never LocalDateTime.now(): every phase, Trading
+        // Date and closure comparison in this method must be made against the
+        // configured Business Day timezone, and against ONE reading of it, so two
+        // decisions in the same request can never land either side of a boundary.
+        LocalDateTime now = businessDayWindowService.clock().now();
+
+        // The authoritative Business Day state — window phase and closure time —
+        // resolved once, from the settings snapshot already loaded above (no extra
+        // settings query).
+        BusinessDayState businessDayState = businessDayWindowService.resolveAt(branchId, now, settings);
 
         // ── Candidate Business Day, resolved ONCE for the whole open flow ────────
         // Every Business-Day comparison below (the legacy gate's "is there a PRIOR
@@ -304,7 +333,7 @@ public class PosSessionService {
         // 2026-08-04.isBefore(2026-08-05) → true, so the current Business Day was
         // misreported as an unclosed PREVIOUS one and every further session on the
         // same Business Day was blocked.
-        LocalDate candidateBusinessDay = BusinessDayResolver.resolve(now, businessDaySettings);
+        LocalDate candidateBusinessDay = businessDayState.window().tradingDate();
         // The gate ALWAYS compares against the Candidate Business Day — including
         // for branches with no configured window, where BusinessDayResolver already
         // returns now.toLocalDate() and the pointer was the only remaining way for
@@ -317,6 +346,19 @@ public class PosSessionService {
         // PRIOR one. A genuinely stale prior day still blocks: it is strictly before
         // the Candidate too (BBQA-5.3-013 unaffected).
         LocalDate gateBusinessDate = candidateBusinessDay;
+
+        // ── Business Day window closure gate ─────────────────────────────────────
+        // Deliberately its OWN guard, evaluated before and independently of the
+        // login-gate-v2 flag below. The two answer unrelated questions — "has this
+        // branch's Business Day closed for the night" versus "is a previous Business
+        // Day still unclosed" — and are governed by separate per-branch switches so
+        // they can be rolled out and rolled back independently.
+        //
+        // A branch with no configured window resolves to UNRESTRICTED and is never
+        // blocked here, which is every branch that has not opted in.
+        if (businessDayState.blocksNormalOperation()) {
+            throw BusinessDayClosedException.of(businessDayState);
+        }
 
         // Stage 3B.2B — per-branch enforcement switch. A failure to even read the
         // flag is itself an infrastructure concern and must fail open to the
@@ -338,7 +380,7 @@ public class PosSessionService {
             // purely for observation afterward, its result never consulted here.
             blockingException = runLegacyGate(branchId, gateBusinessDate);
             boolean legacyAllowed = blockingException == null;
-            runShadowValidation(branchId, settings, settingsFailure, legacyAllowed);
+            runShadowValidation(branchId, businessDayState, settingsFailure, legacyAllowed);
         } else {
             // Flag ON: BusinessDayValidationService becomes authoritative. An
             // Infrastructure Failure (categorized or not) falls back to the exact
@@ -347,7 +389,7 @@ public class PosSessionService {
             try {
                 if (settingsFailure != null) throw settingsFailure;
                 BusinessDayValidationResult result = businessDayValidationService.validate(
-                        branchId, now, businessDaySettings);
+                        branchId, businessDayState);
                 businessDayStateService.recordEnforcementDecision(branchId, result);
                 blockingException = toEnforcementException(branchId, result);
             } catch (BusinessDayInfrastructureException infra) {
@@ -509,19 +551,11 @@ public class PosSessionService {
                 PosSession oldest = oldestSessionOnUnclosedDay(branchId, unclosedBusinessDay.get());
                 if (oldest != null) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT,
-                            "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
-                                    + "Business Day " + unclosedBusinessDay.get() + " cannot be completed because an active session still exists.\n"
-                                    + "Session ID : " + oldest.getId() + "\n"
-                                    + "Terminal : " + oldest.getTerminalId() + "\n"
-                                    + "Status : " + oldest.getStatus() + "\n"
-                                    + "Business Day : " + oldest.getTradingDate() + "\n"
-                                    + "Close or complete the active session before running Day Close.");
+                            PreviousBusinessDaySessionException.buildMessage(oldest.getId(), oldest.getTerminalId(),
+                                    String.valueOf(oldest.getStatus()), oldest.getTradingDate()));
                 } else {
                     throw new ResponseStatusException(HttpStatus.CONFLICT,
-                            "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
-                                    + "Business Day " + unclosedBusinessDay.get() + " has not been closed.\n"
-                                    + "All sessions for this Business Day are already closed.\n"
-                                    + "Run Day Close (Z Report) before opening a new Business Day.");
+                            PreviousBusinessDaySessionException.buildDayNotClosedMessage(unclosedBusinessDay.get()));
                 }
             }
         } catch (ResponseStatusException legacyException) {
@@ -534,14 +568,14 @@ public class PosSessionService {
      *  the flag-OFF path now (Stage 3B.2B): its result never participates in any
      *  if/throw/return; wrapped so a bug in the new engine can never prevent a
      *  real cashier from opening a session. */
-    private void runShadowValidation(Long branchId, PosSettings shadowSettings,
+    private void runShadowValidation(Long branchId, BusinessDayState shadowState,
                                      BusinessDayInfrastructureException settingsFailure, boolean legacyAllowed) {
         try {
             // Settings are now loaded once by openSession(); a failure there is
             // rethrown here so it is recorded under the same metric as before.
             if (settingsFailure != null) throw settingsFailure;
             BusinessDayValidationResult shadowResult = businessDayValidationService.validate(
-                    branchId, LocalDateTime.now(), BusinessDaySettings.from(shadowSettings));
+                    branchId, shadowState);
             businessDayStateService.recordValidationOutcome(branchId, legacyAllowed, shadowResult);
         } catch (BusinessDayInfrastructureException infrastructureFailure) {
             businessDayStateService.recordInfrastructureFailure(branchId, infrastructureFailure.getCategory(), infrastructureFailure);
@@ -602,19 +636,11 @@ public class PosSessionService {
                     // session closed in the interim) — fail closed generically
                     // rather than silently allow.
                     yield new ResponseStatusException(HttpStatus.CONFLICT,
-                            "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
-                                    + "Business Day " + unclosedDay + " has not been closed.\n"
-                                    + "All sessions for this Business Day are already closed.\n"
-                                    + "Run Day Close (Z Report) before opening a new Business Day.");
+                            PreviousBusinessDaySessionException.buildDayNotClosedMessage(unclosedDay));
                 }
                 yield new ResponseStatusException(HttpStatus.CONFLICT,
-                        "PREVIOUS_DAY_SESSION_OPEN: Previous Business Day Not Closed\n"
-                                + "Business Day " + unclosedDay + " cannot be completed because an active session still exists.\n"
-                                + "Session ID : " + oldest.getId() + "\n"
-                                + "Terminal : " + oldest.getTerminalId() + "\n"
-                                + "Status : " + oldest.getStatus() + "\n"
-                                + "Business Day : " + oldest.getTradingDate() + "\n"
-                                + "Close or complete the active session before running Day Close.");
+                        PreviousBusinessDaySessionException.buildMessage(oldest.getId(), oldest.getTerminalId(),
+                                String.valueOf(oldest.getStatus()), oldest.getTradingDate()));
             }
             case UNEXPECTED_STATE -> new ResponseStatusException(HttpStatus.CONFLICT,
                     "BUSINESS_DAY_UNEXPECTED_STATE: Candidate Business Day " + result.candidateBusinessDay()
@@ -653,6 +679,19 @@ public class PosSessionService {
                 if (!currentUser().equals(session.getOpenedBy())) {
                     throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is locked by active cashier: " + session.getOpenedBy());
                 }
+                // Business Day continuation gate — the "Continue Session" counterpart to
+                // the Start Session gate in openSession(). A session left OPEN on a
+                // Business Day that has since rolled over must not be handed back for
+                // normal trading just because it exists; the previous Business Day has
+                // to be closed first, exactly as a terminal with no session is told.
+                // The session itself stays reachable through getById()/close so the
+                // operator can still close it and run Day Close.
+                businessDayContinuationGate.assertMayContinue(session);
+                // Close-workflow gate — composed after the Business Day gate, never merged
+                // with it. A session whose closure workflow an operator has started must not
+                // be handed back for "Continue Session". The session stays reachable through
+                // getById()/x-report/close, which is exactly where the POS is pushed next.
+                closureWorkflowGate.assertMayOperate(session);
                 return Optional.of(session);
             }
             // No open session under this branch+terminalId — if the terminalId exists but belongs
@@ -768,7 +807,11 @@ public class PosSessionService {
             }
         }
 
-        LocalDateTime closeTime = LocalDateTime.now();
+        // One reading of the Business Day clock for the whole close operation. It must be
+        // the SAME clock that stamped openedAt (see openSession) — mixing a UTC JVM clock
+        // here with an Asia/Kolkata openedAt produced durations short by the zone offset,
+        // and a negative duration for any session shorter than that offset.
+        LocalDateTime closeTime = businessDayWindowService.clock().now();
         session.setClosedBy(currentUser());
         session.setClosedByDisplayName(resolveDisplayName(session.getClosedBy()));
         session.setClosedAt(closeTime);
@@ -810,7 +853,7 @@ public class PosSessionService {
 
         // Capture immutable Z-Report snapshot at close time
         String varianceStr = actualClosing.subtract(expectedCash).toPlainString();
-        session.setZReportJson(buildZReportSnapshot(session, expectedCash, actualClosing));
+        session.setZReportJson(buildZReportSnapshot(session, expectedCash, actualClosing, closeTime));
 
         PosSession closed = repo.save(session);
 
@@ -835,7 +878,7 @@ public class PosSessionService {
             // downstream depends on it being the calendar date. tradingDate is null
             // only for sessions opened before Phase 3A, hence the fallback.
             LocalDate glDate = closed.getTradingDate() != null
-                    ? closed.getTradingDate() : java.time.LocalDate.now();
+                    ? closed.getTradingDate() : businessDayWindowService.clock().now().toLocalDate();
             postingEngine.createJournalFromSessionClose(
                     closed.getId(), actualClosing, glDate, branch);
         } catch (Exception e) {
@@ -854,6 +897,159 @@ public class PosSessionService {
     @Transactional
     public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes) {
         return closeSession(sessionId, closingCash, notes, false);
+    }
+
+    // -------------------------------------------------------------------------
+    // Closure workflow — begin / cancel
+    //
+    // The middle state between "trading" and CLOSED. The session stays genuinely OPEN
+    // (the X-Report and every close validation operate on the open session), but
+    // PosSessionClosureWorkflowGate refuses normal POS work on it from this point.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Starts the closure workflow for a session: stamps {@code closingStartedAt} /
+     * {@code closingStartedBy} so the session is locked to closure operations only.
+     *
+     * <p>This is the <b>only</b> writer of that marker, and it is reached from exactly one
+     * user action — the dashboard's "Close Session". Viewing or generating an X-Report
+     * never calls it: the X-Report is an informational, optional, mid-shift read, and a
+     * cashier who looks at one must be able to carry on selling.
+     *
+     * <p>Deliberately does NOT: close the session, change its status, generate an X-Report,
+     * touch {@code xReportGeneratedAt}, move the Business Day or Trading Date, or create a
+     * Day Close. It writes two columns and audits the fact.
+     *
+     * <p>Idempotent: calling it again on a session already in the workflow returns the
+     * session unchanged — the original timestamp and initiating user survive, so the audit
+     * trail keeps naming whoever actually started the closure.
+     *
+     * @param closureAuthToken optional grant from {@code POST /sessions/{id}/authorize-closure},
+     *        verified but NOT consumed here — the close call that follows still has to spend
+     *        it. Present when someone other than the logged-in user (the session's owner,
+     *        verified in the Session Owner Verification modal) is the identity the closure is
+     *        authorized against; absent when a cashier closes their own session.
+     */
+    @Transactional
+    public PosSession beginClosure(Long sessionId, String closureAuthToken) {
+        PosSession session = getById(sessionId);
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not authenticated");
+        }
+        com.billbull.backend.user.User currentUser = userRepository.findByUsername(auth.getName())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        // Same identity resolution as closeSession(), so "may I start this closure?" and
+        // "may I complete it?" can never disagree — verify() rather than consume() because
+        // the grant is single-use and belongs to the close itself.
+        com.billbull.backend.user.User authorizingUser = closureAuthorizationRegistry
+                .verify(sessionId, closureAuthToken)
+                .flatMap(userRepository::findById)
+                .orElse(currentUser);
+
+        // Already in the workflow — idempotent no-op. Checked before the status/Business Day
+        // guards so a repeated click can never surface an error about a state this call was
+        // going to reach anyway.
+        if (session.getClosingStartedAt() != null) {
+            return session;
+        }
+
+        if (session.getStatus() != PosSessionStatus.OPEN) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Only an OPEN session can begin closure. Current status: " + session.getStatus());
+        }
+
+        // Existing session-close authorization rules, reused verbatim.
+        com.billbull.backend.pos.auth.AuthorizationResult authResult =
+                posSessionAuthorizationService.authorizeSessionClose(session, authorizingUser);
+        if (!authResult.authorized()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, authResult.message());
+        }
+
+        // Deliberately NOT gated by businessDayContinuationGate. That gate refuses to let a
+        // previous-Business-Day session keep being *used* — resume, selling, checkout, cash
+        // movements — and it stays enforced at every one of those call sites. Closure is the
+        // opposite kind of operation: it is the remediation the gate is pushing the operator
+        // toward, and Day Close cannot complete until the stale OPEN session is closed. Gating
+        // it here deadlocked the flow ("close this session" → "you cannot, the day is stale").
+        session.setClosingStartedAt(businessDayWindowService.clock().now());
+        session.setClosingStartedBy(authorizingUser.getUsername());
+        PosSession saved = repo.save(session);
+
+        auditService.logSessionClosureStarted(saved.getId(), saved.getTerminalId(), saved.getBranchId(),
+                saved.getClosingStartedBy());
+        return saved;
+    }
+
+    /**
+     * Cancels a started closure workflow, returning the session to normal operation.
+     *
+     * <p><b>Supervisor-only</b>, via {@code authorizeClosureCancellation} — owning the
+     * session is not enough. Otherwise a cashier told to close out could simply un-start the
+     * closure and put the till back into service, which is the bypass this whole workflow
+     * exists to prevent.
+     *
+     * <p>Clears only {@code closingStartedAt}/{@code closingStartedBy}. Status,
+     * {@code xReportGeneratedAt}, Trading Date, and Business Day are all left exactly as
+     * they were — in particular, an X-Report generated while the closure was in progress
+     * stays generated, because it was a real report that really ran.
+     */
+    @Transactional
+    public PosSession cancelClosure(Long sessionId, String reason,
+                                    String supervisorUsernameOrEmail, String supervisorPassword) {
+        PosSession session = getById(sessionId);
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not authenticated");
+        }
+        com.billbull.backend.user.User currentUser = userRepository.findByUsername(auth.getName())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        // A supervisor standing at a till the cashier is logged into verifies with their own
+        // credentials — the same PosCredentialVerificationService flow the Session Owner
+        // Verification modal already uses, so no parallel authentication is introduced. With
+        // no credentials supplied, the logged-in user is the one authorized (a supervisor
+        // working on their own device).
+        com.billbull.backend.user.User authorizingUser = currentUser;
+        if (supervisorUsernameOrEmail != null && !supervisorUsernameOrEmail.isBlank()) {
+            com.billbull.backend.pos.auth.CredentialVerificationResult cred =
+                    credentialVerificationService.verifyCredentials(supervisorUsernameOrEmail, supervisorPassword);
+            if (!cred.valid()) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, cred.message());
+            }
+            authorizingUser = cred.user();
+        }
+
+        com.billbull.backend.pos.auth.AuthorizationResult authResult =
+                posSessionAuthorizationService.authorizeClosureCancellation(session, authorizingUser);
+        if (!authResult.authorized()) {
+            // CLOSURE_NOT_STARTED is a state problem, not a permission problem — reporting it
+            // as 403 would tell a supervisor they lack rights they actually have.
+            HttpStatus status = "CLOSURE_NOT_STARTED".equals(authResult.reasonCode())
+                    ? HttpStatus.BAD_REQUEST : HttpStatus.FORBIDDEN;
+            throw new ResponseStatusException(status, authResult.message());
+        }
+
+        String previousStartedBy = session.getClosingStartedBy();
+        String previousStartedAt = String.valueOf(session.getClosingStartedAt());
+
+        session.setClosingStartedAt(null);
+        session.setClosingStartedBy(null);
+        PosSession saved = repo.save(session);
+
+        auditService.logSessionClosureCancelled(saved.getId(), saved.getTerminalId(), saved.getBranchId(),
+                previousStartedBy, previousStartedAt, reason);
+        return saved;
+    }
+
+    /** Overload for callers with no supervisor credentials to hand — the logged-in user is
+     *  the one authorized, and must themselves hold a supervisor role. */
+    @Transactional
+    public PosSession cancelClosure(Long sessionId, String reason) {
+        return cancelClosure(sessionId, reason, null, null);
     }
 
     // -------------------------------------------------------------------------
@@ -876,8 +1072,14 @@ public class PosSessionService {
         if (session.getStatus() != PosSessionStatus.SUSPENDED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only SUSPENDED sessions can be resumed.");
         }
+        // Same rule as getActiveSession(): resuming is continuation, so a session from
+        // a previous Business Day cannot be brought back into normal operation.
+        businessDayContinuationGate.assertMayContinue(session);
+        // Resuming is continuation, so a session already inside its close workflow cannot
+        // be brought back into normal operation either — it can only be closed.
+        closureWorkflowGate.assertMayOperate(session);
         session.setStatus(PosSessionStatus.OPEN);
-        session.setLastActivityAt(LocalDateTime.now());
+        session.setLastActivityAt(businessDayWindowService.clock().now());
         PosSession resumed = repo.save(session);
 
         // Hosting history: resuming on the same terminal must not duplicate the open segment;
@@ -913,7 +1115,7 @@ public class PosSessionService {
 
         session.setOpenedBy(currentUser());
         session.setStatus(PosSessionStatus.OPEN);
-        session.setLastActivityAt(LocalDateTime.now());
+        session.setLastActivityAt(businessDayWindowService.clock().now());
         PosSession updated = repo.save(session);
 
         // Hosting history: takeover happens on the same terminal, so this is a no-op when a
@@ -1042,13 +1244,17 @@ public class PosSessionService {
     /** Touch lastActivityAt — called by the sales/payment path to reset the idle clock. */
     @Transactional
     public void touchActivity(Long sessionId) {
-        repo.touchLastActivity(sessionId, LocalDateTime.now());
+        repo.touchLastActivity(sessionId, businessDayWindowService.clock().now());
     }
 
-    private String buildZReportSnapshot(PosSession s, BigDecimal expectedCash, BigDecimal closingCash) {
+    /** @param closedAt the close timestamp already captured by the caller — deliberately a
+     *  parameter rather than a second clock read, so the snapshot, session.closedAt and the
+     *  duration all describe one instant of one operation. */
+    private String buildZReportSnapshot(PosSession s, BigDecimal expectedCash, BigDecimal closingCash,
+                                        LocalDateTime closedAt) {
         return "{\"sessionId\":" + s.getId()
                 + ",\"terminalId\":\"" + safe(s.getTerminalId()) + "\""
-                + ",\"closedAt\":\"" + LocalDateTime.now() + "\""
+                + ",\"closedAt\":\"" + closedAt + "\""
                 + ",\"closedBy\":\"" + safe(currentUser()) + "\""
                 + ",\"openingCash\":" + nz(s.getOpeningCash())
                 + ",\"totalSales\":" + nz(s.getTotalSales())
@@ -1097,6 +1303,15 @@ public class PosSessionService {
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add cash movement to a closed session.");
         }
+        // Cash movements are normal session operation — refused on a session that
+        // belongs to a previous Business Day (the drawer's remaining legitimate
+        // action is closing the session, which is not gated here).
+        businessDayContinuationGate.assertMayContinue(session);
+        // Likewise refused once closure has been started: a drop/payout added mid-closure
+        // would move the drawer away from the figure the cashier is being counted against.
+        // (Generating an X-Report does NOT trigger this — only the explicit Close Session
+        // action does, so a mid-shift report leaves cash movements working normally.)
+        closureWorkflowGate.assertMayOperate(session);
 
         PosCashMovementType type;
         try {
@@ -1126,7 +1341,7 @@ public class PosSessionService {
         movement.setReference(reference);
         movement.setPerformedBy(currentUser());
         movement.setPerformedByUserId(sessionOwnershipService.currentPrincipalUserId());
-        movement.setPerformedAt(LocalDateTime.now());
+        movement.setPerformedAt(businessDayWindowService.clock().now());
         movement.setStatus(PosCashMovementStatus.ACTIVE);
         movement.setBusinessDate(session.getSessionDate());
         movement.setBranchId(session.getBranchId());
@@ -1199,6 +1414,19 @@ public class PosSessionService {
                                        com.billbull.backend.pos.checkout.PosPaymentPlan plan) {
         if (sessionId == null) return;
 
+        // Race guard, and the last line of defence for the close-workflow rule: this is the
+        // point inside the checkout transaction where a sale is actually attached to the
+        // session, so it is where the session's *current* state has to be re-read. The
+        // controller checks the same gate up front, but a cashier who presses Checkout at
+        // the same moment the X-Report is generated would slip through a check made only
+        // there. Costs one read on a row this transaction is about to touch anyway.
+        //
+        // findById, not getById: this method is deliberately tolerant of a missing session
+        // (the totals update below is a no-op UPDATE in that case, and historical replay
+        // relies on it), so the gate must not be the thing that turns an absent row into a
+        // 404. A row that isn't there cannot be in a close workflow.
+        repo.findById(sessionId).ifPresent(closureWorkflowGate::assertMayOperate);
+
         BigDecimal total = nz(invoice.getInvoiceTotal());
 
         BigDecimal cashDelta   = BigDecimal.ZERO;
@@ -1244,7 +1472,7 @@ public class PosSessionService {
         // Atomic UPDATE — no SELECT, no optimistic lock, no hot-row contention.
         repo.incrementSessionTotals(sessionId, total, cashDelta, cardDelta, creditDelta, mixedDelta, onlineDelta, voidDelta);
         // Reset the idle clock so a cashier actively ringing sales is never auto-suspended.
-        repo.touchLastActivity(sessionId, LocalDateTime.now());
+        repo.touchLastActivity(sessionId, businessDayWindowService.clock().now());
     }
 
     /** Backward-compatible overload for callers with no settlement plan to hand. */
@@ -1274,7 +1502,7 @@ public class PosSessionService {
     public Map<String, Object> generateXReport(Long sessionId) {
         PosSession session = getById(sessionId);
         if (session.getStatus() == PosSessionStatus.OPEN && session.getXReportGeneratedAt() == null) {
-            LocalDateTime generatedAt = LocalDateTime.now();
+            LocalDateTime generatedAt = businessDayWindowService.clock().now();
             String generatedBy = currentUser();
             String generatedByDisplayName = resolveDisplayName(generatedBy);
             session.setXReportGeneratedAt(generatedAt);
@@ -1891,7 +2119,7 @@ public class PosSessionService {
         dayClose.setCloseDate(date);
         dayClose.setClosedBy(currentUser());
         dayClose.setClosedByDisplayName(resolveDisplayName(dayClose.getClosedBy()));
-        dayClose.setClosedAt(LocalDateTime.now());
+        dayClose.setClosedAt(businessDayWindowService.clock().now());
         dayClose.setBranchName(branch.getName());
         dayClose.setBranchCode(branch.getCode());
         dayClose.setReportVersion("1.0");
@@ -2271,6 +2499,12 @@ public class PosSessionService {
         info.put("closedByDisplayName", s.getClosedByDisplayName() != null
                 ? s.getClosedByDisplayName() : resolveDisplayName(s.getClosedBy()));
         info.put("branch", s.getBranchName());
+        // The Business Day this session belongs to — its immutable tradingDate, falling back
+        // to the legacy sessionDate bucket. Resolved through the same helper the continuation
+        // gate uses so the session-specific X-Report can render the session's own Business
+        // Date instead of whatever day the screen happens to be opened on.
+        info.put("businessDate", com.billbull.backend.pos.businessdate.BusinessDayContinuationGate
+                .sessionBusinessDay(s));
         info.put("device", deviceName != null ? deviceName : s.getTerminalId());
         info.put("deviceInfo", deviceInfo);
         info.put("shift", deriveShift(s.getOpenedAt()));

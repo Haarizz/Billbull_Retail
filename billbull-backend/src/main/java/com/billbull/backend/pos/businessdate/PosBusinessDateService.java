@@ -18,10 +18,17 @@ public class PosBusinessDateService {
 
     private final PosBusinessDateRepository repo;
     private final PosDayCloseRepository dayCloseRepository;
+    /** The one Business Day clock (see {@link BusinessDayClock}). Seeding and the
+     *  "when was this advanced" stamp are Business Day facts, so they must read the
+     *  configured Business Day timezone rather than the JVM default — a host in UTC
+     *  seeding an Asia/Kolkata branch at 03:00 local would otherwise seed yesterday. */
+    private final BusinessDayClock clock;
 
-    public PosBusinessDateService(PosBusinessDateRepository repo, PosDayCloseRepository dayCloseRepository) {
+    public PosBusinessDateService(PosBusinessDateRepository repo, PosDayCloseRepository dayCloseRepository,
+                                  BusinessDayClock clock) {
         this.repo = repo;
         this.dayCloseRepository = dayCloseRepository;
+        this.clock = clock;
     }
 
     /** Returns the branch's current business date, seeding a row at today's calendar
@@ -36,7 +43,7 @@ public class PosBusinessDateService {
     private LocalDate seed(Long branchId) {
         PosBusinessDate bd = new PosBusinessDate();
         bd.setBranchId(branchId);
-        bd.setCurrentBusinessDate(LocalDate.now());
+        bd.setCurrentBusinessDate(clock.now().toLocalDate());
         repo.save(bd);
         return bd.getCurrentBusinessDate();
     }
@@ -50,11 +57,11 @@ public class PosBusinessDateService {
         PosBusinessDate bd = repo.findByBranchId(branchId).orElseGet(() -> {
             PosBusinessDate fresh = new PosBusinessDate();
             fresh.setBranchId(branchId);
-            fresh.setCurrentBusinessDate(LocalDate.now());
+            fresh.setCurrentBusinessDate(clock.now().toLocalDate());
             return fresh;
         });
         bd.setCurrentBusinessDate(bd.getCurrentBusinessDate().plusDays(1));
-        bd.setLastAdvancedAt(LocalDateTime.now());
+        bd.setLastAdvancedAt(clock.now());
         bd.setLastAdvancedBy(actor);
         repo.save(bd);
     }

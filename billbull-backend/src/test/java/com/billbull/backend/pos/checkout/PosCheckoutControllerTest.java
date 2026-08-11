@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -19,6 +20,7 @@ import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -71,6 +73,24 @@ class PosCheckoutControllerTest {
     @Mock private PosSettingsService posSettingsService;
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
+    /** Mocked to a no-op by default: these tests cover pricing/payment behavior, and
+     *  a mocked gate simply allows. Business Day closure enforcement has its own
+     *  dedicated coverage in {@code BusinessDayCheckoutGateTest}. */
+    @Mock private com.billbull.backend.pos.businessdate.BusinessDayCheckoutGate businessDayCheckoutGate;
+    /** Continuation gate — mocked to a no-op here; the previous-Business-Day rule
+     *  itself has dedicated coverage in {@code BusinessDayContinuationGateTest}. */
+    @Mock private com.billbull.backend.pos.businessdate.BusinessDayContinuationGate businessDayContinuationGate;
+    /** Close-workflow gate — a REAL instance, deliberately not a mock: it is a pure,
+     *  dependency-free predicate over the session, so mocking it would only hide whether
+     *  these checkouts are gated. Sessions here have no X-Report, so it is a no-op.
+     *  Dedicated coverage lives in PosSessionServiceTest. */
+    @org.mockito.Spy private com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate =
+            new com.billbull.backend.pos.session.PosSessionClosureWorkflowGate();
+    /** A REAL clock, deliberately not a mock, and deliberately on a zone that is not the
+     *  JVM default: these tests must exercise the same Business Day timezone indirection
+     *  production uses. See PosCheckoutBusinessDateTest for the date-correctness assertions. */
+    @org.mockito.Spy private com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock =
+            new com.billbull.backend.pos.businessdate.BusinessDayClock("Asia/Kolkata");
     /** Real instance, not a mock: the resolver is pure logic and these tests assert on the
      *  payment legs/labels it produces from the legacy request fields. */
     @org.mockito.Spy private PosPaymentAllocationResolver allocationResolver = new PosPaymentAllocationResolver();
@@ -141,7 +161,10 @@ class PosCheckoutControllerTest {
 
         var resp = controller.checkout(req);
 
-        assertEquals(SalesInvoiceStatus.PAID, resp.getBody().getStatus());
+        // checkout() now returns ResponseEntity<?> because a Business-Day-closed
+        // refusal carries a different body type than the invoice — the success path's
+        // body is unchanged.
+        assertEquals(SalesInvoiceStatus.PAID, ((SalesInvoice) resp.getBody()).getStatus());
         // No new invoice, no status change, no payment, no QR write on replay.
         verify(invoiceService, never()).save(any());
         verify(invoiceService, never()).updateStatus(anyLong(), any());
@@ -506,5 +529,178 @@ class PosCheckoutControllerTest {
         // Customer Advance is a customer-ledger operation, not a checkout tender — a terminal
         // must not discover it here and offer it as a payment button.
         assertTrue(!caps.getSupportedAllocationTypes().contains("ADVANCE"));
+    }
+
+    // ---------------------------------------------------------------------
+    // Business Day closure: selling stops, and the ONLY way through is the
+    // existing per-transaction supervisor authorization.
+    // ---------------------------------------------------------------------
+
+    /** Makes the Business Day gate refuse, as it does once the extension has expired. */
+    private void businessDayIsClosed() {
+        com.billbull.backend.pos.businessdate.BusinessDayClosedResponse closed =
+                new com.billbull.backend.pos.businessdate.BusinessDayClosedResponse();
+        closed.setTradingDate(LocalDate.of(2026, 8, 10));
+        closed.setClosedAt(LocalDateTime.of(2026, 8, 10, 23, 0));
+        closed.setNextStartAt(LocalDateTime.of(2026, 8, 11, 9, 0));
+        doThrow(new com.billbull.backend.pos.businessdate.BusinessDayClosedException(closed))
+                .when(businessDayCheckoutGate).assertCheckoutAllowed(any());
+    }
+
+    private PosCheckoutRequest simpleCashRequest() {
+        PosCheckoutRequest req = new PosCheckoutRequest();
+        req.setBranchId(1L);
+        req.setSessionId(9L);
+        req.setTerminalId("T1");
+        req.setPaymentMode("Cash");
+        req.setAmountTendered(100.0);
+        PosCheckoutRequest.PosCheckoutItem item = new PosCheckoutRequest.PosCheckoutItem();
+        item.setItemCode("X");
+        item.setItemName("ITEM");
+        item.setQuantity(1);
+        item.setPrice(100.0);
+        req.setItems(List.of(item));
+        return req;
+    }
+
+    @Test
+    void checkoutAfterBusinessDayClosureIsRefusedWithoutSupervisorAuthorization() {
+        businessDayIsClosed();
+
+        var resp = controller.checkout(simpleCashRequest());
+
+        assertEquals(423, resp.getStatusCode().value());
+        var body = (com.billbull.backend.pos.businessdate.BusinessDayClosedResponse) resp.getBody();
+        // The POS is told a supervisor can release THIS transaction, so it can raise
+        // the existing authorization dialog rather than present a dead end.
+        assertTrue(body.isSupervisorAuthorizationAvailable());
+        // Nothing was created: a refused checkout must leave no stranded invoice.
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void supervisorPinReleasesExactlyOnePendingCheckoutAfterClosure() {
+        businessDayIsClosed();
+        when(posSettingsService.verifyPin("4321")).thenReturn(true);
+
+        SalesInvoice draft = new SalesInvoice();
+        draft.setId(42L);
+        draft.setInvoiceNumber("POS-1");
+        draft.setStatus(SalesInvoiceStatus.DRAFT);
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(42L)).thenReturn(draft);
+
+        PosCheckoutRequest req = simpleCashRequest();
+        req.setSupervisorOverridePin("4321");
+
+        var resp = controller.checkout(req);
+
+        assertEquals(200, resp.getStatusCode().value());
+        // The release is audited — a sale rung up after closure must never be
+        // indistinguishable from one rung up during trading.
+        verify(auditService).logBusinessDayClosedCheckoutAuthorized(
+                eq(1L), eq(9L), eq("T1"), eq("2026-08-10"), eq("2026-08-10T23:00"));
+    }
+
+    @Test
+    void aWrongSupervisorPinDoesNotReleaseTheCheckout() {
+        businessDayIsClosed();
+        when(posSettingsService.verifyPin("0000")).thenReturn(false);
+
+        PosCheckoutRequest req = simpleCashRequest();
+        req.setSupervisorOverridePin("0000");
+
+        assertEquals(423, controller.checkout(req).getStatusCode().value());
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void checkoutOnAPreviousBusinessDaySessionIsRefusedEvenWithSupervisorAuthorization() {
+        // The one-sale supervisor authorization releases a sale on a *closed current*
+        // Business Day. It must never be spendable to keep selling on a session that
+        // belongs to an *earlier* Business Day whose Day Close is still outstanding.
+        businessDayIsClosed();
+        lenient().when(posSettingsService.verifyPin("4321")).thenReturn(true);
+        com.billbull.backend.pos.session.PosSession stale = new com.billbull.backend.pos.session.PosSession();
+        stale.setId(9L);
+        when(sessionService.getById(9L)).thenReturn(stale);
+        org.mockito.Mockito.doThrow(new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.CONFLICT, "PREVIOUS_DAY_SESSION_OPEN: blocked"))
+                .when(businessDayContinuationGate).assertMayContinue(stale);
+
+        PosCheckoutRequest req = simpleCashRequest();
+        req.setSupervisorOverridePin("4321");
+
+        org.springframework.web.server.ResponseStatusException ex = assertThrows(
+                org.springframework.web.server.ResponseStatusException.class, () -> controller.checkout(req));
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void checkoutOnASessionInTheClosureWorkflowIsRefusedEvenWithSupervisorAuthorization() {
+        // Same reasoning as the previous-Business-Day case above: the one-sale supervisor
+        // authorization releases a sale against a closed Business Day, it is not a licence
+        // to add sales to a session an operator has already started closing.
+        businessDayIsClosed();
+        lenient().when(posSettingsService.verifyPin("4321")).thenReturn(true);
+        com.billbull.backend.pos.session.PosSession closing = new com.billbull.backend.pos.session.PosSession();
+        closing.setId(9L);
+        closing.setTerminalId("T1");
+        closing.setStatus(com.billbull.backend.pos.session.PosSessionStatus.OPEN);
+        closing.setClosingStartedAt(java.time.LocalDateTime.now());
+        closing.setClosingStartedBy("cashier1");
+        when(sessionService.getById(9L)).thenReturn(closing);
+
+        PosCheckoutRequest req = simpleCashRequest();
+        req.setSupervisorOverridePin("4321");
+
+        org.springframework.web.server.ResponseStatusException ex = assertThrows(
+                org.springframework.web.server.ResponseStatusException.class, () -> controller.checkout(req));
+        assertTrue(ex.getReason().contains("SESSION_CLOSING_WORKFLOW"));
+        verify(invoiceService, never()).save(any());
+    }
+
+    @Test
+    void checkoutIsUnaffectedByAnInformationalXReport() {
+        // The X-Report is a mid-shift read. A session that has produced one, but whose
+        // closure was never started, must still sell normally.
+        com.billbull.backend.pos.session.PosSession xReported = new com.billbull.backend.pos.session.PosSession();
+        xReported.setId(9L);
+        xReported.setStatus(com.billbull.backend.pos.session.PosSessionStatus.OPEN);
+        xReported.setXReportGeneratedAt(java.time.LocalDateTime.now());
+        when(sessionService.getById(9L)).thenReturn(xReported);
+
+        SalesInvoice draft = new SalesInvoice();
+        draft.setId(42L);
+        draft.setInvoiceNumber("POS-1");
+        draft.setStatus(SalesInvoiceStatus.DRAFT);
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(42L)).thenReturn(draft);
+
+        assertEquals(200, controller.checkout(simpleCashRequest()).getStatusCode().value());
+    }
+
+    @Test
+    void authorizationDoesNotCarryOverToTheNextSale() {
+        // The distinction this whole design turns on: authorizing one pending sale
+        // must NOT leave the till able to ring up another. A second checkout with no
+        // credentials of its own is refused, even immediately afterwards.
+        businessDayIsClosed();
+        when(posSettingsService.verifyPin("4321")).thenReturn(true);
+
+        SalesInvoice draft = new SalesInvoice();
+        draft.setId(42L);
+        draft.setInvoiceNumber("POS-1");
+        draft.setStatus(SalesInvoiceStatus.DRAFT);
+        when(invoiceService.save(any())).thenReturn(draft);
+        when(invoiceService.getById(42L)).thenReturn(draft);
+
+        PosCheckoutRequest authorized = simpleCashRequest();
+        authorized.setSupervisorOverridePin("4321");
+        assertEquals(200, controller.checkout(authorized).getStatusCode().value());
+
+        // Same session, same terminal, moments later — no credentials, no sale.
+        assertEquals(423, controller.checkout(simpleCashRequest()).getStatusCode().value());
     }
 }

@@ -32,15 +32,20 @@ public class PosTransactionExecutionService {
     private final PosCashMovementRepository cashMovementRepository;
     private final AccountingPeriodService accountingPeriodService;
     private final ObjectMapper objectMapper;
+    /** A correction posts into the Business Day it is executed in, so the period check and
+     *  the posting date come from the Business Day clock, not the JVM calendar date. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock clock;
 
     public PosTransactionExecutionService(PostingEngineService postingEngine,
                                           PosCashMovementRepository cashMovementRepository,
                                           AccountingPeriodService accountingPeriodService,
-                                          ObjectMapper objectMapper) {
+                                          ObjectMapper objectMapper,
+                                          com.billbull.backend.pos.businessdate.BusinessDayClock clock) {
         this.postingEngine = postingEngine;
         this.cashMovementRepository = cashMovementRepository;
         this.accountingPeriodService = accountingPeriodService;
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     @SuppressWarnings("unchecked")
@@ -55,7 +60,7 @@ public class PosTransactionExecutionService {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void executeCorrection(PosTransactionCorrection c) {
-        LocalDate date = LocalDate.now();
+        LocalDate date = clock.now().toLocalDate();
 
         try {
             accountingPeriodService.assertOpen(date);

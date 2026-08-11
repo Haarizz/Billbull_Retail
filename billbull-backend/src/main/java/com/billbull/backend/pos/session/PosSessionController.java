@@ -82,6 +82,14 @@ public class PosSessionController {
             // the JSON body shape for the success path above is unchanged, this only adds a new
             // structured 409 body for a case the pre-Phase-7 API never detected at all.
             return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getResponse());
+        } catch (com.billbull.backend.pos.businessdate.BusinessDayClosedException ex) {
+            // The Business Day's extension period has expired. 423 LOCKED rather than
+            // 409 CONFLICT: nothing about the request conflicts with server state and
+            // retrying differently cannot help — the resource is temporarily locked
+            // until the next Business Day starts. Keeping it off 409 also means the
+            // POS's existing session-conflict handling does not mistake a scheduled
+            // closure for a terminal/session collision.
+            return ResponseEntity.status(HttpStatus.LOCKED).body(ex.getResponse());
         }
     }
 
@@ -156,6 +164,47 @@ public class PosSessionController {
         return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson,
                 cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
                 closureAuthToken));
+    }
+
+    /**
+     * Starts the closure workflow — the backend half of the dashboard's "Close Session"
+     * action. The session stays OPEN; what changes is that normal POS work on it is now
+     * refused until it is closed (or a supervisor cancels the closure).
+     *
+     * <p>Called only from that explicit action. The X-Report tile/view must never call it:
+     * an X-Report is informational and must leave the till fully operational.
+     *
+     * <p>Idempotent — a repeated call returns the existing closure state unchanged.
+     */
+    @PostMapping("/{id}/begin-closure")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSession> beginClosure(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body) {
+        String closureAuthToken = body != null ? (String) body.get("closureAuthToken") : null;
+        return ResponseEntity.ok(service.beginClosure(id, closureAuthToken));
+    }
+
+    /**
+     * Cancels a started closure workflow, returning the session to normal operation.
+     * Supervisor-only — see {@code PosSessionAuthorizationService#authorizeClosureCancellation};
+     * owning the session is deliberately not sufficient, or a cashier told to close out could
+     * simply put the till back into service.
+     *
+     * <p>Optional {@code usernameOrEmail}/{@code password} let a supervisor authorize at a
+     * till the cashier is logged into, verified through the same credential service the
+     * Session Owner Verification modal uses. Omit them when the supervisor is themselves the
+     * logged-in user.
+     */
+    @PostMapping("/{id}/cancel-closure")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosSession> cancelClosure(
+            @PathVariable Long id,
+            @RequestBody(required = false) Map<String, Object> body) {
+        String reason = body != null ? (String) body.get("reason") : null;
+        String usernameOrEmail = body != null ? (String) body.get("usernameOrEmail") : null;
+        String password = body != null ? (String) body.get("password") : null;
+        return ResponseEntity.ok(service.cancelClosure(id, reason, usernameOrEmail, password));
     }
 
     @PostMapping("/{id}/authorize-closure")

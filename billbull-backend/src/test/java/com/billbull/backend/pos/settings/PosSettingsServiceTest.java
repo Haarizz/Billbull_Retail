@@ -365,6 +365,99 @@ class PosSettingsServiceTest {
         assertEquals(5, saved.getTerminalArchiveAfterDays());
     }
 
+    // ── Business Day window (operating hours + extension) ───────────────────
+    // The extension is the one field of the four that used to be dropped by the
+    // update branch of the upsert, so a branch could never move off its stored value.
+
+    private PosSettings businessDay(Long branchId, String start, String end, Integer extensionMinutes) {
+        PosSettings s = new PosSettings();
+        s.setBranchId(branchId);
+        s.setOperatingHoursEnabled(true);
+        s.setOperatingStartTime(java.time.LocalTime.parse(start));
+        s.setOperatingEndTime(java.time.LocalTime.parse(end));
+        s.setBusinessDayExtensionMinutes(extensionMinutes);
+        return s;
+    }
+
+    @Test
+    void businessDayExtensionPersistsThroughUpsertOnExistingBranch() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 0);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings saved = service.save(businessDay(1L, "09:00", "21:00", 120));
+
+        ArgumentCaptor<PosSettings> captor = ArgumentCaptor.forClass(PosSettings.class);
+        verify(repo).save(captor.capture());
+        assertEquals(120, captor.getValue().getBusinessDayExtensionMinutes(), "repository must receive the new extension");
+        assertEquals(120, saved.getBusinessDayExtensionMinutes(), "response must carry the new extension");
+    }
+
+    @Test
+    void businessDayExtensionCanBeSetBackToZero() {
+        // Zero is a legitimate configured value — "closes exactly at the Scheduled End Time" —
+        // not an absent field, so it must overwrite a previously configured extension.
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 120);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings saved = service.save(businessDay(1L, "09:00", "21:00", 0));
+
+        assertEquals(0, saved.getBusinessDayExtensionMinutes());
+    }
+
+    @Test
+    void explicitNullBusinessDayExtensionPreservesTheConfiguredValue() {
+        // A JSON field omitted from the body deserializes to the entity's own default of 0
+        // (indistinguishable from an explicit 0), so "absent" is not detectable there — the
+        // same contract operatingStartTime/EndTime already have, and every real caller
+        // spreads the full settings object loaded from GET. An explicit null IS detectable,
+        // and must not blank a configured value into a NOT NULL column.
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 120);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings incoming = businessDay(1L, "09:00", "21:00", null);
+
+        PosSettings saved = service.save(incoming);
+
+        assertEquals(120, saved.getBusinessDayExtensionMinutes(), "null extension must not blank the stored value");
+    }
+
+    @Test
+    void businessDayWindowPersistsAllFourFieldsThroughUpsert() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 0);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings saved = service.save(businessDay(1L, "10:00", "22:00", 120));
+
+        assertTrue(saved.getOperatingHoursEnabled());
+        assertEquals(java.time.LocalTime.of(10, 0), saved.getOperatingStartTime());
+        assertEquals(java.time.LocalTime.of(22, 0), saved.getOperatingEndTime());
+        assertEquals(120, saved.getBusinessDayExtensionMinutes());
+    }
+
+    @Test
+    void savedBusinessDayWindowDrivesScheduledEndAndClosure() {
+        // Ties the persisted settings to the window arithmetic that consumes them:
+        // 10:00 -> 22:00 with a 120-minute extension must close at 00:00 the next day.
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 0);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings saved = service.save(businessDay(1L, "10:00", "22:00", 120));
+
+        var window = com.billbull.backend.pos.businessdate.PosOperatingHoursCalculator.resolveWindow(
+                java.time.LocalDateTime.of(2026, 8, 11, 23, 0),
+                com.billbull.backend.pos.businessdate.BusinessDaySettings.from(saved));
+
+        assertEquals(java.time.LocalDate.of(2026, 8, 11), window.tradingDate());
+        assertEquals(java.time.LocalDateTime.of(2026, 8, 11, 22, 0), window.scheduledEnd());
+        assertEquals(java.time.LocalDateTime.of(2026, 8, 12, 0, 0), window.closureAt());
+        assertEquals(com.billbull.backend.pos.businessdate.BusinessDayPhase.EXTENSION, window.phase());
+    }
+
     @Test
     void validConfigPersistsAllFourFieldsThroughUpsert() {
         PosSettings existing = new PosSettings();

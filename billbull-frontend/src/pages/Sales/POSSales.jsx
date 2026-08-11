@@ -27,7 +27,8 @@ import {
   registerPosTerminal, getPosSettings, getPosSettingsForBranch, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
   verifySessionClosurePermission,
   getPosSessionById,
-  closePosSession, addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
+  closePosSession, beginPosSessionClosure, cancelPosSessionClosure,
+  addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
@@ -50,6 +51,7 @@ import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewM
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
+import { isSessionUsableForSelling, resolveSessionBusinessDate, sessionBusinessDay } from '../../utils/posSessionBusinessDay';
 import {
   Calculator,
   ShoppingCart,
@@ -185,6 +187,8 @@ import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
+import BusinessDayStatusBanner from '../../components/pos/BusinessDayStatusBanner';
+import { BusinessDayStatusProvider } from '../../components/pos/BusinessDayStatusContext';
 import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
@@ -429,10 +433,41 @@ export default function POSSales() {
   const [sessionInvalidated, setSessionInvalidated] = useState(false);
   const [sessionInvalidReason, setSessionInvalidReason] = useState(null);
 
+  // Branch's currently resolved Business Day (day-status). Used ONLY to decide whether a
+  // session belongs to an earlier Business Day — never to label a session's own date.
+  const [currentBusinessDay, setCurrentBusinessDay] = useState(null);
+  // The session the backend has refused for continuation (PREVIOUS_DAY_SESSION_OPEN), kept
+  // with the server's own wording so re-raising the block never invents a second message.
+  // Survives navigating to the closure screen and back: loading a stale session *for
+  // closure* must not make it usable for selling again.
+  const [prevDayBlockedSessionId, setPrevDayBlockedSessionId] = useState(null);
+  const [prevDayBlockedMsg, setPrevDayBlockedMsg] = useState(null);
+
   // True when this terminal has a live POS session. Session-bound features
   // (X/Z report, cash drop/out, customer management) are locked until this is
   // true and re-enable automatically — no refresh — when a session is opened.
   const isSessionActive = currentSession?.status === 'active' || currentSession?.status === 'OPEN';
+  // An operator explicitly started this session's closure ("Close Session"), so it may no
+  // longer be used for selling — only closed, or its closure cancelled by a supervisor.
+  // Backed by the server's `awaitingClosure` flag (closingStartedAt), and enforced
+  // server-side regardless of what this renders (PosSessionClosureWorkflowGate); hiding the
+  // tile is a courtesy, not the control. Note this is NOT tied to the X-Report: generating
+  // one is informational and leaves the till fully operational.
+  const sessionAwaitingClosure = isSessionActive && !!currentSession?.awaitingClosure;
+  // The session belongs to an earlier Business Day, so the backend's
+  // BusinessDayContinuationGate will refuse every continuation call on it. It stays loaded
+  // (the dashboard and the X-Report / Close Session screen both need it) but it is NOT a
+  // usable selling session — "existing session" and "usable active POS session" are
+  // different concepts. Enforced server-side regardless of what this renders.
+  const sessionBlockedByPreviousDay = !!currentSession
+    && !isSessionUsableForSelling(currentSession, {
+      currentBusinessDay,
+      blockedSessionId: prevDayBlockedSessionId,
+    })
+    && (currentSession.status === 'OPEN' || currentSession.status === 'SUSPENDED' || currentSession.status === 'active');
+  // Selling is only offered for a live session that is NOT mid-closure and NOT stranded on
+  // a previous Business Day.
+  const canContinueSelling = isSessionActive && !sessionAwaitingClosure && !sessionBlockedByPreviousDay;
   const { hasAnyRole } = usePermissions();
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
   const [posSettings, setPosSettings] = useState(null);
@@ -600,6 +635,20 @@ export default function POSSales() {
   const [showStartSessionDialog, setShowStartSessionDialog] = useState(false);
   const [prevDaySessionOpenMsg, setPrevDaySessionOpenMsg] = useState(null);
   const [prevDaySessionOpenId, setPrevDaySessionOpenId] = useState(null);
+  // "Complete Session Closure" block — raised whenever the backend refuses an operation
+  // with SESSION_CLOSING_WORKFLOW (session mid-closure). Deliberately separate state from
+  // the previous-Business-Day block above: two different conditions, two different
+  // remedies, never one modal wording both.
+  const [closureRequiredMsg, setClosureRequiredMsg] = useState(null);
+  const [closureRequiredId, setClosureRequiredId] = useState(null);
+  // Supervisor-authorized "Cancel Closure". Credentials are verified server-side against a
+  // supervisor role — this dialog only collects them, it never decides anything.
+  const [showCancelClosureDialog, setShowCancelClosureDialog] = useState(false);
+  const [cancelClosureUsername, setCancelClosureUsername] = useState('');
+  const [cancelClosurePassword, setCancelClosurePassword] = useState('');
+  const [cancelClosureReason, setCancelClosureReason] = useState('');
+  const [cancelClosureError, setCancelClosureError] = useState('');
+  const [cancelClosureLoading, setCancelClosureLoading] = useState(false);
   // Session Roaming Phase 11 — discovery response from openSession's Phase 7 structured 409.
   const [discoveryResponse, setDiscoveryResponse] = useState(null);
   const [discoveryBusy, setDiscoveryBusy] = useState(false);
@@ -1973,6 +2022,75 @@ export default function POSSales() {
   // Invoked on initial POS mount and again whenever the active branch changes, so a live branch
   // switch reconnects the correct branch's terminal/session immediately rather than only on the
   // next full remount.
+  /** Raise the single "Previous Day Not Closed" flow for every path that can hit it
+   *  (Start Session, Continue Session, day-status at mount). The server message is
+   *  the only copy of the wording; the session id is read out of it so
+   *  "Go to Close Session" lands on that exact session. */
+  const showPreviousDayBlock = useCallback((serverMsg, knownSessionId = null) => {
+    const cleanMsg = String(serverMsg).replace('PREVIOUS_DAY_SESSION_OPEN: ', '');
+    // Accept both message shapes the backend produces: "Session #67" and "Session ID : 67".
+    const idMatch = cleanMsg.match(/Session (?:#|ID\s*:\s*)(\d+)/);
+    const blockedId = knownSessionId ?? (idMatch ? Number(idMatch[1]) : null);
+    setPrevDaySessionOpenId(blockedId);
+    setPrevDaySessionOpenMsg(cleanMsg);
+    // Remembered beyond the modal: the session may legitimately be loaded afterwards for
+    // its closure workflow, and that must not turn it back into a sellable session.
+    setPrevDayBlockedSessionId(blockedId);
+    setPrevDayBlockedMsg(cleanMsg);
+  }, []);
+
+  /** Raise the single "Complete Session Closure" flow for every path that can hit it
+   *  (Continue Session at mount, checkout, cash movement). Same discipline as
+   *  showPreviousDayBlock: the server message is the only copy of the wording, and the
+   *  session id is read out of it so "Go to Close Session" lands on that exact session. */
+  const showClosureRequiredBlock = useCallback((serverMsg, knownSessionId = null) => {
+    const cleanMsg = String(serverMsg).replace('SESSION_CLOSING_WORKFLOW: ', '');
+    const idMatch = cleanMsg.match(/Session (?:#|ID\s*:\s*)(\d+)/);
+    setClosureRequiredId(knownSessionId ?? (idMatch ? Number(idMatch[1]) : null));
+    setClosureRequiredMsg(cleanMsg);
+  }, []);
+
+  const openCancelClosureDialog = () => {
+    setCancelClosureUsername('');
+    setCancelClosurePassword('');
+    setCancelClosureReason('');
+    setCancelClosureError('');
+    setShowCancelClosureDialog(true);
+  };
+
+  /** Cancel a started closure. Supervisor authorization is enforced by the backend; a
+   *  non-supervisor's credentials come back 403 and the session stays locked. */
+  const handleCancelClosureSubmit = async () => {
+    const targetId = currentSession?.id;
+    if (!targetId) return;
+    setCancelClosureLoading(true);
+    setCancelClosureError('');
+    try {
+      const updated = await cancelPosSessionClosure(targetId, {
+        reason: cancelClosureReason || undefined,
+        usernameOrEmail: cancelClosureUsername || undefined,
+        password: cancelClosurePassword || undefined,
+      });
+      setCurrentSession(prev => (prev?.id === targetId ? { ...prev, ...updated } : prev));
+      setShowCancelClosureDialog(false);
+      setCancelClosureUsername('');
+      setCancelClosurePassword('');
+      setCancelClosureReason('');
+    } catch (err) {
+      setCancelClosureError(err?.response?.data?.message || err.message
+        || 'Could not cancel the closure. A supervisor must authorize this.');
+    } finally {
+      setCancelClosureLoading(false);
+    }
+  };
+
+  /** True when an axios error is the backend's close-workflow refusal. */
+  const isClosureWorkflowError = (err) => {
+    const msg = err?.response?.data?.message || err?.response?.data;
+    return err?.response?.status === 409 && typeof msg === 'string'
+      && msg.includes('SESSION_CLOSING_WORKFLOW');
+  };
+
   const registerTerminalAndResumeSession = useCallback(async () => {
     const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
     const activeBranchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL' ? activeBranchIdRaw : 'default';
@@ -2012,8 +2130,33 @@ export default function POSSales() {
         setCurrentSession(active);
       }
     } catch (err) {
-      if (err.response?.status === 409 && posTerminalMountedRef.current) {
-        setTerminalLockedBy(err.response?.data?.message || err.response?.data || 'Another active cashier');
+      const activeErrMsg = err?.response?.data?.message || err?.response?.data;
+      if (err.response?.status === 409 && typeof activeErrMsg === 'string'
+          && activeErrMsg.includes('PREVIOUS_DAY_SESSION_OPEN') && posTerminalMountedRef.current) {
+        // The existing session belongs to a previous Business Day, so the backend
+        // refuses to hand it back for "Continue Session". Same blocking flow as
+        // Start Session — never a second, differently-worded warning. The refused session
+        // is never adopted as the active selling session.
+        setCurrentSession(null);
+        showPreviousDayBlock(activeErrMsg);
+      } else if (isClosureWorkflowError(err) && posTerminalMountedRef.current) {
+        // The session has entered its close workflow, so the backend refuses to hand it
+        // back for "Continue Session". Load it through the ungated by-id endpoint anyway:
+        // the dashboard needs the session to render "Close Session Required", and the
+        // X-Report / Close Session screen needs it to finish the closure. This is the
+        // whole point of the session staying OPEN in the database.
+        const closingId = Number(String(activeErrMsg).match(/Session ID\s*:\s*(\d+)/)?.[1]) || null;
+        if (closingId) {
+          try {
+            const closingSession = await getPosSessionById(closingId);
+            if (posTerminalMountedRef.current) setCurrentSession(closingSession);
+          } catch {
+            // Non-fatal — the block modal below still routes the cashier to closure.
+          }
+        }
+        if (posTerminalMountedRef.current) showClosureRequiredBlock(activeErrMsg, closingId);
+      } else if (err.response?.status === 409 && posTerminalMountedRef.current) {
+        setTerminalLockedBy(activeErrMsg || 'Another active cashier');
       }
     }
 
@@ -2024,12 +2167,26 @@ export default function POSSales() {
       const dayStatus = await getPosDayStatus(termId);
       if (posTerminalMountedRef.current) {
         setOpenSessionsBlock(dayStatus?.blocked ? dayStatus : null);
+        // Server-resolved Business Day — the same value BusinessDayContinuationGate
+        // compares against, so the dashboard can classify an already-loaded session
+        // (e.g. after a browser refresh) without a second date calculation of its own.
+        setCurrentBusinessDay(dayStatus?.candidateBusinessDay || dayStatus?.currentBusinessDate || null);
+        // Proactive form of the same rule the backend enforces on every continuation
+        // call: this terminal's existing session belongs to a previous Business Day,
+        // so raise "Previous Day Not Closed" at mount instead of waiting for the
+        // cashier to hit a refused endpoint. The message is built server-side, so the
+        // modal and the API refusal always read identically.
+        const prevDayBlock = dayStatus?.previousBusinessDaySession;
+        if (prevDayBlock?.message) {
+          setCurrentSession(null);
+          showPreviousDayBlock(prevDayBlock.message, prevDayBlock.sessionId);
+        }
       }
     } catch {
       // Non-blocking — day-status is a UX convenience layered on top of the
       // authoritative server-side guards already enforced in openSession/closeDay.
     }
-  }, []);
+  }, [showPreviousDayBlock]);
 
   // Re-run terminal/session resolution whenever the active branch changes while POS stays
   // mounted — without this, switching branches leaves the previous branch's terminal/session in
@@ -2313,7 +2470,7 @@ export default function POSSales() {
     const sess = xReportData?.session || currentSession;
     void autoPrintReportThermal(
       vm, cp,
-      { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] },
+      { branch: cp.companyName, filters: [{ label: 'Date', value: sessionBusinessDay(sess) || '—' }, { label: 'Cashier', value: sess?.openedBy || '' }] },
       `x-report:${sessId}`,
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2345,6 +2502,27 @@ export default function POSSales() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSession?.id]);
+
+  // A session that entered its close workflow can never be sitting on the selling screen —
+  // bounce back to the close screen. Covers the case where the closure was started
+  // elsewhere (another tab, a supervisor's device) while this view was already open. The
+  // backend refuses the sale regardless; this just avoids letting a cashier build a cart
+  // that cannot be settled.
+  useEffect(() => {
+    if (sessionAwaitingClosure && currentView === 'touch-screen') {
+      setCurrentView('x-report');
+    }
+  }, [sessionAwaitingClosure, currentView]);
+
+  // Same guarantee for a session stranded on a previous Business Day: it must never be the
+  // session behind the selling screen, however that screen was reached (stale local state,
+  // a direct navigation, or a refresh that restored the session before day-status resolved).
+  useEffect(() => {
+    if (sessionBlockedByPreviousDay && currentView === 'touch-screen') {
+      setCurrentView('dashboard');
+      if (prevDayBlockedMsg) showPreviousDayBlock(prevDayBlockedMsg, prevDayBlockedSessionId);
+    }
+  }, [sessionBlockedByPreviousDay, currentView, prevDayBlockedMsg, prevDayBlockedSessionId, showPreviousDayBlock]);
 
   // Auto-load terminals when console Terminals tab is active and terminal becomes available
   useEffect(() => {
@@ -2592,16 +2770,7 @@ export default function POSSales() {
       // guide the user to close it instead of starting a new day on top of it (BBQA-5.3-013).
       const serverMsg = err?.response?.data?.message || err?.response?.data;
       if (err?.response?.status === 409 && typeof serverMsg === 'string' && serverMsg.includes('PREVIOUS_DAY_SESSION_OPEN')) {
-        const cleanMsg = serverMsg.replace('PREVIOUS_DAY_SESSION_OPEN: ', '');
-        // Message is built server-side as "Session #<id> on <date> (terminal <t>) is
-        // still <status>..." (PosSessionService.openSession) — pull the id out so
-        // "Go to Close Session" can load that exact stale session instead of landing
-        // on whatever report happens to be cached (BBQA follow-up: previously this
-        // button just switched views with no session loaded, so it silently showed
-        // a stale/unrelated X-Report instead of the blocking session).
-        const idMatch = cleanMsg.match(/Session #(\d+)/);
-        setPrevDaySessionOpenId(idMatch ? Number(idMatch[1]) : null);
-        setPrevDaySessionOpenMsg(cleanMsg);
+        showPreviousDayBlock(serverMsg);
         return;
       }
 
@@ -2847,11 +3016,36 @@ export default function POSSales() {
         closureAuthGrantRef.current = response.authorizationToken
           ? { sessionId: targetSession.id, token: response.authorizationToken }
           : null;
+        // Owner verification successful — START the closure workflow before navigating.
+        // This, and only this, is what persists the closure: begin-closure stamps
+        // closingStartedAt server-side, which is what the backend gate reads to refuse
+        // further selling. Without it, walking back to the dashboard would leave the
+        // session freely sellable — the bypass this flow exists to close.
+        //
+        // Note this is NOT an X-Report call. Generating an X-Report is informational and
+        // deliberately leaves the till operational; conflating the two would lock a session
+        // the moment anyone glanced at a mid-shift report.
+        //
+        // The grant is passed so a non-owner (Day Close closing another cashier's session)
+        // is authorized by the credentials just verified. The backend verifies it without
+        // consuming it, so the close call still has it to spend.
+        try {
+          const started = await beginPosSessionClosure(targetSession.id, {
+            closureAuthToken: closureAuthGrantRef.current?.token,
+          });
+          setCurrentSession(prev => (prev?.id === targetSession.id ? { ...prev, ...started } : prev));
+        } catch (beginErr) {
+          // Do not navigate into a closure we failed to start — that is exactly the
+          // inconsistent half-state this change removes. The auth dialog stays open with
+          // the server's reason (Business Day block, not authorized, not OPEN, …).
+          setCashierAuthError(beginErr?.response?.data?.message || beginErr.message
+            || 'Could not start the closure workflow for this session.');
+          return;
+        }
         setShowCashierAuthDialog(false);
         cashierAuthTargetRef.current = null;
         setCashierAuthUsername('');
         setCashierAuthPassword('');
-        // Owner verification successful! Navigate to the X-Report / Close Session page
         setCurrentView('x-report');
       } else {
         setCashierAuthError(response.message || 'Not authorized to close this session');
@@ -5032,8 +5226,34 @@ export default function POSSales() {
       // cashier lacks the pos_price_override permission — route into the same supervisor-
       // approval dialog used at cart-add time instead of a dead-end error, so the checkout can
       // be retried with a verified PIN/password attached (see processPayment's overrideCreds).
-      if (err?.response?.status === 403 && msgStr.includes('pos_price_override')) {
+      if (isClosureWorkflowError(err)) {
+        // The session entered its close workflow (its X-Report was generated, possibly on
+        // another tab/terminal) while this sale was being rung up. There is no supervisor
+        // override for this — unlike BUSINESS_DAY_CLOSED below — because no credential can
+        // un-issue a numbered X-Report. Route the cashier to finish the closure; the cart
+        // is left intact, as on every other failure path.
+        setShowPaymentDialog(false);
+        showClosureRequiredBlock(msgStr);
+      } else if (err?.response?.status === 403 && msgStr.includes('pos_price_override')) {
         setPendingPriceOverride({ type: 'CHECKOUT' });
+        setSupervisorPinValue('');
+        setSupervisorPinEmail('');
+        setSupervisorPinError('');
+        setShowSupervisorPin(true);
+      } else if (err?.response?.status === 423
+                 && err?.response?.data?.code === 'BUSINESS_DAY_CLOSED'
+                 && err?.response?.data?.supervisorAuthorizationAvailable) {
+        // The Business Day closed while this sale was being rung up. Route into the
+        // SAME supervisor-approval dialog the price-override gate uses — retrying
+        // attaches the verified credentials to this one checkout (see processPayment's
+        // overrideCreds). Deliberately per-transaction: releasing this sale grants the
+        // till nothing afterwards, so the next checkout is refused again unless a
+        // supervisor authorizes that one too.
+        setPendingPriceOverride({
+          type: 'BUSINESS_DAY_CLOSED',
+          closedAt: err.response.data.closedAt,
+          nextStartAt: err.response.data.nextStartAt,
+        });
         setSupervisorPinValue('');
         setSupervisorPinEmail('');
         setSupervisorPinError('');
@@ -5075,6 +5295,13 @@ export default function POSSales() {
       setCashDropFeedback({ type: 'success', message: cashDropType === 'in' ? 'Cash drop recorded.' : 'Cash out recorded.' });
     } catch (err) {
       console.warn('Cash movement API error', err);
+      if (isClosureWorkflowError(err)) {
+        // Session is mid-closure — a drop/payout now would move the drawer away from the
+        // X-Report figure the cashier is about to be counted against. Route to closure.
+        setShowCashDropDialog(false);
+        showClosureRequiredBlock(err?.response?.data?.message || err?.response?.data);
+        return;
+      }
       setCashDropFeedback({ type: 'error', message: 'Failed to record cash movement.' });
     }
     setCashDropAmount('');
@@ -6165,7 +6392,17 @@ export default function POSSales() {
           className={posDashboardTileClass}
           onClick={() => {
             if (posInitLoading) return;
-            if (currentSession?.status === 'active' || currentSession?.status === 'OPEN') {
+            if (sessionBlockedByPreviousDay) {
+              // Stranded on a previous Business Day: re-raise the one existing "Previous Day
+              // Not Closed" flow (whose "Go to Close Session" routes to the closure screen)
+              // rather than opening the selling screen the backend would refuse anyway.
+              if (prevDayBlockedMsg) showPreviousDayBlock(prevDayBlockedMsg, prevDayBlockedSessionId);
+              else setCurrentView('x-report');
+            } else if (sessionAwaitingClosure) {
+              // Mid-closure: the only way out is finishing the closure, so route back to
+              // the X-Report / Close Session screen instead of the selling screen.
+              setCurrentView('x-report');
+            } else if (canContinueSelling) {
               setCurrentView('touch-screen');
             } else {
               setShowStartSessionDialog(true);
@@ -6174,33 +6411,65 @@ export default function POSSales() {
         >
           <CardHeader>
             <div className="flex items-center justify-between">
-              <div className="bg-gradient-to-r from-[#F5C742] to-[#f4d673] p-4 rounded-lg">
+              <div className={`bg-gradient-to-r ${(sessionAwaitingClosure || sessionBlockedByPreviousDay) ? 'from-amber-500 to-amber-400' : 'from-[#F5C742] to-[#f4d673]'} p-4 rounded-lg`}>
                 {posInitLoading ? (
                   <div className="h-8 w-8 border-4 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (currentSession?.status === 'active' || currentSession?.status === 'OPEN') ? (
+                ) : (sessionAwaitingClosure || sessionBlockedByPreviousDay) ? (
+                  <Lock className="h-8 w-8 text-white" />
+                ) : isSessionActive ? (
                   <Play className="h-8 w-8 text-white" />
                 ) : (
                   <Unlock className="h-8 w-8 text-white" />
                 )}
               </div>
-              {(currentSession?.status === 'active' || currentSession?.status === 'OPEN') && (
+              {sessionBlockedByPreviousDay ? (
+                <Badge className="bg-amber-500">Closure Required</Badge>
+              ) : sessionAwaitingClosure ? (
+                <Badge className="bg-amber-500">Closing</Badge>
+              ) : isSessionActive ? (
                 <Badge className="bg-green-500">Active</Badge>
-              )}
+              ) : null}
             </div>
             <CardTitle className="mt-4">
-              {posInitLoading ? 'Connecting...' : (currentSession?.status === 'active' || currentSession?.status === 'OPEN') ? 'Continue Session' : 'Start Session'}
+              {posInitLoading ? 'Connecting...'
+                : sessionBlockedByPreviousDay ? 'Previous Day Session Open'
+                : sessionAwaitingClosure ? 'Session Closure Required'
+                : isSessionActive ? 'Continue Session' : 'Start Session'}
             </CardTitle>
             <CardDescription>
-              {posInitLoading ? 'Checking terminal & session status...' : (currentSession?.status === 'active' || currentSession?.status === 'OPEN')
-                ? 'Resume your active POS session'
-                : 'Open cash drawer and start new session'}
+              {posInitLoading ? 'Checking terminal & session status...'
+                : sessionBlockedByPreviousDay
+                  ? 'This session belongs to a previous business day. Close it before selling can continue.'
+                : sessionAwaitingClosure
+                  ? 'Closure has been started for this session. Complete the session closure before continuing sales.'
+                  : isSessionActive
+                    ? 'Resume your active POS session'
+                    : 'Open cash drawer and start new session'}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {currentSession?.status === 'active' || currentSession?.status === 'OPEN' && (
+            {isSessionActive && (
               <div className="text-sm space-y-1">
                 <p className="text-gray-600">Opening Cash: {formatCurrency(currentSession.openingCash)}</p>
                 <p className="text-gray-600">Started: {currentSession.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : currentSession.startTime ? parseUTCDate(currentSession.startTime)?.toLocaleTimeString() : '—'}</p>
+                {sessionAwaitingClosure && (
+                  <>
+                    <p className="text-amber-700 font-medium">Complete Session Closure</p>
+                    <p className="text-gray-600">
+                      Closure started by {currentSession.closingStartedBy || '—'}. Sales are locked until it is completed.
+                    </p>
+                    {/* Cancelling is a supervisor decision made through the backend, never a
+                        casual button that silently unlocks selling. stopPropagation so it
+                        doesn't also trigger the card's navigate-to-closure handler. */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openCancelClosureDialog(); }}
+                      className="mt-1 text-xs underline text-slate-500 hover:text-slate-700"
+                    >
+                      Cancel Closure (supervisor)
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </CardContent>
@@ -6830,14 +7099,14 @@ export default function POSSales() {
     const vm = buildXReportViewModel();
     const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    printReportWithConfiguredPrinter(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sessionBusinessDay(sess) || '—' }, { label: 'Cashier', value: sess?.openedBy || '' }] });
   };
 
   const handleXReportPreview = () => {
     const vm = buildXReportViewModel();
     const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
-    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    const html = renderReportHtml(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sessionBusinessDay(sess) || '—' }, { label: 'Cashier', value: sess?.openedBy || '' }] });
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
   };
@@ -6848,7 +7117,7 @@ export default function POSSales() {
     const cp = reportCompanyProfile();
     const sess = xReportData?.session || currentSession;
     // PDF export always uses the A4 template.
-    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) }, { label: 'Cashier', value: sess?.openedBy || '' }] });
+    const html = generateReportA4Html(vm, cp, { branch: cp.companyName, filters: [{ label: 'Date', value: sessionBusinessDay(sess) || '—' }, { label: 'Cashier', value: sess?.openedBy || '' }] });
     const filename = `X-Report_${sess?.id ? `SESS-${String(sess.id).padStart(6, '0')}` : new Date().toISOString().slice(0, 10)}`;
     try { await downloadPdfViaServer(html, filename); } catch {
       const { downloadPdf } = await import('../../utils/printGenerator');
@@ -6870,8 +7139,8 @@ export default function POSSales() {
     await exportToExcel(rows, cols, `X-Report_${sess?.id ? `SESS-${String(sess.id).padStart(6, '0')}` : new Date().toISOString().slice(0, 10)}`, {
       companyProfile: cp,
       branch: cp.companyName,
-      dateFrom: sess?.sessionDate,
-      dateTo: sess?.sessionDate,
+      dateFrom: sessionBusinessDay(sess),
+      dateTo: sessionBusinessDay(sess),
     });
   };
 
@@ -8239,7 +8508,10 @@ export default function POSSales() {
           {(() => {
             const sess = xReportData?.session || currentSession;
             const sessionNo = sess?.id ? `SESS-${String(sess.id).padStart(9, '0')}` : '—';
-            const businessDate = sess?.sessionDate || new Date().toISOString().slice(0, 10);
+            // The SESSION's own Business/Trading Date — never the currently resolved
+            // Business Day. This screen is about the selected session, so viewing a
+            // 2026-08-10 session on 2026-08-11 must still read 2026-08-10.
+            const businessDate = resolveSessionBusinessDate(xReportData, currentSession) || '';
             const branchName = sess?.branchName || currentTerminal?.branchName || '—';
             const terminalId = sess?.terminalId || currentTerminal?.terminalId || '—';
             const cashier = sess?.openedBy || '—';
@@ -8288,7 +8560,7 @@ export default function POSSales() {
               <div className="space-y-1 text-xs">
                 {[
                   ['Session No.', xReportData?.session?.id ? `SESS-${String(xReportData.session.id).padStart(6, '0')}` : currentSession?.id ? `SESS-${String(currentSession.id).padStart(6, '0')}` : '—'],
-                  ['Business Date', xReportData?.session?.sessionDate || currentSession?.sessionDate || new Date().toLocaleDateString()],
+                  ['Business Date', resolveSessionBusinessDate(xReportData, currentSession) || '—'],
                   ['Cashier', xReportData?.session?.openedBy || currentSession?.openedBy || '—'],
                   ['Opened At', xReportData?.session?.openedAt ? parseUTCDate(xReportData.session.openedAt)?.toLocaleTimeString() : currentSession?.openedAt ? parseUTCDate(currentSession.openedAt)?.toLocaleTimeString() : '—'],
                   ['Status', xReportData?.session?.status || xReportSession?.status || 'OPEN'],
@@ -9200,6 +9472,7 @@ export default function POSSales() {
   };
 
   return (
+    <BusinessDayStatusProvider terminalId={currentTerminal?.terminalId}>
     <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
       {/* ─── TERMINAL REGISTRATION REJECTED (archived / blocked / decommissioned / maintenance) ─── */}
       {terminalRegistrationError && (() => {
@@ -9397,6 +9670,17 @@ export default function POSSales() {
           </div>
         </div>
       )}
+
+      {/* ─── BUSINESS DAY OVERLAYS (scheduled-end notice / closed) ───
+           Renders nothing at all for a branch with no Business Day Window
+           configured, which is the default. The standing status now lives in the
+           POS header chip (BusinessDayStatusChip); this only owns the blocking
+           CLOSED screen and the once-per-day extension announcement. Backend gates
+           in openSession/checkout remain the authoritative controls regardless. */}
+      <BusinessDayStatusBanner
+        openSession={currentSession}
+        onCloseSession={() => setShowCloseSessionDialog(true)}
+      />
 
       {/* ─── PREVIOUS BUSINESS DATE STILL OPEN (BLOCKS POS ENTRY) ─── */}
       {openSessionsBlock && (
@@ -9705,6 +9989,101 @@ export default function POSSales() {
       {currentView === 'sales-analytics' && renderSalesAnalytics()}
 
       {/* Previous Day Session Still Open — blocks silent continuation into a new day (BBQA-5.3-013) */}
+      {/* Supervisor-authorized Cancel Closure. Deliberately not a plain "Cancel" button:
+          un-starting a closure is what would let a cashier told to close out simply put the
+          till back into service, so it is a supervisor decision, verified server-side. */}
+      <Dialog open={showCancelClosureDialog} onOpenChange={(o) => { if (!o) setShowCancelClosureDialog(false); }}>
+        <DialogContent className="sm:max-w-md border-0 shadow-xl bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-[#1E293B] flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Cancel Session Closure
+            </DialogTitle>
+            <DialogDescription>
+              A supervisor must authorize returning this session to normal trading. The X-Report
+              and all session totals are left untouched.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 pt-1">
+            <input
+              type="text" autoComplete="off"
+              placeholder="Supervisor email or username"
+              className="w-full border rounded px-3 py-2 text-sm"
+              value={cancelClosureUsername}
+              onChange={(e) => setCancelClosureUsername(e.target.value)}
+            />
+            <input
+              type="password" autoComplete="off"
+              placeholder="Supervisor password"
+              className="w-full border rounded px-3 py-2 text-sm"
+              value={cancelClosurePassword}
+              onChange={(e) => setCancelClosurePassword(e.target.value)}
+            />
+            <input
+              type="text"
+              placeholder="Reason (recorded in the audit log)"
+              className="w-full border rounded px-3 py-2 text-sm"
+              value={cancelClosureReason}
+              onChange={(e) => setCancelClosureReason(e.target.value)}
+            />
+            {cancelClosureError && (
+              <p className="text-sm text-red-600 whitespace-pre-line">{cancelClosureError}</p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setShowCancelClosureDialog(false)}>Keep Closing</Button>
+            <Button
+              className="bg-[#327F74] hover:bg-[#286660] text-white"
+              disabled={cancelClosureLoading}
+              onClick={handleCancelClosureSubmit}
+            >
+              {cancelClosureLoading ? 'Cancelling...' : 'Cancel Closure'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Session Closure Required — the close-workflow counterpart to the "Previous Day
+          Not Closed" dialog below. Dismissing it is safe and leaves nothing inconsistent:
+          the session simply stays OPEN and still requiring closure, and every server-side
+          operation on it keeps being refused until the close succeeds or a supervisor
+          cancels it. */}
+      <Dialog open={!!closureRequiredMsg} onOpenChange={(o) => { if (!o) setClosureRequiredMsg(null); }}>
+        <DialogContent className="sm:max-w-md border-0 shadow-xl bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-[#1E293B] flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Session Closure Required
+            </DialogTitle>
+            <DialogDescription className="whitespace-pre-line">{closureRequiredMsg}</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setClosureRequiredMsg(null)}>Cancel</Button>
+            <Button
+              className="bg-[#327F74] hover:bg-[#286660] text-white"
+              onClick={async () => {
+                const sessionId = closureRequiredId;
+                setClosureRequiredMsg(null);
+                setClosureRequiredId(null);
+                setShowStartSessionDialog(false);
+                if (!sessionId) { setCurrentView('x-report'); return; }
+                try {
+                  const session = await getPosSessionById(sessionId);
+                  setCurrentSession(session);
+                  setXReportData(null);
+                  setSessionNowMs(Date.now());
+                  setCurrentView('x-report');
+                } catch (err) {
+                  alert(err?.response?.data?.message || 'Failed to load the session. Please close it manually.');
+                }
+              }}
+            >
+              Complete Session Closure
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!prevDaySessionOpenMsg} onOpenChange={(o) => { if (!o) setPrevDaySessionOpenMsg(null); }}>
         <DialogContent className="sm:max-w-md border-0 shadow-xl bg-white">
           <DialogHeader>
@@ -9712,7 +10091,9 @@ export default function POSSales() {
               <AlertTriangle className="h-5 w-5 text-amber-500" />
               Previous Day Not Closed
             </DialogTitle>
-            <DialogDescription>{prevDaySessionOpenMsg}</DialogDescription>
+            {/* Server message is line-structured (sentence, detail lines, next step) —
+                keep its line breaks so it doesn't read as one run-on paragraph. */}
+            <DialogDescription className="whitespace-pre-line">{prevDaySessionOpenMsg}</DialogDescription>
           </DialogHeader>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setPrevDaySessionOpenMsg(null)}>Cancel</Button>
@@ -10708,7 +11089,9 @@ export default function POSSales() {
                 <div>
                   <h2 className="text-base font-bold text-white leading-tight">Supervisor Approval</h2>
                   <p className="text-[11px] text-amber-100 mt-0.5 leading-tight">
-                    {pendingPriceOverride?.type === 'CHECKOUT'
+                    {pendingPriceOverride?.type === 'BUSINESS_DAY_CLOSED'
+                      ? `The Business Day has closed. ${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to authorize this pending transaction only — normal selling stays blocked.`
+                      : pendingPriceOverride?.type === 'CHECKOUT'
                       ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve the below-minimum price override`
                       : pendingPriceOverride
                       ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve price override${pendingPriceOverride.itemName ? ` for ${pendingPriceOverride.itemName}` : ''} (below min ${pendingPriceOverride.minPrice})`
@@ -15377,6 +15760,7 @@ export default function POSSales() {
         </div>
       )}
     </div>
+    </BusinessDayStatusProvider>
   );
 }
 

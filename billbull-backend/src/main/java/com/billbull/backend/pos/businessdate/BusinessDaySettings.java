@@ -6,48 +6,65 @@ import java.time.LocalTime;
 
 /**
  * Immutable snapshot of the Business Day window configuration a branch is running
- * under — decouples {@link BusinessDayResolver} (a pure function) from the JPA
- * {@link PosSettings} entity so the resolver never needs repository/persistence
- * access. Mirrors the same three fields {@code PosOperatingHoursCalculator}'s
- * caller already reads off {@code PosSettings} (see {@code PosDayStatusService}),
- * just packaged as a value object instead of read inline at each call site.
+ * under — decouples the pure window math ({@link PosOperatingHoursCalculator#resolveWindow},
+ * {@link BusinessDayResolver}) from the JPA {@link PosSettings} entity so neither
+ * ever needs repository/persistence access.
  *
- * <p>Phase 1 only — this type exists so {@code BusinessDayResolver} has a stable
- * input shape; nothing in production code constructs or consumes it yet.
+ * <p>Carries the three scheduled concepts the Business Day distinguishes: the start
+ * time, the <b>Scheduled End Time</b> (which ends normal operation but does
+ * <i>not</i> close the Business Day), and the <b>extension</b> that runs from the
+ * Scheduled End Time to actual closure.
  */
 public final class BusinessDaySettings {
 
     private final boolean enabled;
     private final LocalTime startTime;
     private final LocalTime endTime;
+    private final int extensionMinutes;
 
-    public BusinessDaySettings(boolean enabled, LocalTime startTime, LocalTime endTime) {
+    public BusinessDaySettings(boolean enabled, LocalTime startTime, LocalTime endTime, int extensionMinutes) {
         this.enabled = enabled;
         this.startTime = startTime;
         this.endTime = endTime;
+        // Negative/absent extension is normalized to zero — "closes exactly at the
+        // Scheduled End Time" — rather than rejected here, so a bad stored value can
+        // never make a pure function throw mid-decision. Validation happens at save
+        // time (PosSettingsService), which is where a user can act on the error.
+        this.extensionMinutes = Math.max(0, extensionMinutes);
     }
 
-    /** Disabled/unconfigured window — {@link BusinessDayResolver} treats this as
-     *  "no window," resolving purely from the calendar date of the timestamp. */
+    /** Convenience for a window with no extension — closure coincides with the
+     *  Scheduled End Time. */
+    public BusinessDaySettings(boolean enabled, LocalTime startTime, LocalTime endTime) {
+        this(enabled, startTime, endTime, 0);
+    }
+
+    /** Disabled/unconfigured window — resolves to plain calendar dates and never
+     *  blocks anything. */
     public static BusinessDaySettings disabled() {
-        return new BusinessDaySettings(false, null, null);
+        return new BusinessDaySettings(false, null, null, 0);
     }
 
     public static BusinessDaySettings from(PosSettings settings) {
         if (settings == null) return disabled();
+        Integer extension = settings.getBusinessDayExtensionMinutes();
         return new BusinessDaySettings(
                 Boolean.TRUE.equals(settings.getOperatingHoursEnabled()),
                 settings.getOperatingStartTime(),
-                settings.getOperatingEndTime());
+                settings.getOperatingEndTime(),
+                extension != null ? extension : 0);
     }
 
     public boolean isEnabled() { return enabled; }
     public LocalTime getStartTime() { return startTime; }
     public LocalTime getEndTime() { return endTime; }
 
-    /** Whether this configuration actually describes a usable window — enabled
-     *  and both boundaries present. Matches the null-guard every existing
-     *  operating-hours caller already applies (see {@code PosDayStatusService}). */
+    /** Minutes of grace between the Scheduled End Time and actual closure. Zero
+     *  means the Business Day closes the instant the Scheduled End Time is reached. */
+    public int getExtensionMinutes() { return extensionMinutes; }
+
+    /** Whether this configuration actually describes a usable window — enabled and
+     *  both boundaries present. */
     public boolean isConfigured() {
         return enabled && startTime != null && endTime != null;
     }

@@ -54,6 +54,37 @@ const ResolvedTemplateA4Preview = ({ template, isReturn, hasTax = true, outlet, 
   return <A4PreviewFrame html={html} scale={scale} />;
 };
 
+/**
+ * Restates the configured Business Day as its three phases, for the settings
+ * preview. Presentation only — the backend remains the sole authority on phase and
+ * closure; this exists so an admin can see that "21:00" is the scheduled end and
+ * "23:00" is the actual closure without having to do the arithmetic themselves.
+ *
+ * Mirrors PosOperatingHoursCalculator.resolveWindow's wrap-aware duration handling
+ * so the preview agrees with enforcement for overnight schedules too.
+ */
+function businessDayPhasePreview(draft) {
+  const start = (draft?.operatingStartTime || '').slice(0, 5);
+  const end = (draft?.operatingEndTime || '').slice(0, 5);
+  if (!start || !end || start === end) return null;
+
+  const toMinutes = (hhmm) => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
+  };
+  const startMin = toMinutes(start);
+  const endMin = toMinutes(end);
+  if (startMin == null || endMin == null) return null;
+
+  const extensionMinutes = Math.max(0, Number(draft?.businessDayExtensionMinutes) || 0);
+  // Wrap past midnight for an overnight schedule, exactly as the backend does.
+  const lengthMin = endMin > startMin ? endMin - startMin : endMin + 1440 - startMin;
+  const closureMin = (startMin + lengthMin + extensionMinutes) % 1440;
+  const fmt = (mins) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+
+  return { start, end, closure: fmt(closureMin), extensionMinutes };
+}
+
 const POSConsole = React.memo((props) => {
   const { 
     currentTerminal, setCurrentTerminal, setTerminalsLoading, setTerminalList, setEditingTerminalId, setEditTerminalName, setEditCounterName, setTerminalSaving, editTerminalName, editCounterName, terminalList, 
@@ -864,6 +895,7 @@ const POSConsole = React.memo((props) => {
               operatingHoursEnabled: !!posSettings?.operatingHoursEnabled,
               operatingStartTime: posSettings?.operatingStartTime || '',
               operatingEndTime: posSettings?.operatingEndTime || '',
+              businessDayExtensionMinutes: posSettings?.businessDayExtensionMinutes ?? 0,
             };
             const patch = (changes) => setSettingsDraft({ ...d, ...changes });
             const credLabel = d.supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN';
@@ -1096,19 +1128,79 @@ const POSConsole = React.memo((props) => {
                           onChange={e=>patch({ operatingStartTime: e.target.value ? `${e.target.value}:00` : '' })}
                           className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
                         />
+                        <p className="text-[10px] text-gray-400 mt-1">The Business Day begins here.</p>
                       </div>
                       <div>
-                        <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Business Day End Time</label>
+                        <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Scheduled End Time</label>
                         <input
                           type="time"
                           value={(d.operatingEndTime || '').slice(0, 5)}
                           onChange={e=>patch({ operatingEndTime: e.target.value ? `${e.target.value}:00` : '' })}
                           className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
                         />
+                        {/* Deliberately worded to correct the most common misreading:
+                            this time does NOT close the Business Day. */}
+                        <p className="text-[10px] text-gray-400 mt-1">Normal operating hours end here. This does <span className="font-semibold">not</span> close the Business Day.</p>
                       </div>
                     </div>
+
+                    <div className="mb-3">
+                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Extension After End Time</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="15"
+                          value={Number.isFinite(d.businessDayExtensionMinutes) ? d.businessDayExtensionMinutes : 0}
+                          onChange={e=>patch({ businessDayExtensionMinutes: Math.max(0, parseInt(e.target.value || '0', 10)) })}
+                          className="w-28 border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
+                        />
+                        <span className="text-xs text-gray-500">minutes</span>
+                        <div className="flex gap-1 ml-2">
+                          {[0, 30, 60, 120, 180].map(preset => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={()=>patch({ businessDayExtensionMinutes: preset })}
+                              className={`text-[10px] px-2 py-1 rounded border transition-colors ${
+                                (d.businessDayExtensionMinutes || 0) === preset
+                                  ? 'bg-[#FFF8E7] border-[#FDE6A9] text-[#b8920e] font-semibold'
+                                  : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                              }`}
+                            >
+                              {preset === 0 ? 'None' : preset < 60 ? `${preset}m` : `${preset / 60}h`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-2">
+                        After the scheduled end time, POS remains in an extension period for the configured duration.
+                        After the extension expires, the Business Day is closed and new sessions are blocked until the
+                        next scheduled start time.
+                      </p>
+                    </div>
+
+                    {/* Live restatement of the three phases from the values actually entered —
+                        far more reliable than expecting the operator to derive closure time
+                        from two fields and a duration. */}
+                    {businessDayPhasePreview(d) && (
+                      <div className="rounded-xl border border-[#FDE6A9] bg-[#FFF8E7] px-4 py-3 mb-3">
+                        <p className="text-[10px] font-semibold text-[#b8920e] uppercase tracking-wide mb-1.5">With these settings</p>
+                        <div className="space-y-1 text-[11px] text-[#1E293B]">
+                          <div><span className="font-semibold">{businessDayPhasePreview(d).start} → {businessDayPhasePreview(d).end}</span> — Business Day active</div>
+                          {businessDayPhasePreview(d).extensionMinutes > 0 ? (
+                            <div><span className="font-semibold">{businessDayPhasePreview(d).end} → {businessDayPhasePreview(d).closure}</span> — extension period (trading continues)</div>
+                          ) : (
+                            <div className="text-gray-500 italic">No extension — the Business Day closes at {businessDayPhasePreview(d).end}.</div>
+                          )}
+                          <div><span className="font-semibold">{businessDayPhasePreview(d).closure}</span> — Business Day closes, new sessions blocked</div>
+                          <div><span className="font-semibold">{businessDayPhasePreview(d).start}</span> next day — next Business Day starts</div>
+                        </div>
+                      </div>
+                    )}
+
                     <p className="text-[11px] text-gray-400 px-1">
-                      If the End Time is earlier than the Start Time, the Business Day automatically continues past midnight into the next calendar day.
+                      If the Scheduled End Time is earlier than the Start Time, the Business Day automatically continues past midnight into the next calendar day.
                     </p>
                   </>
                 )}

@@ -33,6 +33,12 @@ class CorrectionRequestServiceTest {
     @Mock
     private CorrectionAuditEntryRepository correctionAuditEntryRepository;
 
+    /** Real Business Day clock on a non-JVM-default zone — correction lifecycle stamps
+     *  now come from it rather than LocalDateTime.now(). */
+    @org.mockito.Spy
+    private com.billbull.backend.pos.businessdate.BusinessDayClock clock =
+            new com.billbull.backend.pos.businessdate.BusinessDayClock("Asia/Kolkata");
+
     @Mock
     private SecurityContext securityContext;
 

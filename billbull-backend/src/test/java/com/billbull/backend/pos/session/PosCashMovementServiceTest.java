@@ -58,7 +58,8 @@ class PosCashMovementServiceTest {
                 any(), any(), any())).thenAnswer(i -> i.getArgument(2));
 
         service = new PosCashMovementService(repo, posSessionService, postingEngine,
-                branchRepository, auditService, objectMapper, categoryRepository, entityManager, effectiveCorrectionViewService);
+                branchRepository, auditService, objectMapper, categoryRepository, entityManager, effectiveCorrectionViewService,
+                new com.billbull.backend.pos.businessdate.BusinessDayClock("Asia/Kolkata"));
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken("supervisor1", null, List.of()));
         lenient().when(repo.save(any(PosCashMovement.class))).thenAnswer(inv -> inv.getArgument(0));

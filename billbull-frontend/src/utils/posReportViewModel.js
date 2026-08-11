@@ -14,6 +14,8 @@
 // React state/context here — the whole point is that historical snapshot rendering and
 // live rendering can never diverge.
 
+import { resolveSessionBusinessDate } from './posSessionBusinessDay';
+
 export const parseUTCDate = (ts) => {
   if (!ts) return null;
   if (ts instanceof Date) return isNaN(ts.getTime()) ? null : ts;
@@ -141,15 +143,20 @@ export function buildXReportViewModel(xReportData, opts = {}) {
 
   const cashierDisplay = sessInfo.cashierDisplayName || sess?.openedByDisplayName || sessInfo.cashier || sess?.openedBy || '—';
 
+  // The session's own Business/Trading Date. Never today's date: an X-Report describes the
+  // selected session, so one belonging to a past Business Day must keep reporting that day
+  // no matter when it is viewed or reprinted from a snapshot.
+  const sessionBusinessDate = resolveSessionBusinessDate(xReportData, sess) || '—';
+
   return {
     reportTitle: 'X-Report / Session Close Report',
-    note: `Report No: ${reportNo}  |  Cashier: ${cashierDisplay}  |  Session: SESS-${String(sessId || 0).padStart(6, '0')}  |  Date: ${sess?.sessionDate || new Date().toISOString().slice(0, 10)}`,
+    note: `Report No: ${reportNo}  |  Cashier: ${cashierDisplay}  |  Session: SESS-${String(sessId || 0).padStart(6, '0')}  |  Date: ${sessionBusinessDate}`,
     reportMeta: [
       { label: 'Report No', value: reportNo },
       { label: 'Session No', value: sessInfo.sessionNo || `SESS-${String(sessId || 0).padStart(6, '0')}` },
       { label: 'Cashier', value: cashierDisplay },
       { label: 'Date & Time', value: new Date().toLocaleString() },
-      { label: 'Business Date', value: sess?.sessionDate || new Date().toISOString().slice(0, 10) },
+      { label: 'Business Date', value: sessionBusinessDate },
       { label: 'Terminal', value: sessInfo.terminalId || sess?.terminalId || '-' },
     ],
     kpis: [

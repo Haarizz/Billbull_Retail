@@ -484,3 +484,29 @@ export const verifySessionClosurePermission = async (sessionId, usernameOrEmail,
   const res = await api.post(`${BASE}/sessions/${sessionId}/authorize-closure`, { usernameOrEmail, password });
   return res.data;
 };
+
+/**
+ * Start the session's closure workflow. The session stays OPEN, but normal POS work on it
+ * (continue/resume, checkout, cash movements) is refused server-side until it is closed or
+ * a supervisor cancels the closure.
+ *
+ * Call this ONLY from the explicit "Close Session" action. Viewing or generating an
+ * X-Report must never call it — the X-Report is informational and mid-shift, and a cashier
+ * who runs one must still be able to sell.
+ *
+ * Idempotent: a repeat call returns the existing closure state untouched.
+ * `closureAuthToken` is the grant from verifySessionClosurePermission; it is verified but
+ * NOT consumed here, so the close call that follows can still spend it.
+ */
+export const beginPosSessionClosure = async (sessionId, { closureAuthToken } = {}) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/begin-closure`, { closureAuthToken });
+  return res.data;
+};
+
+/** Cancel a started closure workflow, returning the session to normal operation.
+ *  Supervisor-only, enforced server-side — being the session's owner is not enough. */
+export const cancelPosSessionClosure = async (sessionId, { reason, usernameOrEmail, password } = {}) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/cancel-closure`,
+    { reason, usernameOrEmail, password });
+  return res.data;
+};
