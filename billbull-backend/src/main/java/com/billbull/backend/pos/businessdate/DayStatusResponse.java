@@ -37,11 +37,25 @@ public class DayStatusResponse {
      *  later phase actually switches control. */
     private String businessDaySource;
 
+    /** The Business Day window's live phase and boundaries — the authoritative
+     *  source for every POS phase banner and every closure screen. Never null. */
+    private BusinessDayInfo businessDay;
+
     private OperatingHoursInfo operatingHours;
     private int totalOpenSessions;
     private CurrentSessionInfo currentTerminalSession; // null if none
     private boolean blocked;
     private List<OpenSessionInfo> openSessions;
+    /** Sessions still OPEN/SUSPENDED on a Business Day that has now closed — the
+     *  operator must close these before trading can resume. Derived, never a stored
+     *  flag, and their {@code tradingDate} is never mutated to reflect it. Empty
+     *  whenever the Business Day is not closed. */
+    private List<OpenSessionInfo> sessionsRequiringClosure = List.of();
+    /** Set when THIS terminal's existing session belongs to a previous Business Day,
+     *  i.e. "Continue Session" is refused by {@code BusinessDayContinuationGate}. Null
+     *  whenever continuation is allowed. Purely a projection of the same gate the
+     *  backend enforces with — the POS renders it, it never decides from it. */
+    private PreviousBusinessDaySessionBlock previousBusinessDaySession;
 
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }
@@ -70,6 +84,9 @@ public class DayStatusResponse {
     public String getBusinessDaySource() { return businessDaySource; }
     public void setBusinessDaySource(String businessDaySource) { this.businessDaySource = businessDaySource; }
 
+    public BusinessDayInfo getBusinessDay() { return businessDay; }
+    public void setBusinessDay(BusinessDayInfo businessDay) { this.businessDay = businessDay; }
+
     public OperatingHoursInfo getOperatingHours() { return operatingHours; }
     public void setOperatingHours(OperatingHoursInfo operatingHours) { this.operatingHours = operatingHours; }
 
@@ -84,6 +101,76 @@ public class DayStatusResponse {
 
     public List<OpenSessionInfo> getOpenSessions() { return openSessions; }
     public void setOpenSessions(List<OpenSessionInfo> openSessions) { this.openSessions = openSessions; }
+
+    public PreviousBusinessDaySessionBlock getPreviousBusinessDaySession() { return previousBusinessDaySession; }
+    public void setPreviousBusinessDaySession(PreviousBusinessDaySessionBlock previousBusinessDaySession) { this.previousBusinessDaySession = previousBusinessDaySession; }
+
+    public boolean isContinuationBlocked() { return previousBusinessDaySession != null; }
+
+    public List<OpenSessionInfo> getSessionsRequiringClosure() { return sessionsRequiringClosure; }
+    public void setSessionsRequiringClosure(List<OpenSessionInfo> sessionsRequiringClosure) { this.sessionsRequiringClosure = sessionsRequiringClosure; }
+
+    /**
+     * The live Business Day window. Everything the POS needs to render any of its
+     * phase states without doing date arithmetic of its own — the client must never
+     * recompute a phase from the raw start/end times, because a client clock in a
+     * different timezone from the configured Business Day timezone would then
+     * disagree with the backend about when the day closed.
+     */
+    public static class BusinessDayInfo {
+        /** ACTIVE | EXTENSION | CLOSED | UNRESTRICTED. */
+        private String phase;
+        /** The one authoritative Trading Date for this window. */
+        private LocalDate tradingDate;
+        private LocalDateTime windowStart;
+        /** Scheduled End — ends normal operation, does NOT close the Business Day. */
+        private LocalDateTime scheduledEnd;
+        /** Actual closure: Scheduled End + the configured extension. */
+        private LocalDateTime closureAt;
+        private LocalDateTime nextWindowStart;
+        /** Configured grace, in minutes, between Scheduled End and closure. */
+        private int extensionMinutes;
+        /** Whether closure actually blocks for this branch. */
+        private boolean enforcementEnabled;
+        /** True when the current extension came from a supervisor grant rather than
+         *  the configured schedule — labelled differently in the UI. */
+        /** Server-computed seconds until closure, so the client counts down from the
+         *  Business Day clock rather than the browser's. Null when not applicable. */
+        private Long secondsUntilClosure;
+        /** Server-computed seconds until the next Business Day starts. */
+        private Long secondsUntilNextStart;
+        /** The server's current time in the Business Day timezone — lets the client
+         *  detect and surface a badly-skewed local clock instead of silently
+         *  rendering the wrong countdown. */
+        private LocalDateTime serverTime;
+        /** IANA id of the timezone every field above is expressed in. */
+        private String timezone;
+
+        public String getPhase() { return phase; }
+        public void setPhase(String phase) { this.phase = phase; }
+        public LocalDate getTradingDate() { return tradingDate; }
+        public void setTradingDate(LocalDate tradingDate) { this.tradingDate = tradingDate; }
+        public LocalDateTime getWindowStart() { return windowStart; }
+        public void setWindowStart(LocalDateTime windowStart) { this.windowStart = windowStart; }
+        public LocalDateTime getScheduledEnd() { return scheduledEnd; }
+        public void setScheduledEnd(LocalDateTime scheduledEnd) { this.scheduledEnd = scheduledEnd; }
+        public LocalDateTime getClosureAt() { return closureAt; }
+        public void setClosureAt(LocalDateTime closureAt) { this.closureAt = closureAt; }
+        public LocalDateTime getNextWindowStart() { return nextWindowStart; }
+        public void setNextWindowStart(LocalDateTime nextWindowStart) { this.nextWindowStart = nextWindowStart; }
+        public int getExtensionMinutes() { return extensionMinutes; }
+        public void setExtensionMinutes(int extensionMinutes) { this.extensionMinutes = extensionMinutes; }
+        public boolean isEnforcementEnabled() { return enforcementEnabled; }
+        public void setEnforcementEnabled(boolean enforcementEnabled) { this.enforcementEnabled = enforcementEnabled; }
+        public Long getSecondsUntilClosure() { return secondsUntilClosure; }
+        public void setSecondsUntilClosure(Long secondsUntilClosure) { this.secondsUntilClosure = secondsUntilClosure; }
+        public Long getSecondsUntilNextStart() { return secondsUntilNextStart; }
+        public void setSecondsUntilNextStart(Long secondsUntilNextStart) { this.secondsUntilNextStart = secondsUntilNextStart; }
+        public LocalDateTime getServerTime() { return serverTime; }
+        public void setServerTime(LocalDateTime serverTime) { this.serverTime = serverTime; }
+        public String getTimezone() { return timezone; }
+        public void setTimezone(String timezone) { this.timezone = timezone; }
+    }
 
     public static class OperatingHoursInfo {
         private boolean enabled;
@@ -127,6 +214,48 @@ public class DayStatusResponse {
         public void setStatus(String status) { this.status = status; }
         public String getOpenedBy() { return openedBy; }
         public void setOpenedBy(String openedBy) { this.openedBy = openedBy; }
+    }
+
+    /** Why "Continue Session" is blocked on this terminal, with everything the
+     *  "Previous Day Not Closed" modal needs to name the offending session. */
+    public static class PreviousBusinessDaySessionBlock {
+        private Long sessionId;
+        private String terminalId;
+        private String terminalName;
+        private String status;
+        private LocalDate businessDay;
+        private LocalDate currentBusinessDay;
+        /** The same text the backend throws on a blocked continuation attempt, so the
+         *  proactive modal and the API refusal always read identically. */
+        private String message;
+
+        public PreviousBusinessDaySessionBlock() {}
+        public PreviousBusinessDaySessionBlock(Long sessionId, String terminalId, String terminalName,
+                                                String status, LocalDate businessDay,
+                                                LocalDate currentBusinessDay, String message) {
+            this.sessionId = sessionId;
+            this.terminalId = terminalId;
+            this.terminalName = terminalName;
+            this.status = status;
+            this.businessDay = businessDay;
+            this.currentBusinessDay = currentBusinessDay;
+            this.message = message;
+        }
+
+        public Long getSessionId() { return sessionId; }
+        public void setSessionId(Long sessionId) { this.sessionId = sessionId; }
+        public String getTerminalId() { return terminalId; }
+        public void setTerminalId(String terminalId) { this.terminalId = terminalId; }
+        public String getTerminalName() { return terminalName; }
+        public void setTerminalName(String terminalName) { this.terminalName = terminalName; }
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
+        public LocalDate getBusinessDay() { return businessDay; }
+        public void setBusinessDay(LocalDate businessDay) { this.businessDay = businessDay; }
+        public LocalDate getCurrentBusinessDay() { return currentBusinessDay; }
+        public void setCurrentBusinessDay(LocalDate currentBusinessDay) { this.currentBusinessDay = currentBusinessDay; }
+        public String getMessage() { return message; }
+        public void setMessage(String message) { this.message = message; }
     }
 
     public static class OpenSessionInfo {

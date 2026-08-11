@@ -1,5 +1,15 @@
 # POS Business Day Architecture
 
+> **Phase 4 (Operating Window + Extension Period) — implemented.** See §17 at the end
+> of this document, which supersedes the earlier phases' description of what the
+> configured end time means. In short: the Scheduled End Time no longer merely
+> labels data — the Business Day now has three enforced phases (ACTIVE → EXTENSION →
+> CLOSED), the Trading Date no longer rolls over at calendar midnight, and Business
+> Day time is anchored to an explicitly configured timezone rather than the JVM
+> default. Sections 1–16 below remain accurate as history of how the engine was
+> built; where §17 differs, §17 is authoritative.
+
+
 **Status:** Phase 1 (infrastructure), Phase 2 (read-only status integration, shadow mode), Phase 3A (Business Day persistence on new sessions), Phase 3B.1 (Previous Unclosed Business Day detection), Stage 3B.2A (Shadow Validation), Stage 3B.2A.5 (feature flag infrastructure), Stage 3B.2A.6 (Infrastructure Failure Policy), and **Stage 3B.2B (Enforcement, feature-flag controlled)** implemented and shipped. `BusinessDayFeatureFlagService.isLoginGateV2Enabled(branchId)` now actually gates `openSession()`'s decision: for any branch with the flag OFF (the default — every branch today), behavior remains byte-identical to Stage 3B.2A.6. For a branch with the flag ON, `BusinessDayValidationService`'s verdict becomes authoritative, with the documented fail-open (Infrastructure Failure → legacy fallback) / fail-closed (`UNEXPECTED_STATE` → block) policy now actually implemented, not just designed. No branch's flag has been enabled outside test environments as of this writing — enabling any branch's flag is a live, production-facing decision and must follow the shadow-soak runbook's rollout procedure.
 **Authoritative reference** for all later Business Day phases. Update this document as each phase lands.
 
@@ -357,3 +367,132 @@ No per-request logging for `ALLOW`/`BLOCK`/flag-routing (would be noisy). WARN-l
 ### What Stage 3B.2B Does Not Do
 
 Does not change `BusinessDayResolver`, `BusinessDayStateService`'s query logic, or `BusinessDayValidationService`'s decision rules. Does not touch Day Close, Pending Day Close, Trading Date persistence, cash movements, GL, reports, or session history. Does not retire `PosBusinessDateService`/`advanceBusinessDate()` — both remain the fallback path for every enforcement-mode request and the sole path for every flag-OFF branch. Does not enable any branch's flag in production — that is an operational decision governed by `docs/business-day-shadow-soak-runbook.md`, not a code change.
+
+## 17. Phase 4 — Operating Window + Extension Period (Enforcement)
+
+**Goal:** make the configured Business Day window mean what operators always read it to mean. Before this phase the Scheduled End Time drove nothing but an advisory `withinHours` flag, and the Trading Date rolled over at calendar midnight regardless of the configured window.
+
+### 17.1 The three phases
+
+A Business Day now has three enforced phases, derived from `(start, end, extension)`:
+
+```
+09:00 ─────────────── 21:00 ─────────────── 23:00 ─────────────── 09:00 next day
+   ACTIVE                 EXTENSION              CLOSED / WAITING     next Business Day
+   normal operation       grace period,          new sessions and     becomes ACTIVE
+                          same Trading Date      selling refused
+```
+
+Three deliberately distinct concepts, never conflated:
+
+| Concept | Field | Meaning |
+|---|---|---|
+| **Scheduled End Time** | `pos_settings.operating_end_time` | Normal operating period ends. **Does not close the Business Day.** |
+| **Extension** | `pos_settings.business_day_extension_minutes` | Controlled grace period. Trading continues on the same Trading Date. |
+| **Actual closure** | *derived*: Scheduled End + extension | The Business Day closes. **The enforcement point.** |
+
+`BusinessDayPhase.UNRESTRICTED` covers the window being disabled and 24-hour operation (`start == end`) — both behave exactly as before this phase and are never blocked. That is the default for every branch that has not opted in.
+
+### 17.2 One calculation, one authority
+
+`PosOperatingHoursCalculator.resolveWindow(now, settings) -> BusinessDayWindow` is the **single** implementation of Business Day window arithmetic. Everything — phase, Trading Date, Scheduled End, closure, next start — comes out of that one function. `BusinessDayResolver.resolve` now delegates to it rather than computing a date independently, so the two can never disagree (guarded by `resolverAlwaysAgreesWithTheWindowsTradingDate`).
+
+Same-day and overnight schedules share one code path. Everything is anchored to **the most recent occurrence of `start` at or before `now`**, and the window's length is the wrap-aware duration from `start` to `end`. An overnight schedule then falls out of the same arithmetic with no special-casing: `21:00 → 05:00` is simply an 8-hour window whose `scheduledEnd` lands on the following calendar day.
+
+`BusinessDayWindowService` is the authoritative *state* provider: it composes the clock, the branch's settings and the window math into one `BusinessDayState`, and every consumer reads `blocksNormalOperation()` from it rather than re-testing the phase.
+
+### 17.3 The Trading Date no longer moves at midnight
+
+The Trading Date is constant for the whole window — across the Scheduled End, across closure, and across calendar midnight. It advances only when the next window starts.
+
+**This is a behavior change for same-day windows.** With `09:00 → 21:00`, a timestamp at 02:00 previously resolved to that calendar date; it now resolves to the previous day (the closed tail of the window that opened at 09:00 yesterday). That is the defect being corrected — it is what split one continuous Business Day across two dates in Day Close — but it does change a value that is persisted to `pos_sessions.trading_date` and consumed by `PosPendingDayCloseResolver`.
+
+### 17.4 Enforcement points (all backend)
+
+| Point | Behavior |
+|---|---|
+| `PosSessionService.openSession()` | Own guard, evaluated before and independently of the pre-existing login-gate-v2 flag. Throws `BusinessDayClosedException` → **423 LOCKED** with a structured `BusinessDayClosedResponse` (tradingDate, scheduledEndAt, closedAt, nextStartAt). |
+| `PosCheckoutController.checkout()` | `BusinessDayCheckoutGate` — the control that actually stops selling. Blocking session *opening* alone is insufficient: a session opened at 20:00 is still open at 23:30. |
+| `BusinessDayValidationService.validate()` | New verdict `BLOCK`/`BUSINESS_DAY_CLOSED_AWAITING_NEXT_START`, evaluated ahead of the unclosed-day checks (both can hold at once; the closure is what explains *this* attempt). |
+| `closeSession` / `closeDay` / reporting | **Deliberately never gated.** A closed Business Day must remain closable and reportable. |
+
+The idempotency replay check in `checkout()` runs *before* the gate, so a network retry of an already-completed sale stays retrievable after closure rather than looking like a failure and tempting a double-ring.
+
+### 17.5 Pending checkout after closure — no grace period
+
+Once the Business Day closes, normal selling stops. There is **no time-based
+checkout grace period**, deliberately.
+
+An earlier revision of this phase allowed any checkout from an already-open session
+for 15 minutes past closure (`pos.businessday.checkout-grace-minutes`). That was
+wrong and has been removed: *"the session was open at closure"* is a property of the
+**session**, not of a particular sale, so it handed the cashier a window in which
+brand-new carts could still be rung up. Closure has to mean selling stopped.
+
+The only way past a closed Business Day at checkout is the **existing
+per-transaction supervisor authorization** the checkout request already carries for
+price overrides (`supervisorOverridePin`, or `supervisorOverrideEmail` +
+`supervisorOverridePassword`), verified by `PosCheckoutController` through
+`PosSettingsService.verifyPin` / `verifySupervisorCredentials`. No second
+authorization mechanism was introduced.
+
+Properties that matter:
+
+- **Per-transaction.** Authorizing one sale grants nothing to the next; the
+  following checkout is refused again unless separately authorized. Pinned by
+  `authorizationDoesNotCarryOverToTheNextSale`.
+- **Credential-verified**, not a client-asserted claim.
+- **Audited synchronously** (`BUSINESS_DAY_CLOSED_CHECKOUT_AUTHORIZED`) — a sale rung
+  up after closure must never be indistinguishable from one rung up during trading.
+  The invoice still carries the closed Business Day's Trading Date, so this entry is
+  what explains, at Day Close or in a later audit, why a transaction exists past the
+  closure time.
+- `BusinessDayCheckoutGate` takes **no session argument at all** — its decision is
+  purely the Business Day phase, so session-dependent leniency cannot creep back in.
+
+The refusal body sets `supervisorAuthorizationAvailable` so the POS raises the same
+supervisor dialog it already uses for price overrides, rather than a dead end.
+
+### 17.6 Closure is final — there is no Business Day extension override
+
+The lifecycle is **ACTIVE → EXTENSION → CLOSED** and nothing moves it backwards. Once the configured extension has elapsed the Business Day is CLOSED until the next configured window starts: no new sessions, no normal sales, and **no supervisor path that reopens or extends it**. The earlier `Business Day Supervisor Override` (a PIN-authorized 30m/1h/2h/3h grant persisted in `pos_business_day_override`, with `BUSINESS_DAY_OVERRIDE_GRANTED`/`_REVOKED` audit actions) has been removed: it contradicted the finalized concept, in which the remaining work after closure is session closure and Day Close, not more trading.
+
+Two supervisor mechanisms remain, and neither touches the Business Day phase:
+
+1. **Session closure supervisor takeover** — lets a supervisor close/take over a session another cashier left open, which is a prerequisite of Day Close (§17.4: closure paths are never gated).
+2. **One-sale closed-Business-Day checkout authorization** — §17.5. Releases exactly one pending transaction, credential-verified and audited; it grants nothing to the next sale and does not alter the schedule.
+
+`pos_business_day_override` is no longer read or written by the application. Migration V76 is left in place unchanged — it is already applied in deployed databases, and a leftover unused table is preferable to rewriting Flyway history. No new migration drops it.
+
+There is therefore no persisted Business Day state at all any more: phase and Trading Date are wholly derived, and invariant 5 holds unconditionally.
+
+### 17.7 Timezone
+
+`pos.businessday.timezone` (default `Asia/Dubai`, overridable per tenant profile) is now the single source of Business Day time, read through `BusinessDayClock`. Every Business Day call site takes its clock from there; `LocalDateTime.now()` is gone from the Business Day path.
+
+This was a hard prerequisite, not a nicety. Business Day arithmetic previously ran on the JVM default timezone — a value this application never sets, so it silently inherited whatever the host had. (`spring.jackson.time-zone` affects JSON serialization only and never influenced Business Day logic.) While the Business Day merely labelled data that produced a cosmetically wrong date; now that it decides whether a till may open a session and sell, a host in the wrong zone would refuse service during real trading hours. An unparseable value **fails startup deliberately** — a silent fallback is the exact failure mode this eliminates.
+
+No second timezone source was introduced: no browser timezone, no database session timezone, no per-branch column. The frontend performs no Business Day arithmetic at all — it renders the phase and the server-computed countdowns.
+
+### 17.8 Coexistence with the legacy model
+
+- **`sessionDate`** — unchanged. Still the pointer-derived accounting bucket for GL, X-Report numbering and advance receipts. Invariant 9 holds: not merged.
+- **`pos_business_date` / `PosBusinessDateService`** — **frozen, not removed.** `advanceBusinessDate` still runs at Day Close and still feeds `sessionDate`. It retains no role in the new lifecycle. Retiring it has GL implications and is a separate project.
+- **Day Close / Z-Report** — **no code change required.** `PosPendingDayCloseResolver` was already purely `tradingDate`-driven, so once the Trading Date is correct, "which day needs closing" is correct too. Day Close remains **manual**; nothing auto-closes when the extension expires.
+- **Open sessions at closure** — surfaced as a derived `sessionsRequiringClosure` list on Day Status (`status == OPEN|SUSPENDED && phaseOf(tradingDate) == CLOSED`). **No session's `tradingDate` is ever mutated** — a session belongs to the Business Day it opened on permanently, and moving it would silently relocate its sales in Day Close and the Z-Report.
+
+### 17.9 Validation
+
+`extension` must expire before the next window opens, rejected at settings-save time (`isExtensionWithinBounds`). Otherwise two Business Days would claim the same instant and the phase would be genuinely ambiguous — better to reject where an admin can see and fix it than to resolve it arbitrarily at every session-open for months.
+
+### 17.10 Rollout
+
+`pos_settings.business_day_window_enforcement_enabled`, **default TRUE**, backfilled TRUE — the agreed rollout is that any branch with a configured Business Day Window gets enforcement. Kept separate from `business_day_login_gate_v2_enabled` so the two rollouts stay independent.
+
+**Deploy-day safety backfill (V75):** branches that configured a window *before* this phase did so when the End Time was purely advisory, and no operator ever chose an extension. Leaving them on the column default of `0` would silently convert their existing End Time into a hard lockout on deploy day. V75 therefore backfills existing `operating_hours_enabled = true` branches with a conservative **120-minute** extension. Branches created afterwards keep the default of `0`, which is the honest default for a setting the operator now sees and chooses explicitly.
+
+### 17.11 Test coverage
+
+- `BusinessDayWindowPhaseTest` (38) — every §17 timestamp for both the 09:00→21:00/+2h and 21:00→05:00/+2h schedules, asserting phase *and* Trading Date; unrestricted configurations; zero extension; extension bounds; resolver/window agreement.
+- `BusinessDayCheckoutGateTest` — selling refused after closure, allowed in ACTIVE and EXTENSION, enforcement-off and unconfigured branches, closure staying absolute across every moment until the next start, and the configured schedule being unchanged by closure.
+- `PosSessionServiceTest` — new-session refusal after closure (with nothing persisted), success during extension and active, enforcement-off, and Trading Date correctness for a session opened during the extension. These build the window relative to the service's own clock so they assert the same rule whatever hour CI runs at.

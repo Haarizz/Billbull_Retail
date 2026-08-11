@@ -164,6 +164,30 @@ public class PosSettings extends BaseEntity {
     @Column(name = "operating_end_time")
     private java.time.LocalTime operatingEndTime;
 
+    /** Minutes of controlled grace between the Scheduled End Time
+     *  ({@code operatingEndTime}) and <b>actual</b> Business Day closure. These are
+     *  three distinct concepts and must not be conflated: the Scheduled End Time
+     *  ends the normal operating period, the extension is a grace period during
+     *  which trading continues on the same Trading Date, and only their sum is the
+     *  point at which the Business Day closes and new sessions are refused.
+     *  <p>Zero means the Business Day closes exactly at the Scheduled End Time.
+     *  Must be short enough to expire before the next window opens — enforced by
+     *  {@code PosOperatingHoursCalculator.isExtensionWithinBounds} at save time. */
+    @Column(name = "business_day_extension_minutes")
+    private Integer businessDayExtensionMinutes = 0;
+
+    /** Per-branch switch for Business Day <i>window</i> enforcement — whether
+     *  reaching actual closure genuinely blocks new sessions and selling. Kept
+     *  deliberately separate from {@code businessDayLoginGateV2Enabled} (which
+     *  governs the unrelated previous-unclosed-day gate) so the two rollouts can be
+     *  staged independently.
+     *  <p>Defaults to TRUE, and migration V75 backfills TRUE for existing branches:
+     *  the agreed rollout is that any branch with a configured Business Day Window
+     *  gets enforcement. A branch with the window disabled is unaffected regardless
+     *  of this flag, since an unconfigured window resolves to UNRESTRICTED. */
+    @Column(name = "business_day_window_enforcement_enabled")
+    private Boolean businessDayWindowEnforcementEnabled = true;
+
     /** Stage 3B.2B rollout switch (per-branch): OFF by default on every install and
      *  every existing branch. When (eventually) enabled, {@code openSession()}'s
      *  login/session-opening gate would become authoritative via
@@ -331,6 +355,12 @@ public class PosSettings extends BaseEntity {
 
     public java.time.LocalTime getOperatingEndTime() { return operatingEndTime; }
     public void setOperatingEndTime(java.time.LocalTime operatingEndTime) { this.operatingEndTime = operatingEndTime; }
+
+    public Integer getBusinessDayExtensionMinutes() { return businessDayExtensionMinutes; }
+    public void setBusinessDayExtensionMinutes(Integer businessDayExtensionMinutes) { this.businessDayExtensionMinutes = businessDayExtensionMinutes; }
+
+    public Boolean getBusinessDayWindowEnforcementEnabled() { return businessDayWindowEnforcementEnabled; }
+    public void setBusinessDayWindowEnforcementEnabled(Boolean businessDayWindowEnforcementEnabled) { this.businessDayWindowEnforcementEnabled = businessDayWindowEnforcementEnabled; }
 
     public Boolean getBusinessDayLoginGateV2Enabled() { return businessDayLoginGateV2Enabled; }
     public void setBusinessDayLoginGateV2Enabled(Boolean businessDayLoginGateV2Enabled) { this.businessDayLoginGateV2Enabled = businessDayLoginGateV2Enabled; }

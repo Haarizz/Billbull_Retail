@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle, Eye } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
+import BusinessDayStatusChip from '../../../components/pos/BusinessDayStatusChip';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
@@ -220,24 +221,27 @@ const POSTouchScreen = React.memo((props) => {
     <div className="h-screen flex flex-col bg-[#F7F7FA]">
       {/* Top Bar */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-4 min-w-0">
             <Button
               variant="outline"
               onClick={() => setCurrentView('dashboard')}
-              className="border-[#F5C742] text-[#F5C742] hover:bg-[#F5C742] hover:text-white"
+              className="border-[#F5C742] text-[#F5C742] hover:bg-[#F5C742] hover:text-white shrink-0"
             >
               ← Dashboard
             </Button>
-            <div>
+            <div className="shrink-0">
               <p className="text-[#1E293B]">Session: {currentSession?.id}</p>
               <p className="text-sm text-gray-600">
                 {new Date().toLocaleDateString()} • {new Date().toLocaleTimeString()}
               </p>
             </div>
+            {/* Business Day status — compact, width-elastic, and the only place the
+                phase is shown in-flow (it replaced a full-width banner). */}
+            <BusinessDayStatusChip />
           </div>
 
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 shrink-0">
             <Button
               variant="outline"
               size="sm"

@@ -49,6 +49,12 @@ public class PosLayawayService {
     private final WarehouseRepository warehouseRepository;
     private final PosAuditService auditService;
     private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
+    /** The one Business Day clock — lifecycle timestamps (cancelledAt/convertedAt) are
+     *  business audit events and belong to the Business Day timezone. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock;
+    /** Used only to read the originating session's tradingDate, so a layaway deposit and
+     *  its instalments are dated into the Business Day they were taken in. */
+    private final com.billbull.backend.pos.session.PosSessionRepository sessionRepository;
 
     public PosLayawayService(PosLayawayRepository repo,
                              PosLayawayPaymentRepository paymentRepo,
@@ -61,7 +67,9 @@ public class PosLayawayService {
                              BranchRepository branchRepository,
                              WarehouseRepository warehouseRepository,
                              PosAuditService auditService,
-                             com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService) {
+                             com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService,
+                             com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock,
+                             com.billbull.backend.pos.session.PosSessionRepository sessionRepository) {
         this.repo = repo;
         this.paymentRepo = paymentRepo;
         this.productRepository = productRepository;
@@ -74,6 +82,24 @@ public class PosLayawayService {
         this.warehouseRepository = warehouseRepository;
         this.auditService = auditService;
         this.branchTaxResolutionService = branchTaxResolutionService;
+        this.businessDayClock = businessDayClock;
+        this.sessionRepository = sessionRepository;
+    }
+
+    /** Business date for a layaway document: the originating POS session's Trading Date,
+     *  so an overnight-window deposit is dated into the Business Day it was taken in and
+     *  not the calendar date that had already rolled over. Falls back to the session's
+     *  legacy sessionDate, then to the Business Day clock — never {@code LocalDate.now()}. */
+    private LocalDate layawayBusinessDate(PosLayaway layaway) {
+        Long sessionId = layaway != null ? layaway.getPosSessionId() : null;
+        if (sessionId != null) {
+            var session = sessionRepository.findById(sessionId).orElse(null);
+            if (session != null) {
+                if (session.getTradingDate() != null) return session.getTradingDate();
+                if (session.getSessionDate() != null) return session.getSessionDate();
+            }
+        }
+        return businessDayClock.now().toLocalDate();
     }
 
     public PosLayaway create(PosLayawayCreateRequest req) {
@@ -238,7 +264,7 @@ public class PosLayawayService {
                     saved.getId(),
                     saved.getDepositAmount(),
                     saved.getDepositPaymentMode(),
-                    java.time.LocalDate.now(),
+                    layawayBusinessDate(saved),
                     branch);
             if (depositJournal != null) {
                 saved.setDepositJournalId(depositJournal.getId());
@@ -298,12 +324,12 @@ public class PosLayawayService {
                     layaway.getId(),
                     layaway.getDepositAmount(),
                     layaway.getDepositPaymentMode(),
-                    java.time.LocalDate.now(),
+                    layawayBusinessDate(layaway),
                     branch);
         }
 
         layaway.setStatus(PosLayawayStatus.CANCELLED);
-        layaway.setCancelledAt(LocalDateTime.now());
+        layaway.setCancelledAt(businessDayClock.now());
         layaway.setCancelledBy(currentUsername());
         PosLayaway cancelled = repo.save(layaway);
         auditService.logLayawayCancelled(
@@ -328,7 +354,7 @@ public class PosLayawayService {
         layaway.setStatus(PosLayawayStatus.CONVERTED);
         layaway.setConvertedInvoiceId(invoiceId);
         layaway.setConvertedInvoiceNumber(invoiceNumber);
-        layaway.setConvertedAt(LocalDateTime.now());
+        layaway.setConvertedAt(businessDayClock.now());
         return repo.save(layaway);
     }
 
@@ -352,7 +378,7 @@ public class PosLayawayService {
 
         PosLayawayPayment payment = new PosLayawayPayment();
         payment.setLayaway(layaway);
-        payment.setPaymentDate(LocalDate.now());
+        payment.setPaymentDate(layawayBusinessDate(layaway));
         payment.setPaymentMode(paymentMode);
         payment.setAmount(round2(applied));
         payment.setReferenceNumber(referenceNumber);
@@ -370,7 +396,7 @@ public class PosLayawayService {
                 ? branchRepository.findById(layaway.getBranchId()).orElse(null) : null;
         try {
             JournalEntry je = postingEngine.createJournalFromLayawayDeposit(
-                    layaway.getId(), applied, paymentMode, LocalDate.now(), branch);
+                    layaway.getId(), applied, paymentMode, layawayBusinessDate(layaway), branch);
             if (je != null) {
                 saved.setJournalId(je.getId());
                 paymentRepo.save(saved);

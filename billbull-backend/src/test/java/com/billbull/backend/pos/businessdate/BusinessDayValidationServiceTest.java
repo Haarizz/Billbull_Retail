@@ -36,13 +36,23 @@ class BusinessDayValidationServiceTest {
         return LocalDateTime.of(y, m, d, h, min);
     }
 
+    /** Builds the {@link BusinessDayState} the service now takes, using the real
+     *  window arithmetic (not a mock) so these tests keep exercising the genuine
+     *  Trading Date resolution rather than a hand-fed date. Enforcement on, no
+     *  the cases below are about the unclosed-day rules, and the closure
+     *  rules have their own dedicated tests. */
+    private static BusinessDayState state(LocalDateTime now, BusinessDaySettings settings) {
+        return new BusinessDayState(
+                PosOperatingHoursCalculator.resolveWindow(now, settings), true, now);
+    }
+
     @Test
     void noPreviousBusinessDayAndCandidateNotClosedResultsInAllow() {
         LocalDateTime now = at(2026, 1, 5, 10, 0);
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
         when(businessDayStateService.isBusinessDayClosed(1L, LocalDate.of(2026, 1, 5))).thenReturn(false);
 
-        BusinessDayValidationResult result = service.validate(1L, now, BusinessDaySettings.disabled());
+        BusinessDayValidationResult result = service.validate(1L, state(now, BusinessDaySettings.disabled()));
 
         assertEquals(LocalDate.of(2026, 1, 5), result.candidateBusinessDay());
         assertEquals(BusinessDayValidationVerdict.ALLOW, result.verdict());
@@ -55,7 +65,7 @@ class BusinessDayValidationServiceTest {
         LocalDateTime now = at(2026, 1, 5, 10, 0);
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(LocalDate.of(2026, 1, 5)));
 
-        BusinessDayValidationResult result = service.validate(1L, now, BusinessDaySettings.disabled());
+        BusinessDayValidationResult result = service.validate(1L, state(now, BusinessDaySettings.disabled()));
 
         assertEquals(BusinessDayValidationVerdict.ALLOW, result.verdict());
         assertEquals(BusinessDayBlockingReason.NONE, result.blockingReason());
@@ -66,7 +76,7 @@ class BusinessDayValidationServiceTest {
         LocalDateTime now = at(2026, 1, 5, 10, 0);
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(LocalDate.of(2026, 1, 1)));
 
-        BusinessDayValidationResult result = service.validate(1L, now, BusinessDaySettings.disabled());
+        BusinessDayValidationResult result = service.validate(1L, state(now, BusinessDaySettings.disabled()));
 
         assertEquals(BusinessDayValidationVerdict.BLOCK, result.verdict());
         assertEquals(BusinessDayBlockingReason.PREVIOUS_BUSINESS_DAY_OPEN, result.blockingReason());
@@ -80,7 +90,7 @@ class BusinessDayValidationServiceTest {
         LocalDateTime now = at(2026, 1, 6, 0, 30);
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(LocalDate.of(2026, 1, 5)));
 
-        BusinessDayValidationResult result = service.validate(1L, now, settings);
+        BusinessDayValidationResult result = service.validate(1L, state(now, settings));
 
         assertEquals(LocalDate.of(2026, 1, 5), result.candidateBusinessDay());
         assertEquals(BusinessDayValidationVerdict.ALLOW, result.verdict()); // same day as the unclosed one
@@ -92,7 +102,7 @@ class BusinessDayValidationServiceTest {
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
         when(businessDayStateService.isBusinessDayClosed(1L, LocalDate.of(2026, 1, 5))).thenReturn(true);
 
-        BusinessDayValidationResult result = service.validate(1L, now, BusinessDaySettings.disabled());
+        BusinessDayValidationResult result = service.validate(1L, state(now, BusinessDaySettings.disabled()));
 
         assertEquals(BusinessDayValidationVerdict.BLOCK, result.verdict());
         assertEquals(BusinessDayBlockingReason.BUSINESS_DAY_ALREADY_CLOSED, result.blockingReason());
@@ -103,7 +113,7 @@ class BusinessDayValidationServiceTest {
         LocalDateTime now = at(2026, 1, 5, 10, 0);
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.of(LocalDate.of(2026, 1, 9)));
 
-        BusinessDayValidationResult result = service.validate(1L, now, BusinessDaySettings.disabled());
+        BusinessDayValidationResult result = service.validate(1L, state(now, BusinessDaySettings.disabled()));
 
         assertEquals(BusinessDayValidationVerdict.UNEXPECTED_STATE, result.verdict());
         assertEquals(BusinessDayBlockingReason.UNEXPECTED_STATE, result.blockingReason());
@@ -115,7 +125,7 @@ class BusinessDayValidationServiceTest {
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenReturn(Optional.empty());
         when(businessDayStateService.isBusinessDayClosed(1L, LocalDate.of(2026, 1, 5))).thenReturn(false);
 
-        BusinessDayValidationResult result = service.validate(1L, now, new BusinessDaySettings(true, null, null));
+        BusinessDayValidationResult result = service.validate(1L, state(now, new BusinessDaySettings(true, null, null)));
 
         assertEquals(LocalDate.of(2026, 1, 5), result.candidateBusinessDay());
         assertEquals(BusinessDayValidationVerdict.ALLOW, result.verdict());
@@ -135,7 +145,7 @@ class BusinessDayValidationServiceTest {
                 .thenThrow(new org.springframework.dao.QueryTimeoutException("timed out"));
 
         BusinessDayInfrastructureException ex = assertThrows(BusinessDayInfrastructureException.class,
-                () -> service.validate(1L, now, BusinessDaySettings.disabled()));
+                () -> service.validate(1L, state(now, BusinessDaySettings.disabled())));
 
         assertEquals(BusinessDayInfrastructureException.FailureCategory.REPOSITORY, ex.getCategory());
     }
@@ -148,7 +158,7 @@ class BusinessDayValidationServiceTest {
                 .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("db down"));
 
         BusinessDayInfrastructureException ex = assertThrows(BusinessDayInfrastructureException.class,
-                () -> service.validate(1L, now, BusinessDaySettings.disabled()));
+                () -> service.validate(1L, state(now, BusinessDaySettings.disabled())));
 
         assertEquals(BusinessDayInfrastructureException.FailureCategory.REPOSITORY, ex.getCategory());
     }
@@ -159,7 +169,7 @@ class BusinessDayValidationServiceTest {
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenThrow(new IllegalStateException("dependency broke"));
 
         BusinessDayInfrastructureException ex = assertThrows(BusinessDayInfrastructureException.class,
-                () -> service.validate(1L, now, BusinessDaySettings.disabled()));
+                () -> service.validate(1L, state(now, BusinessDaySettings.disabled())));
 
         assertEquals(BusinessDayInfrastructureException.FailureCategory.REPOSITORY, ex.getCategory());
         assertEquals(IllegalStateException.class, ex.getCause().getClass());
@@ -173,7 +183,7 @@ class BusinessDayValidationServiceTest {
         when(businessDayStateService.findUnclosedBusinessDay(1L)).thenThrow(original);
 
         BusinessDayInfrastructureException ex = assertThrows(BusinessDayInfrastructureException.class,
-                () -> service.validate(1L, now, BusinessDaySettings.disabled()));
+                () -> service.validate(1L, state(now, BusinessDaySettings.disabled())));
 
         assertEquals(original, ex); // not double-wrapped
     }

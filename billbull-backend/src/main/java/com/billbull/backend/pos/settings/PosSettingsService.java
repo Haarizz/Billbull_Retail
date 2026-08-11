@@ -108,7 +108,23 @@ public class PosSettingsService {
                 throw new IllegalArgumentException("Business Day Start Time is required when the Business Day Window is enabled.");
             }
             if (settings.getOperatingEndTime() == null) {
-                throw new IllegalArgumentException("Business Day End Time is required when the Business Day Window is enabled.");
+                throw new IllegalArgumentException("Business Day Scheduled End Time is required when the Business Day Window is enabled.");
+            }
+            Integer extension = settings.getBusinessDayExtensionMinutes();
+            if (extension != null && extension < 0) {
+                throw new IllegalArgumentException("Business Day extension cannot be negative.");
+            }
+            // The extension must expire before the next Business Day opens. Otherwise
+            // two Business Days would claim the same instant and the phase at that
+            // moment would be genuinely ambiguous — far better to reject the
+            // configuration here, where an admin can see and fix it, than to resolve
+            // the ambiguity arbitrarily at every session-open for months afterward.
+            if (!com.billbull.backend.pos.businessdate.PosOperatingHoursCalculator.isExtensionWithinBounds(
+                    settings.getOperatingStartTime(), settings.getOperatingEndTime(),
+                    extension != null ? extension : 0)) {
+                throw new IllegalArgumentException(
+                        "The Business Day extension is too long: it would run past the next Business Day's start time. "
+                                + "Shorten the extension or adjust the scheduled times.");
             }
         }
     }
@@ -188,6 +204,14 @@ public class PosSettingsService {
                     existing.setOperatingHoursEnabled(settings.getOperatingHoursEnabled());
                     existing.setOperatingStartTime(settings.getOperatingStartTime());
                     existing.setOperatingEndTime(settings.getOperatingEndTime());
+                    // Null means "field absent from this request", not "no extension" — several
+                    // callers POST a partial settings object, and silently resetting a configured
+                    // extension to 0 would close the Business Day early for the rest of that
+                    // evening. An explicit 0 is a real choice (closure exactly at the Scheduled
+                    // End Time) and is honored.
+                    if (settings.getBusinessDayExtensionMinutes() != null) {
+                        existing.setBusinessDayExtensionMinutes(settings.getBusinessDayExtensionMinutes());
+                    }
                     return repo.save(existing);
                 })
                 .orElseGet(() -> {

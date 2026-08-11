@@ -26,16 +26,21 @@ public class PosLayawayExpiryReleaseJob {
 
     private final PosLayawayRepository repo;
     private final PosLayawayService service;
+    /** Layaway due dates are business dates, so "is it overdue yet" must be asked in the
+     *  Business Day timezone — a UTC host would expire Asia/Kolkata layaways 5h30m early. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock clock;
 
-    public PosLayawayExpiryReleaseJob(PosLayawayRepository repo, PosLayawayService service) {
+    public PosLayawayExpiryReleaseJob(PosLayawayRepository repo, PosLayawayService service,
+                                      com.billbull.backend.pos.businessdate.BusinessDayClock clock) {
         this.repo = repo;
         this.service = service;
+        this.clock = clock;
     }
 
     @Scheduled(cron = "0 30 2 * * *")
     @Transactional
     public void sweep() {
-        List<PosLayaway> overdue = repo.findOverdueOpenLayaways(LocalDate.now());
+        List<PosLayaway> overdue = repo.findOverdueOpenLayaways(clock.now().toLocalDate());
         for (PosLayaway layaway : overdue) {
             service.releaseExpired(layaway.getId());
         }

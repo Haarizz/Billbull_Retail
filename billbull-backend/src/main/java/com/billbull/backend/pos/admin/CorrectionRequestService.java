@@ -43,14 +43,19 @@ public class CorrectionRequestService {
     private final FinancialAuditService auditService;
     private final NotificationEventPublisher notifPublisher;
     private final CorrectionAuditEntryRepository correctionAuditEntryRepository;
+    /** A correction request's lifecycle stamps (requested/approved/rejected/cancelled/
+     *  executed) are POS business audit events, so they read the Business Day clock. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock clock;
 
     public CorrectionRequestService(CorrectionRequestRepository repo, FinancialAuditService auditService,
                                      NotificationEventPublisher notifPublisher,
-                                     CorrectionAuditEntryRepository correctionAuditEntryRepository) {
+                                     CorrectionAuditEntryRepository correctionAuditEntryRepository,
+                                     com.billbull.backend.pos.businessdate.BusinessDayClock clock) {
         this.repo = repo;
         this.auditService = auditService;
         this.notifPublisher = notifPublisher;
         this.correctionAuditEntryRepository = correctionAuditEntryRepository;
+        this.clock = clock;
     }
 
     private String currentUser() {
@@ -112,7 +117,7 @@ public class CorrectionRequestService {
         c.setBusinessDate(businessDate);
         c.setStatus(CorrectionRequestStatus.REQUESTED);
         c.setRequestedBy(currentUser());
-        c.setRequestedAt(LocalDateTime.now());
+        c.setRequestedAt(clock.now());
         CorrectionRequest saved = repo.save(c);
 
         saveAuditEntry(saved, "REQUESTED", saved.getRequestedBy(), reason);
@@ -149,7 +154,7 @@ public class CorrectionRequestService {
         }
         c.setStatus(CorrectionRequestStatus.APPROVED);
         c.setApprovedBy(currentUser());
-        c.setApprovedAt(LocalDateTime.now());
+        c.setApprovedAt(clock.now());
         c.setApprovalNotes(notes);
         CorrectionRequest saved = repo.save(c);
         saveAuditEntry(saved, "APPROVED", saved.getApprovedBy(), notes);
@@ -174,7 +179,7 @@ public class CorrectionRequestService {
         }
         c.setStatus(CorrectionRequestStatus.REJECTED);
         c.setRejectedBy(currentUser());
-        c.setRejectedAt(LocalDateTime.now());
+        c.setRejectedAt(clock.now());
         c.setRejectionReason(reason);
         CorrectionRequest saved = repo.save(c);
         saveAuditEntry(saved, "REJECTED", saved.getRejectedBy(), reason);
@@ -195,7 +200,7 @@ public class CorrectionRequestService {
         }
         c.setStatus(CorrectionRequestStatus.CANCELLED);
         c.setCancelledBy(currentUser());
-        c.setCancelledAt(LocalDateTime.now());
+        c.setCancelledAt(clock.now());
         CorrectionRequest saved = repo.save(c);
         saveAuditEntry(saved, "CANCELLED", saved.getCancelledBy(), null);
         auditService.logEvent(ENTITY_TYPE, saved.getRequestNumber(), "CANCELLED", saved.getCancelledBy(),
@@ -231,7 +236,7 @@ public class CorrectionRequestService {
         }
         c.setStatus(CorrectionRequestStatus.APPLIED);
         c.setExecutedBy(currentUser());
-        c.setExecutedAt(LocalDateTime.now());
+        c.setExecutedAt(clock.now());
         CorrectionRequest saved = repo.save(c);
         saveAuditEntry(saved, "APPLIED", saved.getExecutedBy(), null);
         auditService.logEvent(ENTITY_TYPE, saved.getRequestNumber(), "APPLIED", saved.getExecutedBy(),
@@ -264,7 +269,7 @@ public class CorrectionRequestService {
                 request.getId(),
                 action,
                 actor,
-                LocalDateTime.now(),
+                clock.now(),
                 notes
         );
         correctionAuditEntryRepository.save(entry);

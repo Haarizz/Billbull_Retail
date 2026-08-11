@@ -59,6 +59,9 @@ public class PosCheckoutController {
 
     private final SalesInvoiceService invoiceService;
     private final PosSessionService sessionService;
+    private final com.billbull.backend.pos.businessdate.BusinessDayCheckoutGate businessDayCheckoutGate;
+    private final com.billbull.backend.pos.businessdate.BusinessDayContinuationGate businessDayContinuationGate;
+    private final com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate;
     private final SalesInvoiceRepository invoiceRepository;
     private final CustomerRepository customerRepository;
     private final PosAuditService auditService;
@@ -74,6 +77,10 @@ public class PosCheckoutController {
     private final com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
     private final PosPaymentAllocationResolver allocationResolver;
+    /** The one Business Day clock. Used for POS *timestamps* (serial soldAt, line-void
+     *  time, QR fallback). POS *business dates* do NOT come from here — see
+     *  {@link #posBusinessDate(Long)}. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -87,8 +94,13 @@ public class PosCheckoutController {
                                   EmployeeRepository employeeRepository,
                                   PaymentRepository paymentRepository,
                                   com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService,
+                                  com.billbull.backend.pos.businessdate.BusinessDayCheckoutGate businessDayCheckoutGate,
+                                  com.billbull.backend.pos.businessdate.BusinessDayContinuationGate businessDayContinuationGate,
                                   com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService,
-                                  PosPaymentAllocationResolver allocationResolver) {
+                                  PosPaymentAllocationResolver allocationResolver,
+                                  com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock,
+                                  com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate) {
+        this.closureWorkflowGate = closureWorkflowGate;
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
         this.invoiceRepository = invoiceRepository;
@@ -106,18 +118,98 @@ public class PosCheckoutController {
         this.terminalActivityService = terminalActivityService;
         this.branchTaxResolutionService = branchTaxResolutionService;
         this.allocationResolver = allocationResolver;
+        this.businessDayCheckoutGate = businessDayCheckoutGate;
+        this.businessDayContinuationGate = businessDayContinuationGate;
+        this.businessDayClock = businessDayClock;
+    }
+
+    /**
+     * The business date a POS document belongs to.
+     *
+     * <p>Deliberately the session's {@code tradingDate}, not the calendar date and not
+     * {@code businessDayClock.now().toLocalDate()}. Under an overnight Business Day
+     * (e.g. Aug 10 09:00 → Aug 11 02:00) a sale rung at Aug 11 01:00 has calendar date
+     * Aug 11 but Trading Date Aug 10, and it must be invoiced — and its payment dated —
+     * into Aug 10 or the Z-Report and the GL disagree with the sales ledger.
+     *
+     * <p>Fallbacks, in order: {@code tradingDate} (authoritative), {@code sessionDate}
+     * (the legacy accounting bucket, for sessions predating tradingDate), then the
+     * Business Day clock's date for checkouts with no session at all (delivery
+     * settlement from the back office). Never {@code LocalDate.now()}.
+     */
+    private LocalDate posBusinessDate(Long sessionId) {
+        if (sessionId != null) {
+            try {
+                var session = sessionService.getById(sessionId);
+                if (session != null) {
+                    if (session.getTradingDate() != null) return session.getTradingDate();
+                    if (session.getSessionDate() != null) return session.getSessionDate();
+                }
+            } catch (RuntimeException ignored) {
+                // Session missing/unreadable — fall through to the clock rather than fail
+                // a checkout over a date lookup.
+            }
+        }
+        return businessDayClock.now().toLocalDate();
     }
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<SalesInvoice> checkout(@RequestBody PosCheckoutRequest request) {
+    public ResponseEntity<?> checkout(@RequestBody PosCheckoutRequest request) {
         // Idempotency guard: if the frontend sends the same checkoutKey twice (network retry),
         // return the already-completed invoice instead of creating a duplicate.
+        // Deliberately BEFORE the Business Day gate below: a sale that already
+        // completed must stay retrievable by its key even after the Business Day has
+        // closed, or a network retry at 23:01 would look like a failed sale and
+        // tempt the cashier into ringing it a second time.
         if (request.getCheckoutKey() != null && !request.getCheckoutKey().isBlank()) {
             var existing = invoiceRepository.findByPosCheckoutKey(request.getCheckoutKey().trim());
             if (existing.isPresent()) {
                 return ResponseEntity.ok(invoiceService.getById(existing.get().getId()));
             }
+        }
+
+        // Previous-Business-Day continuation gate. Deliberately BEFORE — and outside —
+        // the supervisor-authorized exception below: the one-sale supervisor
+        // authorization releases a sale on a *closed current* Business Day, it may never
+        // be spent to keep trading on a session that belongs to an *earlier* Business
+        // Day whose Day Close is still outstanding. Propagates as the same 409
+        // PREVIOUS_DAY_SESSION_OPEN the POS already renders.
+        // Close-workflow gate — same placement rationale, and equally outside the
+        // supervisor-authorized exception: that authorization releases one sale against a
+        // closed Business Day, it is not a licence to add sales to a session an operator
+        // has already started closing. Kept separate from the Business Day gate above so
+        // the two conditions report their own distinct 409s. The authoritative re-check
+        // happens inside the transaction, in recordInvoiceOnSession.
+        if (request.getSessionId() != null) {
+            var checkoutSession = sessionService.getById(request.getSessionId());
+            businessDayContinuationGate.assertMayContinue(checkoutSession);
+            closureWorkflowGate.assertMayOperate(checkoutSession);
+        }
+
+        // Business Day closure gate — the control that actually stops selling once
+        // the extension has expired. Runs before any invoice row is created so a
+        // refused checkout leaves nothing behind.
+        //
+        // The single exception is the per-transaction supervisor authorization this
+        // request already carries for price overrides — reused here rather than
+        // inventing a second authorization path, and deliberately NOT a time-based
+        // grace: it releases exactly this sale, is credential-verified, and grants
+        // nothing to the next one.
+        try {
+            businessDayCheckoutGate.assertCheckoutAllowed(request.getBranchId());
+        } catch (com.billbull.backend.pos.businessdate.BusinessDayClosedException ex) {
+            if (!verifySupervisorPriceOverride(request)) {
+                return ResponseEntity.status(HttpStatus.LOCKED)
+                        .body(ex.getResponse().asPendingCheckoutRefusal());
+            }
+            // Authorized. Audited synchronously and unconditionally: a sale rung up
+            // after the Business Day closed must never be indistinguishable from one
+            // rung up during it.
+            auditService.logBusinessDayClosedCheckoutAuthorized(
+                    request.getBranchId(), request.getSessionId(), request.getTerminalId(),
+                    String.valueOf(ex.getResponse().getTradingDate()),
+                    String.valueOf(ex.getResponse().getClosedAt()));
         }
 
         // Structural validation of the payment (allocation list or legacy multi-card split)
@@ -202,7 +294,7 @@ public class PosCheckoutController {
                 if (allocation.getAmount() <= 0.001) continue; // cash trimmed to zero by the balance cap
                 if (allocation.isReceipt()) {
                     invoiceService.recordPayment(saved.getId(), allocation.getAmount(),
-                            allocation.getModeLabel(), allocation.getReference(), LocalDate.now(),
+                            allocation.getModeLabel(), allocation.getReference(), saved.getInvoiceDate(),
                             allocation.getBankAccountName(), null, splitGroupId, combinedMode);
                 }
                 // CREDIT allocations intentionally record nothing: the amount stays outstanding
@@ -229,7 +321,7 @@ public class PosCheckoutController {
                                 sm.setStatus(SerialStatus.SOLD);
                                 sm.setSoldInvoiceId(saved.getId());
                                 sm.setSoldInvoiceNumber(saved.getInvoiceNumber());
-                                sm.setSoldAt(LocalDateTime.now());
+                                sm.setSoldAt(businessDayClock.now());
                                 serialMasterRepository.save(sm);
                             });
                 }
@@ -257,7 +349,7 @@ public class PosCheckoutController {
             BigDecimal totalWithVat = saved.getInvoiceTotal() != null ? saved.getInvoiceTotal() : BigDecimal.ZERO;
             BigDecimal vatTotal = saved.getTaxTotal() != null ? saved.getTaxTotal() : BigDecimal.ZERO;
             LocalDateTime invoiceAt = saved.getInvoiceDate() != null
-                    ? saved.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+                    ? saved.getInvoiceDate().atStartOfDay() : businessDayClock.now();
             String qr = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
             invoiceService.archiveReceiptQr(saved.getId(), qr);
         } catch (Exception e) {
@@ -358,8 +450,8 @@ public class PosCheckoutController {
                             mobile, mobile, mobile, mobile);
             if (customer.isEmpty()) return ResponseEntity.notFound().build();
             String code = customer.get().getCode();
-            LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : LocalDate.now().minusDays(90);
-            List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, LocalDate.now(), branchId);
+            LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : businessDayClock.now().toLocalDate().minusDays(90);
+            List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, businessDayClock.now().toLocalDate(), branchId);
             Optional<String> matchedInvoiceNumber = invoices.stream()
                     .filter(i -> code.equalsIgnoreCase(i.getCustomerCode()))
                     .findFirst()
@@ -385,8 +477,8 @@ public class PosCheckoutController {
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) String dateTo,
             @RequestParam(required = false) Long branchId) {
-        LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : LocalDate.now();
-        LocalDate to   = dateTo   != null ? LocalDate.parse(dateTo)   : LocalDate.now();
+        LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : businessDayClock.now().toLocalDate();
+        LocalDate to   = dateTo   != null ? LocalDate.parse(dateTo)   : businessDayClock.now().toLocalDate();
         List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, to, branchId);
         applyActualPaymentMode(invoices);
         return invoices;
@@ -448,7 +540,7 @@ public class PosCheckoutController {
                 ? invoice.getTaxTotal() : BigDecimal.ZERO;
 
         LocalDateTime invoiceAt = invoice.getInvoiceDate() != null
-                ? invoice.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+                ? invoice.getInvoiceDate().atStartOfDay() : businessDayClock.now();
 
         String qrCode = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
 
@@ -491,7 +583,7 @@ public class PosCheckoutController {
             BigDecimal totalWithVat = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
             BigDecimal vatTotal = invoice.getTaxTotal() != null ? invoice.getTaxTotal() : BigDecimal.ZERO;
             LocalDateTime invoiceAt = invoice.getInvoiceDate() != null
-                    ? invoice.getInvoiceDate().atStartOfDay() : LocalDateTime.now();
+                    ? invoice.getInvoiceDate().atStartOfDay() : businessDayClock.now();
             qrCode = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
         }
 
@@ -555,7 +647,9 @@ public class PosCheckoutController {
             if (allocation.getAmount() <= 0.001) continue;
             if (!allocation.isReceipt()) continue; // credit stays on the customer's ledger
             invoiceService.recordPayment(id, allocation.getAmount(), allocation.getModeLabel(),
-                    allocation.getReference(), LocalDate.now(), allocation.getBankAccountName(),
+                    allocation.getReference(),
+                    invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : posBusinessDate(req.getSessionId()),
+                    allocation.getBankAccountName(),
                     null, splitGroupId, combinedMode);
         }
 
@@ -651,7 +745,8 @@ public class PosCheckoutController {
         SalesInvoice inv = new SalesInvoice();
         inv.setSalesType(SalesType.POS_SALE);
         inv.setSalesChannel(isDeliveryCheckout(req) ? "Retail_Delivery" : "Retail_POS");
-        inv.setInvoiceDate(LocalDate.now());
+        // Business date, not calendar date — see posBusinessDate().
+        inv.setInvoiceDate(posBusinessDate(req.getSessionId()));
         inv.setCustomerCode(req.getCustomerCode() != null ? req.getCustomerCode() : "WALK-IN");
         inv.setCustomerName(req.getCustomerName() != null ? req.getCustomerName() : "Walk-in Customer");
         inv.setPaymentMode(resolvePaymentMode(req));
@@ -786,7 +881,7 @@ public class PosCheckoutController {
                 if (si.isVoided()) {
                     si.setVoidReason(item.getVoidReason());
                     si.setVoidedBy(currentUser());
-                    si.setVoidedAt(LocalDateTime.now());
+                    si.setVoidedAt(businessDayClock.now());
                 } else {
                     if (item.getBatchNumber() != null && !item.getBatchNumber().isBlank()) {
                         si.setPinnedBatchNumber(item.getBatchNumber().trim());

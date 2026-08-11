@@ -13,5 +13,13 @@ public enum BusinessDayBlockingReason {
     /** The oldest unclosed Business Day is strictly after the Candidate Business
      *  Day — an anomalous ordering that should not occur under correct clock
      *  behavior; never silently allowed or silently blocked. */
-    UNEXPECTED_STATE
+    UNEXPECTED_STATE,
+
+    /** The Business Day's extension period has expired, so the Business Day is
+     *  {@link BusinessDayPhase#CLOSED} and the branch is waiting for the next
+     *  configured start time. A scheduled, self-resolving condition — no supervisor
+     *  may reopen the Business Day; the remaining work is session closure and Day
+     *  Close — so the message must say when trading resumes rather than reading
+     *  like an error. */
+    BUSINESS_DAY_CLOSED_AWAITING_NEXT_START
 }

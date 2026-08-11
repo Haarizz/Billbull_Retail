@@ -3,7 +3,6 @@ package com.billbull.backend.pos.businessdate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
@@ -43,9 +42,10 @@ public class BusinessDayValidationService {
     }
 
     /**
-     * Resolves the Candidate Business Day for {@code now} and compares it
-     * against the branch's Previous Unclosed Business Day (if any):
+     * Evaluates the branch's already-resolved {@link BusinessDayState} and its
+     * Previous Unclosed Business Day into a single verdict:
      * <ul>
+     *   <li>the Business Day window has closed and enforcement is on → {@code BLOCK}/{@code BUSINESS_DAY_CLOSED_AWAITING_NEXT_START}
      *   <li>no unclosed day, and the Candidate isn't itself already closed → {@code ALLOW}/{@code NONE}
      *   <li>no unclosed day, but the Candidate is already closed → {@code BLOCK}/{@code BUSINESS_DAY_ALREADY_CLOSED}
      *   <li>unclosed day strictly before the Candidate → {@code BLOCK}/{@code PREVIOUS_BUSINESS_DAY_OPEN}
@@ -53,8 +53,23 @@ public class BusinessDayValidationService {
      *   <li>unclosed day strictly after the Candidate (anomalous) → {@code UNEXPECTED_STATE}/{@code UNEXPECTED_STATE}
      * </ul>
      */
-    public BusinessDayValidationResult validate(Long branchId, LocalDateTime now, BusinessDaySettings settings) {
-        LocalDate candidate = BusinessDayResolver.resolve(now, settings);
+    public BusinessDayValidationResult validate(Long branchId, BusinessDayState state) {
+        LocalDate candidate = state.window().tradingDate();
+
+        // Window closure is evaluated FIRST, ahead of the unclosed-day checks below.
+        // Both conditions can hold at once (a branch whose Business Day closed at
+        // 23:00 with its Day Close still not run), and when they do, "the Business
+        // Day is closed until 09:00" is the answer that actually explains why this
+        // session-open attempt failed right now — the unclosed prior day is not what
+        // is stopping them at 23:30, and it will surface with its own message the
+        // moment they retry inside the next window. Day Close itself is deliberately
+        // never gated on the phase, so the operator can still clear it meanwhile.
+        if (state.blocksNormalOperation()) {
+            return new BusinessDayValidationResult(candidate, Optional.empty(),
+                    BusinessDayValidationVerdict.BLOCK,
+                    BusinessDayBlockingReason.BUSINESS_DAY_CLOSED_AWAITING_NEXT_START);
+        }
+
         Optional<LocalDate> previousUnclosed = findUnclosedBusinessDayOrFail(branchId);
 
         if (previousUnclosed.isPresent()) {

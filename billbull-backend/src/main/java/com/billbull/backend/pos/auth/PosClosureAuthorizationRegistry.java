@@ -52,6 +52,26 @@ public class PosClosureAuthorizationRegistry {
         return Optional.of(grant.userId());
     }
 
+    /**
+     * Non-consuming counterpart to {@link #consume}: reports the verified user id a token
+     * stands for, leaving the grant intact for the close call that still has to spend it.
+     *
+     * <p>Exists for {@code begin-closure}, which happens between the owner verification and
+     * the actual close. It has to know the closure was verified, but consuming the grant
+     * there would leave the close itself unauthorized and force the owner to re-type their
+     * password mid-count. Read-only by construction — it cannot extend, reissue, or refresh
+     * a grant, so a token still expires on its original schedule and is still spendable
+     * exactly once.
+     */
+    public Optional<Long> verify(Long sessionId, String token) {
+        if (sessionId == null || token == null || token.isBlank()) return Optional.empty();
+        Grant grant = grants.get(token);
+        if (grant == null) return Optional.empty();
+        if (!sessionId.equals(grant.sessionId())) return Optional.empty();
+        if (Instant.now().isAfter(grant.expiresAt())) return Optional.empty();
+        return Optional.of(grant.userId());
+    }
+
     private void purgeExpired() {
         Instant now = Instant.now();
         grants.values().removeIf(g -> now.isAfter(g.expiresAt()));

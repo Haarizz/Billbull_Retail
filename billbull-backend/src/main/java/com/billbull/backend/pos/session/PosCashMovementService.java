@@ -46,6 +46,9 @@ public class PosCashMovementService {
     private final PosCashMovementCategoryRepository categoryRepository;
     private final jakarta.persistence.EntityManager entityManager;
     private final com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
+    /** Edit/void of a cash movement is a business audit event, so its timestamp belongs to
+     *  the Business Day timezone — the same clock that stamped performedAt on creation. */
+    private final com.billbull.backend.pos.businessdate.BusinessDayClock clock;
 
     public PosCashMovementService(PosCashMovementRepository repo,
                                    PosSessionService posSessionService,
@@ -55,7 +58,8 @@ public class PosCashMovementService {
                                    ObjectMapper objectMapper,
                                    PosCashMovementCategoryRepository categoryRepository,
                                    jakarta.persistence.EntityManager entityManager,
-                                   com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService) {
+                                   com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService,
+                                   com.billbull.backend.pos.businessdate.BusinessDayClock clock) {
         this.repo = repo;
         this.posSessionService = posSessionService;
         this.postingEngine = postingEngine;
@@ -65,6 +69,18 @@ public class PosCashMovementService {
         this.categoryRepository = categoryRepository;
         this.entityManager = entityManager;
         this.effectiveCorrectionViewService = effectiveCorrectionViewService;
+        this.clock = clock;
+    }
+
+    /** The business date a void reversal posts to: the movement's own businessDate (copied
+     *  from the session at creation), so the reversal lands in the same Business Day as the
+     *  entry it reverses. Falls back to the Business Day clock's date for legacy rows that
+     *  predate the column — never the JVM calendar date. */
+    private LocalDate reversalBusinessDate(PosCashMovement m) {
+        if (m.getBusinessDate() != null) return m.getBusinessDate();
+        PosSession s = m.getPosSession();
+        if (s != null && s.getTradingDate() != null) return s.getTradingDate();
+        return clock.now().toLocalDate();
     }
 
     /** Batch-resolves category names for a page of responses (same lazy-enrichment pattern as
@@ -150,7 +166,7 @@ public class PosCashMovementService {
         m.setDescription(description);
         m.setReference(reference);
         m.setEditedBy(currentUser());
-        m.setEditedAt(LocalDateTime.now());
+        m.setEditedAt(clock.now());
         m.setEditCount((m.getEditCount() == null ? 0 : m.getEditCount()) + 1);
         PosCashMovement saved = repo.save(m);
         String newJson = toJson(saved);
@@ -178,7 +194,7 @@ public class PosCashMovementService {
         m.setStatus(PosCashMovementStatus.VOIDED);
         m.setVoidReason(voidReason);
         m.setVoidedBy(currentUser());
-        m.setVoidedAt(LocalDateTime.now());
+        m.setVoidedAt(clock.now());
         PosCashMovement saved = repo.save(m);
 
         Branch branch = saved.getBranchId() != null
@@ -188,7 +204,7 @@ public class PosCashMovementService {
         // default, denormalized at creation) — never re-resolve from the category's current
         // state, which may have changed or been deactivated since.
         postingEngine.reverseJournalFromCashMovementVoid(saved.getId(), saved.getMovementType().name(),
-                saved.getAmount(), saved.getDescription(), LocalDate.now(), branch,
+                                saved.getAmount(), saved.getDescription(), reversalBusinessDate(saved), branch,
                 saved.getPostedAccountCode(), saved.getPostedAccountName());
 
         String newJson = toJson(saved);
