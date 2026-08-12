@@ -56,6 +56,21 @@ public class DayStatusResponse {
      *  whenever continuation is allowed. Purely a projection of the same gate the
      *  backend enforces with — the POS renders it, it never decides from it. */
     private PreviousBusinessDaySessionBlock previousBusinessDaySession;
+    /**
+     * True when the Business Day has closed, nothing is left in
+     * {@code sessionsRequiringClosure}, and a Day Close is still outstanding for
+     * that Trading Date or an earlier one — i.e. the operator's only remaining
+     * step is the Day Close / Z-Report.
+     *
+     * <p>Exists so the POS can tell "sessions still need closure" apart from
+     * "sessions are all closed but Day Close is still pending" without inferring
+     * the latter from an empty session list. Derived here from the same
+     * {@link PosPendingDayCloseResolver} answer that already backs
+     * {@code pendingDayCloseDate} — the authoritative Day Close state, read off
+     * {@code PosDayCloseRepository}, never from the absence of open sessions.
+     * Mutually exclusive with a non-empty {@code sessionsRequiringClosure}.
+     */
+    private boolean dayCloseRequired;
 
     public Long getBranchId() { return branchId; }
     public void setBranchId(Long branchId) { this.branchId = branchId; }
@@ -109,6 +124,9 @@ public class DayStatusResponse {
 
     public List<OpenSessionInfo> getSessionsRequiringClosure() { return sessionsRequiringClosure; }
     public void setSessionsRequiringClosure(List<OpenSessionInfo> sessionsRequiringClosure) { this.sessionsRequiringClosure = sessionsRequiringClosure; }
+
+    public boolean isDayCloseRequired() { return dayCloseRequired; }
+    public void setDayCloseRequired(boolean dayCloseRequired) { this.dayCloseRequired = dayCloseRequired; }
 
     /**
      * The live Business Day window. Everything the POS needs to render any of its
@@ -265,17 +283,29 @@ public class DayStatusResponse {
         private String counterName;
         private String openedBy;
         private LocalDateTime openedAt;
+        /** OPEN | SUSPENDED — the session's own status, so the client can drive the
+         *  right closure action from backend state instead of assuming OPEN. */
+        private String status;
 
         public OpenSessionInfo() {}
         public OpenSessionInfo(Long sessionId, String terminalId, String terminalName,
                                 String counterName, String openedBy, LocalDateTime openedAt) {
+            this(sessionId, terminalId, terminalName, counterName, openedBy, openedAt, null);
+        }
+        public OpenSessionInfo(Long sessionId, String terminalId, String terminalName,
+                                String counterName, String openedBy, LocalDateTime openedAt,
+                                String status) {
             this.sessionId = sessionId;
             this.terminalId = terminalId;
             this.terminalName = terminalName;
             this.counterName = counterName;
             this.openedBy = openedBy;
             this.openedAt = openedAt;
+            this.status = status;
         }
+
+        public String getStatus() { return status; }
+        public void setStatus(String status) { this.status = status; }
 
         public Long getSessionId() { return sessionId; }
         public void setSessionId(Long sessionId) { this.sessionId = sessionId; }

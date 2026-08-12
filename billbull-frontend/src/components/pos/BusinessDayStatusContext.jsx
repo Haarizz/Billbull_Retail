@@ -40,7 +40,14 @@ export function formatTime(isoDateTime) {
   return timePart ? timePart.slice(0, 5) : null;
 }
 
-export function BusinessDayStatusProvider({ terminalId, children }) {
+/**
+ * `refreshRef` is an escape hatch for callers that sit *outside* the provider —
+ * notably the Behaviour-tab settings save in POSSales, which changes the very
+ * schedule this status is derived from and must not leave the chip/banner stale
+ * for up to a full poll interval. The provider parks its `refresh` on the ref;
+ * anything inside the tree should use `useBusinessDayStatus().refresh` instead.
+ */
+export function BusinessDayStatusProvider({ terminalId, refreshRef, children }) {
   const [status, setStatus] = useState(null);
   const [elapsedSinceFetch, setElapsedSinceFetch] = useState(0);
   const mountedRef = useRef(true);
@@ -57,6 +64,12 @@ export function BusinessDayStatusProvider({ terminalId, children }) {
       // backend still refuses what it should.
     }
   }, [terminalId]);
+
+  useEffect(() => {
+    if (!refreshRef) return undefined;
+    refreshRef.current = refresh;
+    return () => { refreshRef.current = null; };
+  }, [refreshRef, refresh]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -116,6 +129,12 @@ export function BusinessDayStatusProvider({ terminalId, children }) {
     closureTime: formatTime(businessDay?.closureAt),
     nextStartTime: formatTime(businessDay?.nextWindowStart),
     sessionsRequiringClosure: status?.sessionsRequiringClosure || [],
+    // Backend-derived, so every till agrees: the day has ended, nothing is left to
+    // close, and only the Day Close/Z-Report remains. Never inferred here from an
+    // empty sessionsRequiringClosure — that cannot tell "Day Close done" apart
+    // from "Day Close still pending".
+    dayCloseRequired: Boolean(status?.dayCloseRequired),
+    pendingDayCloseDate: status?.pendingDayCloseDate || null,
     refresh,
   }), [status, businessDay, phase, enforced, approachingEnd, secondsUntilClosure, secondsUntilNextStart, refresh]);
 

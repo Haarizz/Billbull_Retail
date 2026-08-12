@@ -1,5 +1,6 @@
 package com.billbull.backend.pos.businessdate;
 
+import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
 import com.billbull.backend.pos.session.PosSession;
 import com.billbull.backend.pos.session.PosSessionRepository;
 import com.billbull.backend.pos.session.PosSessionResolutionStrategy;
@@ -46,6 +47,10 @@ public class PosDayStatusService {
 
     private final PosBusinessDateService businessDateService;
     private final PosPendingDayCloseResolver pendingDayCloseResolver;
+    /** Read for one question only: does the closed Trading Date already have a
+     *  Day Close record? The authoritative "is this Business Day finalized" answer,
+     *  which no phase or session state may substitute for. */
+    private final PosDayCloseRepository dayCloseRepository;
     private final BusinessDayStateService businessDayStateService;
     private final BusinessDayWindowService businessDayWindowService;
     private final PosSessionRepository sessionRepository;
@@ -57,6 +62,7 @@ public class PosDayStatusService {
 
     public PosDayStatusService(PosBusinessDateService businessDateService,
                                 PosPendingDayCloseResolver pendingDayCloseResolver,
+                                PosDayCloseRepository dayCloseRepository,
                                 BusinessDayStateService businessDayStateService,
                                 BusinessDayWindowService businessDayWindowService,
                                 PosSessionRepository sessionRepository,
@@ -67,6 +73,7 @@ public class PosDayStatusService {
                                 BusinessDayContinuationGate businessDayContinuationGate) {
         this.businessDateService = businessDateService;
         this.pendingDayCloseResolver = pendingDayCloseResolver;
+        this.dayCloseRepository = dayCloseRepository;
         this.businessDayStateService = businessDayStateService;
         this.businessDayWindowService = businessDayWindowService;
         this.sessionRepository = sessionRepository;
@@ -171,7 +178,18 @@ public class PosDayStatusService {
         response.setHasActiveBusinessDay(activeBusinessDay.isPresent());
         response.setBusinessDaySource("LEGACY_POINTER");
         response.setBusinessDay(buildBusinessDayInfo(businessDayState, businessDaySettings));
-        response.setSessionsRequiringClosure(resolveSessionsRequiringClosure(branchId, businessDayState));
+        // One query for the closed Trading Date's sessions, two answers derived from
+        // it: which are still open, and whether the date saw any trading at all.
+        // Empty (and unqueried) unless the Business Day has actually closed.
+        List<PosSession> tradingDateSessions = businessDayState.blocksNormalOperation()
+                ? sessionRepository.findByBranchIdAndTradingDateOrderByOpenedAtDesc(
+                        branchId, businessDayState.window().tradingDate())
+                : List.of();
+        List<DayStatusResponse.OpenSessionInfo> sessionsRequiringClosure =
+                resolveSessionsRequiringClosure(tradingDateSessions);
+        response.setSessionsRequiringClosure(sessionsRequiringClosure);
+        response.setDayCloseRequired(resolveDayCloseRequired(
+                branchId, businessDayState, tradingDateSessions, sessionsRequiringClosure, pendingDayClose));
         response.setOperatingHours(new DayStatusResponse.OperatingHoursInfo(
                 hoursEnabled,
                 settings.getOperatingStartTime() != null ? settings.getOperatingStartTime().toString() : null,
@@ -221,20 +239,70 @@ public class PosDayStatusService {
      * would silently relocate its sales in Day Close and the Z-Report. The POS uses
      * this list to drive the operator toward closing them.
      *
-     * <p>Empty unless the Business Day is actually closed, so this costs one extra
-     * query only during the closed phase, never during normal trading.
+     * <p>The caller supplies the closed Trading Date's sessions — empty unless the
+     * Business Day is actually closed, so this costs one extra query only during the
+     * closed phase, never during normal trading.
      */
-    private List<DayStatusResponse.OpenSessionInfo> resolveSessionsRequiringClosure(Long branchId,
-                                                                                     BusinessDayState state) {
-        if (!state.blocksNormalOperation()) return List.of();
-        return sessionRepository
-                .findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, state.window().tradingDate())
-                .stream()
+    private List<DayStatusResponse.OpenSessionInfo> resolveSessionsRequiringClosure(
+            List<PosSession> tradingDateSessions) {
+        return tradingDateSessions.stream()
                 .filter(s -> s.getStatus() == PosSessionStatus.OPEN || s.getStatus() == PosSessionStatus.SUSPENDED)
                 .map(s -> new DayStatusResponse.OpenSessionInfo(
                         s.getId(), s.getTerminalId(), resolveTerminalName(s.getTerminalId()),
-                        s.getCounterName(), s.getOpenedBy(), s.getOpenedAt()))
+                        s.getCounterName(), s.getOpenedBy(), s.getOpenedAt(), s.getStatus().name()))
                 .toList();
+    }
+
+    /**
+     * "Everything is closed except the Day Close itself."
+     *
+     * <p>The state the operator lands in after closing the last session and its
+     * X-Report on a Business Day that has already ended: nothing left to close,
+     * but the day is not finalized. Without this the POS could only see an empty
+     * {@code sessionsRequiringClosure} list and would have no action to offer,
+     * stranding the operator between session closure and the Z-Report.
+     *
+     * <p><b>"Trading ended" is never treated as "Business Day finalized."</b>
+     * Finalization is read from the {@code pos_day_close} records and nothing else
+     * — never from {@code phase == CLOSED}, from an empty session list, or from
+     * completed X-Reports, all of which only say that session closure progressed.
+     * Two authoritative reads, either of which means work remains:
+     *
+     * <ol>
+     *   <li>no {@code PosDayClose} row for the closed Trading Date itself — the
+     *       direct question, and the one that holds even if a <i>later</i> date was
+     *       closed first (which moves {@code PosPendingDayCloseResolver}'s
+     *       last-closed anchor past this date and would otherwise report nothing
+     *       pending while this date still has no record); and</li>
+     *   <li>{@link PosPendingDayCloseResolver} reporting an outstanding date at or
+     *       before this one — catches an <i>earlier</i> date still unclosed.</li>
+     * </ol>
+     *
+     * <p>A Trading Date with no sessions at all is exempt from (1): it never
+     * required a Day Close in the first place, which is the same rule that lets the
+     * resolver ignore empty calendar dates and replaced the old Skip Date workflow.
+     *
+     * <p>This is a navigation/state signal only — it grants nothing. Every Day
+     * Close validation (X-Reports complete, no open sessions, no suspended bills,
+     * supervisor approval) is still enforced by the Day Close flow itself.
+     */
+    private boolean resolveDayCloseRequired(Long branchId,
+                                             BusinessDayState state,
+                                             List<PosSession> tradingDateSessions,
+                                             List<DayStatusResponse.OpenSessionInfo> sessionsRequiringClosure,
+                                             Optional<LocalDate> pendingDayClose) {
+        if (!state.blocksNormalOperation()) return false;
+        // Sessions still open outrank this: they must be closed first, and the POS
+        // shows that state instead. Keeps the two mutually exclusive.
+        if (!sessionsRequiringClosure.isEmpty()) return false;
+
+        LocalDate tradingDate = state.window().tradingDate();
+        boolean thisDateUnfinalized = !tradingDateSessions.isEmpty()
+                && !dayCloseRepository.existsByBranchIdAndCloseDate(branchId, tradingDate);
+        boolean earlierDatePending = pendingDayClose
+                .filter(pending -> !pending.isAfter(tradingDate))
+                .isPresent();
+        return thisDateUnfinalized || earlierDatePending;
     }
 
     private String resolveTerminalName(String terminalId) {

@@ -591,7 +591,13 @@ public class PosSessionService {
      *  both callers' fail-open handling can react uniformly. */
     private PosSettings loadSettingsOrFail(Long branchId) {
         try {
-            return posSettingsRepository.findByBranchId(branchId).orElse(new PosSettings());
+            // Shared row lock, not a plain read: for the duration of the opening
+            // transaction this pins the Business Day schedule the Trading Date is about
+            // to be resolved from. PosSettingsService.save() takes the conflicting
+            // exclusive lock on the same row, so a Start/End change can never interleave
+            // between this read and the session being persisted with its tradingDate.
+            // Concurrent session opens are unaffected — shared locks do not conflict.
+            return posSettingsRepository.findByBranchIdForShare(branchId).orElse(new PosSettings());
         } catch (RuntimeException settingsFailure) {
             throw new BusinessDayInfrastructureException(BusinessDayInfrastructureException.FailureCategory.SETTINGS,
                     "Failed to load PosSettings for Business Day validation", settingsFailure);
@@ -666,6 +672,25 @@ public class PosSessionService {
                     session.setOpenedByDisplayName(resolveDisplayName(newOwnerUsername));
                     repo.save(session);
                 });
+    }
+
+    /**
+     * The branch's sessions that lock the Business Day schedule: still OPEN, or with a started
+     * closure workflow that has not finished. All terminals, all Trading Dates.
+     *
+     * <p>The single definition consumed by {@code PosSettingsService}'s Business Day schedule
+     * guard — declared here, next to every other session-state authority, rather than being
+     * re-derived there. See
+     * {@link PosSessionRepository#findBusinessDayScheduleLockingSessions(Long)}.
+     *
+     * <p>Note for callers inside a settings-save transaction: this reads sessions only. The
+     * exclusion of a concurrently opening session comes from the {@code PosSettings} row lock
+     * that {@code openSession()} and the settings save contend on, not from this query.
+     */
+    @Transactional(readOnly = true)
+    public List<PosSession> findBusinessDayScheduleLockingSessions(Long branchId) {
+        if (branchId == null) return List.of();
+        return repo.findBusinessDayScheduleLockingSessions(branchId);
     }
 
     @Transactional(readOnly = true)

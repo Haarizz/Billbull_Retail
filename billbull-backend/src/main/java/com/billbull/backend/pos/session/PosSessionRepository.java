@@ -76,6 +76,29 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     boolean existsByBranchIdAndTerminalIdAndStatus(Long branchId, String terminalId, PosSessionStatus status);
 
+    /**
+     * Every session on a branch — <b>any</b> terminal, <b>any</b> Trading Date — that would be
+     * damaged by re-timing the Business Day underneath it: sessions still OPEN, plus sessions
+     * whose closure workflow has been started but which are not yet CLOSED (the
+     * {@code closingStartedAt IS NOT NULL} case that {@code PosSessionClosureWorkflowGate}
+     * recognises, where the status is deliberately still OPEN/SUSPENDED).
+     *
+     * <p>Not a second definition of "active session": this is the exact
+     * {@code OPEN} ∪ {@code isInClosureWorkflow} set those two existing authorities already
+     * describe, expressed as one query so the schedule guard cannot drift from them. A plain
+     * SUSPENDED session with no closure started is excluded for the same reason
+     * {@code PosSessionClosureWorkflowGate} excludes it — it is not in the workflow — and it
+     * remains protected by {@code BusinessDayContinuationGate} when it is resumed.
+     *
+     * <p>Ordered oldest-first so the rejection message can name the longest-running session.
+     */
+    @Query("SELECT s FROM PosSession s WHERE s.branchId = :branchId AND ("
+            + "s.status = com.billbull.backend.pos.session.PosSessionStatus.OPEN "
+            + "OR (s.status = com.billbull.backend.pos.session.PosSessionStatus.SUSPENDED "
+            + "AND s.closingStartedAt IS NOT NULL)) "
+            + "ORDER BY s.openedAt ASC")
+    List<PosSession> findBusinessDayScheduleLockingSessions(@Param("branchId") Long branchId);
+
     // Sessions idle past the threshold — used by PosSessionScheduler to auto-suspend
     @Query("SELECT s FROM PosSession s WHERE s.status = 'OPEN' " +
            "AND s.idleTimeoutMinutes IS NOT NULL AND s.idleTimeoutMinutes > 0 " +

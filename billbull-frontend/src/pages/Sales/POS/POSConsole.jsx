@@ -900,6 +900,15 @@ const POSConsole = React.memo((props) => {
             const patch = (changes) => setSettingsDraft({ ...d, ...changes });
             const credLabel = d.supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN';
 
+            // Business Day schedule lock — server-computed (PosSettingsService), never derived
+            // here. The backend refuses the change regardless; disabling the controls just
+            // stops an admin typing a value that is about to be rejected. Read from the loaded
+            // settings, not the draft, because the draft is a local copy of editable fields.
+            const businessDayScheduleLocked = !!posSettings?.businessDayScheduleLocked;
+            const businessDayScheduleLockCount = posSettings?.businessDayScheduleLockingSessionCount ?? 0;
+            const businessDayScheduleLockReason = posSettings?.businessDayScheduleLockReason
+              || 'Business Day timing cannot be changed while a POS session is open or undergoing closure. Close all active sessions before changing the Business Day schedule.';
+
             // Cash drawer trigger config — MANUAL_OPEN is always on (explicit action).
             const drawerTriggerKeys = String(d.cashDrawerTriggers || '').split(',').map(t => t.trim()).filter(Boolean);
             const hasTrigger = (key) => drawerTriggerKeys.includes(key);
@@ -1105,12 +1114,33 @@ const POSConsole = React.memo((props) => {
                   Pending Day Close, Day Close, X Reports and Z Reports.
                 </p>
 
+                {/* The schedule is frozen while sessions are trading against it: an already-open
+                    session's Trading Date is immutable, so re-timing the window underneath it
+                    would retroactively strand it on a previous Business Day. The extension is
+                    deliberately still editable — it cannot move any Trading Date. */}
+                {businessDayScheduleLocked && (
+                  <div className="rounded-xl border border-[#FDE6A9] bg-[#FFF8E7] px-4 py-3 mb-3">
+                    <p className="text-[11px] font-semibold text-[#b8920e] mb-1">
+                      Business Day schedule locked
+                      {businessDayScheduleLockCount > 0 && ` — ${businessDayScheduleLockCount} active session${businessDayScheduleLockCount === 1 ? '' : 's'}`}
+                    </p>
+                    <p className="text-[11px] text-[#1E293B]">{businessDayScheduleLockReason}</p>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      Extension After End Time can still be changed — it shifts only the closing time, never a session's Trading Date.
+                    </p>
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl mb-3">
                   <div>
                     <p className="text-sm font-medium text-[#1E293B]">Enable Business Day Window</p>
                     <p className="text-[10px] text-gray-400">Define a start/end time window for the Business Day instead of following the calendar day.</p>
                   </div>
-                  <Switch checked={d.operatingHoursEnabled} onCheckedChange={v=>patch({ operatingHoursEnabled: v })} />
+                  <Switch
+                    checked={d.operatingHoursEnabled}
+                    disabled={businessDayScheduleLocked}
+                    onCheckedChange={v=>patch({ operatingHoursEnabled: v })}
+                  />
                 </div>
 
                 {!d.operatingHoursEnabled && (
@@ -1125,8 +1155,10 @@ const POSConsole = React.memo((props) => {
                         <input
                           type="time"
                           value={(d.operatingStartTime || '').slice(0, 5)}
+                          disabled={businessDayScheduleLocked}
+                          title={businessDayScheduleLocked ? businessDayScheduleLockReason : undefined}
                           onChange={e=>patch({ operatingStartTime: e.target.value ? `${e.target.value}:00` : '' })}
-                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
+                          className={`w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] ${businessDayScheduleLocked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
                         />
                         <p className="text-[10px] text-gray-400 mt-1">The Business Day begins here.</p>
                       </div>
@@ -1135,8 +1167,10 @@ const POSConsole = React.memo((props) => {
                         <input
                           type="time"
                           value={(d.operatingEndTime || '').slice(0, 5)}
+                          disabled={businessDayScheduleLocked}
+                          title={businessDayScheduleLocked ? businessDayScheduleLockReason : undefined}
                           onChange={e=>patch({ operatingEndTime: e.target.value ? `${e.target.value}:00` : '' })}
-                          className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
+                          className={`w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742] ${businessDayScheduleLocked ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : ''}`}
                         />
                         {/* Deliberately worded to correct the most common misreading:
                             this time does NOT close the Business Day. */}

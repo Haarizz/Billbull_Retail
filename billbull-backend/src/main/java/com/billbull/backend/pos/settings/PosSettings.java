@@ -188,6 +188,21 @@ public class PosSettings extends BaseEntity {
     @Column(name = "business_day_window_enforcement_enabled")
     private Boolean businessDayWindowEnforcementEnabled = true;
 
+    // ── Read-only projection of the Business Day schedule guard (never persisted) ──
+    // Populated by PosSettingsService on the GET paths so the POS Console can disable
+    // the Start/End controls and say why, instead of letting an admin type a change
+    // that the backend will then refuse. Rendering convenience only:
+    // PosSettingsService.save() is the control and re-derives this itself, under a row
+    // lock, at the moment of the write.
+    @Transient
+    private boolean businessDayScheduleLocked;
+
+    @Transient
+    private int businessDayScheduleLockingSessionCount;
+
+    @Transient
+    private String businessDayScheduleLockReason;
+
     /** Stage 3B.2B rollout switch (per-branch): OFF by default on every install and
      *  every existing branch. When (eventually) enabled, {@code openSession()}'s
      *  login/session-opening gate would become authoritative via
@@ -361,6 +376,15 @@ public class PosSettings extends BaseEntity {
 
     public Boolean getBusinessDayWindowEnforcementEnabled() { return businessDayWindowEnforcementEnabled; }
     public void setBusinessDayWindowEnforcementEnabled(Boolean businessDayWindowEnforcementEnabled) { this.businessDayWindowEnforcementEnabled = businessDayWindowEnforcementEnabled; }
+
+    public boolean isBusinessDayScheduleLocked() { return businessDayScheduleLocked; }
+    public void setBusinessDayScheduleLocked(boolean businessDayScheduleLocked) { this.businessDayScheduleLocked = businessDayScheduleLocked; }
+
+    public int getBusinessDayScheduleLockingSessionCount() { return businessDayScheduleLockingSessionCount; }
+    public void setBusinessDayScheduleLockingSessionCount(int businessDayScheduleLockingSessionCount) { this.businessDayScheduleLockingSessionCount = businessDayScheduleLockingSessionCount; }
+
+    public String getBusinessDayScheduleLockReason() { return businessDayScheduleLockReason; }
+    public void setBusinessDayScheduleLockReason(String businessDayScheduleLockReason) { this.businessDayScheduleLockReason = businessDayScheduleLockReason; }
 
     public Boolean getBusinessDayLoginGateV2Enabled() { return businessDayLoginGateV2Enabled; }
     public void setBusinessDayLoginGateV2Enabled(Boolean businessDayLoginGateV2Enabled) { this.businessDayLoginGateV2Enabled = businessDayLoginGateV2Enabled; }

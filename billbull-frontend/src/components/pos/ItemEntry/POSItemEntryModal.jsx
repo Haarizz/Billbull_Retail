@@ -26,6 +26,8 @@ const POSItemEntryModal = ({
     onChangePrice,
     onChangeQuantity,
     onChangeDiscount,
+    discountMode,
+    onChangeDiscountMode,
     editablePrice,
     editableDiscount,
     lockQuantity,
@@ -77,6 +79,8 @@ const POSItemEntryModal = ({
                             onChangePrice={onChangePrice}
                             onChangeQuantity={onChangeQuantity}
                             onChangeDiscount={onChangeDiscount}
+                            discountMode={discountMode}
+                            onChangeDiscountMode={onChangeDiscountMode}
                             isReadOnly={mode === 'view'}
                             errors={errors}
                             onCancel={onClose}

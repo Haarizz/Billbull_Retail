@@ -57,6 +57,10 @@ const POSItemEntryContainer = ({
     const [localPrice, setLocalPrice] = useState(0);
     const [localQty, setLocalQty] = useState(1);
     const [localDisc, setLocalDisc] = useState(0);
+    // Whether localDisc is a percentage or a currency amount off the line.
+    // Downstream (cart line, totals, backend) always stores a percentage, so an
+    // amount entry is converted at confirm time.
+    const [discountMode, setDiscountMode] = useState('percent');
     const [errors, setErrors] = useState({});
 
     const abortControllers = useRef({ stock: null, price: null });
@@ -75,6 +79,7 @@ const POSItemEntryContainer = ({
                 setLocalPrice(initialValues?.price ?? (activeEntity.price || 0));
                 setLocalDisc(initialValues?.discount ?? (activeEntity.defaultDiscount || activeEntity.maxDiscount || 0));
             }
+            setDiscountMode('percent');
             setErrors({});
         }
     }, [isOpen, activeEntity, mode, initialValues]);
@@ -150,13 +155,33 @@ const POSItemEntryContainer = ({
     // (1 - discount/100)) so this preview never disagrees with the amount that
     // actually lands on the cart row once confirmed. VAT itself is computed and
     // shown only at the invoice level (see TradeSummary), not per line.
-    const netTotal = parsedPrice * parsedQty * (1 - parsedDisc / 100);
+    const grossTotal = parsedPrice * parsedQty;
+    // An amount discount is expressed as the equivalent percentage of the line's
+    // gross so every downstream consumer keeps working off a single percent field.
+    const discountPercent = discountMode === 'amount'
+        ? (grossTotal > 0 ? (parsedDisc / grossTotal) * 100 : 0)
+        : parsedDisc;
+    const netTotal = grossTotal * (1 - discountPercent / 100);
+
+    const handleDiscountModeChange = (nextMode) => {
+        if (nextMode === discountMode) return;
+        // Carry the entered discount across the toggle instead of silently
+        // reinterpreting "10%" as "10 AED" (or vice versa).
+        if (grossTotal > 0 && parsedDisc > 0) {
+            setLocalDisc(nextMode === 'amount'
+                ? Number(((parsedDisc / 100) * grossTotal).toFixed(2))
+                : Number(((parsedDisc / grossTotal) * 100).toFixed(4)));
+        }
+        setDiscountMode(nextMode);
+    };
 
     const handleConfirm = () => {
         const newErrors = {};
         if (parsedQty <= 0) newErrors.quantity = 'Quantity must be greater than 0';
         if (parsedPrice < 0) newErrors.price = 'Price cannot be negative';
-        if (parsedDisc < 0 || parsedDisc > 100) newErrors.discount = 'Discount must be between 0 and 100';
+        if (parsedDisc < 0) newErrors.discount = 'Discount cannot be negative';
+        else if (discountMode === 'amount' && parsedDisc > grossTotal) newErrors.discount = 'Discount cannot exceed the line total';
+        else if (discountMode === 'percent' && parsedDisc > 100) newErrors.discount = 'Discount must be between 0 and 100';
 
         if (Object.keys(newErrors).length > 0) {
             setErrors(newErrors);
@@ -167,7 +192,7 @@ const POSItemEntryContainer = ({
         const payload = {
             quantity: parsedQty,
             price: parsedPrice,
-            discount: parsedDisc,
+            discount: discountPercent,
         };
 
         if (mode === 'add') {
@@ -235,6 +260,8 @@ const POSItemEntryContainer = ({
             onChangePrice={handlePriceInputChange}
             onChangeQuantity={setLocalQty}
             onChangeDiscount={setLocalDisc}
+            discountMode={discountMode}
+            onChangeDiscountMode={handleDiscountModeChange}
         />
     );
 };

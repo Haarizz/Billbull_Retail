@@ -1,5 +1,10 @@
 package com.billbull.backend.pos.settings;
 
+import com.billbull.backend.pos.businessdate.BusinessDayClock;
+import com.billbull.backend.pos.businessdate.BusinessDayPhase;
+import com.billbull.backend.pos.businessdate.BusinessDaySettings;
+import com.billbull.backend.pos.businessdate.PosOperatingHoursCalculator;
+import com.billbull.backend.pos.session.PosSession;
 import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
@@ -27,11 +32,13 @@ public class PosSettingsService {
     private final AuditLogService auditLogService;
     private final PosSessionService posSessionService;
     private final PosCredentialVerificationService credentialVerificationService;
+    private final BusinessDayClock businessDayClock;
 
     public PosSettingsService(PosSettingsRepository repo, BranchAccessService branchAccessService,
                               PasswordEncoder passwordEncoder, UserRepository userRepository,
                               AuditLogService auditLogService, PosSessionService posSessionService,
-                              PosCredentialVerificationService credentialVerificationService) {
+                              PosCredentialVerificationService credentialVerificationService,
+                              BusinessDayClock businessDayClock) {
         this.repo = repo;
         this.branchAccessService = branchAccessService;
         this.passwordEncoder = passwordEncoder;
@@ -39,6 +46,7 @@ public class PosSettingsService {
         this.auditLogService = auditLogService;
         this.posSessionService = posSessionService;
         this.credentialVerificationService = credentialVerificationService;
+        this.businessDayClock = businessDayClock;
     }
 
     /** A stored PIN already BCrypt-hashed? BCrypt hashes start with $2a/$2b/$2y. */
@@ -61,20 +69,29 @@ public class PosSettingsService {
     public PosSettings getForCurrentBranch() {
         Long branchId = branchAccessService.getActiveBranchId();
         if (branchId == null) return defaultSettings();
-        return repo.findByBranchId(branchId).orElseGet(() -> {
-            PosSettings s = defaultSettings();
-            s.setBranchId(branchId);
-            return s;
-        });
+        return getForBranch(branchId);
     }
 
     @Transactional(readOnly = true)
     public PosSettings getForBranch(Long branchId) {
-        return repo.findByBranchId(branchId).orElseGet(() -> {
+        PosSettings settings = repo.findByBranchId(branchId).orElseGet(() -> {
             PosSettings s = defaultSettings();
             s.setBranchId(branchId);
             return s;
         });
+        return withBusinessDayScheduleLock(settings);
+    }
+
+    /** Stamps the read-only schedule-lock projection onto a settings view. Uses the same
+     *  {@code PosSessionService} definition of a locking session that {@link #save} enforces
+     *  with, so the console can never disagree with the backend about whether the Business Day
+     *  schedule is editable. Never persisted — the fields are {@code @Transient}. */
+    private PosSettings withBusinessDayScheduleLock(PosSettings settings) {
+        int locking = posSessionService.findBusinessDayScheduleLockingSessions(settings.getBranchId()).size();
+        settings.setBusinessDayScheduleLockingSessionCount(locking);
+        settings.setBusinessDayScheduleLocked(locking > 0);
+        settings.setBusinessDayScheduleLockReason(locking > 0 ? SCHEDULE_LOCKED_MESSAGE : null);
+        return settings;
     }
 
     /**
@@ -129,6 +146,156 @@ public class PosSettingsService {
         }
     }
 
+    // ── Business Day schedule change guard ───────────────────────────────────────
+    //
+    // An administrator must not be able to re-time the accounting window underneath
+    // sessions that are already trading against it. PosSession.tradingDate is immutable
+    // by design and is resolved once, at open, from windowStart — which is anchored on
+    // the Start Time. Move Start or End (or switch the window off entirely) while a
+    // session is live and the Candidate Business Day computed a moment later can differ
+    // from that session's stored tradingDate, retroactively turning an in-progress
+    // session into a "previous Business Day" one for BusinessDayContinuationGate.
+    //
+    // The fix is refusal, never repair: nothing here recalculates, rewrites, or
+    // migrates an existing session's tradingDate, and BusinessDayWindowService /
+    // PosOperatingHoursCalculator are untouched — they remain the sole window authority
+    // and are only *read* below.
+
+    /** The message the API returns and the console displays — one wording for both. */
+    static final String SCHEDULE_LOCKED_MESSAGE =
+            "Business Day timing cannot be changed while a POS session is open or undergoing closure. "
+                    + "Close all active sessions before changing the Business Day schedule.";
+
+    /**
+     * Whether {@code incoming} re-times the Business Day relative to {@code existing}.
+     *
+     * <p>Covers the enable/disable switch as well as the two times: turning the window off
+     * substitutes the plain calendar day for the configured window, which shifts the
+     * Candidate Business Day exactly as moving Start would, and leaving it unguarded would
+     * also make the Start/End rule trivially bypassable (disable, then re-time).
+     *
+     * <p>The extension is deliberately NOT part of this — see
+     * {@link #rejectsExtensionChange}.
+     */
+    private boolean changesBusinessDaySchedule(PosSettings existing, PosSettings incoming) {
+        boolean existingEnabled = Boolean.TRUE.equals(existing.getOperatingHoursEnabled());
+        boolean incomingEnabled = Boolean.TRUE.equals(incoming.getOperatingHoursEnabled());
+        return existingEnabled != incomingEnabled
+                || !Objects.equals(existing.getOperatingStartTime(), incoming.getOperatingStartTime())
+                || !Objects.equals(existing.getOperatingEndTime(), incoming.getOperatingEndTime());
+    }
+
+    /**
+     * Whether an extension change must be refused.
+     *
+     * <p><b>Why the extension is not simply treated like Start/End.</b> The Trading Date comes
+     * from {@code windowStart.toLocalDate()}, and {@code windowStart} is derived from the Start
+     * Time alone; the extension only shifts {@code closureAt = scheduledEnd + extension}.
+     * Changing it therefore <i>cannot</i> change any session's Business Day — open sessions keep
+     * trading on the same Trading Date, which is precisely what an operator needs when the shop
+     * is still serving customers at closing time. Blocking it would make the one setting that
+     * exists to be adjusted late in the day unadjustable exactly when it is needed.
+     *
+     * <p><b>The one case that is unsafe.</b> The documented lifecycle
+     * (ACTIVE → EXTENSION → CLOSED) is one-way: "once the configured extension has elapsed the
+     * Business Day is CLOSED until the next window starts. There is deliberately no supervisor
+     * path that reopens it." Lengthening the extension after closure would push {@code closureAt}
+     * back past {@code now} and move the current Business Day CLOSED → EXTENSION — reopening a
+     * day that may already have been Day-Closed, and resurrecting it as an alternative,
+     * back-door supervisor override. That, and only that, is refused.
+     *
+     * <p>Shortening the extension is allowed even mid-extension: it moves the day forward to
+     * CLOSED, which is the legitimate "we are closing now" action, leaves every tradingDate
+     * untouched, and never blocks closing a session (neither the closure workflow nor Day Close
+     * is gated by the Business Day phase).
+     */
+    private boolean rejectsExtensionChange(PosSettings existing, PosSettings incoming) {
+        if (incoming.getBusinessDayExtensionMinutes() == null) return false; // field absent from request
+        if (Objects.equals(existing.getBusinessDayExtensionMinutes(),
+                incoming.getBusinessDayExtensionMinutes())) return false;
+
+        java.time.LocalDateTime now = businessDayClock.now();
+        BusinessDayPhase before = PosOperatingHoursCalculator
+                .resolveWindow(now, BusinessDaySettings.from(existing)).phase();
+        if (before != BusinessDayPhase.CLOSED) return false;
+
+        // Same stored schedule, only the proposed extension differs — so any phase change
+        // observed here is attributable to the extension alone.
+        PosSettings proposed = new PosSettings();
+        proposed.setOperatingHoursEnabled(existing.getOperatingHoursEnabled());
+        proposed.setOperatingStartTime(existing.getOperatingStartTime());
+        proposed.setOperatingEndTime(existing.getOperatingEndTime());
+        proposed.setBusinessDayExtensionMinutes(incoming.getBusinessDayExtensionMinutes());
+        BusinessDayPhase after = PosOperatingHoursCalculator
+                .resolveWindow(now, BusinessDaySettings.from(proposed)).phase();
+
+        return after != BusinessDayPhase.CLOSED;
+    }
+
+    /**
+     * Refuses a Business Day re-timing while the branch has sessions that are OPEN or in the
+     * closure workflow, and refuses an extension change that would reopen a closed Business Day.
+     *
+     * <p>Called from inside {@link #save}'s transaction, <i>after</i> the settings row has been
+     * locked FOR UPDATE — see the race note there.
+     */
+    private void validateBusinessDayScheduleChange(PosSettings existing, PosSettings incoming) {
+        boolean scheduleChange = changesBusinessDaySchedule(existing, incoming);
+        boolean extensionReopens = rejectsExtensionChange(existing, incoming);
+        if (!scheduleChange && !extensionReopens) return;
+
+        if (extensionReopens && !scheduleChange) {
+            String message = "The Business Day for this branch has already closed. Increasing the extension "
+                    + "now would reopen a closed Business Day, which is not permitted. It can be changed "
+                    + "again when the next Business Day starts.";
+            auditRejection(incoming.getBranchId(), "extension " + existing.getBusinessDayExtensionMinutes()
+                    + "min -> " + incoming.getBusinessDayExtensionMinutes() + "min would reopen a CLOSED Business Day");
+            throw new IllegalArgumentException(message);
+        }
+
+        List<PosSession> blocking = posSessionService.findBusinessDayScheduleLockingSessions(existing.getBranchId());
+        if (!blocking.isEmpty()) {
+            PosSession oldest = blocking.get(0);
+            auditRejection(existing.getBranchId(), String.format(
+                    "attempted schedule change (enabled %s->%s, start %s->%s, end %s->%s) refused: %d session(s) "
+                            + "open or in closure, oldest #%d on terminal %s",
+                    existing.getOperatingHoursEnabled(), incoming.getOperatingHoursEnabled(),
+                    existing.getOperatingStartTime(), incoming.getOperatingStartTime(),
+                    existing.getOperatingEndTime(), incoming.getOperatingEndTime(),
+                    blocking.size(), oldest.getId(), oldest.getTerminalId()));
+            throw new IllegalArgumentException(SCHEDULE_LOCKED_MESSAGE
+                    + String.format(" %d session(s) are still active (oldest: session #%d on terminal %s).",
+                            blocking.size(), oldest.getId(), oldest.getTerminalId()));
+        }
+
+        if (extensionReopens) {
+            // Schedule change with no active sessions, but the extension would still reopen a
+            // closed day. Refuse for the lifecycle reason.
+            auditRejection(existing.getBranchId(),
+                    "schedule change refused: proposed extension would reopen a CLOSED Business Day");
+            throw new IllegalArgumentException("The Business Day for this branch has already closed. "
+                    + "The proposed extension would reopen it, which is not permitted.");
+        }
+
+        auditAccepted(existing, incoming);
+    }
+
+    /** Same AuditLogService domain-event channel PosSettingsService already uses for
+     *  supervisor handovers — no separate audit mechanism is introduced. */
+    private void auditRejection(Long branchId, String detail) {
+        auditLogService.logDomainEvent("POS_SETTINGS", String.valueOf(branchId),
+                "BUSINESS_DAY_SCHEDULE_CHANGE_REJECTED", detail);
+    }
+
+    private void auditAccepted(PosSettings existing, PosSettings incoming) {
+        auditLogService.logDomainEvent("POS_SETTINGS", String.valueOf(existing.getBranchId()),
+                "BUSINESS_DAY_SCHEDULE_CHANGED", String.format(
+                        "enabled %s->%s, start %s->%s, end %s->%s (no sessions open or in closure)",
+                        existing.getOperatingHoursEnabled(), incoming.getOperatingHoursEnabled(),
+                        existing.getOperatingStartTime(), incoming.getOperatingStartTime(),
+                        existing.getOperatingEndTime(), incoming.getOperatingEndTime()));
+    }
+
     /** Roles allowed to act as a supervisor (for configuration, day close, void gate, mode, PIN). */
     public static final List<String> SUPERVISOR_ROLES = List.of(
             "ADMIN", "ROLE_ADMIN", "BRANCH_ADMIN", "ROLE_BRANCH_ADMIN",
@@ -152,9 +319,19 @@ public class PosSettingsService {
         }
         validateTerminalAutoArchiveConfig(settings);
         validateOperatingHoursConfig(settings);
-        // Upsert by branchId
-        return repo.findByBranchId(settings.getBranchId())
+        // Upsert by branchId.
+        //
+        // Race safety: this read takes a PESSIMISTIC_WRITE (FOR UPDATE) lock on the branch's
+        // settings row and holds it for the rest of this transaction. PosSessionService's
+        // openSession() takes the conflicting PESSIMISTIC_READ (FOR SHARE) lock on the same row
+        // before it resolves a Trading Date, so a session cannot come into existence between
+        // the active-session check below and this save committing: whichever transaction
+        // acquires the row first, the other blocks until it commits and then sees its result.
+        // The check is therefore made inside, not merely before, the update flow, and calling
+        // the API directly changes nothing — every write goes through here.
+        return repo.findByBranchIdForUpdate(settings.getBranchId())
                 .map(existing -> {
+                    validateBusinessDayScheduleChange(existing, settings);
                     boolean changesSupervisorConfig =
                             !Objects.equals(existing.getRequireSupervisorForVoid(), settings.getRequireSupervisorForVoid())
                             || !Objects.equals(existing.getSupervisorApprovalMode(), settings.getSupervisorApprovalMode())
@@ -212,12 +389,26 @@ public class PosSettingsService {
                     if (settings.getBusinessDayExtensionMinutes() != null) {
                         existing.setBusinessDayExtensionMinutes(settings.getBusinessDayExtensionMinutes());
                     }
-                    return repo.save(existing);
+                    // Same lock projection the GET paths return, so the console's copy of the
+                    // settings stays accurate after a save instead of appearing unlocked until
+                    // the next fetch.
+                    return withBusinessDayScheduleLock(repo.save(existing));
                 })
                 .orElseGet(() -> {
-                    // New record: hash the PIN before first persist.
+                    // First-ever save for this branch. The same guard applies — configuring a
+                    // window for the first time while sessions are trading on the calendar day
+                    // moves the Candidate Business Day just as any later re-timing would — but
+                    // there is no row to lock yet, so this path is guarded, not race-proof. The
+                    // window it leaves open is narrow and benign: a branch with no settings row
+                    // has no configured Business Day at all, so a session opening concurrently
+                    // resolves the unrestricted calendar day, which differs from the newly
+                    // configured window's Trading Date only when "now" is before the new Start
+                    // Time. Every subsequent save is fully locked.
+                    PosSettings none = new PosSettings();
+                    none.setBranchId(settings.getBranchId());
+                    validateBusinessDayScheduleChange(none, settings);
                     settings.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
-                    return repo.save(settings);
+                    return withBusinessDayScheduleLock(repo.save(settings));
                 });
     }
 
