@@ -807,6 +807,33 @@ public class SalesInvoiceService {
     }
 
     /**
+     * Branch-scoped, ownership-FREE lookup for POS receipt reprinting.
+     *
+     * <p>Reprinting an already-issued receipt is not a data-visibility question: any authorised
+     * cashier standing at any terminal of the invoice's branch must be able to hand the customer
+     * a duplicate copy, regardless of which cashier originally rang the sale up. So this path
+     * deliberately skips {@code ownershipAccessService} (which 404s another user's invoice) while
+     * keeping branch/tenant isolation intact. The reprint *permission* is enforced by the caller
+     * (see {@code PosCheckoutController#reprintReceipt}); this method only resolves the row.
+     *
+     * <p>Not-found is a real 404 here (unlike {@link #getById(Long)}'s RuntimeException → 400), and
+     * a foreign branch is a 403 from {@code branchAccessService} — the status contract the POS
+     * reprint screen relies on to tell "no such invoice" from "not yours to print".
+     */
+    @Transactional(readOnly = true)
+    public SalesInvoice getByIdForReceiptReprint(Long id) {
+        SalesInvoice invoice = invoiceRepo.findById(id)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "Sales Invoice not found: " + id));
+        branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Sales Invoice");
+
+        Hibernate.initialize(invoice.getItems());
+        enrichItems(invoice.getItems());
+        applyBatchSelectionSummary(invoice);
+        return invoice;
+    }
+
+    /**
      * Owns its own read transaction: the controller returns this entity straight to
      * Jackson, and with spring.jpa.open-in-view=false there is no session left at
      * serialization time — so the LAZY `items` collection must be initialized here,

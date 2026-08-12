@@ -70,6 +70,10 @@ public class PosCheckoutController {
     private final ProductRepository productRepository;
     private final ProductPricingRepository pricingRepository;
     private final RolePermissionService permissionService;
+    private final com.billbull.backend.security.ModulePermissionService modulePermissionService;
+
+    /** Single-switch RBAC row (canView == "granted"), same shape as permissions.pos.cashmovement.*. */
+    static final String RECEIPT_REPRINT_PERMISSION = "permissions.pos.receipt.reprint";
     private final PosSettingsService posSettingsService;
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
@@ -99,7 +103,9 @@ public class PosCheckoutController {
                                   com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService,
                                   PosPaymentAllocationResolver allocationResolver,
                                   com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock,
-                                  com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate) {
+                                  com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate,
+                                  com.billbull.backend.security.ModulePermissionService modulePermissionService) {
+        this.modulePermissionService = modulePermissionService;
         this.closureWorkflowGate = closureWorkflowGate;
         this.invoiceService = invoiceService;
         this.sessionService = sessionService;
@@ -564,7 +570,13 @@ public class PosCheckoutController {
             @RequestParam(required = false) Long sessionId,
             @RequestParam(required = false) String terminalId,
             @RequestParam(required = false) Long branchId) {
-        SalesInvoice invoice = invoiceService.getById(id);
+        // Reprint authorization is deliberately NOT invoice ownership. Who may hand a customer a
+        // duplicate receipt is a permission + branch question: any holder of
+        // permissions.pos.receipt.reprint may reprint any invoice of a branch they can act on,
+        // whichever cashier originally rang it up (403 without the permission, 403 for a foreign
+        // branch, 404 only when the invoice genuinely does not exist).
+        modulePermissionService.requireCanView(RECEIPT_REPRINT_PERMISSION);
+        SalesInvoice invoice = invoiceService.getByIdForReceiptReprint(id);
         if (invoice.getItems() != null) invoice.getItems().size();
 
         String sellerName = invoice.getBranchName();
@@ -587,14 +599,17 @@ public class PosCheckoutController {
             qrCode = ZatcaQrGenerator.generate(sellerName, trn, invoiceAt, totalWithVat, vatTotal);
         }
 
-        // §4.2 Audit log: RECEIPT_REPRINTED for fraud detection
+        // §4.2 Audit log: RECEIPT_REPRINTED for fraud detection. The operator is resolved here, on
+        // the request thread, and passed in — the audit service is @Async and has no principal.
+        String reprintedBy = currentUser();
         auditService.logReceiptReprinted(
                 sessionId, terminalId, branchId != null ? branchId : invoice.getBranchId(),
-                id, invoice.getInvoiceNumber());
+                id, invoice.getInvoiceNumber(), reprintedBy);
 
         // Bump the reprint counter / last-reprinted-by/at so the "Reprint Previous
-        // Invoices" screen shows real audit history instead of always 0/blank.
-        String reprintedBy = currentUser();
+        // Invoices" screen shows real audit history instead of always 0/blank. This stamps only
+        // the reprint columns (single-column UPDATE) — the invoice's createdBy/createdByUserId
+        // stays the original cashier.
         Instant reprintedAt = Instant.now();
         invoiceService.recordReprint(id, reprintedBy);
         invoice.setReprintCount((invoice.getReprintCount() == null ? 0 : invoice.getReprintCount()) + 1);

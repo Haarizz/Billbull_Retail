@@ -268,6 +268,18 @@ public class RolePermissionInitializer implements ApplicationRunner {
             }
         });
 
+        // ── POS Receipt Reprint RBAC ───────────────────────────────────────────────────────────
+        // Single-switch permissions.pos.receipt.reprint row (canView == "granted"), same mechanism
+        // as permissions.pos.cashmovement.* above. Deliberately NOT tied to invoice ownership:
+        // reprinting a duplicate copy is a counter-service action any authorised cashier of the
+        // invoice's branch performs, including for sales rung up by a colleague on another
+        // terminal. Branch/tenant isolation is enforced separately by BranchAccessService.
+        for (String reprintRole : new String[]{
+                "ADMIN", "BRANCH_ADMIN", "MANAGER", "SUPERVISOR", "SALES"}) {
+            roleRepository.findByName(reprintRole).ifPresent(role ->
+                    seedIfAbsent(role, "permissions.pos.receipt.reprint", true, true, true, true, true));
+        }
+
         // ── POS Reports RBAC (Customers & Sales > Reports > POS Reports) ────────────────────────
         // Read-only historical X/Z-Report browser. Admin/Branch Admin/Manager/Supervisor: full
         // view/viewall/print/export. Sales (cashier-level): view only, own branch (viewall stays

@@ -475,6 +475,9 @@ export default function POSSales() {
   const [settingsDraft, setSettingsDraft] = useState(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
+  // Filled by BusinessDayStatusProvider (rendered below this component's body),
+  // so a Business Day schedule change can re-poll the status immediately.
+  const businessDayRefreshRef = useRef(null);
   const [currentTerminal, setCurrentTerminal] = useState(null);
   const [terminalLockedBy, setTerminalLockedBy] = useState(null);
   // Set when the previous business date is still open past configured operating hours
@@ -2948,6 +2951,10 @@ export default function POSSales() {
       setShowCloseSessionDialog(false);
       setSessionToClose(null);
       setSessionNowMs(Date.now());
+      // Re-evaluate the Business Day immediately: this close may have been the last
+      // session pending closure, and the overlay must not keep naming a session that
+      // is now closed for up to a full poll interval.
+      businessDayRefreshRef.current?.();
       if (targetSession.id === currentSession?.id) {
         setCurrentView('x-report');
       } else {
@@ -2983,7 +2990,8 @@ export default function POSSales() {
     const explicitTarget = (target && target.nativeEvent) ? null : target;
     const targetSession = explicitTarget || sessionToClose || currentSession;
     
-    if (targetSession?.status === 'active' || targetSession?.status === 'OPEN') {
+    if (targetSession?.status === 'active' || targetSession?.status === 'OPEN'
+        || targetSession?.status === 'SUSPENDED') {
       // Any authorized user may *initiate* a normal close. The Session Owner
       // Verification modal is itself the gate: the credentials typed there are
       // checked against the target session by /authorize-closure. So we never
@@ -3001,6 +3009,69 @@ export default function POSSales() {
       setCashierAuthError('');
     }
   };
+
+  /**
+   * "Close Session" from the Trading-Period-Ended overlay.
+   *
+   * The overlay lists sessions straight off `day-status.sessionsRequiringClosure`,
+   * so the entry is a wire DTO (sessionId/terminalId/…), not one of the session
+   * objects the rest of this screen passes around. Normalise it and hand it to the
+   * one existing closure entry point — Session Owner Verification, then
+   * begin-closure, then the X-Report/denomination screen — rather than opening a
+   * second, parallel close path. The overlay is suppressed for the duration by
+   * `businessDayClosureFlowActive` below, so the denomination UI is never covered.
+   */
+  const handleTradingEndedCloseSession = (pending) => {
+    if (!pending?.sessionId) return;
+    const target = {
+      id: pending.sessionId,
+      status: pending.status || 'OPEN',
+      terminalId: pending.terminalId,
+      terminalName: pending.terminalName,
+      counterName: pending.counterName,
+      openedBy: pending.openedBy,
+      cashier: pending.openedBy,
+      openedAt: pending.openedAt,
+    };
+    setClosureAction('NORMAL_CLOSE');
+    setSessionToClose(target);
+    handleDayCloseNormalClose(target);
+  };
+
+  /**
+   * "Open Day Close" from the Trading-Period-Ended overlay, shown once every
+   * session on the closed Trading Date is closed but the day is not finalized.
+   *
+   * Pure navigation into the *existing* Day Close / Z-Report view — no second
+   * Z-Report implementation and no validation is skipped: entering 'z-report'
+   * runs the same effect the Z-Report dashboard tile does, which re-reads
+   * day-status, pins zReportDate to the authoritative pendingDayCloseDate and
+   * loads the already-generated session/X-Report state. The date passed here is
+   * only a hint for that load; the effect's own lookup still wins.
+   *
+   * Switching to 'z-report' also flips `businessDayClosureFlowActive` below, so
+   * the blocking overlay stands down instead of covering the Day Close page.
+   */
+  const handleTradingEndedOpenDayClose = (targetDate) => {
+    if (targetDate) {
+      setPendingDayCloseDate(targetDate);
+      setZReportDate(targetDate);
+    }
+    setCurrentView('z-report');
+  };
+
+  /**
+   * While any part of the closure/Day Close work is on screen, the blocking
+   * Business Day overlay stands down. It is a *blocking* layer at z-[100]: left
+   * mounted it would render on top of the owner-verification dialog, the X-Report
+   * denomination screen and the Close Session dialog — which is exactly the
+   * "denomination visible but not clickable" state. It comes back on its own if
+   * the operator walks back to the till with sessions still open.
+   */
+  const businessDayClosureFlowActive = Boolean(
+    showCashierAuthDialog || showCloseSessionDialog || showSupervisorPin || sessionToClose
+    || currentView === 'x-report' || currentView === 'z-report',
+  );
 
   const handleCashierAuthSubmit = async () => {
     if (!cashierAuthUsername || !cashierAuthPassword) {
@@ -3618,7 +3689,16 @@ export default function POSSales() {
       operatingHoursEnabled: !!posSettings?.operatingHoursEnabled,
       operatingStartTime: posSettings?.operatingStartTime || '',
       operatingEndTime: posSettings?.operatingEndTime || '',
+      businessDayExtensionMinutes: posSettings?.businessDayExtensionMinutes ?? 0,
     });
+    // Refresh the stored settings alongside opening the editor, so the server-computed
+    // Business Day schedule lock (businessDayScheduleLocked — sessions opened or closed since
+    // this screen loaded) is current when the admin starts editing. The draft above is
+    // seeded from the copy already in hand; only the read-only lock projection is at stake,
+    // and the backend re-checks it under a row lock on save regardless.
+    getPosSettings()
+      .then(fresh => { if (fresh) setPosSettings(prev => mergeSavedPosSettings(prev, fresh)); })
+      .catch(err => console.warn('Could not refresh POS settings before editing', err));
   };
 
   const handleSaveSettings = async () => {
@@ -3634,12 +3714,21 @@ export default function POSSales() {
       const saved = await savePosSettings(payload);
       setPosSettings(prev => mergeSavedPosSettings(prev, saved || payload));
       setSettingsDraft(null);
+      // Start/end/extension feed the server-resolved Business Day phase. Without an
+      // immediate re-poll the chip and banner would keep showing the old window
+      // (and the old countdown) until the next 60s poll.
+      businessDayRefreshRef.current?.();
       setSettingsSavedFlash(true);
       setTimeout(() => setSettingsSavedFlash(false), 2000);
     } catch (err) {
       console.warn('Failed to save POS settings', err);
-      // Keep optimistic local copy so the cashier UI still honors the change.
-      setPosSettings(prev => ({ ...(prev || {}), ...settingsDraft }));
+      // A rejection must never be applied optimistically: the backend refuses a Business Day
+      // schedule change while sessions are open or in closure, and quietly honoring it locally
+      // would leave the POS running a window the server does not agree with. Surface the
+      // server's own message and drop the draft, so the fields visibly return to the stored
+      // (still authoritative) values rather than silently reverting without explanation.
+      const serverMessage = err?.response?.data?.message || err?.response?.data?.error;
+      window.alert(serverMessage || 'Could not save POS settings. Please try again.');
       setSettingsDraft(null);
     } finally {
       setSettingsSaving(false);
@@ -7619,7 +7708,9 @@ export default function POSSales() {
                 blockingTerminals.push({
                   terminalId: s.terminalId,
                   terminalName: s.terminalName || s.terminalId || '—',
-                  counter: s.counterName || '—',
+                  // buildSessionInfo() on the backend emits this as `counter`;
+                  // other session payloads (history/X-Report) use `counterName`.
+                  counter: s.counterName || s.counter || '—',
                   cashier: s.cashier || s.openedBy || '—',
                   sessionNo: s.sessionNo || (s.sessionId ? `SESS-${s.sessionId}` : '—'),
                   totalSales: s.totalSales ?? s.sessionSalesAmount ?? 0,
@@ -7640,7 +7731,7 @@ export default function POSSales() {
                 blockingTerminals.push({
                   terminalId: t.terminalId,
                   terminalName: t.terminalName || matchingSession?.terminalName || t.terminalId || '—',
-                  counter: t.counter || matchingSession?.counterName || '—',
+                  counter: t.counter || matchingSession?.counterName || matchingSession?.counter || '—',
                   cashier: t.openedBy || matchingSession?.cashier || matchingSession?.openedBy || '—',
                   sessionNo: matchingSession ? (matchingSession.sessionNo || (matchingSession.sessionId ? `SESS-${matchingSession.sessionId}` : '—')) : '—',
                   totalSales: matchingSession?.totalSales ?? matchingSession?.sessionSalesAmount ?? 0,
@@ -9472,7 +9563,7 @@ export default function POSSales() {
   };
 
   return (
-    <BusinessDayStatusProvider terminalId={currentTerminal?.terminalId}>
+    <BusinessDayStatusProvider terminalId={currentTerminal?.terminalId} refreshRef={businessDayRefreshRef}>
     <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
       {/* ─── TERMINAL REGISTRATION REJECTED (archived / blocked / decommissioned / maintenance) ─── */}
       {terminalRegistrationError && (() => {
@@ -9679,7 +9770,10 @@ export default function POSSales() {
            in openSession/checkout remain the authoritative controls regardless. */}
       <BusinessDayStatusBanner
         openSession={currentSession}
-        onCloseSession={() => setShowCloseSessionDialog(true)}
+        currentTerminalId={currentTerminal?.terminalId}
+        onCloseSession={handleTradingEndedCloseSession}
+        onOpenDayClose={handleTradingEndedOpenDayClose}
+        closureFlowActive={businessDayClosureFlowActive}
       />
 
       {/* ─── PREVIOUS BUSINESS DATE STILL OPEN (BLOCKS POS ENTRY) ─── */}

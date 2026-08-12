@@ -1,4 +1,4 @@
-import React, { useId, useState } from 'react';
+import React, { useId } from 'react';
 import { Minus, Plus, PlusCircle, Check } from 'lucide-react';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 
@@ -12,6 +12,11 @@ const EntryForm = ({
     onChangePrice,
     onChangeQuantity,
     onChangeDiscount,
+    // The discount value is entered either as a percent or as a currency amount.
+    // The mode lives in the container because the line-total math and the
+    // confirmed payload both depend on it.
+    discountMode = 'percent',
+    onChangeDiscountMode,
     isReadOnly = false,
     // A batch/serial line is exactly one physical unit, so its quantity is
     // fixed even though price/discount stay editable.
@@ -25,7 +30,6 @@ const EntryForm = ({
     const priceId = useId();
     const qtyId = useId();
     const discId = useId();
-    const [discountMode, setDiscountMode] = useState('percent'); // 'percent' | 'amount'
 
     const qtyDisabled = isReadOnly || lockQuantity;
 
@@ -125,14 +129,14 @@ const EntryForm = ({
                     <div className="flex bg-gray-50 rounded-lg p-1 mb-3">
                         <button 
                             type="button"
-                            onClick={() => setDiscountMode('percent')}
+                            onClick={() => onChangeDiscountMode?.('percent')}
                             className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${discountMode === 'percent' ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                         >
                             % Percent
                         </button>
                         <button 
                             type="button"
-                            onClick={() => setDiscountMode('amount')}
+                            onClick={() => onChangeDiscountMode?.('amount')}
                             className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all ${discountMode === 'amount' ? 'bg-white text-slate-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                         >
                             {currency} Amount

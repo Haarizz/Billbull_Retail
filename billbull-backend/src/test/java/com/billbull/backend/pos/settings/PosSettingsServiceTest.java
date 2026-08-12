@@ -51,9 +51,22 @@ class PosSettingsServiceTest {
     private final PasswordEncoder encoder = new BCryptPasswordEncoder();
     private PosSettingsService service;
 
+    /**
+     * The Business Day clock, pinned so the schedule guard's phase decisions are
+     * deterministic. A real {@link com.billbull.backend.pos.businessdate.BusinessDayClock}
+     * subclass rather than a mock or a parallel time source — the production class stays the
+     * only clock, tests merely fix its reading. Default 2026-08-11 12:00 sits inside a
+     * 09:00→21:00 window (phase ACTIVE); tests that need a closed day move it.
+     */
+    private java.time.LocalDateTime now = java.time.LocalDateTime.of(2026, 8, 11, 12, 0);
+
     @BeforeEach
     void setUp() {
-        service = new PosSettingsService(repo, branchAccessService, encoder, userRepository, auditLogService, posSessionService, posCredentialVerificationService);
+        var clock = new com.billbull.backend.pos.businessdate.BusinessDayClock("Asia/Dubai") {
+            @Override public java.time.LocalDateTime now() { return now; }
+        };
+        service = new PosSettingsService(repo, branchAccessService, encoder, userRepository,
+                auditLogService, posSessionService, posCredentialVerificationService, clock);
     }
 
     @AfterEach
@@ -76,7 +89,7 @@ class PosSettingsServiceTest {
     void nonSupervisorCannotEnableRequireSupervisorForVoid() {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
 
         authenticateAs("CASHIER");
 
@@ -92,7 +105,7 @@ class PosSettingsServiceTest {
     void nonSupervisorCannotChangeSupervisorPin() {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
 
         authenticateAs("CASHIER");
 
@@ -107,7 +120,7 @@ class PosSettingsServiceTest {
     void supervisorCanChangeSupervisorConfig() {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         authenticateAs("ROLE_ADMIN");
@@ -127,7 +140,7 @@ class PosSettingsServiceTest {
     void nonSupervisorCanStillSaveUnrelatedSettings() {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         authenticateAs("CASHIER");
@@ -145,7 +158,7 @@ class PosSettingsServiceTest {
     void nonSupervisorCannotEnableRequirePriceOverrideApproval() {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
 
         authenticateAs("CASHIER");
 
@@ -160,7 +173,7 @@ class PosSettingsServiceTest {
     void supervisorCanEnableRequirePriceOverrideApproval() {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         authenticateAs("ROLE_MANAGER");
@@ -181,7 +194,7 @@ class PosSettingsServiceTest {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
         existing.setProductEntryMode("DIRECT_ADD");
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings incoming = new PosSettings();
@@ -198,7 +211,7 @@ class PosSettingsServiceTest {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
         existing.setProductEntryMode("DIRECT_ADD");
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         authenticateAs("CASHIER");
@@ -234,7 +247,7 @@ class PosSettingsServiceTest {
     @Test
     void saveWithoutExplicitBranchIdTargetsActiveBranch() {
         when(branchAccessService.getActiveBranchId()).thenReturn(99L);
-        when(repo.findByBranchId(99L)).thenReturn(Optional.empty());
+        when(repo.findByBranchIdForUpdate(99L)).thenReturn(Optional.empty());
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings incoming = new PosSettings(); // no branchId set — mimics a POST with none
@@ -261,7 +274,7 @@ class PosSettingsServiceTest {
         incoming.setBranchId(7L);
         incoming.setSupervisorPin("1234");
 
-        when(repo.findByBranchId(7L)).thenReturn(Optional.empty()); // new record path
+        when(repo.findByBranchIdForUpdate(7L)).thenReturn(Optional.empty()); // new record path
         when(repo.save(any(PosSettings.class))).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings saved = service.save(incoming);
@@ -357,7 +370,7 @@ class PosSettingsServiceTest {
     @Test
     void allowsWarningGreaterThanArchiveWhenAutoArchiveDisabled() {
         PosSettings s = autoArchiveSettings(1L, false, 5, true, 10);
-        lenient().when(repo.findByBranchId(1L)).thenReturn(Optional.empty());
+        lenient().when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.empty());
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings saved = service.save(s);
@@ -382,7 +395,7 @@ class PosSettingsServiceTest {
     @Test
     void businessDayExtensionPersistsThroughUpsertOnExistingBranch() {
         PosSettings existing = businessDay(1L, "09:00", "21:00", 0);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings saved = service.save(businessDay(1L, "09:00", "21:00", 120));
@@ -398,7 +411,7 @@ class PosSettingsServiceTest {
         // Zero is a legitimate configured value — "closes exactly at the Scheduled End Time" —
         // not an absent field, so it must overwrite a previously configured extension.
         PosSettings existing = businessDay(1L, "09:00", "21:00", 120);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings saved = service.save(businessDay(1L, "09:00", "21:00", 0));
@@ -414,7 +427,7 @@ class PosSettingsServiceTest {
         // spreads the full settings object loaded from GET. An explicit null IS detectable,
         // and must not blank a configured value into a NOT NULL column.
         PosSettings existing = businessDay(1L, "09:00", "21:00", 120);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings incoming = businessDay(1L, "09:00", "21:00", null);
@@ -427,7 +440,7 @@ class PosSettingsServiceTest {
     @Test
     void businessDayWindowPersistsAllFourFieldsThroughUpsert() {
         PosSettings existing = businessDay(1L, "09:00", "21:00", 0);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings saved = service.save(businessDay(1L, "10:00", "22:00", 120));
@@ -443,7 +456,7 @@ class PosSettingsServiceTest {
         // Ties the persisted settings to the window arithmetic that consumes them:
         // 10:00 -> 22:00 with a 120-minute extension must close at 00:00 the next day.
         PosSettings existing = businessDay(1L, "09:00", "21:00", 0);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings saved = service.save(businessDay(1L, "10:00", "22:00", 120));
@@ -458,11 +471,292 @@ class PosSettingsServiceTest {
         assertEquals(com.billbull.backend.pos.businessdate.BusinessDayPhase.EXTENSION, window.phase());
     }
 
+    // ── Business Day schedule guard: no re-timing under live sessions ───────────
+    //
+    // The rule: Start Time, End Time and the enable switch are frozen while the branch has
+    // any session that is OPEN or in the closure workflow (closingStartedAt set, status still
+    // OPEN/SUSPENDED), on any terminal. Enforced in the service, so a direct API call — which
+    // reaches exactly this method — cannot bypass it.
+
+    private com.billbull.backend.pos.session.PosSession openSession(long id, String terminalId) {
+        var s = new com.billbull.backend.pos.session.PosSession();
+        s.setId(id);
+        s.setBranchId(1L);
+        s.setTerminalId(terminalId);
+        s.setStatus(com.billbull.backend.pos.session.PosSessionStatus.OPEN);
+        s.setTradingDate(java.time.LocalDate.of(2026, 8, 11));
+        return s;
+    }
+
+    private com.billbull.backend.pos.session.PosSession closureWorkflowSession(long id, String terminalId) {
+        var s = openSession(id, terminalId);
+        s.setClosingStartedAt(java.time.LocalDateTime.of(2026, 8, 11, 20, 30));
+        return s;
+    }
+
+    private void withLockingSessions(com.billbull.backend.pos.session.PosSession... sessions) {
+        when(posSessionService.findBusinessDayScheduleLockingSessions(1L)).thenReturn(List.of(sessions));
+    }
+
+    @Test
+    void startTimeChangeRejectedWhileASessionIsOpen() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        withLockingSessions(openSession(500L, "POS-1"));
+
+        var error = assertThrows(IllegalArgumentException.class,
+                () -> service.save(businessDay(1L, "10:00", "21:00", 60)));
+
+        assertTrue(error.getMessage().startsWith(PosSettingsService.SCHEDULE_LOCKED_MESSAGE));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void endTimeChangeRejectedWhileASessionIsOpen() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        withLockingSessions(openSession(500L, "POS-1"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.save(businessDay(1L, "09:00", "23:00", 60)));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void startTimeChangeRejectedWhileASessionIsInTheClosureWorkflow() {
+        // Status is still OPEN during closure — the guard must key off closingStartedAt too,
+        // exactly as PosSessionClosureWorkflowGate does.
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        withLockingSessions(closureWorkflowSession(501L, "POS-2"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.save(businessDay(1L, "08:00", "21:00", 60)));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void endTimeChangeRejectedWhileASessionIsInTheClosureWorkflow() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        withLockingSessions(closureWorkflowSession(501L, "POS-2"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.save(businessDay(1L, "09:00", "20:00", 60)));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void disablingTheWindowIsRejectedWhileASessionIsOpen() {
+        // Switching the window off substitutes the calendar day for the configured window —
+        // the same hazard as moving Start, and the obvious way to bypass the rule otherwise.
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        withLockingSessions(openSession(500L, "POS-1"));
+
+        PosSettings incoming = businessDay(1L, "09:00", "21:00", 60);
+        incoming.setOperatingHoursEnabled(false);
+
+        assertThrows(IllegalArgumentException.class, () -> service.save(incoming));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void startAndEndChangeAllowedWhenNoSessionsAreActive() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // posSessionService returns an empty list by default — no OPEN/closure sessions.
+
+        PosSettings saved = service.save(businessDay(1L, "11:00", "23:00", 60));
+
+        assertEquals(java.time.LocalTime.of(11, 0), saved.getOperatingStartTime());
+        assertEquals(java.time.LocalTime.of(23, 0), saved.getOperatingEndTime());
+        verify(auditLogService).logDomainEvent(org.mockito.ArgumentMatchers.eq("POS_SETTINGS"),
+                org.mockito.ArgumentMatchers.eq("1"),
+                org.mockito.ArgumentMatchers.eq("BUSINESS_DAY_SCHEDULE_CHANGED"),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void rejectedScheduleChangeLeavesTheOpenSessionsTradingDateUntouched() {
+        // The fix prevents an inconsistent state; it never repairs sessions afterwards.
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        var live = openSession(500L, "POS-1");
+        withLockingSessions(live);
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.save(businessDay(1L, "03:00", "21:00", 60)));
+
+        assertEquals(java.time.LocalDate.of(2026, 8, 11), live.getTradingDate(),
+                "an existing session's tradingDate must never be recalculated by a settings change");
+        assertEquals(java.time.LocalTime.of(9, 0), existing.getOperatingStartTime(),
+                "the stored schedule must be left exactly as it was");
+    }
+
+    @Test
+    void rejectedScheduleChangeIsAudited() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        withLockingSessions(openSession(500L, "POS-1"));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.save(businessDay(1L, "10:00", "21:00", 60)));
+
+        verify(auditLogService).logDomainEvent(org.mockito.ArgumentMatchers.eq("POS_SETTINGS"),
+                org.mockito.ArgumentMatchers.eq("1"),
+                org.mockito.ArgumentMatchers.eq("BUSINESS_DAY_SCHEDULE_CHANGE_REJECTED"),
+                org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void unrelatedSettingsStillSaveWhileSessionsAreOpen() {
+        // The guard must freeze the Business Day schedule only — nothing else on this screen.
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(posSessionService.findBusinessDayScheduleLockingSessions(1L))
+                .thenReturn(List.of(openSession(500L, "POS-1")));
+
+        PosSettings incoming = businessDay(1L, "09:00", "21:00", 60);
+        incoming.setDefaultLayout("compact");
+
+        assertEquals("compact", service.save(incoming).getDefaultLayout());
+    }
+
+    // ── Extension rule ──────────────────────────────────────────────────────────
+    //
+    // Allowed while sessions are open (it cannot move any tradingDate — only closureAt),
+    // refused only when it would drag the current Business Day back out of CLOSED.
+
+    @Test
+    void extensionChangeAllowedWhileSessionsAreOpen() {
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 0);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(posSessionService.findBusinessDayScheduleLockingSessions(1L))
+                .thenReturn(List.of(openSession(500L, "POS-1"), closureWorkflowSession(501L, "POS-2")));
+
+        PosSettings saved = service.save(businessDay(1L, "09:00", "21:00", 120));
+
+        assertEquals(120, saved.getBusinessDayExtensionMinutes());
+    }
+
+    @Test
+    void extensionMayBeShortenedDuringTheExtensionPeriod() {
+        // 21:30 with a 120-minute extension → phase EXTENSION. Cutting it to 15 minutes closes
+        // the day now, which is a legitimate forward move and leaves tradingDate alone.
+        now = java.time.LocalDateTime.of(2026, 8, 11, 21, 30);
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 120);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(posSessionService.findBusinessDayScheduleLockingSessions(1L))
+                .thenReturn(List.of(openSession(500L, "POS-1")));
+
+        assertEquals(15, service.save(businessDay(1L, "09:00", "21:00", 15)).getBusinessDayExtensionMinutes());
+    }
+
+    @Test
+    void extensionCannotBeLengthenedOnceTheBusinessDayHasClosed() {
+        // 22:30, window 09:00→21:00 + 60min → closed at 22:00. Extending to 180 minutes would
+        // push closure to 00:00 and move the day CLOSED → EXTENSION: a back-door reopen.
+        now = java.time.LocalDateTime.of(2026, 8, 11, 22, 30);
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+
+        var error = assertThrows(IllegalArgumentException.class,
+                () -> service.save(businessDay(1L, "09:00", "21:00", 180)));
+
+        assertTrue(error.getMessage().contains("already closed"));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void extensionMayStillBeShortenedAfterTheBusinessDayHasClosed() {
+        // Still CLOSED afterwards — nothing is reopened, so there is nothing to refuse.
+        now = java.time.LocalDateTime.of(2026, 8, 11, 22, 30);
+        PosSettings existing = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        assertEquals(0, service.save(businessDay(1L, "09:00", "21:00", 0)).getBusinessDayExtensionMinutes());
+    }
+
+    // ── Blank / invalid values keep their existing behavior ─────────────────────
+
+    @Test
+    void enabledWindowWithBlankStartStillRejectedByTheExistingValidation() {
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setOperatingHoursEnabled(true);
+        incoming.setOperatingEndTime(java.time.LocalTime.of(21, 0));
+
+        var error = assertThrows(IllegalArgumentException.class, () -> service.save(incoming));
+        assertTrue(error.getMessage().contains("Start Time is required"));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void enabledWindowWithBlankEndStillRejectedByTheExistingValidation() {
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setOperatingHoursEnabled(true);
+        incoming.setOperatingStartTime(java.time.LocalTime.of(9, 0));
+
+        var error = assertThrows(IllegalArgumentException.class, () -> service.save(incoming));
+        assertTrue(error.getMessage().contains("End Time is required"));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void disabledWindowWithNoTimesStillSavesUnrestricted() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setOperatingHoursEnabled(false);
+
+        PosSettings saved = service.save(incoming);
+
+        assertFalse(saved.getOperatingHoursEnabled());
+        assertFalse(com.billbull.backend.pos.businessdate.BusinessDaySettings.from(saved).isConfigured());
+    }
+
+    // ── Read path exposes the lock to the console ───────────────────────────────
+
+    @Test
+    void getForBranchReportsTheScheduleLockWhenSessionsAreActive() {
+        PosSettings stored = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(stored));
+        withLockingSessions(openSession(500L, "POS-1"), closureWorkflowSession(501L, "POS-2"));
+
+        PosSettings view = service.getForBranch(1L);
+
+        assertTrue(view.isBusinessDayScheduleLocked());
+        assertEquals(2, view.getBusinessDayScheduleLockingSessionCount());
+        assertEquals(PosSettingsService.SCHEDULE_LOCKED_MESSAGE, view.getBusinessDayScheduleLockReason());
+    }
+
+    @Test
+    void getForBranchReportsNoLockWhenNothingIsActive() {
+        PosSettings stored = businessDay(1L, "09:00", "21:00", 60);
+        when(repo.findByBranchId(1L)).thenReturn(Optional.of(stored));
+
+        PosSettings view = service.getForBranch(1L);
+
+        assertFalse(view.isBusinessDayScheduleLocked());
+        assertEquals(0, view.getBusinessDayScheduleLockingSessionCount());
+    }
+
     @Test
     void validConfigPersistsAllFourFieldsThroughUpsert() {
         PosSettings existing = new PosSettings();
         existing.setBranchId(1L);
-        when(repo.findByBranchId(1L)).thenReturn(Optional.of(existing));
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
         when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         PosSettings incoming = autoArchiveSettings(1L, true, 45, true, 7);

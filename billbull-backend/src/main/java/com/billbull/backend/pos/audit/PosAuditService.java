@@ -161,6 +161,27 @@ public class PosAuditService {
     }
 
     /**
+     * Reprint audit with the reprinting operator passed in explicitly.
+     *
+     * <p>A reprint is routinely performed by someone other than the cashier who created the
+     * invoice, so the entry has to name the person who pressed Print — and {@link #save}'s own
+     * {@code currentUser()} cannot supply it: this method is {@code @Async} and no
+     * SecurityContext is propagated to the executor thread, so the ambient principal there is
+     * empty. The caller captures the username on the request thread and hands it over.
+     * The invoice's own createdBy is never touched by this trail.
+     */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logReceiptReprinted(Long sessionId, String terminalId, Long branchId,
+                                     Long invoiceId, String invoiceNumber, String reprintedBy) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.RECEIPT_REPRINTED, "INVOICE", String.valueOf(invoiceId),
+                "Receipt reprinted for invoice: " + invoiceNumber
+                        + (reprintedBy != null && !reprintedBy.isBlank() ? " by " + reprintedBy : ""),
+                null, null, reprintedBy);
+    }
+
+    /**
      * A supervisor authorized one pending checkout to complete after the Business
      * Day had already closed.
      *
@@ -252,12 +273,20 @@ public class PosAuditService {
     private void save(Long sessionId, String terminalId, Long branchId,
                       PosAuditAction action, String entityType, String entityId,
                       String description, String oldJson, String newJson) {
+        save(sessionId, terminalId, branchId, action, entityType, entityId,
+                description, oldJson, newJson, null);
+    }
+
+    /** {@code userId} overrides the ambient principal — see the reprint overload for why. */
+    private void save(Long sessionId, String terminalId, Long branchId,
+                      PosAuditAction action, String entityType, String entityId,
+                      String description, String oldJson, String newJson, String userId) {
         try {
             PosAuditLog log = new PosAuditLog();
             log.setSessionId(sessionId);
             log.setTerminalId(terminalId);
             log.setBranchId(branchId);
-            log.setUserId(currentUser());
+            log.setUserId(userId != null && !userId.isBlank() ? userId : currentUser());
             log.setAction(action);
             log.setEntityType(entityType);
             log.setEntityId(entityId);

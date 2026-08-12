@@ -84,7 +84,11 @@ public final class ModuleCatalog {
             "permissions.pos.reports.view",
             "permissions.pos.reports.viewall",
             "permissions.pos.reports.print",
-            "permissions.pos.reports.export");
+            "permissions.pos.reports.export",
+            // Duplicate-receipt reprint at the POS counter. Single-switch grant, and deliberately
+            // independent of invoice ownership: it authorizes reprinting ANY invoice of a branch the
+            // holder can act on, not just the ones they rang up themselves.
+            "permissions.pos.receipt.reprint");
 
     /** lowercase key → canonical key */
     private static final Map<String, String> CANONICAL_BY_LOWERCASE = CANONICAL_MODULES.stream()
