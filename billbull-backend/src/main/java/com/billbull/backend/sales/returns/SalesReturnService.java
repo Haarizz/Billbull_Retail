@@ -23,6 +23,8 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
+import com.billbull.backend.sales.voucher.CreditVoucher;
+import com.billbull.backend.sales.voucher.CreditVoucherResponse;
 import com.billbull.backend.sales.settings.SalesDocumentType;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
@@ -95,6 +97,18 @@ public class SalesReturnService {
 
     @Autowired
     private SerialMasterRepository serialMasterRepository;
+
+    @Autowired
+    private SalesReturnAuthorizationService authorizationService;
+
+    @Autowired
+    private SalesReturnCashRefundService cashRefundService;
+
+    @Autowired
+    private com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService;
+
+    @Autowired
+    private SalesReturnCustomerAccountResolver customerAccountResolver;
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
@@ -189,9 +203,52 @@ public class SalesReturnService {
             salesReturn.getItems().forEach(item -> item.setSalesReturn(salesReturn));
         }
 
+        normaliseLineConditions(salesReturn);
+        applyEntryPointDefaults(salesReturn);
         prorateDiscountFromInvoice(salesReturn);
 
         return salesReturnRepository.save(salesReturn);
+    }
+
+    /**
+     * Keeps the structured per-line {@link SalesReturnCondition} (§12) and the legacy
+     * {@code itemStatus} string in agreement, in whichever direction the caller supplied.
+     *
+     * <p>{@code itemStatus} is what the restock and COGS branches in this service actually
+     * read, so it must never contradict the condition the cashier chose. New clients send
+     * {@code condition}; older ones send only {@code itemStatus}; both end up consistent.
+     */
+    private void normaliseLineConditions(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null) return;
+
+        for (SalesReturnItem item : salesReturn.getItems()) {
+            if (item.getCondition() != null) {
+                // Condition is authoritative — derive the legacy string from it.
+                item.setItemStatus(item.getCondition().toLegacyItemStatus());
+            } else {
+                SalesReturnCondition derived = SalesReturnCondition.fromLegacyItemStatus(item.getItemStatus());
+                if (derived == null) {
+                    // Neither supplied. Default to GOOD (restock), matching the behaviour before
+                    // conditions existed, where a blank status was treated as non-scrap.
+                    derived = SalesReturnCondition.GOOD;
+                }
+                item.setCondition(derived);
+                item.setItemStatus(derived.toLegacyItemStatus());
+            }
+        }
+    }
+
+    /** Fills in entry-point provenance and the refunded amount when the caller omitted them. */
+    private void applyEntryPointDefaults(SalesReturn salesReturn) {
+        if (salesReturn.getEntryPoint() == null) {
+            // A return carrying POS session context came from POS even if the client did not say so.
+            salesReturn.setEntryPoint(salesReturn.getPosSessionId() != null
+                    ? SalesReturnEntryPoint.POS
+                    : SalesReturnEntryPoint.SALES_RETURN);
+        }
+        if (salesReturn.getRefundAmount() == null && salesReturn.getRefundMethod() != null) {
+            salesReturn.setRefundAmount(salesReturn.getTotalAmount());
+        }
     }
 
     /**
@@ -302,11 +359,56 @@ public class SalesReturnService {
 
     @Transactional
     public SalesReturn updateStatus(Long id, SalesReturnStatus status) {
+        return updateStatus(id, status, null, null);
+    }
+
+    /**
+     * Transitions a return's status, running every side effect of approval in one transaction.
+     *
+     * <p>Order matters and is deliberate (§13): the row is locked, then authorization is
+     * established, then quantities are revalidated, and only after all of that does anything
+     * move — stock, GL, and finally the drawer cash-out. An unauthorized or stale request
+     * therefore fails with nothing having been written, rather than leaving a half-applied
+     * refund behind.
+     *
+     * @param supervisorUsername supervisor credentials, required only when policy flags this
+     *                           return for sign-off; ignored otherwise
+     */
+    @Transactional
+    public SalesReturn updateStatus(Long id, SalesReturnStatus status,
+                                    String supervisorUsername, String supervisorPassword) {
+        // Take the row lock BEFORE reading status. This is what makes confirmation idempotent:
+        // a double-clicked or retried approval blocks here, then sees APPROVED and is rejected,
+        // so stock, journals and the cash payout each happen exactly once.
+        salesReturnRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "Sales Return not found with ID: " + id));
+
         SalesReturn salesReturn = getReturnById(id);
 
         if (salesReturn.getStatus() == SalesReturnStatus.APPROVED) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.BAD_REQUEST, "Approved returns cannot be modified.");
+        }
+
+        if (status == SalesReturnStatus.APPROVED) {
+            // §15/§10 — authorization is resolved from persisted state and enforced here, so a
+            // direct API call cannot skip it by omitting whatever flag the UI would have sent.
+            String requiredAuthorization = authorizationService.resolveRequiredAuthorization(salesReturn);
+            if (requiredAuthorization != null) {
+                authorizationService.authorize(salesReturn, requiredAuthorization,
+                        supervisorUsername, supervisorPassword);
+            }
+
+            // §14 — the refund method has to be one this customer can actually be settled with.
+            // Checked here, not only in the UI: the screen greys the control out, but that is a
+            // hint, and a return posted through the API directly must not be able to book a
+            // ledger credit against a customer who has no ledger.
+            assertRefundMethodSettleable(salesReturn);
+
+            // §29 — revalidate against persisted data under a lock BEFORE anything is written.
+            // Whatever the client was shown when it built this return is stale by now.
+            assertReturnableQuantitiesStillAvailable(salesReturn);
         }
 
         salesReturn.setStatus(status);
@@ -317,8 +419,160 @@ public class SalesReturnService {
             applyNonBatchStockReturns(saved);
             postJournalForApprovedReturn(saved);
             applySerialReturns(saved);
+            // Last, because these are the steps that hand value to the customer. Both share this
+            // transaction, so a failure anywhere above rolls them back with everything else — a
+            // return is never reported as refunded without the matching drawer movement, and never
+            // reported as settled by voucher without the voucher actually existing.
+            cashRefundService.recordCashRefund(saved);
+            issueCreditVoucherIfRequired(saved);
         }
         return saved;
+    }
+
+    /**
+     * Rejects a refund method the customer on this return cannot be settled with (§14).
+     *
+     * <p>Today that is Customer Credit on a walk-in sale: the method posts to the customer's
+     * ledger, and an anonymous sale has no ledger to post to. Booking it anyway would record a
+     * credit against the "WALK-IN" placeholder, where it would be both unredeemable by the
+     * customer and a permanent phantom balance in the AR sub-ledger.
+     *
+     * <p>The error names Credit Voucher as the alternative because it is the instrument that
+     * solves the same problem for an anonymous customer — bearer credit, no account needed.
+     */
+    private void assertRefundMethodSettleable(SalesReturn salesReturn) {
+        if (salesReturn.getRefundMethod() == null) return;
+
+        String blocked = customerAccountResolver.blockedReason(
+                salesReturn.getRefundMethod(), salesReturn.getCustomerCode());
+        if (blocked != null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY, blocked);
+        }
+    }
+
+    /**
+     * Issues the store-credit voucher for a return settled as {@code CREDIT_VOUCHER} (§7).
+     *
+     * <p>Runs in the approval transaction so voucher creation and the return commit together. If
+     * issuance fails the whole approval rolls back rather than leaving a return that claims to
+     * have refunded via a voucher that was never created (§8).
+     *
+     * <p>The issued voucher is attached to the returned entity so the caller gets its real,
+     * persisted code, balance and expiry in the same response — the frontend never invents any of
+     * those (§25).
+     */
+    private void issueCreditVoucherIfRequired(SalesReturn salesReturn) {
+        if (salesReturn.getRefundMethod() != SalesReturnRefundMethod.CREDIT_VOUCHER) {
+            return;
+        }
+
+        java.math.BigDecimal amount = salesReturn.getRefundAmount() != null
+                ? salesReturn.getRefundAmount()
+                : salesReturn.getTotalAmount();
+
+        CreditVoucher voucher = creditVoucherService.issueForSalesReturn(
+                salesReturn.getId(),
+                salesReturn.getReturnNumber(),
+                salesReturn.getLinkedInvoice(),
+                amount,
+                salesReturn.getCustomerCode(),
+                salesReturn.getCustomerName(),
+                salesReturn.getCustomerMobile(),
+                salesReturn.getBranch());
+
+        salesReturn.setIssuedVoucher(CreditVoucherResponse.from(voucher));
+    }
+
+    // ---------------------------------------------------------------
+    // §29 Concurrency guard
+    // ---------------------------------------------------------------
+
+    /**
+     * Re-checks every line's returnable quantity against persisted data, holding a write lock
+     * on the original invoice row for the duration of the transaction.
+     *
+     * <p>Why the invoice row: every return against an invoice must pass through it, so locking
+     * it serialises concurrent approvals. Without this, two terminals could each read
+     * "available = 2" for a non-batch product and both approve a return of 2, over-returning
+     * the sale. Batch-controlled lines were already safe — {@link #applyBatchReturns} locks each
+     * BatchAllocation — but non-batch lines had no equivalent guard.
+     *
+     * <p>Deliberately fails the whole return rather than silently trimming quantities: a cashier
+     * who has already handed over cash for 2 units must be told the second unit was rejected,
+     * not have it disappear from the receipt.
+     */
+    private void assertReturnableQuantitiesStillAvailable(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
+
+        String linkedInvoice = salesReturn.getLinkedInvoice();
+        if (linkedInvoice == null || linkedInvoice.isBlank()) {
+            // Unlinked returns have no invoice to over-return against; nothing to serialise on.
+            log.warn("[SalesReturn] {} has no linked invoice — skipping returnable-quantity revalidation.",
+                    salesReturn.getReturnNumber());
+            return;
+        }
+
+        Optional<SalesInvoice> lockedOpt = salesInvoiceRepository.findByInvoiceNumberForUpdate(linkedInvoice);
+        if (lockedOpt.isEmpty()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Cannot approve " + salesReturn.getReturnNumber() + ": linked invoice '"
+                            + linkedInvoice + "' no longer exists.");
+        }
+        SalesInvoice invoice = lockedOpt.get();
+
+        // Sold quantity per item code, excluding voided lines.
+        Map<String, Integer> soldByCode = new HashMap<>();
+        if (invoice.getItems() != null) {
+            for (SalesInvoiceItem ii : invoice.getItems()) {
+                if (ii.getItemCode() == null || Boolean.TRUE.equals(ii.getVoided())) continue;
+                soldByCode.merge(ii.getItemCode(), ii.getQuantity() != null ? ii.getQuantity() : 0, Integer::sum);
+            }
+        }
+
+        // Already-approved returns against this invoice, read inside the lock. Only APPROVED
+        // rows have moved stock, so only they consume returnable quantity — and this return
+        // is still DRAFT at this point, so it cannot count itself.
+        Map<String, Integer> returnedByCode = new HashMap<>();
+        for (SalesReturn prior : salesReturnRepository.findByLinkedInvoiceWithItems(linkedInvoice)) {
+            if (prior.getStatus() != SalesReturnStatus.APPROVED) continue;
+            if (prior.getId() != null && prior.getId().equals(salesReturn.getId())) continue;
+            if (prior.getItems() == null) continue;
+            for (SalesReturnItem ri : prior.getItems()) {
+                if (ri.getItemCode() == null) continue;
+                returnedByCode.merge(ri.getItemCode(),
+                        ri.getReturnQty() != null ? ri.getReturnQty() : 0, Integer::sum);
+            }
+        }
+
+        List<String> violations = new ArrayList<>();
+        for (SalesReturnItem item : salesReturn.getItems()) {
+            String code = item.getItemCode();
+            int requested = item.getReturnQty() != null ? item.getReturnQty() : 0;
+            if (code == null || requested <= 0) continue;
+
+            int sold = soldByCode.getOrDefault(code, 0);
+            if (sold == 0) {
+                violations.add(code + " is not on invoice " + linkedInvoice);
+                continue;
+            }
+            int available = sold - returnedByCode.getOrDefault(code, 0);
+            if (requested > available) {
+                violations.add(code + ": requested " + requested + " but only " + Math.max(0, available)
+                        + " of " + sold + " remain returnable");
+            }
+        }
+
+        if (!violations.isEmpty()) {
+            log.warn("[SalesReturn] {} rejected at approval — returnable quantities changed: {}",
+                    salesReturn.getReturnNumber(), violations);
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.CONFLICT,
+                    "This return can no longer be completed because the invoice has changed since it was"
+                            + " started (another return may have been processed). " + String.join("; ", violations)
+                            + ". Reload the invoice and try again.");
+        }
     }
 
     // ---------------------------------------------------------------
@@ -871,7 +1125,12 @@ public class SalesReturnService {
                 }
                 Optional<com.billbull.backend.inventory.product.ProductPricing> pricingOpt =
                         productPricingRepository.findByProductId(productOpt.get().getId());
-                if (pricingOpt.isEmpty() || pricingOpt.get().getCost() == null) {
+                // An explicit 0.00 counts as missing, not as a real cost: it yields the same
+                // zero COGS as a null but would otherwise slip past the caller's friendly guard
+                // (which keys off this list) and surface as the posting engine's generic
+                // "resolve the product WAC" error, naming no item.
+                if (pricingOpt.isEmpty() || pricingOpt.get().getCost() == null
+                        || pricingOpt.get().getCost().compareTo(BigDecimal.ZERO) <= 0) {
                     log.warn("[SalesReturn] {} — no cost for product '{}'; COGS=0, post manual journal.",
                             salesReturn.getReturnNumber(), itemCode);
                     missingCostItemCodes.add(itemCode);

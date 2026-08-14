@@ -249,6 +249,28 @@ public class PosSettings extends BaseEntity {
     @Column(name = "require_supervisor_for_day_close")
     private Boolean requireSupervisorForDayClose = false;
 
+    // ---- Credit Voucher expiry policy (per branch) -------------------------------------
+    //
+    // All three are nullable, and null means "not configured — use the global
+    // sales.voucher.expiry-months default". That is what preserves the pre-existing
+    // 12-month behaviour for every branch that never opens this setting.
+
+    /**
+     * {@code AUTO} — expire a voucher {@link #creditVoucherExpiryMonths} after it is issued.
+     * {@code MANUAL} — expire every voucher on the fixed {@link #creditVoucherExpiryDate}.
+     * {@code null} — no branch policy; the global property decides.
+     */
+    @Column(name = "credit_voucher_expiry_mode", length = 10)
+    private String creditVoucherExpiryMode;
+
+    /** Months a voucher stays valid under AUTO. {@code 0} is a real choice: never expires. */
+    @Column(name = "credit_voucher_expiry_months")
+    private Integer creditVoucherExpiryMonths;
+
+    /** The fixed expiry date under MANUAL. */
+    @Column(name = "credit_voucher_expiry_date")
+    private java.time.LocalDate creditVoucherExpiryDate;
+
     // Getters & Setters
 
     public Long getBranchId() { return branchId; }
@@ -418,4 +440,13 @@ public class PosSettings extends BaseEntity {
 
     public Boolean getRequireSupervisorForDayClose() { return requireSupervisorForDayClose; }
     public void setRequireSupervisorForDayClose(Boolean requireSupervisorForDayClose) { this.requireSupervisorForDayClose = requireSupervisorForDayClose; }
+
+    public String getCreditVoucherExpiryMode() { return creditVoucherExpiryMode; }
+    public void setCreditVoucherExpiryMode(String creditVoucherExpiryMode) { this.creditVoucherExpiryMode = creditVoucherExpiryMode; }
+
+    public Integer getCreditVoucherExpiryMonths() { return creditVoucherExpiryMonths; }
+    public void setCreditVoucherExpiryMonths(Integer creditVoucherExpiryMonths) { this.creditVoucherExpiryMonths = creditVoucherExpiryMonths; }
+
+    public java.time.LocalDate getCreditVoucherExpiryDate() { return creditVoucherExpiryDate; }
+    public void setCreditVoucherExpiryDate(java.time.LocalDate creditVoucherExpiryDate) { this.creditVoucherExpiryDate = creditVoucherExpiryDate; }
 }

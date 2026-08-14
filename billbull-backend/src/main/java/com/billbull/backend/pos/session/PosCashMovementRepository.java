@@ -19,6 +19,18 @@ public interface PosCashMovementRepository extends JpaRepository<PosCashMovement
      *  (with a status badge), only the summed totals exclude them. */
     List<PosCashMovement> findByPosSession_IdInOrderByPerformedAtAsc(List<Long> sessionIds);
 
+    /**
+     * Movements carrying a specific reference, direction and status. Backs the Sales Return
+     * cash-refund duplicate guard, which stores the return number in {@code reference} — a
+     * retried confirmation must never pay the customer out of the drawer twice.
+     *
+     * <p>Callers pass {@code ACTIVE}: a voided refund movement means the cash went back into
+     * the drawer, so re-issuing the refund is legitimate rather than a duplicate.
+     */
+    List<PosCashMovement> findByReferenceAndMovementTypeAndStatus(String reference,
+                                                                  PosCashMovementType movementType,
+                                                                  PosCashMovementStatus status);
+
     /** SUM(amount) grouped by movementType across a set of sessions, restricted to the
      *  given status — backs both the Day Close cash reconciliation and the Consolidated
      *  Cash Position drop-in/drop-out totals. Callers pass {@code ACTIVE} so voided

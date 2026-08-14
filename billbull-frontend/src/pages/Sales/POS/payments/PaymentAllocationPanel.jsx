@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Banknote, CreditCard, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
+import { AlertTriangle, Banknote, CreditCard, Gift, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
 
 import { PAYMENT_TYPES } from './paymentModel';
 import { remainingAfterAllocation, suggestedNextMethod } from './paymentFlow';
@@ -10,6 +10,7 @@ import CashPaymentModal from './modals/CashPaymentModal';
 import CardPaymentModal from './modals/CardPaymentModal';
 import OnlinePaymentModal from './modals/OnlinePaymentModal';
 import CreditPaymentModal from './modals/CreditPaymentModal';
+import VoucherPaymentModal from './modals/VoucherPaymentModal';
 
 /** Hotkeys are the first letter of each method, which is also what the badge shows. */
 const METHODS = [
@@ -17,6 +18,8 @@ const METHODS = [
   { type: PAYMENT_TYPES.CARD, label: 'Card', hotkey: 'd', icon: CreditCard, accent: '#2563eb' },
   { type: PAYMENT_TYPES.ONLINE, label: 'Online', hotkey: 'o', icon: Landmark, accent: '#0891b2' },
   { type: PAYMENT_TYPES.CREDIT, label: 'Credit', hotkey: 'r', icon: Users, accent: '#9333ea' },
+  // 'v' is free; 'c' and 'd' are already Cash and Card.
+  { type: PAYMENT_TYPES.VOUCHER, label: 'Voucher', hotkey: 'v', icon: Gift, accent: '#8B5CF6' },
 ];
 
 /**
@@ -239,6 +242,7 @@ export default function PaymentAllocationPanel({
         <CreditPaymentModal {...modalProps} customers={customers} defaultCustomerId={selectedCustomerId}
           onCustomerCreated={onCustomerCreated} />
       )}
+      {activeModal?.type === PAYMENT_TYPES.VOUCHER && <VoucherPaymentModal {...modalProps} />}
 
     </div>
   );

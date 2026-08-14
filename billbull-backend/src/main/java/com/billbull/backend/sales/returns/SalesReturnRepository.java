@@ -37,6 +37,25 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     @Query("SELECT r FROM SalesReturn r LEFT JOIN FETCH r.items WHERE r.id = :id")
     Optional<SalesReturn> findByIdWithItems(@Param("id") Long id);
 
+    /**
+     * Pessimistic-write lock on a single return row, taken at the start of the approval
+     * transaction.
+     *
+     * <p>This is what makes confirmation idempotent under concurrency. Without it, a
+     * double-clicked or retried confirmation could have two transactions both read status
+     * DRAFT, both pass the "already approved" guard, and both post stock movements, GL
+     * journals and — worst of all — two drawer cash payouts for one refund. Whichever
+     * transaction takes the lock second sees APPROVED and is rejected.
+     *
+     * <p>Items are deliberately not JOIN FETCHed: some databases refuse {@code FOR UPDATE}
+     * alongside an outer join. The caller re-reads the full graph through
+     * {@code findByIdWithItems} inside the same transaction, which returns the same locked,
+     * managed instance from the persistence context.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM SalesReturn r WHERE r.id = :id")
+    Optional<SalesReturn> findByIdForUpdate(@Param("id") Long id);
+
     boolean existsByReturnNumber(String returnNumber);
 
     @Query("SELECT r.returnNumber FROM SalesReturn r WHERE r.returnNumber LIKE CONCAT(:prefix, '%')")

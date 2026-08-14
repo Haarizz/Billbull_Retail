@@ -58,6 +58,8 @@ public class PosCheckoutController {
 
 
     private final SalesInvoiceService invoiceService;
+    /** Draws down store credit for VOUCHER tender legs; see {@link #redeemVoucherAllocation}. */
+    private final com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService;
     private final PosSessionService sessionService;
     private final com.billbull.backend.pos.businessdate.BusinessDayCheckoutGate businessDayCheckoutGate;
     private final com.billbull.backend.pos.businessdate.BusinessDayContinuationGate businessDayContinuationGate;
@@ -104,7 +106,9 @@ public class PosCheckoutController {
                                   PosPaymentAllocationResolver allocationResolver,
                                   com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock,
                                   com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate,
-                                  com.billbull.backend.security.ModulePermissionService modulePermissionService) {
+                                  com.billbull.backend.security.ModulePermissionService modulePermissionService,
+                                  com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService) {
+        this.creditVoucherService = creditVoucherService;
         this.modulePermissionService = modulePermissionService;
         this.closureWorkflowGate = closureWorkflowGate;
         this.invoiceService = invoiceService;
@@ -298,6 +302,14 @@ public class PosCheckoutController {
 
             for (ResolvedPaymentAllocation allocation : plan.getAllocations()) {
                 if (allocation.getAmount() <= 0.001) continue; // cash trimmed to zero by the balance cap
+
+                // A VOUCHER leg must draw the store credit down before it is recorded as settling
+                // the invoice. Doing it first means an invalid, expired or already-spent voucher
+                // fails the checkout rather than producing a Payment row backed by nothing.
+                if (allocation.getType() == PosPaymentAllocationType.VOUCHER) {
+                    redeemVoucherAllocation(saved, allocation, request);
+                }
+
                 if (allocation.isReceipt()) {
                     invoiceService.recordPayment(saved.getId(), allocation.getAmount(),
                             allocation.getModeLabel(), allocation.getReference(), saved.getInvoiceDate(),
@@ -1025,6 +1037,42 @@ public class PosCheckoutController {
      *  checkout request, via the same PosSettingsService checks the cart-add-time approval
      *  dialog uses (ARCHFIX S5 — PIN is BCrypt-hashed; credentials check role membership). PIN
      *  is tried first when both are present, matching PIN being the simpler/default approval mode. */
+    /**
+     * Draws a Credit Voucher down for a VOUCHER tender leg.
+     *
+     * <p>The voucher code arrives as the allocation's {@code reference} — the string the cashier
+     * scanned or typed. It is resolved and redeemed server-side: nothing the client sent about the
+     * voucher's balance, status or expiry is trusted, because a till showing a stale balance is
+     * exactly how a voucher gets spent twice.
+     *
+     * <p>{@code CreditVoucherService.redeem} takes a row lock and re-validates under it, so two
+     * terminals racing on the same voucher serialise and the loser is refused.
+     */
+    private void redeemVoucherAllocation(com.billbull.backend.sales.invoice.SalesInvoice invoice,
+                                         ResolvedPaymentAllocation allocation,
+                                         PosCheckoutRequest request) {
+        String voucherToken = allocation.getReference();
+        if (voucherToken == null || voucherToken.isBlank()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "A voucher payment must carry the voucher code in its reference.");
+        }
+
+        var voucher = creditVoucherService.findByToken(voucherToken);
+
+        creditVoucherService.redeem(
+                voucher.getId(),
+                java.math.BigDecimal.valueOf(allocation.getAmount())
+                        .setScale(2, java.math.RoundingMode.HALF_UP),
+                invoice.getInvoiceNumber(),
+                invoice.getId(),
+                invoice.getBranchId(),
+                request.getTerminalId(),
+                request.getSessionId(),
+                invoice.getInvoiceDate(),
+                invoice.getBranchEntity());
+    }
+
     private boolean verifySupervisorPriceOverride(PosCheckoutRequest req) {
         if (req.getSupervisorOverridePin() != null && !req.getSupervisorOverridePin().isBlank()) {
             return posSettingsService.verifyPin(req.getSupervisorOverridePin());

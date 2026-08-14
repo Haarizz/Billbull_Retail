@@ -32,6 +32,18 @@ const CMD = {
   ALIGN_LEFT: [ESC, 0x61, 0x00],
   ALIGN_CENTER: [ESC, 0x61, 0x01],
   ALIGN_RIGHT: [ESC, 0x61, 0x02],
+  // ── Native 1D barcode (GS h / GS w / GS H / GS k) ────────────────────────
+  // Rendered by the printer's own barcode engine rather than as a raster image.
+  // That matters for scannability: the printer lays the bars down on exact dot
+  // boundaries at full head resolution, whereas a dithered bitmap of the same
+  // symbol picks up edge artefacts that make narrow bars marginal for a scanner.
+  // It is also a fraction of the bytes.
+  BARCODE_HEIGHT: (dots) => [GS, 0x68, Math.max(1, Math.min(255, dots)) & 0xff],
+  /** Module (narrow-bar) width in dots. 2 is the readable minimum; 3 is safer on 80mm. */
+  BARCODE_WIDTH: (n) => [GS, 0x77, Math.max(2, Math.min(6, n)) & 0xff],
+  /** Human-readable text position: 0 none, 1 above, 2 below, 3 both. */
+  BARCODE_HRI: (pos) => [GS, 0x48, pos & 0xff],
+  BARCODE_HRI_FONT_B: [GS, 0x66, 0x01],
   // GS L nL nH — set the left margin (in dots); GS W nL nH — set the print-area
   // width (in dots). The receipt uses these to FORCE the full printable area every
   // print: left margin 0 and width = full paper, so no residual/stored margin can
@@ -642,6 +654,52 @@ export const emitEscPosBrandedHeader = async (w, {
 // plain-text company header (pass omitHeader: true to the text builder) so the
 // branded header isn't duplicated. Same init/heating/codepage preamble + cut as
 // buildEscPosFromPlainText, so it gets proper density on the print head.
+/**
+ * Code 39 payload sanitiser.
+ *
+ * Code 39 encodes 0-9, A-Z, space and `- . $ / + %` only. Anything else would make the
+ * printer emit a truncated symbol or nothing at all — silently, with no error — so an
+ * unprintable character is a caller bug worth surfacing rather than quietly dropping.
+ * Lowercase is upper-cased because Code 39 has no lowercase and scanners return uppercase.
+ */
+const sanitiseCode39 = (value) => {
+  const v = String(value || '').trim().toUpperCase();
+  if (!v) return null;
+  return /^[0-9A-Z\-. $/+%]+$/.test(v) ? v : null;
+};
+
+/**
+ * Emits a native Code 39 barcode, centred, with its value printed beneath it.
+ *
+ * The HRI line is not decoration: if a scanner ever fails on a creased or faded voucher,
+ * the cashier can key the code in by hand, so the symbol and the readable text must always
+ * travel together.
+ *
+ * Uses `GS k 4` (NUL-terminated form) rather than `GS k 69` (length-prefixed): the older
+ * form is understood by the clone controllers this codebase already targets everywhere else.
+ */
+const emitEscPosBarcode = (w, value, { heightDots = 80, moduleWidth = 3 } = {}) => {
+  const data = sanitiseCode39(value);
+  if (!data) return false;
+
+  w.push(CMD.ALIGN_CENTER);
+  w.push(CMD.BARCODE_HEIGHT(heightDots));
+  w.push(CMD.BARCODE_WIDTH(moduleWidth));
+  w.push(CMD.BARCODE_HRI(2));          // value printed below the bars
+  w.push(CMD.BARCODE_HRI_FONT_B);
+  // GS k 4 <data> NUL
+  w.push([GS, 0x6b, 0x04]);
+  w.push(toPrinterBytes(data));
+  w.push([0x00]);
+  w.push([0x0a]);
+  w.push(CMD.ALIGN_LEFT);
+  return true;
+};
+
+/**
+ * @param headerOpts.barcode optional `{ value, heightDots, moduleWidth }` — a native
+ *        barcode emitted after the body, used by the Credit Voucher print.
+ */
 export const buildEscPosDocument = async (bodyText, headerOpts = {}) => {
   const mm = String(headerOpts.paperSize || '80mm').includes('58') ? 58 : 80;
   const gutter = leftGutterFor(mm);
@@ -658,6 +716,18 @@ export const buildEscPosDocument = async (bodyText, headerOpts = {}) => {
   // Body is built to usableColsFor(); prefix the left gutter so it sits inside the
   // symmetric software margin (no GS L / GS W — see the MARGIN_COLS note).
   String(bodyText || '').split('\n').forEach((line) => w.gline(gutter, line));
+
+  // Barcode last, so it sits directly above the tear-off where a scanner can reach it
+  // without the customer having to flatten the whole receipt.
+  if (headerOpts.barcode?.value) {
+    emitEscPosBarcode(w, headerOpts.barcode.value, {
+      heightDots: headerOpts.barcode.heightDots ?? (mm === 58 ? 70 : 90),
+      // 58mm paper has ~half the dots, so a 3-module bar can overrun the usable width
+      // on a long code; 2 keeps the whole symbol on the paper and still scans.
+      moduleWidth: headerOpts.barcode.moduleWidth ?? (mm === 58 ? 2 : 3),
+    });
+  }
+
   // X/Z reports and statements can be long; feed enough that the LAST section
   // (footer / generated timestamp / cashier attribution) fully clears the blade
   // before cutting, then feed-then-cut (GS V 66 n) so nothing is chopped off.
@@ -1204,7 +1274,27 @@ const pushBandedRaster = (writer, bits, w, h) => {
 // the single-block size ever verified safe on this printer class), then the
 // same feed+cut sequence. A hard 1-bit threshold (not dithering) — this is
 // text/UI, not a photo — mirrors canvasToMonoRows in bilingualReceiptCanvas.js.
-export const buildEscPosDocumentFromCanvas = (canvas, { paperSize = '80mm', threshold = 160 } = {}) => {
+/**
+ * @param opts.barcode optional `{ value, heightDots, moduleWidth }` — a NATIVE Code 39 symbol
+ *        emitted after the raster block and before the cut.
+ *
+ * <p><b>Why the barcode cannot simply be concatenated onto this document.</b> The byte stream
+ * below ends with FEED + CUT_PARTIAL_FEED. Appending barcode bytes to the finished document
+ * would place them <em>after</em> the blade, so the symbol would print at the top of the next
+ * customer's receipt. It has to be emitted inside the document, before the cut — which is what
+ * this option does.
+ *
+ * <p>The barcode stays native rather than being drawn into the canvas: a dithered bitmap of a
+ * Code 39 symbol picks up edge artefacts that make narrow bars marginal for a scanner, whereas
+ * the printer's own barcode engine lays bars on exact dot boundaries. Arabic must be raster
+ * (these printers have no Arabic code page); a barcode must not be. Hence the hybrid.
+ *
+ * <p>State handling reuses the sequence this function already used: the raster is emitted under
+ * ALIGN_CENTER, then ALIGN_LEFT restores text state. The barcode helper re-centres itself and
+ * restores ALIGN_LEFT again, so the printer is left in the same state as before — no new or
+ * speculative reset commands are introduced.
+ */
+export const buildEscPosDocumentFromCanvas = (canvas, { paperSize = '80mm', threshold = 160, barcode = null } = {}) => {
   const mm = String(paperSize || '').includes('58') ? 58 : 80;
   const w = canvas.width, h = canvas.height;
   const { data } = canvas.getContext('2d').getImageData(0, 0, w, h);
@@ -1224,6 +1314,15 @@ export const buildEscPosDocumentFromCanvas = (canvas, { paperSize = '80mm', thre
   pushBandedRaster(writer, bits, w, h);
   writer.push([0x0a]);
   writer.push(CMD.ALIGN_LEFT);
+
+  // Native barcode AFTER the raster but BEFORE the cut — see the class note above.
+  if (barcode?.value) {
+    emitEscPosBarcode(writer, barcode.value, {
+      heightDots: barcode.heightDots ?? (mm === 58 ? 70 : 90),
+      moduleWidth: barcode.moduleWidth ?? (mm === 58 ? 2 : 3),
+    });
+  }
+
   // Same head→cutter clearance model as buildEscPosReceipt's cut.
   writer.push(CMD.FEED(2));
   writer.push(CMD.CUT_PARTIAL_FEED(mm === 58 ? 100 : 120));

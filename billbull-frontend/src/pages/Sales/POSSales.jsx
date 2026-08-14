@@ -42,6 +42,10 @@ import {
 import { getSelectableCategories } from '../../api/posCashMovementCategoryApi';
 import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from '../../api/branchTaxApi';
 import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSalesReturnsPage } from '../../api/salesReturnApi';
+// Sections 4/26 - POS -> Actions -> Return renders the shared Sales Return workflow,
+// the same component Customer & Sales -> Sales Return hosts. No POS-specific copy.
+import SalesReturnScreen from './SalesReturn/SalesReturnScreen';
+import { ENTRY_POINT } from './SalesReturn/constants';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { resolvePrintTemplate } from '../../api/printTemplateApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
@@ -1052,27 +1056,10 @@ export default function POSSales() {
   const [serviceJobStep, setServiceJobStep] = useState(1);
   const [serviceDetailTab, setServiceDetailTab] = useState('overview');
   const [serviceJobFilter, setServiceJobFilter] = useState({ status: 'All', customer: '', jobNo: '', serial: '', technician: '', warranty: 'All' });
-  // Return / Sales Return modal
+  // Sales Return. Only the open/closed flag lives here now — invoice lookup, line
+  // selection, per-line condition/reason, refund method and submission are all owned by
+  // the shared SalesReturnScreen, so POS no longer carries a parallel copy of that state.
   const [showReturn, setShowReturn] = useState(false);
-  const [returnStep, setReturnStep] = useState(1);
-  const [returnInvoiceQuery, setReturnInvoiceQuery] = useState('');
-  const [returnCustomerMobile, setReturnCustomerMobile] = useState('');
-  const [returnDateFrom, setReturnDateFrom] = useState('');
-  const [returnInvoiceFound, setReturnInvoiceFound] = useState(null);
-  const [returnInvoiceLoading, setReturnInvoiceLoading] = useState(false);
-  const [returnInvoiceError, setReturnInvoiceError] = useState('');
-  const [returnableItems, setReturnableItems] = useState([]);
-  const [returnItemsLoading, setReturnItemsLoading] = useState(false);
-  const [returnSelectedItems, setReturnSelectedItems] = useState({});
-  const [returnReasons, setReturnReasons] = useState({});
-  const [returnItemConditions, setReturnItemConditions] = useState({});
-  const [returnRefundMethod, setReturnRefundMethod] = useState('Cash Back');
-  const [returnVoucherExpiry, setReturnVoucherExpiry] = useState(() => {
-    const d = new Date(); d.setMonth(d.getMonth() + 2);
-    return d.toISOString().split('T')[0];
-  });
-  const [returnSaving, setReturnSaving] = useState(false);
-  const [returnSavedId, setReturnSavedId] = useState(null);
   const [showAddShippingDialog, setShowAddShippingDialog] = useState(false);
   const [shippingAddress, setShippingAddress] = useState('');
   const [shippingMethod, setShippingMethod] = useState('standard');
@@ -3707,9 +3694,18 @@ export default function POSSales() {
       window.alert('Business Day Start Time and End Time are required when the Business Day Window is enabled.');
       return;
     }
+    if (settingsDraft.creditVoucherExpiryMode === 'MANUAL' && !settingsDraft.creditVoucherExpiryDate) {
+      window.alert('Choose the date credit vouchers should expire on.');
+      return;
+    }
     setSettingsSaving(true);
     try {
       const payload = { ...(posSettings || {}), ...settingsDraft };
+      // The number/date inputs yield '' when cleared, which is not a number or a date.
+      // The backend re-validates all of this; normalising here just avoids sending it a
+      // body it would reject for a type error rather than for the real problem.
+      if (payload.creditVoucherExpiryMonths === '') payload.creditVoucherExpiryMonths = null;
+      if (payload.creditVoucherExpiryDate === '') payload.creditVoucherExpiryDate = null;
       console.log('SAVING POS SETTINGS PAYLOAD:', payload);
       const saved = await savePosSettings(payload);
       setPosSettings(prev => mergeSavedPosSettings(prev, saved || payload));
@@ -9552,8 +9548,7 @@ export default function POSSales() {
     setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
     setShowSerialBatch, setSerialBatchQuery, setSerialBatchResult, setSerialBatchSubView,
     setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,
-    setShowServiceRepair, setServiceView, setShowReturn, setReturnStep, setReturnInvoiceQuery,
-    setReturnInvoiceFound, setReturnSelectedItems, setReturnReasons, setShowAddShippingDialog,
+    setShowServiceRepair, setServiceView, setShowReturn, setShowAddShippingDialog,
     setShowAddCustomerDialog, setShowDeliveryModal, setDeliveryModalTab, setDeliveryCustomerId,
     setShowDeliverySettleModal, setDeliverySettleSearch, setDeliverySettlePersonFilter,
     setDeliverySettleSelected, setShowLockPOS,
@@ -13496,639 +13491,43 @@ export default function POSSales() {
         );
       })()}
 
-      {/* ─── SALES RETURN MODAL ─── */}
-      {showReturn && (() => {
-        // Compute totals from real returnable items. Must match the linked
-        // invoice's VAT mode, or a return against a VAT-inclusive sale
-        // double-counts VAT on top of the already-inclusive price.
-        const returnVatMode = returnInvoiceFound?.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE';
-        const activeItems = returnableItems.filter(it => (returnSelectedItems[it.itemCode] || 0) > 0);
-        const returnDiscount = returnableItems.reduce((s, it) => {
-          const qty = returnSelectedItems[it.itemCode] || 0;
-          return s + qty * parseFloat(it.unitPrice || 0) * (parseFloat(it.discountPercent || 0) / 100);
-        }, 0);
-        const returnLineTotals = returnableItems.map((it) => {
-          const qty = returnSelectedItems[it.itemCode] || 0;
-          const gross = qty * parseFloat(it.unitPrice || 0);
-          const disc = gross * (parseFloat(it.discountPercent || 0) / 100);
-          return computeLineTaxTotals({
-            netAfterDiscount: gross - disc,
-            taxPercent: parseFloat(it.taxRate || 0),
-            vatMode: returnVatMode,
-          });
-        });
-        const returnSubtotal = returnLineTotals.reduce((s, r) => s + r.taxableAmount, 0);
-        const returnVAT = returnLineTotals.reduce((s, r) => s + r.taxAmount, 0);
-        const returnNet = returnSubtotal + returnVAT;
-        const anyItemSelected = activeItems.length > 0;
-
-        const doSearchInvoice = async () => {
-          const q = returnInvoiceQuery.trim();
-          const mob = returnCustomerMobile.trim();
-          if (!q && !mob) return;
-          setReturnInvoiceLoading(true);
-          setReturnInvoiceError('');
-          setReturnInvoiceFound(null);
-          try {
-            const inv = await lookupPosInvoice({
-              invoiceNumber: q || undefined,
-              customerMobile: mob || undefined,
-              dateFrom: returnDateFrom || undefined,
-              branchId: currentTerminal?.branchId || undefined,
-            });
-            setReturnInvoiceFound(inv);
-          } catch (err) {
-            if (err?.response?.status === 404) {
-              setReturnInvoiceFound(false);
-            } else {
-              setReturnInvoiceError(err?.response?.data?.message || 'Search failed. Try again.');
-            }
-          } finally {
-            setReturnInvoiceLoading(false);
-          }
-        };
-
-        const doLoadReturnableItems = async () => {
-          if (!returnInvoiceFound || returnInvoiceFound === false) return;
-          setReturnItemsLoading(true);
-          try {
-            const batches = await getReturnableBatches(returnInvoiceFound.invoiceNumber);
-            const pastReturnsPage = await getSalesReturnsPage({ search: returnInvoiceFound.invoiceNumber, size: 100 });
-            const pastReturns = pastReturnsPage?.content || [];
-
-            const alreadyReturnedMap = {};
-            pastReturns.forEach(ret => {
-              if (ret.status === 'DRAFT' || ret.status === 'REJECTED') return;
-              (ret.items || []).forEach(ri => {
-                if (ri.itemCode) {
-                  alreadyReturnedMap[ri.itemCode] = (alreadyReturnedMap[ri.itemCode] || 0) + (Number(ri.returnQty) || 0);
-                }
-              });
-            });
-
-            const grouped = {};
-            (batches || []).forEach(b => {
-              const key = b.itemCode;
-              if (!grouped[key]) {
-                grouped[key] = {
-                  itemCode: b.itemCode, itemName: b.itemName, unit: b.unit,
-                  soldQty: 0, alreadyReturned: 0, returnable: 0, unitPrice: 0, taxRate: 0, discountPercent: 0, batches: []
-                };
-              }
-              grouped[key].soldQty += parseFloat(b.originalQty || 0);
-              grouped[key].batches.push(b);
-            });
-            const invoiceItems = returnInvoiceFound.items || [];
-
-            invoiceItems.forEach(invItem => {
-              if (!grouped[invItem.itemCode] && !invItem.voided) {
-                grouped[invItem.itemCode] = {
-                  itemCode: invItem.itemCode, itemName: invItem.itemName,
-                  unit: invItem.unit || 'Each', soldQty: parseFloat(invItem.quantity || 0),
-                  alreadyReturned: 0, returnable: 0,
-                  unitPrice: parseFloat(invItem.price || 0), taxRate: parseFloat(invItem.taxRate || 0),
-                  discountPercent: parseFloat(invItem.discount || 0), batches: []
-                };
-              }
-            });
-
-            Object.values(grouped).forEach(g => {
-              const invItem = invoiceItems.find(i => i.itemCode === g.itemCode);
-              if (invItem) { g.unitPrice = parseFloat(invItem.price || 0); g.taxRate = parseFloat(invItem.taxRate || 0); g.discountPercent = parseFloat(invItem.discount || 0); }
-
-              const totalSold = g.soldQty;
-              const alreadyRet = alreadyReturnedMap[g.itemCode] || 0;
-              g.alreadyReturned = alreadyRet;
-              g.returnable = Math.max(0, totalSold - alreadyRet);
-            });
-
-            setReturnableItems(Object.values(grouped));
-          } catch { setReturnableItems([]); } finally { setReturnItemsLoading(false); }
-        };
-
-        const doAdvanceToItems = async () => { await doLoadReturnableItems(); setReturnStep(2); };
-
-        const doSaveReturn = async (andApprove = false, andPrint = false) => {
-          if (!anyItemSelected) return;
-          setReturnSaving(true);
-          try {
-            const inv = returnInvoiceFound;
-            const itemsPayload = returnableItems
-              .filter(it => (returnSelectedItems[it.itemCode] || 0) > 0)
-              .map(it => {
-                const qty = returnSelectedItems[it.itemCode] || 0;
-                // Send the raw condition ('Good' / 'Damaged') — the backend's restock/COGS-reversal
-                // logic does an exact match against "Good"; the display-style "Good/Restock" /
-                // "Damaged/Scrap" strings this used to send never matched, so every POS-originated
-                // return was silently treated as scrap (no stock restored, no COGS reversed).
-                const itemStatus = returnItemConditions[it.itemCode] || 'Good';
-                const grossAmt = qty * parseFloat(it.unitPrice || 0);
-                const discountAmt = grossAmt * (parseFloat(it.discountPercent || 0) / 100);
-                const { taxAmount: taxAmt, total: itemTotal } = computeLineTaxTotals({
-                  netAfterDiscount: grossAmt - discountAmt,
-                  taxPercent: parseFloat(it.taxRate || 0),
-                  vatMode: returnVatMode,
-                });
-                const batchesForItem = it.batches.slice(0, qty).map(b => ({
-                  originalAllocationId: b.allocationId, batchMasterId: b.batchMasterId,
-                  batchNumber: b.batchNumber, binCode: b.binCode, quantity: 1, expiryDate: b.expiryDate,
-                }));
-                return {
-                  itemCode: it.itemCode, itemName: it.itemName, unit: it.unit,
-                  soldQty: it.soldQty, returnQty: qty, price: it.unitPrice, taxRate: it.taxRate,
-                  discountPercent: it.discountPercent || 0, discountAmount: discountAmt,
-                  taxAmount: taxAmt,
-                  total: itemTotal, itemStatus, reason: returnReasons[it.itemCode] || '', batches: batchesForItem
-                };
-              });
-            const payload = {
-              linkedInvoice: inv.invoiceNumber, returnDate: new Date().toISOString().split('T')[0],
-              customerCode: inv.customerCode, customerName: inv.customerName,
-              taxInclusive: returnVatMode === 'INCLUSIVE',
-              subTotal: returnSubtotal, taxAmount: returnVAT, totalAmount: returnNet,
-              reason: Object.values(returnReasons).filter(Boolean).join(', ') || 'POS Return',
-              returnAction: returnRefundMethod === 'Credit Voucher' ? 'Credit Note' : 'Refund',
-              internalNotes: `Refund method: ${returnRefundMethod}. POS terminal ${currentTerminal?.terminalId || ''}.`,
-              status: 'DRAFT', branchId: inv.branchId, branchName: inv.branchName, branchCode: inv.branchCode,
-              items: itemsPayload,
-            };
-            const saved = await saveSalesReturn(payload);
-            if (andApprove || andPrint) await updateSalesReturnStatus(saved.id, 'APPROVED');
-            if (andPrint) {
-              const returnInvoiceData = {
-                invoiceNumber: saved.returnNumber || '',
-                invoiceDate: saved.returnDate || new Date().toISOString(),
-                createdAt: saved.createdAt || new Date().toISOString(),
-                customerName: inv.customerName || 'Walk-in Customer',
-                customerAddress: inv.customerAddress || '',
-                customerPhone: inv.customerPhone || '',
-                paymentMode: returnRefundMethod,
-                subTotal: returnSubtotal,
-                discountTotal: returnDiscount,
-                taxTotal: returnVAT,
-                invoiceTotal: returnNet,
-                items: itemsPayload.map(i => ({
-                  itemName: i.itemName,
-                  quantity: i.returnQty,
-                  unitPrice: i.price,
-                  netAmount: i.total,
-                  batchNumber: i.batches?.[0]?.batchNumber || '',
-                })),
-              };
-              const returnA4Data = {
-                title: 'CREDIT NOTE',
-                docNo: saved.returnNumber || '',
-                date: saved.returnDate || new Date().toLocaleDateString('en-AE', { day: '2-digit', month: 'short', year: 'numeric' }),
-                customer: { name: inv.customerName || 'Walk-in Customer', address: inv.customerAddress || '', phone: inv.customerPhone || '', email: '', trn: '' },
-                items: itemsPayload.map(i => ({
-                  code: i.itemCode || '',
-                  name: i.itemName,
-                  desc: `Orig. Invoice: ${inv.invoiceNumber}`,
-                  qty: i.returnQty,
-                  price: i.price,
-                  discountPercent: i.discountPercent || 0,
-                  discountAmount: i.discountAmount || 0,
-                  tax: i.taxRate || 0,
-                  taxAmt: i.taxAmount || 0,
-                  total: i.total,
-                  batchNumber: i.batches?.[0]?.batchNumber || '',
-                })),
-                totals: { subTotal: returnSubtotal, tax: returnVAT, grandTotal: returnNet, itemDiscountAmount: returnDiscount, billDiscountAmount: 0 },
-                meta: { notes: tplReturnFooter, paymentMode: returnRefundMethod, location: tplOutletName, salesPerson: '' },
-              };
-              if (tplReturnPaper === 'A4') {
-                const returnA4Template = resolveCreditNoteA4Template(tplReturnFooter, {
-                  showLogo: tplReturnShowLogo, showCompanyDetails: tplReturnShowCompanyDetails,
-                  showTrn: tplReturnShowTrn, showCustomerDetails: tplReturnShowCustomerDetails,
-                  showTerms: tplReturnShowTerms, showNotes: tplReturnShowNotes,
-                  showQRCode: tplReturnShowQRCode, showStamp: tplReturnShowStamp,
-                  showSignature: tplReturnShowSignature, showGrandTotalBanner: tplReturnShowGrandTotalBanner,
-                  colItemCode: tplReturnColItemCode, colBatchNo: tplReturnColBatchNo,
-                  colDiscount: tplReturnColDiscount, colVatPct: tplReturnColVatPct, colVatAmt: tplReturnColVatAmt,
-                });
-                const returnA4Options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplReturnShowStamp } };
-                printHtml(await generatePrintHtmlAsync(returnA4Template, returnA4Data, returnA4Options));
-              } else {
-                const returnPrinter = resolvePrinterForContext(printerConfigs, {
-                  deviceType: 'RECEIPT_PRINTER',
-                  branchId: inv.branchId || currentTerminal?.branchId || null,
-                  terminalId: currentTerminal?.terminalId || null,
-                });
-                // Credit-account block for a return. The backend does NOT return the
-                // customer's post-return balance on the save response, so the old code
-                // fell back to Previous=0 / Updated=returnNet — i.e. it printed the
-                // return amount as a NEW positive balance the customer owes, the exact
-                // opposite of what a credit note does. Fix: a Credit Voucher reduces the
-                // customer's outstanding, so query the real post-approval balance (the
-                // return is APPROVED above) and render it as a reduction — Invoice Credit
-                // is 0 (no new charge) and "Amount Paid" carries the credited amount, so
-                // Previous − returnNet = Updated holds. A cash/card Refund does not touch
-                // the credit ledger, so the block is suppressed for it (nothing to show).
-                let retCreditPrev = null, retCreditUpdated = null, retShowCredit = false;
-                if (tplReturnShowCreditBalance && returnRefundMethod === 'Credit Voucher'
-                    && inv.customerCode && inv.customerName && inv.customerName !== 'Walk-in Customer') {
-                  try {
-                    const cr = await posCreditBalance(inv.customerCode);
-                    if (cr?.found && cr.outstanding != null) {
-                      retCreditUpdated = parseFloat(cr.outstanding) || 0;
-                      retCreditPrev = retCreditUpdated + returnNet;
-                      retShowCredit = true;
-                    }
-                  } catch (_) { /* leave the block suppressed if the lookup fails */ }
-                }
-                if (!returnPrinter) {
-                  notifyPrintFallback('No receipt printer is configured for this terminal — the credit note was saved, but it did not print. Set one up in Settings → Devices.');
-                } else {
-                  try {
-                    const qrContent = tplReturnShowQRCode ? buildQrContent(returnA4Data, tplOutletName) : null;
-                    const returnText = buildThermalReceiptText(tplReturnPaper, returnInvoiceData, { companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter, showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', currency: activeCurrency, customerPhone: returnInvoiceData.customerPhone, showCustomerDetails: tplReturnShowCustomerDetails });
-                    const returnBuildEscPosBase64 = (getReceiptTemplate(receiptTemplateId).buildEscPosBase64) || buildEscPosReceiptBase64;
-                    const returnEscPosBase64 = await returnBuildEscPosBase64(tplReturnPaper, returnInvoiceData, {
-                      companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
-                      showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE',
-                      logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
-                      showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
-                      showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
-                      showQRCode: tplReturnShowQRCode, qrContent,
-                      showCustomerDetails: tplReturnShowCustomerDetails, showFooterText: tplReturnShowTerms,
-                      customerPhone: returnInvoiceData.customerPhone, currency: activeCurrency,
-                      cashierName: cashierDisplayName,
-                      terminalId: currentTerminal?.terminalId,
-                      counterName: currentTerminal?.counterName,
-                      showCreditBalance: retShowCredit,
-                      creditPreviousBalance: retShowCredit ? retCreditPrev : null,
-                      creditInvoiceCredit: 0,
-                      creditAmountPaid: retShowCredit ? returnNet : 0,
-                      creditUpdatedBalance: retShowCredit ? retCreditUpdated : null,
-                    });
-                    await sendEscPosReceiptToConfiguredPrinter(returnPrinter, { dataBase64: returnEscPosBase64, receiptText: returnText, title: `Credit Note ${saved.returnNumber || ''}`.trim() });
-                  } catch (err) {
-                    console.warn('ESC/POS print failed for return receipt', err);
-                    notifyPrintFallback(`The credit note was saved, but it didn't print: ${err?.message || 'printer error'}.`);
-                  }
-                }
-              }
-            }
-            syncPosData();
-            setShowReturn(false); setReturnStep(1); setReturnInvoiceQuery(''); setReturnCustomerMobile('');
-            setReturnDateFrom(''); setReturnInvoiceFound(null); setReturnableItems([]);
-            setReturnSelectedItems({}); setReturnReasons({}); setReturnItemConditions({});
-            setReturnRefundMethod('Cash Back'); setReturnSavedId(null);
-          } catch (err) {
-            alert(err?.response?.data?.message || err?.message || 'Error processing return.');
-          } finally { setReturnSaving(false); }
-        };
-        const steps = ['Scan Invoice', 'Select Items', 'Refund Method', 'Confirm Return'];
-        return (
-          <div className="fixed inset-0 z-50 flex">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setShowReturn(false)} />
-            <div className="relative ml-auto w-full max-w-4xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
-                <div>
-                  <div className="flex items-center gap-2"><RotateCcw className="h-4 w-4 text-purple-600" /><span className="text-base font-semibold text-[#1E293B]">Sales Return</span></div>
-                  <p className="text-xs text-gray-500 mt-0.5">Scan the old invoice, select returned items and quantities, and process refund or credit voucher.</p>
-                </div>
-                <button onClick={() => setShowReturn(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
-              </div>
-              {/* Step Progress */}
-              <div className="bg-white border-b border-gray-100 px-3 sm:px-5 py-3 flex items-center gap-0 shrink-0 overflow-x-auto">
-                {steps.map((s, i) => (
-                  <React.Fragment key={s}>
-                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${returnStep > i + 1 ? 'bg-[#327F74] text-white' : returnStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{returnStep > i + 1 ? '✓' : i + 1}</div>
-                      <span className={`hidden sm:inline text-xs whitespace-nowrap ${returnStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
-                    </div>
-                    {i < steps.length - 1 && <div className="w-6 sm:flex-1 h-px bg-gray-200 mx-1.5 sm:mx-2 shrink-0 sm:shrink" />}
-                  </React.Fragment>
-                ))}
-              </div>
-              <div className="overflow-auto flex-1 p-5">
-                {/* STEP 1 — Invoice Lookup */}
-                {returnStep === 1 && (
-                  <div className="max-w-lg mx-auto space-y-4">
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-3">
-                      <p className="text-sm font-semibold text-[#1E293B]">Scan / Search Invoice</p>
-                      <AsyncSearchableDropdown
-                        value={null}
-                        inputValue={returnInvoiceQuery}
-                        onInputChange={(val) => { setReturnInvoiceQuery(val); setReturnInvoiceFound(null); setReturnInvoiceError(''); }}
-                        placeholder="Scan invoice barcode or enter invoice number..."
-                        fetchOptions={async (query) => {
-                          if (!query) return [];
-                          try {
-                            const res = await getSalesInvoicesPage({ search: query, size: 5 });
-                            if (res && res.content) {
-                              return res.content;
-                            }
-                          } catch { return []; }
-                          return [];
-                        }}
-                        renderOption={(opt, active) => (
-                          <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
-                            <div>
-                              <p className="font-bold text-sm text-[#1E293B]">{opt.invoiceNumber}</p>
-                              <p className="text-xs text-gray-500">{opt.customerName || 'Walk-in'}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="font-bold text-[#327F74] text-sm">{opt.grandTotal} AED</p>
-                              <p className="text-[10px] text-gray-400">{opt.invoiceDate ? new Date(opt.invoiceDate).toLocaleDateString() : ''}</p>
-                            </div>
-                          </div>
-                        )}
-                        onSelect={(opt) => {
-                          if (opt) {
-                            setReturnInvoiceQuery(opt.invoiceNumber);
-                            // Give state a moment to update before running doSearchInvoice, which reads from returnInvoiceQuery state
-                            setTimeout(() => document.getElementById('searchInvoiceBtn')?.click(), 50);
-                          }
-                        }}
-                        className="w-full"
-                      />
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-xs text-gray-400 block mb-0.5">Customer Mobile</label>
-                          <input value={returnCustomerMobile}
-                            onChange={e => { setReturnCustomerMobile(e.target.value); setReturnInvoiceFound(null); setReturnInvoiceError(''); }}
-                            onKeyDown={e => e.key === 'Enter' && doSearchInvoice()}
-                            placeholder="+971 XX XXX XXXX" className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-400 block mb-0.5">From Date</label>
-                          <input type="date" value={returnDateFrom} onChange={e => setReturnDateFrom(e.target.value)}
-                            className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button id="searchInvoiceBtn" onClick={doSearchInvoice} disabled={returnInvoiceLoading || (!returnInvoiceQuery.trim() && !returnCustomerMobile.trim())}
-                          className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-4 py-2 rounded flex items-center gap-1">
-                          <Search className="h-3.5 w-3.5" />{returnInvoiceLoading ? 'Searching…' : 'Search Invoice'}
-                        </button>
-                        <button onClick={() => { setReturnInvoiceQuery(''); setReturnCustomerMobile(''); setReturnDateFrom(''); setReturnInvoiceFound(null); setReturnInvoiceError(''); }}
-                          className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
-                      </div>
-                    </div>
-                    {returnInvoiceError && (
-                      <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded p-3 text-sm text-red-600"><AlertCircle className="h-4 w-4 shrink-0" />{returnInvoiceError}</div>
-                    )}
-                    {returnInvoiceFound === false && !returnInvoiceError && (
-                      <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded p-3 text-sm text-red-600"><AlertCircle className="h-4 w-4 shrink-0" />Invoice not found. Please check the invoice number and try again.</div>
-                    )}
-                    {returnInvoiceFound && returnInvoiceFound !== false && (
-                      <div className="bg-white border border-[#F5C742]/40 rounded-lg p-4 shadow-sm space-y-2 text-xs">
-                        <div className="flex items-center justify-between mb-1">
-                          <p className="font-semibold text-sm text-[#1E293B]">Invoice Found</p>
-                          <span className="text-xs bg-green-100 text-green-700 rounded px-2 py-0.5">Eligible for Return</span>
-                        </div>
-                        {[
-                          ['Invoice No.', returnInvoiceFound.invoiceNumber],
-                          ['Date', returnInvoiceFound.invoiceDate],
-                          ['Customer', returnInvoiceFound.customerName || returnInvoiceFound.customerCode || 'Walk-in'],
-                          ['Terminal', returnInvoiceFound.posCounterName || returnInvoiceFound.posTerminalId || '—'],
-                          ['Payment Mode', returnInvoiceFound.paymentMode || '—'],
-                          ['Invoice Total', <CurrencyAmount amount={parseFloat(returnInvoiceFound.invoiceTotal || 0)} />],
-                          ['Status', returnInvoiceFound.status],
-                        ].map(([k, v]) => (
-                          <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {/* STEP 2 — Select Items */}
-                {returnStep === 2 && (
-                  <div className="space-y-3">
-                    {returnItemsLoading ? (
-                      <div className="flex items-center justify-center py-16 text-gray-400 text-sm gap-2">
-                        <div className="w-4 h-4 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin" />Loading items…
-                      </div>
-                    ) : (
-                      <>
-                        <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
-                          <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B]">
-                            Select Items to Return — Invoice {returnInvoiceFound?.invoiceNumber}
-                          </div>
-                          {returnableItems.length === 0 ? (
-                            <div className="p-6 text-center text-sm text-gray-400">No returnable items found for this invoice.</div>
-                          ) : (
-                            <div className="overflow-x-auto">
-                            <table className="w-full min-w-[920px] text-xs">
-                              <thead>
-                                <tr className="text-gray-500 border-b border-[#327F74]/10">
-                                  {['Code', 'Item', 'Sold', 'Returned', 'Returnable', 'Return Qty', 'Rate', 'VAT', 'Return Amt', 'Condition', 'Reason'].map(h => (
-                                    <th key={h} className="px-2 py-2 text-left font-medium">{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {returnableItems.map(it => {
-                                  const returnable = parseFloat(it.returnable || 0);
-                                  const selQty = returnSelectedItems[it.itemCode] || 0;
-                                  const lineGross = selQty * parseFloat(it.unitPrice || 0);
-                                  const lineDisc = lineGross * (parseFloat(it.discountPercent || 0) / 100);
-                                  const lineAmt = (lineGross - lineDisc) * (1 + parseFloat(it.taxRate || 0) / 100);
-                                  return (
-                                    <tr key={it.itemCode} className={`border-b border-gray-50 ${returnable === 0 ? 'bg-gray-50 opacity-60' : ''}`}>
-                                      <td className="px-2 py-2 text-gray-500">{it.itemCode}</td>
-                                      <td className="px-2 py-2 text-[#1E293B]">{it.itemName}</td>
-                                      <td className="px-2 py-2 text-center">{it.soldQty}</td>
-                                      <td className="px-2 py-2 text-center text-amber-600">{it.alreadyReturned}</td>
-                                      <td className="px-2 py-2 text-center text-green-700">{returnable}</td>
-                                      <td className="px-2 py-2">
-                                        {returnable > 0 ? (
-                                          <input type="number" min={0} max={returnable} value={selQty}
-                                            onChange={e => setReturnSelectedItems(prev => ({ ...prev, [it.itemCode]: Math.min(returnable, Math.max(0, parseInt(e.target.value) || 0)) }))}
-                                            className="w-14 border border-[#327F74]/30 rounded px-1.5 py-0.5 text-center text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                                        ) : <span className="text-[10px] bg-gray-100 text-gray-400 rounded px-1.5 py-0.5">N/A</span>}
-                                      </td>
-                                      <td className="px-2 py-2 text-right"><CurrencyAmount amount={parseFloat(it.unitPrice || 0)} /></td>
-                                      <td className="px-2 py-2 text-right">{it.taxRate || 0}%</td>
-                                      <td className="px-2 py-2 text-right font-semibold text-[#327F74]"><CurrencyAmount amount={lineAmt} /></td>
-                                      <td className="px-2 py-2">
-                                        {returnable > 0 ? (
-                                          <select value={returnItemConditions[it.itemCode] || 'Good'} onChange={e => setReturnItemConditions(prev => ({ ...prev, [it.itemCode]: e.target.value }))}
-                                            className="border border-[#327F74]/30 rounded px-1 py-0.5 text-[10px] focus:outline-none w-20">
-                                            <option>Good</option><option>Damaged</option>
-                                          </select>
-                                        ) : <span className="text-[10px] text-gray-400">—</span>}
-                                      </td>
-                                      <td className="px-2 py-2">
-                                        {returnable > 0 ? (
-                                          <select value={returnReasons[it.itemCode] || ''} onChange={e => setReturnReasons(prev => ({ ...prev, [it.itemCode]: e.target.value }))}
-                                            className="border border-[#327F74]/30 rounded px-1 py-0.5 text-[10px] focus:outline-none w-28">
-                                            <option value="">Select…</option>
-                                            {['Damaged Goods', 'Wrong item', 'Changed mind', 'Expired item', 'Price issue', 'Defective', 'Other'].map(o => <option key={o}>{o}</option>)}
-                                          </select>
-                                        ) : <span className="text-[10px] text-gray-400">—</span>}
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                            </div>
-                          )}
-                        </div>
-                        <div className="bg-[#FFF8DC] border border-[#F5C742]/40 rounded-lg p-3 flex items-center justify-between text-sm">
-                          <span className="text-gray-600">Total Return Amount (incl. VAT):</span>
-                          <span className="font-bold text-[#1E293B]"><CurrencyAmount amount={returnNet} /></span>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-                {/* STEP 3 — Refund Method */}
-                {returnStep === 3 && (
-                  <div className="max-w-lg mx-auto space-y-4">
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
-                      <p className="text-sm font-semibold text-[#1E293B] mb-3">Return Summary</p>
-                      {[['Subtotal', returnSubtotal], ['VAT Reversal', returnVAT], ['Net Refund Amount', returnNet]].map(([k, v]) => (
-                        <div key={k} className={`flex justify-between py-1 ${k === 'Net Refund Amount' ? 'font-bold border-t border-gray-200 pt-2' : ''}`}>
-                          <span className="text-gray-500 text-sm">{k}</span><span className="text-sm"><CurrencyAmount amount={v} /></span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
-                      <p className="text-sm font-semibold text-[#1E293B] mb-3">Select Refund Method</p>
-                      <div className="space-y-2">
-                        {['Cash Back', 'Card Refund', 'Credit Voucher', 'Customer Credit Balance', 'Exchange Adjustment'].map(method => (
-                          <label key={method} className="flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-[#F7F7FA]">
-                            <input type="radio" name="refund" value={method} checked={returnRefundMethod === method} onChange={() => setReturnRefundMethod(method)} className="accent-[#327F74]" />
-                            <span className="text-sm text-[#1E293B]">{method}</span>
-                          </label>
-                        ))}
-                      </div>
-                      {returnRefundMethod === 'Credit Voucher' && (
-                        <div className="mt-3 p-3 bg-[#F7F7FA] border border-[#327F74]/20 rounded space-y-2 text-xs">
-                          <div className="flex justify-between"><span className="text-gray-500">Voucher Amount</span><span className="font-semibold"><CurrencyAmount amount={returnNet} /></span></div>
-                          <div><label className="text-gray-500 block mb-0.5">Voucher Expiry</label>
-                            <input type="date" value={returnVoucherExpiry} onChange={e => setReturnVoucherExpiry(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                          </div>
-                        </div>
-                      )}
-                      {returnRefundMethod === 'Cash Back' && (
-                        <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700 flex items-center gap-2"><AlertTriangle className="h-3.5 w-3.5 shrink-0" />Cash refund requires manager approval. Please request supervisor authorization.</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {/* STEP 4 — Confirm */}
-                {returnStep === 4 && (
-                  <div className="max-w-lg mx-auto space-y-4">
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-2 text-xs">
-                      <p className="text-sm font-semibold text-[#1E293B] mb-2">Confirm Return</p>
-                      {[
-                        ['Original Invoice', returnInvoiceFound?.invoiceNumber || '—'],
-                        ['Customer', returnInvoiceFound?.customerName || returnInvoiceFound?.customerCode || 'Walk-in'],
-                        ['Items Selected', `${activeItems.length} line(s)`],
-                        ['Refund Method', returnRefundMethod],
-                        ['Subtotal', <CurrencyAmount amount={returnSubtotal} />],
-                        ['VAT Reversal', <CurrencyAmount amount={returnVAT} />],
-                        ['Net Refund Amount', <CurrencyAmount amount={returnNet} />],
-                      ].map(([k, v]) => (
-                        <div key={k} className="flex gap-2 py-1 border-b border-gray-50 last:border-0">
-                          <span className="text-gray-400 w-40 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="bg-amber-50 border border-amber-200 rounded p-3 flex items-start gap-2 text-xs text-amber-700">
-                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                      <div>Every return is recorded in the audit log. Stock will be updated based on return condition. VAT will be reversed correctly.</div>
-                    </div>
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden flex flex-col">
-                      <div className="px-4 py-2 bg-[#F7F7FA] border-b border-[#327F74]/10 text-xs font-semibold text-[#1E293B] flex-shrink-0">Return Receipt Preview</div>
-                      <div className="bg-[#f0f0f3] flex-1 min-h-[300px] flex items-center justify-center p-4">
-                        <iframe
-                          title="return-preview"
-                          srcDoc={buildThermalReceiptHtml(tplReturnPaper, {
-                            invoiceNumber: returnInvoiceFound?.invoiceNumber || 'PREVIEW',
-                            invoiceDate: new Date().toISOString(),
-                            customerName: returnInvoiceFound?.customerName || 'Walk-in Customer',
-                            paymentMode: returnRefundMethod,
-                            subTotal: returnSubtotal,
-                            discountTotal: returnDiscount,
-                            taxTotal: returnVAT,
-                            invoiceTotal: returnNet,
-                            items: activeItems.map(it => {
-                              const returnQty = returnSelectedItems[it.itemCode] || 0;
-                              return {
-                                itemName: it.itemName,
-                                quantity: returnQty,
-                                unitPrice: it.unitPrice,
-                                netAmount: returnQty * (parseFloat(it.unitPrice) || 0) * (1 + (parseFloat(it.taxRate) || 0) / 100),
-                              };
-                            }).filter(i => i.quantity > 0)
-                          }, {
-                            companyName: tplOutletName, trn: tplOutletTrn, header: tplReturnHeader, footer: tplReturnFooter,
-                            showTrn: tplReturnShowTrn, documentTitle: 'CREDIT NOTE', isReturn: true,
-                            logoDataUrl: tplLogoDataUrl, showLogo: tplReturnShowLogo,
-                            stampDataUrl: tplReturnShowQRCode ? tplStampDataUrl : null,
-                            showCompanyDetails: tplReturnShowCompanyDetails, outletAddress: tplOutletAddress, outletPhone: tplOutletPhone,
-                            showServiceCharge: tplReturnShowGrandTotalBanner, showVatSummary: tplReturnColVatAmt, showPaymentDetails: tplReturnColDiscount,
-                            showQRCode: tplReturnShowQRCode, showCustomerDetails: tplReturnShowCustomerDetails, showLoyaltyPoints: tplReturnShowNotes,
-                            showFooterText: tplReturnShowTerms, currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
-                            cashierName: cashierDisplayName,
-                            terminalId: currentTerminal?.terminalId,
-                            counterName: currentTerminal?.counterName,
-                            customerPhone: returnInvoiceFound?.customerPhone,
-                            customerEmail: returnInvoiceFound?.customerEmail,
-                            // Suppress the credit-account block in the return PREVIEW: the
-                            // real post-return balance isn't known until the credit note is
-                            // approved (see the print path, which queries it then). Showing
-                            // Previous=0 / Updated=returnNet here printed the return amount
-                            // as a positive balance owed — the opposite of a credit note.
-                            showCreditBalance: false,
-                          })}
-                          style={{
-                            width: tplReturnPaper === '58mm' ? '240px' : '320px',
-                            height: '400px',
-                            border: 'none',
-                            background: '#fff',
-                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Footer */}
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
-                <div className="flex flex-wrap gap-2">
-                  {returnStep > 1 && !returnSaving && <button onClick={() => setReturnStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
-                  <button onClick={() => setShowReturn(false)} disabled={returnSaving} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50 disabled:opacity-50">Cancel</button>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {returnStep === 1 && (
-                    <button onClick={doAdvanceToItems} disabled={!returnInvoiceFound || returnInvoiceFound === false || returnInvoiceLoading}
-                      className="bg-[#327F74] hover:bg-[#286660] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm px-5 py-2 rounded">Next →</button>
-                  )}
-                  {returnStep === 2 && (
-                    <button onClick={() => setReturnStep(3)} disabled={!anyItemSelected}
-                      className={`text-sm px-5 py-2 rounded ${!anyItemSelected ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#327F74] hover:bg-[#286660] text-white'}`}>Next →</button>
-                  )}
-                  {returnStep === 3 && (
-                    <button onClick={() => setReturnStep(4)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
-                  )}
-                  {returnStep === 4 && (<>
-                    <button onClick={() => doSaveReturn(false, false)} disabled={returnSaving || !anyItemSelected}
-                      className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 disabled:opacity-50">
-                      {returnSaving ? 'Saving…' : 'Save Draft'}
-                    </button>
-                    <button onClick={() => doSaveReturn(true, false)} disabled={returnSaving || !anyItemSelected}
-                      className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1 disabled:opacity-50">
-                      <RotateCcw className="h-3.5 w-3.5" />{returnSaving ? 'Processing…' : 'Confirm Return'}
-                    </button>
-                    <button onClick={() => doSaveReturn(true, true)} disabled={returnSaving || !anyItemSelected}
-                      className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1 disabled:opacity-50">
-                      <Printer className="h-3.5 w-3.5" />{returnSaving ? 'Processing…' : 'Confirm & Print'}
-                    </button>
-                  </>)}
-                </div>
-              </div>
-            </div>
+      {/* --- SALES RETURN -----------------------------------------------
+          Section 4/26 - the previous inline 4-step wizard lived here (~630 lines) and was
+          a second, divergent implementation of the return workflow. It is replaced by the
+          shared SalesReturnScreen, the same component Customer & Sales -> Sales Return
+          renders. POS supplies only its context; every rule lives in the shared layer. */}
+      {showReturn && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.55)' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[1400px] h-[92vh] overflow-hidden">
+            <SalesReturnScreen
+              entryPoint={ENTRY_POINT.POS}
+              embedded
+              posContext={{
+                branchId: currentTerminal?.branchId ?? null,
+                terminalId: currentTerminal?.terminalId ?? null,
+                counterName: currentTerminal?.counterName ?? null,
+                // Only a genuinely open session counts. A CLOSED or awaiting-closure session
+                // must not authorise a cash refund out of a drawer that is already counted,
+                // so it is passed as null and the UI disables Cash Refund accordingly.
+                sessionId: isSessionActive ? (currentSession?.id ?? null) : null,
+                tradingDate: currentSession?.tradingDate ?? null,
+                cashierName: currentSession?.openedBy ?? null,
+              }}
+              onClose={() => setShowReturn(false)}
+              onComplete={() => {
+                // Deliberately does NOT close the modal. Closing here unmounted
+                // SalesReturnScreen the instant the return posted, which destroyed the
+                // Credit Voucher card and the receipt print buttons before the cashier
+                // could see or use them — the voucher existed in the database but the
+                // cashier only ever saw a toast. The screen stays up showing its
+                // completion state; the cashier leaves via "Back to POS", which calls
+                // onClose. Same reasoning as the Sales Return register entry point.
+              }}
+            />
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* Add Shipping Dialog */}
       <Dialog open={showAddShippingDialog} onOpenChange={v => { if (!v) setShowAddShippingDialog(false); }}>

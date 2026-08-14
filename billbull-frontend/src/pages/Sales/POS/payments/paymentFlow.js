@@ -29,7 +29,13 @@ export const METHOD_SHORT_LABELS = Object.freeze({
   [PAYMENT_TYPES.CARD]: 'Card',
   [PAYMENT_TYPES.ONLINE]: 'Online',
   [PAYMENT_TYPES.CREDIT]: 'Credit',
+  [PAYMENT_TYPES.VOUCHER]: 'Voucher',
 });
+
+// VOUCHER is deliberately absent from NEXT_METHOD_PRIORITY above: the till should never nudge a
+// cashier toward a voucher, because the customer either produced one or did not. It still
+// chains correctly *away* from itself — a voucher that leaves a balance suggests Cash next,
+// which is the ordinary "voucher + cash" split.
 
 /**
  * The tender to open next, or null when this payment settles the bill.

@@ -83,6 +83,13 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-2001", "2001", "Accounts Payable Control",  "Liabilities", "Liability", "Cr", "BS", false, "2050", "ACCOUNTS_PAYABLE"),
             new AccountSeed("SYS-2002", "2002", "GRN Clearing",              "Liabilities", "Liability", "Cr", "BS", false, "2050", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-2060", "2060", "Customer Advances Received","Liabilities", "Liability", "Cr", "BS", false, "2050", "CURRENT_LIABILITIES"),
+            // Store credit issued as a Credit Voucher from a Sales Return. Deliberately its own
+            // account rather than folded into 2060: a Customer Advance is cash the customer paid
+            // us up front and is aged/refunded through the Customer Ledger, whereas a voucher is
+            // credit we owe for goods already returned and is extinguished only by redemption at
+            // the till. Sharing one account would corrupt advance ageing and make the outstanding
+            // voucher liability unreportable.
+            new AccountSeed("SYS-2061", "2061", "Credit Vouchers Issued",    "Liabilities", "Liability", "Cr", "BS", false, "2050", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-2051", "2051", "Deferred Revenue",          "Liabilities", "Liability", "Cr", "BS", false, "2050", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-2100", "2100", "VAT Output Tax",            "Liabilities", "Liability", "Cr", "BS", false, "2050", "TAX_LIABILITIES"),
             new AccountSeed("SYS-2101", "2101", "VAT Payable (Net)",         "Liabilities", "Liability", "Cr", "BS", false, "2050", "TAX_LIABILITIES"),

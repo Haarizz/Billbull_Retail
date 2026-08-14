@@ -24,7 +24,20 @@ public enum PosPaymentAllocationType {
     /** Online / bank transfer. {@code bankAccountName} selects the receiving CoA bank account. */
     ONLINE,
     /** Balance left on the customer's A/R ledger — not a receipt, so it creates no Payment row. */
-    CREDIT;
+    CREDIT,
+
+    /**
+     * Store credit redeemed from a Credit Voucher issued by a Sales Return.
+     *
+     * <p>A payment instrument, not a discount: it settles the invoice at full price by drawing
+     * down the liability recognised when the voucher was issued. Modelling it as a discount would
+     * understate revenue on this sale and leave the liability on the books forever.
+     *
+     * <p>{@code reference} carries the voucher code the cashier scanned. Like every non-cash
+     * tender it may not exceed the balance due — a voucher worth more than the sale keeps its
+     * remainder rather than paying out change.
+     */
+    VOUCHER;
 
     /**
      * Lenient parse of the wire value. Accepts the enum names plus the aliases the existing
@@ -53,6 +66,11 @@ public enum PosPaymentAllocationType {
             case "AR":
             case "ACCOUNTS_RECEIVABLE":
                 return CREDIT;
+            case "VOUCHER":
+            case "CREDIT_VOUCHER":
+            case "GIFT_VOUCHER":
+            case "STORE_CREDIT":
+                return VOUCHER;
             default:
                 return null;
         }

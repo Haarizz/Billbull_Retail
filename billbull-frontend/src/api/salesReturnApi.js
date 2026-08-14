@@ -50,10 +50,27 @@ export const saveSalesReturn = async (payload) => {
 // --------------------
 // UPDATE STATUS
 // --------------------
-export const updateSalesReturnStatus = async (id, status) => {
+/**
+ * Transitions a return's status. Approving is what moves stock, posts to the GL, and pays
+ * cash out of the drawer.
+ *
+ * When the return is gated by policy (§15), pass supervisor credentials as the third
+ * argument. They travel in the request body, never the query string, so they are not written
+ * to access logs or browser history. The backend verifies them server-side and rejects an
+ * approval that needs sign-off and does not carry it — the dialog is a convenience, not the
+ * control.
+ *
+ * @param {{supervisorUsername: string, supervisorPassword: string}} [authorization]
+ */
+export const updateSalesReturnStatus = async (id, status, authorization = null) => {
     const res = await api.put(
         `${BASE_URL}/${id}/status`,
-        null,
+        authorization
+            ? {
+                supervisorUsername: authorization.supervisorUsername,
+                supervisorPassword: authorization.supervisorPassword,
+            }
+            : null,
         { params: { status } }
     );
     return res.data;
@@ -73,5 +90,45 @@ export const getReturnableBatches = async (invoiceNumber) => {
     const res = await api.get(`${BASE_URL}/returnable-batches`, {
         params: { invoiceNumber }
     });
+    return res.data;
+};
+
+// ============================================================================
+// SHARED SALES RETURN WORKFLOW
+//
+// These back BOTH entry points — POS → Actions → Return and
+// Customer & Sales → Sales Return. There is deliberately no POS-specific
+// variant: one API surface, one business layer (§27).
+// ============================================================================
+
+/**
+ * §8 — Find the original invoice. Matches invoice number, POS receipt number,
+ * customer name, customer code, or customer mobile. Results are branch-scoped
+ * by the backend.
+ */
+export const searchReturnInvoices = async (query) => {
+    const res = await api.get(`${BASE_URL}/invoice-search`, { params: { query } });
+    return res.data;
+};
+
+/**
+ * §9 — Eligibility for one invoice, with every sold line, its returnable
+ * ceiling, and batch lots.
+ *
+ * Advisory only. The backend re-runs these checks under row locks when the
+ * return is confirmed, so a return that looks eligible here can still be
+ * rejected at confirm time (§29). Never treat this as permission to write.
+ */
+export const getReturnEligibility = async (invoiceNumber) => {
+    const res = await api.get(`${BASE_URL}/eligibility`, { params: { invoiceNumber } });
+    return res.data;
+};
+
+/**
+ * §12/§14 — Condition, reason, and refund-method vocabularies. Served from the
+ * backend so the two entry points cannot drift apart.
+ */
+export const getReturnOptions = async () => {
+    const res = await api.get(`${BASE_URL}/options`);
     return res.data;
 };

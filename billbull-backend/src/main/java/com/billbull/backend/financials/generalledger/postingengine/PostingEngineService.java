@@ -72,6 +72,7 @@ public class PostingEngineService {
         public static final String ACC_ACCOUNTS_PAYABLE    = "2001";  // Accounts Payable Control
         public static final String ACC_GRN_CLEARING        = "2002";  // GRN Clearing
         public static final String ACC_CUSTOMER_ADVANCE    = "2060";  // Customer Advances Received
+        public static final String ACC_CREDIT_VOUCHER      = "2061";  // Credit Vouchers Issued (store-credit liability)
         public static final String ACC_DEFERRED_REVENUE    = "2051";  // Deferred Revenue
         public static final String ACC_VAT_OUTPUT          = "2100";  // VAT Output Tax
         public static final String ACC_VAT_PAYABLE         = "2101";  // VAT Payable (Net) — FTA settlement account
@@ -153,6 +154,7 @@ public class PostingEngineService {
         private static final String TX_CREDIT_NOTE      = "CN";
         private static final String TX_CARD_SETTLEMENT  = "CARD";
         private static final String TX_MANUAL_JOURNAL   = "JV";
+        private static final String TX_CREDIT_VOUCHER   = "CV";    // credit voucher issue / redemption
         private static final String TX_ADVANCE_APP      = "ADVA";  // customer advance application
         private static final String TX_ADVANCE_REFUND   = "ADVR";  // customer advance refund
         private static final String TX_VENDOR_ADVANCE   = "VADV";  // vendor advance pay/apply/refund
@@ -1093,7 +1095,28 @@ public class PostingEngineService {
                 addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Return Credit Note", BigDecimal.ZERO, totalAmount);
 
-                // COGS reversal — cost is required; reject the return if unavailable to prevent BS/PL imbalance.
+                // COGS reversal — only when goods actually come back into stock.
+                //
+                // A scrap return (Damaged/Opened/Defective/Expired) restocks nothing: no stock
+                // movement is posted and the cost stays on the books as a loss, so a zero COGS
+                // figure is the CORRECT answer, not a missing one. Requiring cost > 0
+                // unconditionally made every scrap return impossible to post, which is not what
+                // this guard was for — it exists to catch a resaleable return whose cost is
+                // unknown, where inventory rises physically with no matching GL entry.
+                //
+                // The two entries are independent and each self-balances, so omitting the
+                // inventory entry leaves the revenue/VAT/AR entry above intact.
+                boolean restocksInventory = salesReturn.getItems() != null
+                                && salesReturn.getItems().stream().anyMatch(i ->
+                                                i.getReturnQty() != null && i.getReturnQty() > 0
+                                                && "Good".equalsIgnoreCase(i.getItemStatus()));
+
+                if (!restocksInventory) {
+                        log.info("Sales Return {}: no resaleable lines — scrap return, so no Inventory/COGS "
+                                        + "entry is posted and the cost stays on the books as a loss.", ref);
+                        return post(entry);
+                }
+
                 if (costOfGoodsReturned == null || costOfGoodsReturned.compareTo(BigDecimal.ZERO) <= 0) {
                         throw new PostingException(PostingErrorCode.UNBALANCED_ENTRY,
                                 "Sales Return " + ref + ": cannot post without product cost — COGS and Inventory "
@@ -1105,6 +1128,133 @@ public class PostingEngineService {
                 addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned, BigDecimal.ZERO);
                 addLine(invEntry, "COGS",      ACC_COGS,      "COGS reversal",      BigDecimal.ZERO, costOfGoodsReturned);
                 post(invEntry);
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // CREDIT VOUCHER (store credit issued by a Sales Return)
+        // =========================================================
+
+        /**
+         * Voucher issued by a Sales Return.
+         *
+         * <pre>
+         * Dr Accounts Receivable  (1100)  [amount]
+         * Cr Credit Vouchers Issued (2061) [amount]
+         * </pre>
+         *
+         * <p>The return's own journal has already posted
+         * {@code Dr Revenue + Dr VAT / Cr Accounts Receivable}, leaving a credit on AR that some
+         * settlement must clear. A cash refund clears it with {@code Cr Cash}; a voucher clears it
+         * by recognising a liability instead — the business now owes the customer store credit
+         * rather than cash. AR nets to zero across the two entries and the liability sits on the
+         * balance sheet until redeemed.
+         *
+         * <p>This is the same shape as the cash-refund posting, which is the point: the refund
+         * method changes only which account replaces Cash, never the return posting itself.
+         */
+        @Transactional
+        public JournalEntry createJournalFromCreditVoucherIssue(
+                        Long voucherId,
+                        String voucherNumber,
+                        BigDecimal amount,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = TX_CREDIT_VOUCHER + "-ISSUE-" + voucherId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref,
+                                "Credit Voucher issued " + voucherNumber, TX_CREDIT_VOUCHER, branch);
+
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Settle return by credit voucher", amount, BigDecimal.ZERO);
+                addLine(entry, "Credit Vouchers Issued", ACC_CREDIT_VOUCHER,
+                                "Store credit liability " + voucherNumber, BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        /**
+         * Voucher redeemed against a sale.
+         *
+         * <pre>
+         * Dr Credit Vouchers Issued (2061)  [amount]
+         * Cr Accounts Receivable    (1100)  [amount]
+         * </pre>
+         *
+         * <p>The sale has already posted {@code Dr AR / Cr Revenue + VAT} in the normal way. This
+         * settles the AR the voucher covers by drawing down the liability created at issue, which
+         * is exactly how a cash tender settles it by crediting AR against Cash.
+         *
+         * <p>Deliberately not modelled as a discount: a discount would reduce revenue on this
+         * sale, understating turnover and leaving the liability on the books forever.
+         *
+         * <p>The reference includes the invoice number as well as the voucher id, because one
+         * voucher can legitimately be redeemed against several sales — keying on the voucher alone
+         * would make the second redemption look like a duplicate and silently skip its posting.
+         */
+        @Transactional
+        public JournalEntry createJournalFromCreditVoucherRedemption(
+                        Long voucherId,
+                        String voucherNumber,
+                        String invoiceNumber,
+                        BigDecimal amount,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = TX_CREDIT_VOUCHER + "-REDEEM-" + voucherId + "-" + invoiceNumber;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref,
+                                "Credit Voucher " + voucherNumber + " redeemed on " + invoiceNumber,
+                                TX_CREDIT_VOUCHER, branch);
+
+                addLine(entry, "Credit Vouchers Issued", ACC_CREDIT_VOUCHER,
+                                "Redeem store credit " + voucherNumber, amount, BigDecimal.ZERO);
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Settle sale " + invoiceNumber + " by voucher", BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        /**
+         * Voucher cancelled with balance still on it — the liability is released.
+         *
+         * <pre>
+         * Dr Credit Vouchers Issued (2061)  [remaining balance]
+         * Cr Sales Returns          (4002)  [remaining balance]
+         * </pre>
+         *
+         * <p>Credited back to Sales Returns rather than to income: the original entry reduced
+         * revenue when the goods came back, so releasing the unredeemed remainder reverses that
+         * same contra-revenue line rather than inventing a gain.
+         */
+        @Transactional
+        public JournalEntry createJournalFromCreditVoucherCancellation(
+                        Long voucherId,
+                        String voucherNumber,
+                        BigDecimal remainingBalance,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                String ref = TX_CREDIT_VOUCHER + "-CANCEL-" + voucherId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                if (remainingBalance == null || remainingBalance.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                JournalEntry entry = createBaseEntry(date != null ? date : LocalDate.now(), ref,
+                                "Credit Voucher cancelled " + voucherNumber, TX_CREDIT_VOUCHER, branch);
+
+                addLine(entry, "Credit Vouchers Issued", ACC_CREDIT_VOUCHER,
+                                "Release unredeemed store credit", remainingBalance, BigDecimal.ZERO);
+                addLine(entry, "Sales Returns", ACC_SALES_RETURNS,
+                                "Cancelled voucher " + voucherNumber, BigDecimal.ZERO, remainingBalance);
 
                 return post(entry);
         }

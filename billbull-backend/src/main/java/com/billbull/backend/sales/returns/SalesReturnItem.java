@@ -37,6 +37,17 @@ public class SalesReturnItem {
     private BigDecimal total;
     private String itemStatus; // Good (Restock), Damaged (Scrap)
 
+    /**
+     * Structured per-line condition (§12). Authoritative for new returns; the service keeps
+     * the legacy {@link #itemStatus} string in sync from it so the existing restock and COGS
+     * branches in SalesReturnService continue to work untouched. Null on rows written before
+     * this column existed — read those through
+     * {@link SalesReturnCondition#fromLegacyItemStatus(String)}.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "return_condition", length = 20)
+    private SalesReturnCondition condition;
+
     /** Standardised return reason code (e.g. DEFECTIVE, WRONG_ITEM, CUSTOMER_CHANGED_MIND). */
     @Column(name = "return_reason", length = 100)
     private String returnReason;
@@ -161,6 +172,24 @@ public class SalesReturnItem {
 
     public void setItemStatus(String itemStatus) {
         this.itemStatus = itemStatus;
+    }
+
+    public SalesReturnCondition getCondition() {
+        return condition;
+    }
+
+    public void setCondition(SalesReturnCondition condition) {
+        this.condition = condition;
+    }
+
+    /**
+     * Condition for display/reporting, falling back to the legacy itemStatus string for rows
+     * written before the column existed. Serialized to the UI so the new screen can render a
+     * historic return without a null condition chip.
+     */
+    @Transient
+    public SalesReturnCondition getEffectiveCondition() {
+        return condition != null ? condition : SalesReturnCondition.fromLegacyItemStatus(itemStatus);
     }
 
     public String getReturnReason() { return returnReason; }

@@ -6,6 +6,7 @@ import com.billbull.backend.pos.businessdate.BusinessDaySettings;
 import com.billbull.backend.pos.businessdate.PosOperatingHoursCalculator;
 import com.billbull.backend.pos.session.PosSession;
 import com.billbull.backend.pos.session.PosSessionService;
+import com.billbull.backend.sales.voucher.CreditVoucherExpiryResolver;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.user.UserRepository;
@@ -47,6 +48,48 @@ public class PosSettingsService {
         this.posSessionService = posSessionService;
         this.credentialVerificationService = credentialVerificationService;
         this.businessDayClock = businessDayClock;
+    }
+
+    // ---- Credit voucher expiry policy (§9–§17) ---------------------------------------
+
+    /**
+     * Did this request carry the voucher expiry policy at all?
+     *
+     * <p>A null mode means the field was simply absent from a partial POST and the stored
+     * policy must be left alone; an explicit empty string means the admin chose "use the system
+     * default" and the branch override is cleared.
+     */
+    private boolean creditVoucherExpirySupplied(PosSettings settings) {
+        return settings.getCreditVoucherExpiryMode() != null;
+    }
+
+    /** Blank mode -> null (no branch policy); otherwise the trimmed, upper-cased mode. */
+    private String normalisedExpiryMode(PosSettings settings) {
+        String mode = settings.getCreditVoucherExpiryMode();
+        if (mode == null || mode.isBlank()) return null;
+        return mode.trim().toUpperCase();
+    }
+
+    /**
+     * Rejects an unusable voucher expiry policy before it reaches the database (§13).
+     *
+     * <p>"Past" is judged against the branch's business date rather than the server's calendar
+     * date, so an admin configuring a policy late at night in a store whose business day runs
+     * past midnight is not told their perfectly valid date is in the past.
+     */
+    private void validateCreditVoucherExpiryConfig(PosSettings settings) {
+        if (!creditVoucherExpirySupplied(settings)) return;
+        String mode = normalisedExpiryMode(settings);
+        if (mode == null) return;
+
+        CreditVoucherExpiryResolver.validate(
+                        mode,
+                        settings.getCreditVoucherExpiryMonths(),
+                        settings.getCreditVoucherExpiryDate(),
+                        businessDayClock.now().toLocalDate())
+                .ifPresent(problem -> {
+                    throw new IllegalArgumentException(problem);
+                });
     }
 
     /** A stored PIN already BCrypt-hashed? BCrypt hashes start with $2a/$2b/$2y. */
@@ -342,6 +385,43 @@ public class PosSettingsService {
                         throw new AccessDeniedException(
                                 "Only supervisors/managers/admins may change supervisor approval settings.");
                     }
+                    // §14 — credit voucher expiry is a business-wide financial policy: it sets how
+                    // long the business remains liable for store credit it has issued. It is held
+                    // to the same bar as the supervisor settings above, so a cashier with console
+                    // access cannot quietly shorten or extend that liability.
+                    boolean changesVoucherExpiry = creditVoucherExpirySupplied(settings)
+                            && (!Objects.equals(existing.getCreditVoucherExpiryMode(), normalisedExpiryMode(settings))
+                                || !Objects.equals(existing.getCreditVoucherExpiryMonths(), settings.getCreditVoucherExpiryMonths())
+                                || !Objects.equals(existing.getCreditVoucherExpiryDate(), settings.getCreditVoucherExpiryDate()));
+                    if (changesVoucherExpiry && !currentUserCanConfigureSupervisorSettings()) {
+                        throw new AccessDeniedException(
+                                "Only supervisors/managers/admins may change the credit voucher expiry policy.");
+                    }
+                    // Validated only when it actually changes. The console POSTs the whole
+                    // settings object for any edit, so validating unconditionally would make a
+                    // MANUAL date that has since lapsed block every unrelated settings change
+                    // until someone noticed why.
+                    if (changesVoucherExpiry) {
+                        validateCreditVoucherExpiryConfig(settings);
+                    }
+                    // Null mode means "this request did not carry the voucher policy" — the same
+                    // partial-POST convention businessDayExtensionMinutes uses below. An explicit
+                    // blank clears the branch policy back to the global default.
+                    if (creditVoucherExpirySupplied(settings)) {
+                        String mode = normalisedExpiryMode(settings);
+                        existing.setCreditVoucherExpiryMode(mode);
+                        existing.setCreditVoucherExpiryMonths(
+                                CreditVoucherExpiryResolver.MODE_AUTO.equals(mode) ? settings.getCreditVoucherExpiryMonths() : null);
+                        existing.setCreditVoucherExpiryDate(
+                                CreditVoucherExpiryResolver.MODE_MANUAL.equals(mode) ? settings.getCreditVoucherExpiryDate() : null);
+                        auditLogService.logDomainEvent("POS_SETTINGS", String.valueOf(existing.getBranchId()),
+                                "CREDIT_VOUCHER_EXPIRY_CHANGED",
+                                String.format("Credit voucher expiry policy for branch %s set to %s (months=%s, date=%s).",
+                                        existing.getBranchId(),
+                                        mode == null ? "system default" : mode,
+                                        existing.getCreditVoucherExpiryMonths(),
+                                        existing.getCreditVoucherExpiryDate()));
+                    }
                     existing.setMaxTerminalsPerBranch(settings.getMaxTerminalsPerBranch());
                     existing.setRequireSupervisorForVoid(settings.getRequireSupervisorForVoid());
                     existing.setRequireSupervisorForDayClose(settings.getRequireSupervisorForDayClose());
@@ -407,6 +487,8 @@ public class PosSettingsService {
                     PosSettings none = new PosSettings();
                     none.setBranchId(settings.getBranchId());
                     validateBusinessDayScheduleChange(none, settings);
+                    validateCreditVoucherExpiryConfig(settings);
+                    settings.setCreditVoucherExpiryMode(normalisedExpiryMode(settings));
                     settings.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
                     return withBusinessDayScheduleLock(repo.save(settings));
                 });

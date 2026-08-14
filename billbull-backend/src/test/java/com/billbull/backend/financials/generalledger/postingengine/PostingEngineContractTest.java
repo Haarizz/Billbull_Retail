@@ -373,6 +373,32 @@ class PostingEngineContractTest {
         verify(journalEntryRepository, times(2)).save(any());
     }
 
+    /**
+     * A scrap return restocks nothing, so zero COGS is the correct figure rather than a missing
+     * one. It must still post the revenue/VAT/AR reversal — the customer is refunded either way.
+     * Requiring cost > 0 here previously made every Damaged return impossible to approve.
+     */
+    @Test
+    void scrapSalesReturnPostsRefundWithoutInventoryEntry() {
+        SalesReturn ret = salesReturn("CN-003", 800.0, 40.0, 840.0, "Damaged");
+
+        JournalEntry result = service.createJournalFromSalesReturn(ret, BigDecimal.ZERO, true);
+
+        assertBalanced(result);
+        assertLineExists(result, PostingEngineService.ACC_ACCOUNTS_RECEIVABLE, new BigDecimal("840.00"), false);
+        // Only the revenue reversal — no Inventory/COGS entry, so the cost stays on the books.
+        verify(journalEntryRepository, times(1)).save(any());
+    }
+
+    /** A resaleable return with no resolvable cost is still refused: stock would rise with no GL entry. */
+    @Test
+    void resaleableSalesReturnWithoutCostIsRejected() {
+        SalesReturn ret = salesReturn("CN-004", 800.0, 40.0, 840.0, "Good");
+
+        assertThrows(PostingException.class,
+                () -> service.createJournalFromSalesReturn(ret, BigDecimal.ZERO, true));
+    }
+
     // =========================================================
     // §21F — Settlement Discount Tests (Task 9.6)
     // =========================================================
@@ -692,13 +718,30 @@ class PostingEngineContractTest {
         return pv;
     }
 
+    /** A return of one resaleable ("Good") unit — the case that reverses COGS. */
     private static SalesReturn salesReturn(String returnNumber, double subTotal, double taxAmount, double totalAmount) {
+        return salesReturn(returnNumber, subTotal, taxAmount, totalAmount, "Good");
+    }
+
+    /**
+     * @param itemStatus "Good" restocks and reverses COGS; anything else is scrap, which posts
+     *                   no Inventory/COGS entry because no stock comes back.
+     */
+    private static SalesReturn salesReturn(String returnNumber, double subTotal, double taxAmount,
+                                           double totalAmount, String itemStatus) {
         SalesReturn ret = new SalesReturn();
         ret.setReturnNumber(returnNumber);
         ret.setReturnDate(LocalDate.of(2026, 6, 1));
         ret.setSubTotal(BigDecimal.valueOf(subTotal));
         ret.setTaxAmount(BigDecimal.valueOf(taxAmount));
         ret.setTotalAmount(BigDecimal.valueOf(totalAmount));
+
+        com.billbull.backend.sales.returns.SalesReturnItem item =
+                new com.billbull.backend.sales.returns.SalesReturnItem();
+        item.setItemCode("ITEM-1");
+        item.setReturnQty(1);
+        item.setItemStatus(itemStatus);
+        ret.setItems(new java.util.ArrayList<>(java.util.List.of(item)));
         return ret;
     }
 

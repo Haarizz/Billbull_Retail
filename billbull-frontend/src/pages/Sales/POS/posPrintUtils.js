@@ -570,7 +570,7 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
 // Thermal (58mm/80mm) credit-note receipt for Sales Return. Independent of
 // buildThermalReceiptHtml (POS tax-invoice shape) since a return doc carries
 // different fields (returnNumber, linkedInvoice, per-line discount/tax already
-// resolved by SalesReturn.jsx) rather than a POS invoice/session object.
+// resolved by the Sales Return screen) rather than a POS invoice/session object.
 export const buildSalesReturnThermalHtml = (paperSize, ret, {
   companyName, trn, header, footer,
   showTrn = true, showLogo = true, showCompanyDetails = true,

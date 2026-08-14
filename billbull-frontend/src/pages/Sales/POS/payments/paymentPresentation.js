@@ -36,6 +36,10 @@ export function allocationLabel(line, { short = false } = {}) {
       return line.paymentSubtype ? `${line.paymentSubtype} Online` : 'Online';
     case PAYMENT_TYPES.CREDIT:
       return short ? AR_LABEL_SHORT : AR_LABEL;
+    case PAYMENT_TYPES.VOUCHER:
+      // Naming the voucher on the receipt matters: the customer needs to see which of their
+      // vouchers was spent, and the remaining balance sits on that specific one.
+      return line.reference ? `Voucher ${line.reference}` : 'Credit Voucher';
     default:
       return 'Payment';
   }
@@ -52,6 +56,8 @@ export function allocationLabelAr(line) {
       return 'تحويل بنكي';
     case PAYMENT_TYPES.CREDIT:
       return 'محول إلى الذمم المدينة';
+    case PAYMENT_TYPES.VOUCHER:
+      return 'قسيمة رصيد';
     default:
       return '';
   }
