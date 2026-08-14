@@ -15,6 +15,20 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         Optional<SalesInvoice> findByInvoiceNumber(String invoiceNumber);
 
+        /**
+         * Pessimistic-write lock on an invoice row, used to serialise Sales Return approvals
+         * against the same invoice (§29).
+         *
+         * <p>Batch-controlled lines are already protected by the row lock on BatchAllocation in
+         * SalesReturnService.applyBatchReturns. Non-batch lines had no such guard: two terminals
+         * could each read "available = 2" and both return 2. Locking the shared invoice row makes
+         * the read-check-write sequence atomic across terminals, because every return against an
+         * invoice must pass through this same row.
+         */
+        @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+        @Query("SELECT s FROM SalesInvoice s WHERE s.invoiceNumber = :invoiceNumber")
+        Optional<SalesInvoice> findByInvoiceNumberForUpdate(@Param("invoiceNumber") String invoiceNumber);
+
         Optional<SalesInvoice> findByPosCheckoutKey(String posCheckoutKey);
 
         /**
@@ -25,6 +39,32 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         Optional<SalesInvoice> findTopByPosTerminalIdOrderByCreatedAtDesc(String posTerminalId);
 
         boolean existsByCustomerCode(String customerCode);
+
+        /**
+         * §8 Sales Return "Find Original Invoice" search. Matches invoice number, POS receipt
+         * (checkout key), customer name and customer code, plus any customer codes the caller
+         * pre-resolved from a mobile-number lookup (Customer holds the mobile, not the invoice).
+         *
+         * <p>Cancelled invoices are excluded here rather than filtered in Java so the LIMIT
+         * applies to returnable candidates only. Items are NOT fetched — the results list shows
+         * a count, and the full line graph loads on demand via the eligibility endpoint.
+         *
+         * <p>Pass an empty (not null) list for {@code customerCodes} when no mobile match was
+         * found; the {@code :#{#customerCodes.size()} = 0} guard keeps the IN clause inert.
+         */
+        @Query("SELECT s FROM SalesInvoice s "
+                        + "WHERE s.status <> 'CANCELLED' "
+                        + "AND (:branchId IS NULL OR s.branchId = :branchId) "
+                        + "AND ( LOWER(s.invoiceNumber) LIKE LOWER(CONCAT('%', :q, '%')) "
+                        + "   OR LOWER(COALESCE(s.posCheckoutKey, '')) LIKE LOWER(CONCAT('%', :q, '%')) "
+                        + "   OR LOWER(COALESCE(s.customerName, '')) LIKE LOWER(CONCAT('%', :q, '%')) "
+                        + "   OR LOWER(COALESCE(s.customerCode, '')) LIKE LOWER(CONCAT('%', :q, '%')) "
+                        + "   OR (:#{#customerCodes.size()} > 0 AND s.customerCode IN :customerCodes) ) "
+                        + "ORDER BY s.invoiceDate DESC, s.id DESC")
+        List<SalesInvoice> searchReturnableInvoices(@Param("q") String q,
+                        @Param("customerCodes") List<String> customerCodes,
+                        @Param("branchId") Long branchId,
+                        Pageable pageable);
 
         List<SalesInvoice> findAllByOrderByInvoiceDateDesc();
 

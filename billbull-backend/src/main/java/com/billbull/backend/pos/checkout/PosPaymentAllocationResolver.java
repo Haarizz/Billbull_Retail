@@ -211,7 +211,7 @@ public class PosPaymentAllocationResolver {
         validateAllocationStructure(raw);
 
         List<ResolvedPaymentAllocation> resolved = new ArrayList<>();
-        double cash = 0, card = 0, online = 0, credit = 0;
+        double cash = 0, card = 0, online = 0, credit = 0, voucher = 0;
 
         for (PosPaymentAllocation a : raw) {
             PosPaymentAllocationType type = PosPaymentAllocationType.parse(a.getType());
@@ -221,6 +221,7 @@ public class PosPaymentAllocationResolver {
                 case CARD -> card += amount;
                 case ONLINE -> online += amount;
                 case CREDIT -> credit += amount;
+                case VOUCHER -> voucher += amount;
             }
             resolved.add(new ResolvedPaymentAllocation(
                     type, modeLabelFor(type, a.getSubtype()), amount,
@@ -231,7 +232,10 @@ public class PosPaymentAllocationResolver {
         // Business rule: only CASH may exceed the remaining balance (the excess is the customer's
         // change). Every other tender is money that would otherwise have to be refunded through a
         // separate channel, so an over-allocation is rejected rather than silently truncated.
-        double nonCash = card + online + credit;
+        //
+        // Voucher sits on the non-cash side deliberately: a voucher worth more than the sale keeps
+        // its remaining balance for next time (§20) rather than paying the difference out as change.
+        double nonCash = card + online + credit + voucher;
         if (invoiceTotal > 0 && nonCash - invoiceTotal > ROUNDING_TOLERANCE) {
             throw badRequest(String.format(
                     "Non-cash payment allocations (%.2f) cannot exceed the invoice total (%.2f).",
@@ -240,8 +244,9 @@ public class PosPaymentAllocationResolver {
 
         // Credit is the balance the customer carries on their A/R ledger — it is not a receipt,
         // so it never counts toward the settled amount that drives the invoice's PAID status.
-        double settled = Math.min(cash + card + online, invoiceTotal);
-        List<ResolvedPaymentAllocation> capped = capCashAllocations(resolved, settled - (card + online));
+        // Voucher does count: it is value actually surrendered to settle this sale.
+        double settled = Math.min(cash + card + online + voucher, invoiceTotal);
+        List<ResolvedPaymentAllocation> capped = capCashAllocations(resolved, settled - (card + online + voucher));
 
         String combined = isMeaningfulLabel(combinedLabelOverride)
                 ? combinedLabelOverride
@@ -352,6 +357,9 @@ public class PosPaymentAllocationResolver {
             case CARD -> "Card";
             case ONLINE -> "Online";
             case CREDIT -> "Credit";
+            // Matches TenderBucket.of("Voucher") -> VOUCHER, so voucher tenders land in the
+            // Voucher column of every existing payment report without any report change.
+            case VOUCHER -> "Voucher";
         };
     }
 
@@ -362,6 +370,7 @@ public class PosPaymentAllocationResolver {
             case CARD -> a.getModeLabel() != null && !a.getModeLabel().isBlank() ? a.getModeLabel() : "Card";
             case ONLINE -> "Online";
             case CREDIT -> "Credit";
+            case VOUCHER -> "Voucher";
         };
     }
 

@@ -21,6 +21,15 @@ export const PAYMENT_TYPES = Object.freeze({
   CARD: 'CARD',
   ONLINE: 'ONLINE',
   CREDIT: 'CREDIT',
+  /**
+   * Store credit redeemed from a Credit Voucher issued by a Sales Return.
+   *
+   * A payment instrument, not a discount: it settles the sale at full price by drawing down
+   * the liability recognised when the voucher was issued. The voucher code travels in the
+   * line's `reference`, and the backend redeems it under a row lock at checkout — adding the
+   * line here reserves nothing.
+   */
+  VOUCHER: 'VOUCHER',
 });
 
 /**
@@ -32,6 +41,7 @@ export const PAYMENT_TYPE_LABELS = Object.freeze({
   [PAYMENT_TYPES.CARD]: 'Card',
   [PAYMENT_TYPES.ONLINE]: 'Online',
   [PAYMENT_TYPES.CREDIT]: 'Credit',
+  [PAYMENT_TYPES.VOUCHER]: 'Voucher',
 });
 
 /** Currency comparison tolerance — half a fils, so 2-dp rounding never flips a check. */
@@ -105,6 +115,10 @@ export function validateLine(line) {
       return line.bankAccountId ? null : 'Select a receiving bank account.';
     case PAYMENT_TYPES.CREDIT:
       return line.customerCode ? null : 'Select a customer for the credit sale.';
+    case PAYMENT_TYPES.VOUCHER:
+      // The code is what the backend redeems against; without it the allocation is unbacked
+      // and checkout would post a payment line with no voucher behind it.
+      return line.reference ? null : 'Scan or enter a voucher code.';
     default:
       return null;
   }

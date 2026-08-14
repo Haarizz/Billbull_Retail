@@ -66,6 +66,19 @@ public class GeneralLedgerController {
         return ledgerService.getAccountTree();
     }
 
+    /**
+     * GET /api/ledger/accounts/next-code?parentCode=6000&accountGroup=Expenses
+     * Server-side allocation of the next free account code (see AccountCodeGenerator).
+     */
+    @GetMapping("/accounts/next-code")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, String> getNextAccountCode(
+            @RequestParam(required = false) String parentCode,
+            @RequestParam(required = false) String accountGroup) {
+        modulePermissionService.requireCanView("finance.ledger");
+        return Map.of("code", ledgerService.nextAccountCode(parentCode, accountGroup));
+    }
+
     @PostMapping("/accounts")
     @PreAuthorize("isAuthenticated()")
     public Account createOrUpdateAccount(@RequestBody Account account) {

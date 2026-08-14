@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { PlusCircle, Save, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { createAccount } from '../../api/ledgerApi';
+import { generateNextAccountCode } from '../../utils/accountCodeGenerator';
 
 const ACCOUNT_GROUPS = ['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'];
 
@@ -35,18 +36,6 @@ const DEFAULT_PARENT_NAME_MAP = {
   Income: ['Sales', 'Income'],
   Expenses: ['Operating Expenses', 'Expenses'],
   Equity: ['Equity']
-};
-
-const generateNextCode = (group, existingAccounts = []) => {
-  const prefixMap = { Assets: 1, Liabilities: 2, Equity: 3, Income: 4, Expenses: 5 };
-  const prefix = prefixMap[group] ?? 9;
-  const rangeMin = prefix * 1000;
-  const rangeMax = rangeMin + 999;
-  const existing = existingAccounts
-    .map(account => Number.parseInt(account?.code, 10))
-    .filter(code => Number.isFinite(code) && code >= rangeMin && code <= rangeMax);
-  const max = existing.length > 0 ? Math.max(...existing) : rangeMin + 99;
-  return String(max + 1);
 };
 
 const findDefaultParentCode = (group, existingAccounts = []) => {
@@ -95,9 +84,15 @@ const LedgerAccountCreateModal = ({
     setSaving(false);
   }, [isOpen, defaultGroup, initialName]);
 
-  const generatedCode = useMemo(
-    () => generateNextCode(group, existingAccounts),
+  const defaultParentCode = useMemo(
+    () => findDefaultParentCode(group, existingAccounts),
     [group, existingAccounts]
+  );
+
+  // Preview only — the backend allocates the authoritative code when `code` is sent blank.
+  const generatedCode = useMemo(
+    () => generateNextAccountCode({ group, parentCode: defaultParentCode, existingAccounts }),
+    [group, defaultParentCode, existingAccounts]
   );
 
   const parentOptions = useMemo(() => {
@@ -119,7 +114,8 @@ const LedgerAccountCreateModal = ({
 
   const handleSave = async () => {
     const trimmedName = name.trim();
-    const finalCode = (code.trim() || generatedCode).trim();
+    // Blank => the backend allocates the code atomically on save.
+    const finalCode = code.trim();
 
     if (!trimmedName) {
       toast.error('Account name is required.');
@@ -129,7 +125,7 @@ const LedgerAccountCreateModal = ({
       toast.error('Account group is required.');
       return;
     }
-    if (existingAccounts.some(account => String(account?.code || '').trim() === finalCode)) {
+    if (finalCode && existingAccounts.some(account => String(account?.code || '').trim() === finalCode)) {
       toast.error(`Account code ${finalCode} already exists.`);
       return;
     }
@@ -138,7 +134,7 @@ const LedgerAccountCreateModal = ({
       return;
     }
 
-    const parentCode = findDefaultParentCode(group, existingAccounts);
+    const parentCode = defaultParentCode;
     const parentAccount = parentCode ? existingAccounts.find(account => account.code === parentCode) : null;
     const normalBalance = NORMAL_BALANCE_MAP[group] || balanceType;
 

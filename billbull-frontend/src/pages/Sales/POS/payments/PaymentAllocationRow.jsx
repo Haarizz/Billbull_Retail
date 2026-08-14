@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { AlertCircle, Banknote, CreditCard, Landmark, Pencil, Users, X } from 'lucide-react';
+import { AlertCircle, Banknote, CreditCard, Gift, Landmark, Pencil, Users, X } from 'lucide-react';
 
 import { PAYMENT_TYPES } from './paymentModel';
 import { CurrencyAmount } from '../POSCurrency';
@@ -11,6 +11,7 @@ const TYPE_STYLE = {
   // Credit is not money collected — spelling that out on the row is what stops a cashier
   // reading a settled-looking bill as paid when part of it is still owed.
   [PAYMENT_TYPES.CREDIT]: { icon: Users, accent: '#9333ea', label: 'Transferred to Accounts Receivable' },
+  [PAYMENT_TYPES.VOUCHER]: { icon: Gift, accent: '#8B5CF6', label: 'Credit Voucher' },
 };
 
 /**

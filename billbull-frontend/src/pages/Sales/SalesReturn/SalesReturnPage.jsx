@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
-import { computeLineTaxTotals } from '../../utils/vatMath';
-import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { buildSalesReturnThermalHtml } from './POS/posPrintUtils';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
-import billBullLogo from '../../assets/billBullLogo.png';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
+import { computeLineTaxTotals } from '../../../utils/vatMath';
+import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
+import { getTemplatesByCategory } from '../../../api/printTemplateApi';
+import { buildSalesReturnThermalHtml } from '../POS/posPrintUtils';
+import { useCompany } from '../../../context/CompanyContext';
+import { useBranch } from '../../../context/BranchContext';
+import billBullLogo from '../../../assets/billBullLogo.png';
 import {
    RotateCcw,
    Search,
@@ -36,14 +36,14 @@ import {
    Mail,
    Download
 } from 'lucide-react';
-import ExportDropdown from '../../components/common/ExportDropdown';
-import PaginationFooter from '../../components/common/PaginationFooter';
-import DateFilter from '../../components/common/DateFilter';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import { generateDocFilename } from '../../utils/filenameUtils';
-import { usePrintDocument } from '../../hooks/usePrintDocument';
-import CurrencyAmount from '../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import ExportDropdown from '../../../components/common/ExportDropdown';
+import PaginationFooter from '../../../components/common/PaginationFooter';
+import DateFilter from '../../../components/common/DateFilter';
+import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
+import { generateDocFilename } from '../../../utils/filenameUtils';
+import { usePrintDocument } from '../../../hooks/usePrintDocument';
+import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatDisplayDate } from '../../../utils/dateUtils';
 
 // ✅ DYNAMIC UI COMPONENTS
 
@@ -51,17 +51,23 @@ import { formatDisplayDate } from '../../utils/dateUtils';
 // API Imports
 import {
    getSalesReturnsPage,
+   getSalesReturnById,
    saveSalesReturn,
    getNextSalesReturnNumber,
    getSalesReturnStats,
    deleteSalesReturn,
    updateSalesReturnStatus,
    getReturnableBatches
-} from '../../api/salesReturnApi';
-import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
-import TableSkeleton from '../../components/common/TableSkeleton';
+} from '../../../api/salesReturnApi';
+import { getAllSalesInvoices } from '../../../api/salesInvoiceApi';
+import { getSalesSettings } from '../../../api/salesSettingsApi';
+import { isAutoNumberingEnabled } from '../../../utils/salesNumbering';
+import TableSkeleton from '../../../components/common/TableSkeleton';
+
+// §24/§26 — the shared Sales Return workflow. This page hosts it for the
+// Customer & Sales entry point; POS → Actions → Return renders the very same component.
+import SalesReturnScreen from './SalesReturnScreen';
+import { ENTRY_POINT } from './constants';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -133,6 +139,9 @@ const SalesReturn = () => {
    // Drawer State
    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
    const [selectedReturn, setSelectedReturn] = useState(null);
+
+   // The unposted return currently open for editing, or null for a brand-new one.
+   const [editingDraft, setEditingDraft] = useState(null);
 
    // Stats state
    const [stats, setStats] = useState({
@@ -217,6 +226,7 @@ const SalesReturn = () => {
    // ==========================================
    const handleCreateNew = async () => {
       setReturnId(null);
+      setEditingDraft(null);
       if (returnAutoNumbering) {
          try {
             const nextNum = await getNextSalesReturnNumber();
@@ -382,33 +392,32 @@ const SalesReturn = () => {
       setTimeout(() => setSelectedReturn(null), 300);
    };
 
-   const handleLoadReturn = (ret) => {
-      setReturnId(ret.id);
-      setLoadedReturnBranchId(ret.branch?.id ?? null);
-      setReturnNo(ret.returnNumber);
-      setReturnDate(ret.returnDate);
-      setReturnStatus(ret.status);
-      setLinkedInvoice(ret.linkedInvoice);
-      setLinkedInvoiceVatMode(ret.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
-      setCustomerCode(ret.customerCode);
-      setCustomerName(ret.customerName);
-      setReason(ret.reason);
-      setReturnAction(ret.returnAction);
-      setInternalNotes(ret.internalNotes);
-      setItems(ret.items.map(i => ({ ...i, batches: Array.isArray(i.batches) ? i.batches : [] })));
-      setActiveTab('create');
-
-      // Refresh returnable batches view (so partial returns reflect already-returned qty)
-      if (ret.linkedInvoice) {
-         getReturnableBatches(ret.linkedInvoice).then(list => {
-            const grouped = (list || []).reduce((acc, r) => {
-               const code = r.itemCode || '';
-               if (!acc[code]) acc[code] = [];
-               acc[code].push(r);
-               return acc;
-            }, {});
-            setReturnableByItem(grouped);
-         }).catch(() => setReturnableByItem({}));
+   /**
+    * Opens an existing return for editing in the shared workflow screen.
+    *
+    * <p>Approved returns are immutable — the backend rejects any modification of one
+    * (SalesReturnService.saveReturn) — so they are turned away here with the reason rather
+    * than opened into a screen whose Confirm can only fail.
+    *
+    * <p>The full record is re-fetched by id: the list page carries enough to render a row,
+    * but editing needs the per-line conditions, reasons and batch selections.
+    */
+   const handleLoadReturn = async (ret) => {
+      if (String(ret.status || '').toUpperCase() === 'APPROVED') {
+         alert('This return has already been approved and cannot be modified. Create a reversal instead.');
+         return;
+      }
+      try {
+         setIsLoading(true);
+         const full = await getSalesReturnById(ret.id);
+         setLoadedReturnBranchId(full?.branch?.id ?? ret.branch?.id ?? null);
+         setEditingDraft(full || ret);
+         setActiveTab('create');
+      } catch (err) {
+         console.error('Could not open return for editing', err);
+         alert(err?.response?.data?.message || 'Could not open this return for editing.');
+      } finally {
+         setIsLoading(false);
       }
    };
 
@@ -743,26 +752,37 @@ const SalesReturn = () => {
    // ==========================================
    // RENDER
    // ==========================================
+   // The create tab hosts a full two-pane workflow screen that must fit the viewport exactly
+   // — it manages its own internal scrolling, so the page around it must not add height of its
+   // own. On the list tab the page scrolls normally.
+   const isCreating = activeTab === 'create';
+
    return (
-      <div className="flex min-h-screen bg-[#F7F7FA] font-sans relative" onClick={() => setIsInvoiceOpen(false)}>
+      <div
+         className={`flex bg-[#F7F7FA] font-sans relative ${isCreating ? 'h-screen overflow-hidden' : 'min-h-screen'}`}
+         onClick={() => setIsInvoiceOpen(false)}
+      >
 
-         <main className="flex-1 flex flex-col w-full print:hidden">
+         <main className="flex-1 flex flex-col w-full min-h-0 print:hidden">
 
-            <div className="p-4 md:p-6 space-y-6">
+            <div className={`p-4 md:p-6 ${isCreating ? 'flex-1 min-h-0 flex flex-col gap-3' : 'space-y-6'}`}>
 
                {/* HEADER */}
-               <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+               <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 shrink-0">
                   <div>
                      <div className="text-xs text-slate-500 mb-1">Sales &gt; Sales Returns</div>
-                     <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-                        <RotateCcw className="text-[#F5C742]" size={28} />
+                     <h1 className={`font-bold text-slate-800 flex items-center gap-2 ${isCreating ? 'text-lg' : 'text-2xl'}`}>
+                        <RotateCcw className="text-[#F5C742]" size={isCreating ? 20 : 28} />
                         Sales Returns
                      </h1>
-                     <p className="text-sm text-slate-500 mt-1">Manage customer returns and generate credit notes</p>
+                     {!isCreating && (
+                        <p className="text-sm text-slate-500 mt-1">Manage customer returns and generate credit notes</p>
+                     )}
                   </div>
                </div>
 
-               {/* STATS CARDS */}
+               {/* STATS CARDS — hidden while creating: the workflow screen needs the height. */}
+               {!isCreating && (
                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                      <div className="flex justify-between items-start">
@@ -816,16 +836,22 @@ const SalesReturn = () => {
                      </div>
                   </div>
                </div>
+               )}
 
                {/* TABS */}
-               <div className="bg-white border border-slate-200 rounded-lg p-1 inline-flex shadow-sm w-fit">
+               <div className="bg-white border border-slate-200 rounded-lg p-1 inline-flex shadow-sm w-fit shrink-0">
                   {[
                      { id: 'list', label: 'Returns List' },
                      { id: 'create', label: 'New Sales Return' }
                   ].map(tab => (
                      <button
                         key={tab.id}
-                        onClick={() => setActiveTab(tab.id)}
+                        // Reaching for "New Sales Return" means a new one — never a silent
+                        // continuation of the draft that happened to be open.
+                        onClick={() => {
+                           if (tab.id === 'create') setEditingDraft(null);
+                           setActiveTab(tab.id);
+                        }}
                         className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${activeTab === tab.id ? 'bg-[#F5C742] text-slate-900 shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
                      >
                         {tab.label}
@@ -923,7 +949,18 @@ const SalesReturn = () => {
                                     <td className="px-4 py-3 text-center">
                                        <div className="flex justify-center gap-1" onClick={(e) => e.stopPropagation()}>
                                           <button onClick={() => handleViewReturn(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Eye size={14} /></button>
-                                          <button onClick={() => handleLoadReturn(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500"><Edit size={14} /></button>
+                                          {/* Approved returns are immutable server-side, so the
+                                              affordance is removed rather than left to fail. */}
+                                          <button
+                                             onClick={() => handleLoadReturn(ret)}
+                                             disabled={String(ret.status || '').toUpperCase() === 'APPROVED'}
+                                             title={String(ret.status || '').toUpperCase() === 'APPROVED'
+                                                ? 'Approved returns cannot be edited — create a reversal instead'
+                                                : 'Edit return'}
+                                             className="p-1 hover:bg-slate-200 rounded text-slate-500 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                                          >
+                                             <Edit size={14} />
+                                          </button>
                                           <button onClick={() => handlePrint(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Print"><Printer size={14} /></button>
                                           <button onClick={() => handleDownload(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Download PDF"><Download size={14} /></button>
                                           <button onClick={() => { if (window.confirm('Delete this record?')) deleteSalesReturn(ret.id).then(fetchReturns); }} className="p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
@@ -956,294 +993,30 @@ const SalesReturn = () => {
                )}
 
                {/* ================= TAB: CREATE / EDIT ================= */}
-               {activeTab === 'create' && (
-                  <div className="flex gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-
-                     {/* MAIN FORM */}
-                     <div className="flex-1 space-y-4">
-
-                        {/* ACTION BAR */}
-                        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-sm flex justify-between items-center">
-                           <div className="flex items-center gap-4">
-                              <div className="flex flex-col px-2">
-                                 <span className="text-[10px] font-bold text-slate-400 uppercase">Status</span>
-                                 {renderStatusBadge(returnStatus)}
-                              </div>
-                              <div className="h-8 w-px bg-slate-100"></div>
-                              <div className="flex flex-col px-2">
-                                 <span className="text-[10px] font-bold text-slate-400 uppercase">Return No</span>
-                                 <span className="text-sm font-bold text-slate-700">{returnNo}</span>
-                              </div>
-                           </div>
-                           <div className="flex gap-2 items-center">
-                              {isLocked && (
-                                 <span
-                                    title="Approved returns are locked. Create a reversal to undo or adjust."
-                                    className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 font-semibold"
-                                 >
-                                    Locked — Approved
-                                 </span>
-                              )}
-                              <button onClick={() => setActiveTab('list')} className="px-4 py-2 border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50">
-                                 {isLocked ? 'Back to List' : 'Cancel'}
-                              </button>
-                              {!isLocked && (
-                                 <>
-                                    <button
-                                       onClick={() => handleSave('DRAFT')}
-                                       className="px-4 py-2 bg-white border border-[#F5C742] rounded-md text-xs font-bold text-slate-700 hover:bg-yellow-50 shadow-sm flex items-center gap-2"
-                                    >
-                                       <Save size={16} /> Save Draft
-                                    </button>
-                                    <button
-                                       onClick={() => handleSave('APPROVED')}
-                                       className="px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center gap-2"
-                                    >
-                                       <CheckCircle2 size={16} /> Approve & Credit
-                                    </button>
-                                 </>
-                              )}
-                           </div>
-                        </div>
-
-                        {/* RETURN HEADER */}
-                        <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 relative z-20">
-                           <h3 className="text-sm font-bold text-slate-800 mb-4 flex items-center gap-2">
-                              <RefreshCw size={16} className="text-yellow-500" /> Header Information
-                           </h3>
-                           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                 <div>
-                                    <label className="block text-xs font-semibold text-slate-500 mb-1">Return No</label>
-                                    <input
-                                       type="text"
-                                       value={returnNo}
-                                       onChange={e => setReturnNo(e.target.value)}
-                                       readOnly={returnAutoNumbering}
-                                       placeholder={returnAutoNumbering ? 'Auto generated' : 'Enter return number'}
-                                       className="w-full text-xs p-2 border border-slate-200 rounded text-slate-700 font-semibold read-only:bg-slate-50 read-only:text-slate-500 focus:border-yellow-400 outline-none"
-                                    />
-                                 </div>
-                              
-                                 <div>
-                                    <label className="block text-xs font-semibold text-slate-500 mb-1">Return Date</label>
-                                    <input type="date" value={returnDate} onChange={e => setReturnDate(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded focus:border-yellow-400 outline-none" />
-                                 </div>
-                              
-
-                              
-                                 <div className="relative">
-                                    <label className="block text-xs font-semibold text-slate-500 mb-1">Source Invoice <span className="text-red-500">*</span></label>
-                                    <div
-                                       onClick={(e) => { e.stopPropagation(); setIsInvoiceOpen(!isInvoiceOpen); }}
-                                       className="w-full text-xs p-2 border border-slate-200 rounded bg-white flex justify-between items-center cursor-pointer hover:border-yellow-400"
-                                    >
-                                       {linkedInvoice || 'Select Invoice...'}
-                                       <ChevronDown size={14} className="text-slate-400" />
-                                    </div>
-                                    {isInvoiceOpen && (
-                                       <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded shadow-lg z-50 mt-1 max-h-48 overflow-y-auto">
-                                          {invoicesList.map(inv => (
-                                             <div key={inv.id} onClick={() => handleSelectInvoice(inv)} className="px-3 py-2 text-xs hover:bg-slate-50 cursor-pointer border-b border-slate-50">
-                                                <span className="font-bold text-blue-600">{inv.invoiceNumber}</span> - {inv.customerName}
-                                             </div>
-                                          ))}
-                                       </div>
-                                    )}
-                                 </div>
-                              
-
-                              
-                                 <div>
-                                    <label className="block text-xs font-semibold text-slate-500 mb-1">Customer</label>
-                                    <input type="text" value={customerName ? `${customerCode} - ${customerName}` : ''} readOnly className="w-full text-xs p-2 bg-slate-50 border border-slate-200 rounded text-slate-500 font-medium" placeholder="Select invoice first..." />
-                                 </div>
-                              
-
-                              
-                                 <div>
-                                    <label className="block text-xs font-semibold text-slate-500 mb-1">Reason for Return</label>
-                                    <select value={reason} onChange={e => setReason(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white outline-none focus:border-yellow-400">
-                                       <option>Damaged Goods</option>
-                                       <option>Expired Stock</option>
-                                       <option>Customer Choice</option>
-                                       <option>Wrong Delivery</option>
-                                       <option>Defective Product</option>
-                                    </select>
-                                 </div>
-                              
-
-                              
-                                 <div>
-                                    <label className="block text-xs font-semibold text-slate-500 mb-1">Return Action</label>
-                                    <select value={returnAction} onChange={e => setReturnAction(e.target.value)} className="w-full text-xs p-2 border border-slate-200 rounded bg-white outline-none focus:border-yellow-400">
-                                       <option>Credit Note</option>
-                                       <option>Cash Refund</option>
-                                       <option>Replacement</option>
-                                    </select>
-                                 </div>
-                              
-                           </div>
-                        </div>
-
-                        {/* RETURN ITEMS */}
-                        <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
-                           <div className="flex justify-between items-center mb-4">
-                              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                                 <Box size={16} className="text-yellow-500" /> Return Items
-                              </h3>
-                              {!linkedInvoice && <span className="text-[10px] font-bold text-orange-500 bg-orange-50 px-2 py-1 rounded border border-orange-100 flex items-center gap-1 animate-pulse"><AlertCircle size={10} /> SELECT INVOICE TO LOAD ITEMS</span>}
-                           </div>
-
-                           <div className="overflow-x-auto">
-                              <table className="bb-nowrap-table w-full text-xs">
-                                 <thead className="bg-[#F8FAFC] text-slate-600 font-semibold border-b border-slate-200">
-                                    <tr>
-                                       <th className="p-3 text-left">Item Details</th>
-                                       <th className="p-3 text-center w-24">Sold Qty</th>
-                                       <th className="p-3 text-center w-24 bg-red-50/50">Return Qty</th>
-                                       <th className="p-3 text-left w-32">Condition</th>
-                                       <th className="p-3 text-right w-28">Price</th>
-                                       <th className="p-3 text-right w-28 font-bold">Total Credit</th>
-                                       <th className="p-3 w-10"></th>
-                                    </tr>
-                                 </thead>
-                                 <tbody className="divide-y divide-slate-100">
-                                    {items.length === 0 ? (
-                                       <tr>
-                                          <td colSpan="7" className="p-12 text-center text-slate-400 flex flex-col items-center">
-                                             <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-3 text-slate-300">
-                                                <Receipt size={24} />
-                                             </div>
-                                             <p>No items attached. Load an invoice to populate items.</p>
-                                          </td>
-                                       </tr>
-                                    ) : (
-                                       [...items].reverse().map((item, idx) => (
-                                          <tr key={idx} className={`hover:bg-slate-50 transition-colors ${item.returnQty > 0 ? 'bg-emerald-50/30' : ''}`}>
-                                             <td>
-
-                                                <td className="p-3">
-                                                   <div className="font-bold text-slate-700">{item.itemName}</div>
-                                                   <div className="text-[10px] text-slate-400 mt-0.5">{item.itemCode} | {item.unit}</div>
-                                                </td>
-                                             
-</td>
-                                             <td>
-
-                                                <td className="p-3 text-center text-slate-500 font-medium">{item.soldQty}</td>
-                                             
-</td>
-                                             <td>
-
-                                                <td className="p-3 text-center bg-red-50/20">
-                                                   <input
-                                                      type="number"
-                                                      value={item.returnQty}
-                                                      onChange={e => handleItemChange(idx, 'returnQty', e.target.value)}
-                                                      className="w-full text-center p-1 border border-slate-200 rounded focus:border-red-400 outline-none font-bold text-red-600"
-                                                      disabled={(returnableByItem[item.itemCode] || []).length > 0}
-                                                   />
-                                                   {(returnableByItem[item.itemCode] || []).length > 0 && (
-                                                      <button
-                                                         type="button"
-                                                         onClick={() => openBatchModal(idx)}
-                                                         className="mt-1 w-full text-[10px] px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100"
-                                                      >
-                                                         {(item.batches && item.batches.length > 0)
-                                                            ? `${item.batches.length} batch${item.batches.length > 1 ? 'es' : ''}`
-                                                            : 'Select batches'}
-                                                      </button>
-                                                   )}
-                                                </td>
-                                             
-</td>
-                                             <td>
-
-                                                <td className="p-3">
-                                                   <select
-                                                      value={item.itemStatus}
-                                                      onChange={e => handleItemChange(idx, 'itemStatus', e.target.value)}
-                                                      className="w-full p-1 border border-slate-200 rounded text-[10px] outline-none"
-                                                   >
-                                                      <option value="Good">Good (Restock)</option>
-                                                      <option value="Damaged">Damaged (Scrap)</option>
-                                                   </select>
-                                                </td>
-                                             
-</td>
-                                             <td>
-
-                                                <td className="p-3 text-right text-slate-600 font-medium"><CurrencyAmount value={item.price} currency={currency} /></td>
-                                             
-</td>
-                                             <td>
-
-                                                <td className="p-3 text-right font-bold text-slate-800"><CurrencyAmount value={item.total} currency={currency} /></td>
-                                             
-</td>
-                                             <td className="p-3 text-center">
-                                                <button onClick={() => { const ni = [...items]; ni.splice(idx, 1); setItems(ni); }} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
-                                             </td>
-                                          </tr>
-                                       ))
-                                    )}
-                                 </tbody>
-                              </table>
-                           </div>
-                        </div>
-
-                        {/* NOTES */}
-                        
-                           <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-4">
-                              <label className="block text-xs font-bold text-slate-600 mb-2">Internal Notes / Audit Log</label>
-                              <textarea
-                                 rows="3"
-                                 value={internalNotes}
-                                 onChange={e => setInternalNotes(e.target.value)}
-                                 placeholder="Add any specific details about this return approval..."
-                                 className="w-full p-3 text-xs border border-slate-200 rounded focus:border-[#F5C742] outline-none resize-none"
-                              ></textarea>
-                           </div>
-                        
-                     </div>
-
-                     {/* SUMMARY SIDEBAR */}
-                     <div className="w-80 space-y-4">
-                        
-                           <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-5 sticky top-4">
-                              <h4 className="text-xs font-bold text-slate-700 mb-4 border-b border-slate-100 pb-2 flex items-center gap-2">
-                                 <Receipt size={14} className="text-red-500" /> Credit Note Summary
-                              </h4>
-                              <div className="space-y-4">
-                                 <div className="flex justify-between items-center">
-                                    <span className="text-xs text-slate-500 font-medium">Subtotal</span>
-                                    <CurrencyAmount value={subTotal} currency={currency} className="text-xs font-bold text-slate-700" />
-                                 </div>
-                                 <div className="flex justify-between items-center">
-                                    <span className="text-xs text-slate-500 font-medium">Tax Recovery</span>
-                                    <CurrencyAmount value={taxAmtTotal} currency={currency} className="text-xs font-bold text-slate-700" />
-                                 </div>
-                                 <div className="h-px bg-slate-100"></div>
-                                 <div className="flex justify-between items-center pt-1">
-                                    <div className="flex flex-col">
-                                       <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">Total Credit</span>
-                                       <span className="text-[10px] text-slate-400">Total amount to be refunded</span>
-                                    </div>
-                                    <CurrencyAmount value={grandTotal} currency={currency} className="text-xl font-bold text-red-600" />
-                                 </div>
-
-                                 <div className="mt-6 p-4 bg-red-50/50 rounded-lg border border-red-100">
-                                    <div className="flex items-start gap-3">
-                                       <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
-                                       <div className="text-[10px] text-red-700 leading-relaxed font-medium">
-                                          Approval of this return will generate a Credit Note for the customer and adjust your inventory based on the item conditions specified.
-                                       </div>
-                                    </div>
-                                 </div>
-                              </div>
-                           </div>
-                        
-                     </div>
+               {/* ================= TAB: CREATE / EDIT =================
+                   §24 — the legacy inline create form has been replaced by the shared
+                   SalesReturnScreen, the same component POS → Actions → Return renders.
+                   Both entry points now run one UI, one validation flow, and one API. */}
+               {isCreating && (
+                  <div className="rounded-lg border border-slate-200 shadow-sm overflow-hidden bg-white flex-1 min-h-0">
+                     <SalesReturnScreen
+                        // Remount when the draft changes: the workflow holds its own state, and
+                        // switching records under it would leave the previous one's lines in place.
+                        key={editingDraft?.id ?? 'new'}
+                        entryPoint={ENTRY_POINT.SALES_RETURN}
+                        embedded
+                        draft={editingDraft}
+                        onClose={() => { setActiveTab('list'); setReturnsPage(0); setEditingDraft(null); }}
+                        onComplete={() => {
+                           // Refresh the register in the background, but STAY on the screen.
+                           // Switching tabs here would unmount SalesReturnScreen the instant a
+                           // return posted, destroying the credit-voucher card and the receipt
+                           // print buttons before the cashier could use them. The user leaves
+                           // via Cancel/close, which is what routes back to the list.
+                           setReturnsPage(0);
+                           fetchReturns();
+                        }}
+                     />
                   </div>
                )}
 
@@ -1357,7 +1130,14 @@ const SalesReturn = () => {
 
                   {/* Drawer Footer */}
                   <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-between gap-3 sticky bottom-0">
-                     <button onClick={() => { handleCloseDrawer(); handleLoadReturn(selectedReturn); }} className="flex-1 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center justify-center gap-2 transition-colors">
+                     <button
+                        onClick={() => { handleCloseDrawer(); handleLoadReturn(selectedReturn); }}
+                        disabled={String(selectedReturn.status || '').toUpperCase() === 'APPROVED'}
+                        title={String(selectedReturn.status || '').toUpperCase() === 'APPROVED'
+                           ? 'Approved returns cannot be edited — create a reversal instead'
+                           : undefined}
+                        className="flex-1 px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#F5C742]"
+                     >
                         <Edit size={14} /> Edit Return
                      </button>
                      <button onClick={() => handlePrint(selectedReturn)} className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">

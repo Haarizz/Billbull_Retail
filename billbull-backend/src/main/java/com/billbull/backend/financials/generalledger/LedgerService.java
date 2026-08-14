@@ -17,10 +17,13 @@ import java.util.UUID;
 import com.billbull.backend.common.UuidV7;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.financials.chartofaccounts.Account;
+import com.billbull.backend.financials.chartofaccounts.AccountCodeGenerator;
 import com.billbull.backend.financials.chartofaccounts.AccountSelectionRules;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
 import com.billbull.backend.financials.chartofaccounts.CostCenter;
@@ -112,10 +115,43 @@ public class LedgerService {
         return account != null && account.getCode() != null ? account.getCode() : "";
     }
 
+    /**
+     * Allocates the next free account code for the given parent/group.
+     * See {@link AccountCodeGenerator} for the banding rules.
+     */
+    public String nextAccountCode(String parentCode, String accountGroup) {
+        List<String> usedCodes = accountRepo.findAll().stream()
+                .map(Account::getCode)
+                .toList();
+        String code = AccountCodeGenerator.nextCode(parentCode, accountGroup, usedCodes);
+        if (code == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "No free account code remains for group '" + accountGroup + "'. Enter a code manually.");
+        }
+        return code;
+    }
+
     public Account saveAccount(Account account) {
-        if (account.getId() == null || account.getId().isEmpty()) {
+        boolean isNew = account.getId() == null || account.getId().isEmpty();
+        if (isNew) {
             account.setId(UUID.randomUUID().toString());
         }
+
+        // Blank code on create => server allocates it, so two users saving concurrently
+        // cannot both compute the same "next" code in their browsers.
+        if (account.getCode() == null || account.getCode().isBlank()) {
+            account.setCode(nextAccountCode(account.getParentCode(), account.getAccountGroup()));
+        } else {
+            account.setCode(account.getCode().trim());
+        }
+
+        Account existing = accountRepo.findByCode(account.getCode());
+        if (existing != null && !existing.getId().equals(account.getId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Account code '" + account.getCode() + "' already exists ("
+                            + existing.getName() + ").");
+        }
+
         return accountRepo.save(account);
     }
 

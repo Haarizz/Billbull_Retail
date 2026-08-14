@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers } from 'lucide-react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers, Gift } from 'lucide-react';
 import { UAParser } from 'ua-parser-js';
 import { usePermissions } from '../../../context/PermissionContext';
 import { formatDistanceToNow, parseISO } from 'date-fns';
@@ -896,6 +896,12 @@ const POSConsole = React.memo((props) => {
               operatingStartTime: posSettings?.operatingStartTime || '',
               operatingEndTime: posSettings?.operatingEndTime || '',
               businessDayExtensionMinutes: posSettings?.businessDayExtensionMinutes ?? 0,
+              // Credit Voucher expiry policy. '' means "no branch policy — use the system
+              // default", which is what an untouched branch has and what preserves the
+              // historical 12-month behaviour.
+              creditVoucherExpiryMode: posSettings?.creditVoucherExpiryMode || '',
+              creditVoucherExpiryMonths: posSettings?.creditVoucherExpiryMonths ?? 12,
+              creditVoucherExpiryDate: posSettings?.creditVoucherExpiryDate || '',
             };
             const patch = (changes) => setSettingsDraft({ ...d, ...changes });
             const credLabel = d.supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN';
@@ -958,6 +964,62 @@ const POSConsole = React.memo((props) => {
                     </button>
                   ))}
                 </div>
+              </div>
+
+              {/* Credit Voucher Expiry (§9–§14) — a financial policy, so it lives on the
+                  admin-only Behavior tab rather than being chosen per return at the till.
+                  The backend re-validates and resolves the final expiry date regardless of
+                  what is chosen here (§15); this only records the policy. */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Gift className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Credit Voucher Expiry
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">How long store credit issued by a Sales Return stays valid. Applies to vouchers issued from now on — vouchers already issued keep the expiry date printed on them.</p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    ['', 'System Default', 'Uses the configured default expiry period (currently 12 months).'],
+                    ['AUTO', 'Automatic', 'Expires a fixed number of months after each voucher is issued.'],
+                    ['MANUAL', 'Manual Date', 'Every voucher expires on one fixed calendar date.'],
+                  ].map(([val, label, desc]) => (
+                    <button key={val || 'DEFAULT'} type="button" onClick={() => patch({ creditVoucherExpiryMode: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.creditVoucherExpiryMode === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.creditVoucherExpiryMode === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
+                      {d.creditVoucherExpiryMode === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
+                    </button>
+                  ))}
+                </div>
+
+                {d.creditVoucherExpiryMode === 'AUTO' && (
+                  <div className="mt-4 flex items-center gap-3 flex-wrap">
+                    <label className="text-xs font-bold text-[#1E293B]">Valid for</label>
+                    <input type="number" min={0} max={600}
+                      value={d.creditVoucherExpiryMonths ?? ''}
+                      onChange={(e) => patch({ creditVoucherExpiryMonths: e.target.value === '' ? '' : Number(e.target.value) })}
+                      className="w-24 px-3 py-2 rounded-lg border-2 border-gray-200 text-sm focus:border-[#F5C742] outline-none" />
+                    <span className="text-xs text-gray-500">months from the issue date</span>
+                    <span className="text-[11px] text-gray-400 w-full">
+                      Enter 0 for vouchers that never expire — some jurisdictions require this.
+                    </span>
+                  </div>
+                )}
+
+                {d.creditVoucherExpiryMode === 'MANUAL' && (
+                  <div className="mt-4 flex items-center gap-3 flex-wrap">
+                    <label className="text-xs font-bold text-[#1E293B]">All vouchers expire on</label>
+                    <input type="date"
+                      value={d.creditVoucherExpiryDate || ''}
+                      onChange={(e) => patch({ creditVoucherExpiryDate: e.target.value })}
+                      className="px-3 py-2 rounded-lg border-2 border-gray-200 text-sm focus:border-[#F5C742] outline-none" />
+                    <span className="text-[11px] text-gray-400 w-full flex items-start gap-1.5">
+                      <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0 text-[#b8920e]" />
+                      Must be a future date. Once it passes, new vouchers fall back to the default
+                      period until this date is updated — so review it before it lapses.
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Item Removal / Supervisor approval */}

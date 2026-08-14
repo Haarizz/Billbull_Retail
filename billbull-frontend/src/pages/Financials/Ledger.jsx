@@ -44,6 +44,7 @@ import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { generateNextAccountCode } from '../../utils/accountCodeGenerator';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 // ==========================================
@@ -580,6 +581,17 @@ const Ledger = () => {
   const [ccBudget, setCcBudget] = useState('');
   const [ccDescription, setCcDescription] = useState('');
 
+  // Preview of the code the backend will allocate when the code field is left blank.
+  // Advisory only — LedgerService allocates the authoritative code on save.
+  const previewAccountCode = useMemo(() => {
+    if (accId || !selectedGroup) return '';
+    return generateNextAccountCode({
+      group: selectedGroup,
+      parentCode: accParentCode,
+      existingAccounts: accounts
+    });
+  }, [accId, selectedGroup, accParentCode, accounts]);
+
   // --- DERIVED OPTIONS (Must be below state declarations) ---
   const parentAccountSelectOptions = useMemo(() => {
     return [
@@ -686,11 +698,14 @@ const Ledger = () => {
   const handleSaveAccount = async () => {
     if (!accName || !selectedGroup) return alert("Name and Group are required");
 
-    const codeToCheck = accCode || generateNextCode(selectedGroup, accounts);
+    // Blank code => the backend allocates it atomically on save (see LedgerService.saveAccount).
+    const codeToCheck = (accCode || '').trim();
 
-    // Uniqueness Check
-    const isDuplicateCode = accounts.some(acc => acc.code === codeToCheck && (!accId || acc.id !== accId));
-    if (isDuplicateCode) return alert(`Account Code '${codeToCheck}' already exists.`);
+    // Uniqueness check only applies to a manually entered code.
+    if (codeToCheck) {
+      const isDuplicateCode = accounts.some(acc => acc.code === codeToCheck && (!accId || acc.id !== accId));
+      if (isDuplicateCode) return alert(`Account Code '${codeToCheck}' already exists.`);
+    }
 
     const isDebit = selectedBalType.includes('Debit');
     const formattedAmt = parseFloat(accOpeningBalance || 0);
@@ -727,7 +742,9 @@ const Ledger = () => {
       setIsAccountModalOpen(false);
     } catch (err) {
       console.error("Error saving Account", err);
-      alert("Failed to save Account");
+      // Surface the backend reason (e.g. 409 duplicate code) instead of a blanket failure.
+      const reason = err?.response?.data?.message || err?.response?.data?.error;
+      alert(reason ? `Failed to save Account: ${reason}` : "Failed to save Account");
     }
   };
 
@@ -932,18 +949,6 @@ const Ledger = () => {
       case 'Equity': return 'bg-purple-50 text-purple-700 border-purple-100';
       default: return 'bg-slate-50 text-slate-700 border-slate-100';
     }
-  };
-
-  const generateNextCode = (group, existingAccounts) => {
-    const prefixMap = { 'Assets': 1, 'Liabilities': 2, 'Equity': 3, 'Income': 4, 'Expenses': 5 };
-    const prefix = prefixMap[group] ?? 9;
-    const rangeMin = prefix * 1000;
-    const rangeMax = rangeMin + 999;
-    const existing = existingAccounts
-      .map(a => parseInt(a.code))
-      .filter(n => Number.isFinite(n) && n >= rangeMin && n <= rangeMax);
-    const max = existing.length > 0 ? Math.max(...existing) : rangeMin + 99;
-    return String(max + 1);
   };
 
   const handleOpenAddAccount = () => {
@@ -2198,8 +2203,12 @@ const glAccountOptions = accounts
                 </div>
                 <div className="col-span-1">
                   <label className="block text-xs font-bold text-slate-600 mb-1">Account Code</label>
-                  <input type="text" value={accCode} onChange={(e) => setAccCode(e.target.value)} placeholder="Auto-generated" className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-slate-50 focus:outline-none text-slate-500" />
-                  <p className="text-[10px] text-slate-400 mt-1">Leave empty for auto-generation</p>
+                  <input type="text" value={accCode} onChange={(e) => setAccCode(e.target.value)} placeholder={previewAccountCode ? `Auto ${previewAccountCode}` : 'Auto-generated'} className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md bg-slate-50 focus:outline-none text-slate-500" />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    {accParentCode && previewAccountCode
+                      ? `Leave empty to auto-generate under parent ${accParentCode}`
+                      : 'Leave empty for auto-generation'}
+                  </p>
                 </div>
 
                 <div className="col-span-1">

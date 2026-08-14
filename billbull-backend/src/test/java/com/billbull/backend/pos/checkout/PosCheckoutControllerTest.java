@@ -524,7 +524,10 @@ class PosCheckoutControllerTest {
         assertTrue(caps.isLegacyPaymentScalars());
         assertEquals(2, caps.getCheckoutApiVersion());
         assertEquals(PosPaymentAllocationResolver.MAX_CARD_LEGS, caps.getMaxCardAllocations());
-        assertEquals(java.util.List.of("CASH", "CARD", "ONLINE", "CREDIT"),
+        // VOUCHER is how a terminal discovers that Credit Voucher redemption is available as a
+        // tender. It is a payment instrument that draws down the store-credit liability, never a
+        // coupon/discount — see CreditVoucherService.
+        assertEquals(java.util.List.of("CASH", "CARD", "ONLINE", "CREDIT", "VOUCHER"),
                 caps.getSupportedAllocationTypes());
         // Customer Advance is a customer-ledger operation, not a checkout tender — a terminal
         // must not discover it here and offer it as a payment button.
