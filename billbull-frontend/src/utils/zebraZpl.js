@@ -25,7 +25,7 @@ const BROWSER_PRINT_BASES = isHttpsPage
     ];
 let resolvedBase = null;
 const DPI = 8; // ZD220t is 203 DPI ≈ 8 dots/mm
-const mm = (v) => Math.round(v * DPI);
+const mmToDots = (mmValue) => Math.round(mmValue * DPI);
 
 // Code 128 module count estimate. Real count depends on subset switching but
 // this is close enough for centering. 35 base (start + checksum + stop) + 11/char.
@@ -36,94 +36,199 @@ const escapeZpl = (s) => String(s ?? '')
     .replace(/\^/g, '\\^')
     .replace(/~/g, '\\~');
 
-const centerX = (pageDots, barcodeDots) => Math.max(0, Math.round((pageDots - barcodeDots) / 2));
+const DEBUG_LAYOUT = true; // Enabled for development layout diagnostics as requested
 
-// Pick the largest module width (BY value) that still fits inside the usable
-// width. Falls back to 2 dots minimum which is the practical scanner threshold.
-const pickModuleWidth = (data, availableDots) => {
-    const modules = estimateCode128Modules(data);
-    for (const by of [4, 3, 2]) {
-        if (modules * by <= availableDots) return by;
+const resolveLabelLayout = (template, fields, printerProfile = { dpi: DPI }) => {
+    const { labelWidthMm = 100, labelHeightMm = 75 } = template;
+    const dpi = printerProfile.dpi || DPI;
+    const toDots = (mm) => Math.round(mm * dpi);
+
+    const isSmallHeight = labelHeightMm <= 25;
+
+    const labelWidthDots = toDots(labelWidthMm);
+    const labelHeightDots = toDots(labelHeightMm);
+
+    // Calculate safe printable area
+    const safeArea = {
+        left: toDots(2),
+        right: labelWidthDots - toDots(2),
+        top: toDots(2),
+        bottom: labelHeightDots - toDots(2)
+    };
+    const safeWidthDots = safeArea.right - safeArea.left;
+    const safeHeightDots = safeArea.bottom - safeArea.top;
+
+    // Fonts mapping (compact typography for small labels)
+    const fonts = {
+        company: isSmallHeight ? toDots(2.0) : toDots(2.6),
+        productName: isSmallHeight ? toDots(2.6) : toDots(3.4),
+        brand: isSmallHeight ? toDots(2.0) : toDots(2.4),
+        code: isSmallHeight ? toDots(1.8) : toDots(2.2),
+        expiry: isSmallHeight ? toDots(2.0) : toDots(2.4),
+        price: isSmallHeight ? toDots(2.8) : toDots(3.6)
+    };
+
+    const textSpacing = toDots(0.5);
+
+    // Explicitly check for enabled fields that also have truthy values
+    const textFields = fields.filter(f => f.type === 'text' && f.enabled && !!f.value);
+    const barcodeFields = fields.filter(f => f.type === 'barcode' && f.enabled && !!f.value);
+    const barcodeCount = barcodeFields.length;
+
+    // Measure text requirements
+    let requiredTextHeight = 0;
+    textFields.forEach(f => {
+        f.fontH = fonts[f.id] || toDots(2.4);
+        f.elementHeight = f.fontH + textSpacing;
+        requiredTextHeight += f.elementHeight;
+    });
+
+    // Allocate space for barcodes
+    let availableBarcodeHeight = safeHeightDots - requiredTextHeight;
+
+    const humanReadableHeight = toDots(2.5); // approximate height of human-readable text under barcode
+    const gapPerBarcode = toDots(1);
+
+    const minimumBarcodeHeight = toDots(5); // Minimum scannable height
+    let resolvedBarcodeHeight = 0;
+
+    if (barcodeCount > 0) {
+        let spacePerBarcode = (availableBarcodeHeight / barcodeCount) - humanReadableHeight - gapPerBarcode;
+        const barcodeSpecificMax = barcodeCount > 1 ? toDots(14) : toDots(22);
+        
+        resolvedBarcodeHeight = Math.max(minimumBarcodeHeight, Math.min(barcodeSpecificMax, Math.round(spacePerBarcode)));
+        
+        barcodeFields.forEach(f => {
+            f.elementHeight = resolvedBarcodeHeight + humanReadableHeight + gapPerBarcode;
+        });
     }
-    return 2;
-};
 
-const centeredText = (y, text, fontH, pageDots) => {
-    const safe = escapeZpl(text);
-    return `^FO0,${y}^FB${pageDots},1,0,C,0^A0N,${fontH},${fontH}^FD${safe}^FS`;
-};
+    // Allocate positions
+    const layoutElements = [];
+    let currentY = safeArea.top;
 
-const buildLabelZpl = ({
-    labelWidthMm = 100,
-    labelHeightMm = 75,
-    company = '',
-    productName = '',
-    brand = '',
-    code = '',
-    productBarcode = '',
-    batchBarcode = '',
-    expiry = '',
-    price = ''
-}) => {
-    const pageDots = mm(labelWidthMm);
-    const labelDots = mm(labelHeightMm);
-    const sideMarginDots = mm(3);
-    const usableDots = pageDots - sideMarginDots * 2;
+    // Calculate total stack height for vertical centering if space allows
+    let totalStackHeight = requiredTextHeight;
+    if (barcodeCount > 0) {
+        barcodeFields.forEach(f => totalStackHeight += f.elementHeight);
+    }
+    
+    if (totalStackHeight < safeHeightDots) {
+        currentY = safeArea.top + Math.round((safeHeightDots - totalStackHeight) / 2);
+    }
 
-    const hasProduct = !!productBarcode;
-    const hasBatch = !!batchBarcode && batchBarcode !== productBarcode;
-    const barcodeHeightDots = hasProduct && hasBatch ? mm(11) : mm(20);
+    // Preserve logical field ordering
+    const order = ['company', 'productName', 'brand', 'code', 'productBarcode', 'batchBarcode', 'expiry', 'price'];
+    const allFields = [...textFields, ...barcodeFields].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 
-    // Build a row plan first so we can vertically center the whole stack
-    // inside the label instead of packing everything against the top edge.
-    const rows = [];
-    if (company)     rows.push({ kind: 'text', value: company,         fontH: mm(2.6), advance: mm(3.2) });
-    if (productName) rows.push({ kind: 'text', value: productName,     fontH: mm(3.4), advance: mm(4.0) });
-    if (brand)       rows.push({ kind: 'text', value: brand,           fontH: mm(2.4), advance: mm(3.0) });
-    if (code)        rows.push({ kind: 'text', value: `Code: ${code}`, fontH: mm(2.2), advance: mm(3.0) });
-    if (hasProduct)  rows.push({ kind: 'barcode', value: productBarcode, height: barcodeHeightDots, advance: barcodeHeightDots + mm(4.5) });
-    if (hasBatch)    rows.push({ kind: 'barcode', value: batchBarcode,   height: barcodeHeightDots, advance: barcodeHeightDots + mm(4.5) });
-    if (expiry)      rows.push({ kind: 'text', value: `Exp: ${expiry}`, fontH: mm(2.4), advance: mm(3.0) });
-    if (price)       rows.push({ kind: 'text', value: price,            fontH: mm(3.6), advance: mm(3.6) });
+    allFields.forEach(f => {
+        let width = safeWidthDots;
+        if (f.type === 'barcode') {
+            const modules = estimateCode128Modules(f.value);
+            let by = 1; // Default minimum module width (1 dot) to ensure fit on very small labels
+            for (const testBy of [4, 3, 2, 1]) {
+                if (modules * testBy <= safeWidthDots) {
+                    by = testBy;
+                    break;
+                }
+            }
+            width = modules * by;
+            f.by = by;
+            f.barcodeHeight = resolvedBarcodeHeight;
+        }
 
-    // Total stack height = sum of advances except the last row uses its own
-    // intrinsic height (text fontH or barcode height) rather than its advance,
-    // since there's no trailing gap after the final element.
-    let stackHeight = 0;
-    rows.forEach((r, i) => {
-        if (i === rows.length - 1) {
-            stackHeight += r.kind === 'barcode' ? r.height : r.fontH;
-        } else {
-            stackHeight += r.advance;
+        const x = Math.max(safeArea.left, Math.round((labelWidthDots - width) / 2)); // Center horizontally
+        
+        layoutElements.push({
+            ...f,
+            x: x,
+            y: currentY,
+            width: width,
+            height: f.elementHeight,
+            isValid: true
+        });
+
+        currentY += f.elementHeight;
+    });
+
+    // Validate EVERY element against the physical label boundary
+    let validationPassed = true;
+    layoutElements.forEach(el => {
+        el.isValid = (
+            el.x >= 0 &&
+            el.y >= 0 &&
+            (el.x + el.width) <= labelWidthDots &&
+            (el.y + el.height) <= safeArea.bottom + toDots(1.5) // allow tiny grace margin for font descenders
+        );
+        if (!el.isValid) {
+            validationPassed = false;
         }
     });
 
-    const topPadding = mm(2);
-    const startY = Math.max(topPadding, Math.round((labelDots - stackHeight) / 2));
+    if (DEBUG_LAYOUT) {
+        console.log(`[ZPL Layout Diagnostics]`);
+        console.log(`Label: ${labelWidthDots} x ${labelHeightDots} dots`);
+        console.log(`Safe area: ${safeWidthDots} x ${safeHeightDots} dots`);
+        layoutElements.forEach(el => {
+            console.log(`${el.id}: x=${el.x} y=${el.y} width=${el.width} height=${el.height} isValid=${el.isValid}`);
+        });
+        console.log(`bottom: ${currentY} / ${safeArea.bottom}`);
+    }
+
+    return {
+        labelWidthDots,
+        labelHeightDots,
+        safeArea,
+        elements: layoutElements,
+        validationPassed
+    };
+};
+
+const buildLabelZpl = (data) => {
+    // If BarcodePrinter provides explicitly resolved semantic fields, use them.
+    // Otherwise fallback to legacy parsing.
+    let fields = data.fields;
+    if (!fields) {
+        fields = [
+            { type: 'text', id: 'company', enabled: !!data.company, value: data.company },
+            { type: 'text', id: 'productName', enabled: !!data.productName, value: data.productName },
+            { type: 'text', id: 'brand', enabled: !!data.brand, value: data.brand },
+            { type: 'text', id: 'code', enabled: !!data.code, value: data.code ? `Code: ${data.code}` : '' },
+            { type: 'barcode', id: 'productBarcode', enabled: !!data.productBarcode, value: data.productBarcode },
+            { type: 'barcode', id: 'batchBarcode', enabled: !!data.batchBarcode, value: data.batchBarcode },
+            { type: 'text', id: 'expiry', enabled: !!data.expiry, value: data.expiry ? `Exp: ${data.expiry}` : '' },
+            { type: 'text', id: 'price', enabled: !!data.price, value: data.price }
+        ];
+    }
+
+    const layout = resolveLabelLayout(
+        { labelWidthMm: data.labelWidthMm || 100, labelHeightMm: data.labelHeightMm || 75 },
+        fields,
+        { dpi: DPI }
+    );
 
     const out = [];
     out.push('^XA');
     out.push('^CI28');
-    out.push(`^PW${pageDots}`);
-    out.push(`^LL${labelDots}`);
+    out.push(`^PW${layout.labelWidthDots}`);
+    out.push(`^LL${layout.labelHeightDots}`);
     out.push('^LH0,0');
     out.push('^LS0');
     out.push('^PON');
     out.push('^MMT');
 
-    let y = startY;
-    for (const r of rows) {
-        if (r.kind === 'text') {
-            out.push(centeredText(y, r.value, r.fontH, pageDots));
-        } else {
-            const by = pickModuleWidth(r.value, usableDots);
-            const widthDots = estimateCode128Modules(r.value) * by;
-            const x = centerX(pageDots, widthDots);
-            out.push(`^BY${by},2,${r.height}`);
-            out.push(`^FO${x},${y}^BCN,${r.height},Y,N,N^FD${escapeZpl(r.value)}^FS`);
+    layout.elements.forEach(el => {
+        if (!el.isValid) {
+            console.warn(`Element ${el.id} exceeds safe area in ZPL layout!`);
         }
-        y += r.advance;
-    }
+
+        if (el.type === 'text') {
+            out.push(`^FO0,${el.y}^FB${layout.labelWidthDots},1,0,C,0^A0N,${el.fontH},${el.fontH}^FD${escapeZpl(el.value)}^FS`);
+        } else if (el.type === 'barcode') {
+            out.push(`^BY${el.by},2,${el.barcodeHeight}`);
+            out.push(`^FO${el.x},${el.y}^BCN,${el.barcodeHeight},Y,N,N^FD${escapeZpl(el.value)}^FS`);
+        }
+    });
 
     out.push('^XZ');
     return out.join('\n');
@@ -189,4 +294,4 @@ export const printZplBatch = async (labels, preferredDevice = null) => {
     return device;
 };
 
-export { buildLabelZpl };
+export { buildLabelZpl, resolveLabelLayout };
