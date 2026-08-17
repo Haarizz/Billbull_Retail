@@ -1139,14 +1139,16 @@ const BarcodePrinter = () => {
             return {
                 labelWidthMm: Number(t.width) || 100,
                 labelHeightMm: Number(t.height) || 75,
-                company: isEnabled('company') ? (item?.product?.company || companyName) : '',
-                productName: isEnabled('name') ? (item?.product?.name || '') : '',
-                brand: isEnabled('brandName') ? (getProductBrandName(item.product) || '') : '',
-                code: isEnabled('itemCode') ? (item?.product?.code || '') : '',
-                productBarcode,
-                batchBarcode: batchBarcode !== productBarcode ? batchBarcode : '',
-                expiry: (isEnabled('expiryDate') && isExpiryTrackingEnabled(item) && item.expiryDate) ? item.expiryDate : '',
-                price: priceVal
+                fields: [
+                    { type: 'text', id: 'company', enabled: isEnabled('company'), value: item?.product?.company || companyName || '' },
+                    { type: 'text', id: 'productName', enabled: isEnabled('name'), value: item?.product?.name || '' },
+                    { type: 'text', id: 'brand', enabled: isEnabled('brandName'), value: getProductBrandName(item.product) || '' },
+                    { type: 'text', id: 'code', enabled: isEnabled('itemCode'), value: item?.product?.code ? `Code: ${item.product.code}` : '' },
+                    { type: 'barcode', id: 'productBarcode', enabled: true, value: productBarcode || '' },
+                    { type: 'barcode', id: 'batchBarcode', enabled: true, value: batchBarcode !== productBarcode ? (batchBarcode || '') : '' },
+                    { type: 'text', id: 'expiry', enabled: !!(isEnabled('expiryDate') && isExpiryTrackingEnabled(item)), value: item.expiryDate ? `Exp: ${item.expiryDate}` : '' },
+                    { type: 'text', id: 'price', enabled: isEnabled('price'), value: priceVal || '' }
+                ]
             };
         });
 
