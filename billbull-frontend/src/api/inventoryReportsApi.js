@@ -42,8 +42,9 @@ export const getInventoryReportData = async (reportId, filters = {}, abortSignal
         if (branchId !== null) params.branchId = branchId;
         if (filters.dateFrom) params.dateFrom = filters.dateFrom;
         if (filters.dateTo) params.dateTo = filters.dateTo;
-        if (filters.department && filters.department !== 'All') params.department = filters.department;
-        if (filters.brand && filters.brand !== 'All') params.brand = filters.brand;
+        if (filters.department && filters.department !== 'All') params.departmentId = filters.department;
+        if (filters.brand && filters.brand !== 'All') params.brandId = filters.brand;
+        if (filters.productId) params.productId = filters.productId;
         if (filters.searchQuery) params.search = filters.searchQuery;
         if (filters.stockCondition && filters.stockCondition !== 'All') params.stockCondition = filters.stockCondition;
         if (filters.costingMethod && filters.costingMethod !== 'avg') params.costingMethod = filters.costingMethod;

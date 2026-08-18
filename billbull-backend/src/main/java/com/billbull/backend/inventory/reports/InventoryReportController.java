@@ -74,8 +74,9 @@ public class InventoryReportController {
             @RequestParam(required = false) Long warehouseId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate dateTo,
-            @RequestParam(required = false) String department,
-            @RequestParam(required = false) String brand,
+            @RequestParam(required = false) Long departmentId,
+            @RequestParam(required = false) Long brandId,
+            @RequestParam(required = false) Long productId,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String stockCondition,
             @RequestParam(required = false) String branchScope) {
@@ -85,8 +86,9 @@ public class InventoryReportController {
                 warehouseId,
                 dateFrom,
                 dateTo,
-                department,
-                brand,
+                departmentId,
+                brandId,
+                productId,
                 search,
                 stockCondition,
                 allBranches(branchScope)));
