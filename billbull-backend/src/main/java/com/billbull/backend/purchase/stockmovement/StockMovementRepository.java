@@ -9,9 +9,10 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 public interface StockMovementRepository
-                extends JpaRepository<StockMovement, Long> {
+                extends JpaRepository<StockMovement, Long>, JpaSpecificationExecutor<StockMovement> {
 
         boolean existsBySourceTypeAndSourceIdAndProductId(
                         StockSourceType sourceType,
@@ -180,11 +181,28 @@ public interface StockMovementRepository
         List<Object[]> findStockByWarehouseAndBatch(@Param("warehouseId") Long warehouseId);
 
         @Query("""
+                            SELECT sm.productId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND (CAST(:dateTo AS date) IS NULL OR sm.movementDate <= CAST(:dateTo AS date))
+                            GROUP BY sm.productId, sm.batchNumber, sm.expiryDate
+                        """)
+        List<Object[]> findStockByWarehouseAndBatchUpToDate(@Param("warehouseId") Long warehouseId, @Param("dateTo") LocalDate dateTo);
+
+        @Query("""
                             SELECT sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
                             FROM StockMovement sm
                             GROUP BY sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate
                         """)
         List<Object[]> findAllStockGroupedByProductWarehouseAndBatch();
+
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE (CAST(:dateTo AS date) IS NULL OR sm.movementDate <= CAST(:dateTo AS date))
+                            GROUP BY sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate
+                        """)
+        List<Object[]> findAllStockGroupedByProductWarehouseAndBatchUpToDate(@Param("dateTo") LocalDate dateTo);
 
         // ✅ Get Last Sold and Last Received dates for Out of Stock Report
         @Query(value = """
@@ -372,9 +390,21 @@ public interface StockMovementRepository
                         """)
         List<Object[]> getBatchWeightedAvgCostByWarehouse(@Param("warehouseId") Long warehouseId);
 
-        // ✅ Batch LIFO cost per product for a specific warehouse
-        // "Last-In" = unit cost of the most recently received inbound movement (by movement_date DESC, id DESC)
-        // Returns rows: [productId, lifoCost]
+        @Query("""
+                            SELECT sm.productId,
+                                   CASE WHEN COALESCE(SUM(sm.quantity), 0) = 0 THEN null
+                                        ELSE SUM(sm.unitCost * sm.quantity) / SUM(sm.quantity)
+                                   END
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.quantity > 0
+                              AND sm.unitCost IS NOT NULL
+                              AND sm.unitCost > 0
+                              AND (CAST(:dateTo AS date) IS NULL OR sm.movementDate <= CAST(:dateTo AS date))
+                            GROUP BY sm.productId
+                        """)
+        List<Object[]> getBatchWeightedAvgCostByWarehouseUpToDate(@Param("warehouseId") Long warehouseId, @Param("dateTo") LocalDate dateTo);
+
         @Query(value = """
                             SELECT t.product_id, t.unit_cost
                             FROM (
@@ -393,9 +423,25 @@ public interface StockMovementRepository
                         """, nativeQuery = true)
         List<Object[]> getBatchLifoCostByWarehouse(@Param("warehouseId") Long warehouseId);
 
-        // ✅ Batch FIFO cost per product for a specific warehouse
-        // "First-In" = unit cost of the oldest received inbound movement (by movement_date ASC, id ASC)
-        // Returns rows: [productId, fifoCost]
+        @Query(value = """
+                            SELECT t.product_id, t.unit_cost
+                            FROM (
+                                SELECT product_id, unit_cost,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY product_id
+                                           ORDER BY movement_date DESC, id DESC
+                                       ) AS rn
+                                FROM stock_movements
+                                WHERE warehouse_id = :warehouseId
+                                  AND quantity > 0
+                                  AND unit_cost IS NOT NULL
+                                  AND unit_cost > 0
+                                  AND (CAST(:dateTo AS date) IS NULL OR movement_date <= CAST(:dateTo AS date))
+                            ) t
+                            WHERE t.rn = 1
+                        """, nativeQuery = true)
+        List<Object[]> getBatchLifoCostByWarehouseUpToDate(@Param("warehouseId") Long warehouseId, @Param("dateTo") LocalDate dateTo);
+
         @Query(value = """
                             SELECT t.product_id, t.unit_cost
                             FROM (
@@ -413,6 +459,25 @@ public interface StockMovementRepository
                             WHERE t.rn = 1
                         """, nativeQuery = true)
         List<Object[]> getBatchFifoCostByWarehouse(@Param("warehouseId") Long warehouseId);
+
+        @Query(value = """
+                            SELECT t.product_id, t.unit_cost
+                            FROM (
+                                SELECT product_id, unit_cost,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY product_id
+                                           ORDER BY movement_date ASC, id ASC
+                                       ) AS rn
+                                FROM stock_movements
+                                WHERE warehouse_id = :warehouseId
+                                  AND quantity > 0
+                                  AND unit_cost IS NOT NULL
+                                  AND unit_cost > 0
+                                  AND (CAST(:dateTo AS date) IS NULL OR movement_date <= CAST(:dateTo AS date))
+                            ) t
+                            WHERE t.rn = 1
+                        """, nativeQuery = true)
+        List<Object[]> getBatchFifoCostByWarehouseUpToDate(@Param("warehouseId") Long warehouseId, @Param("dateTo") LocalDate dateTo);
 
         // ✅ Unlocated stock (no bin assigned) for a product in a warehouse
         @Query("""
@@ -575,6 +640,26 @@ public interface StockMovementRepository
         List<Object[]> findAllStockGroupedByProductAndWarehouseAndBranchIdIn(
                         @Param("branchIds") java.util.Collection<Long> branchIds);
 
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.movementDate < :dateFrom
+                            GROUP BY sm.productId, sm.warehouseId
+                        """)
+        List<Object[]> findOpeningBalanceGroupedByProductAndWarehouse(@Param("dateFrom") LocalDate dateFrom);
+
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                              AND sm.movementDate < :dateFrom
+                            GROUP BY sm.productId, sm.warehouseId
+                        """)
+        List<Object[]> findOpeningBalanceGroupedByProductAndWarehouseAndBranchIdIn(
+                        @Param("branchIds") java.util.Collection<Long> branchIds,
+                        @Param("dateFrom") LocalDate dateFrom);
+
+
         /** Branch-scoped variant of {@link #findStockByProductsForAllWarehouses}. */
         @Query("""
                             SELECT sm.productId, sm.warehouseId, COALESCE(SUM(sm.quantity), 0)
@@ -630,11 +715,56 @@ public interface StockMovementRepository
         @Query("""
                             SELECT sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
                             FROM StockMovement sm
-                            WHERE (sm.branchId IN :branchIds OR sm.branchId IS NULL)
+                            WHERE sm.branchId IN :branchIds
                             GROUP BY sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate
                         """)
         List<Object[]> findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn(
                         @Param("branchIds") java.util.Collection<Long> branchIds);
+
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.branchId IN :branchIds
+                              AND (CAST(:dateTo AS date) IS NULL OR sm.movementDate <= CAST(:dateTo AS date))
+                            GROUP BY sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate
+                        """)
+        List<Object[]> findAllStockGroupedByProductWarehouseAndBatchAndBranchIdInUpToDate(
+                        @Param("branchIds") java.util.Collection<Long> branchIds,
+                        @Param("dateTo") java.time.LocalDate dateTo);
+
+        @Query("""
+                            SELECT sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.batchNumber = :batchNumber
+                            GROUP BY sm.productId, sm.warehouseId, sm.batchNumber, sm.expiryDate
+                        """)
+        List<Object[]> findStockByWarehouseAndBatch(
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("batchNumber") String batchNumber);
+
+        @Query("""
+                            SELECT COALESCE(SUM(sm.quantity * sm.unitCost), 0)
+                            FROM StockMovement sm
+                            WHERE sm.quantity > 0 AND sm.unitCost > 0
+                        """)
+        BigDecimal sumTotalInventoryCost();
+
+        @Query("""
+                            SELECT COALESCE(SUM(sm.quantity * sm.unitCost), 0)
+                            FROM StockMovement sm
+                            WHERE sm.quantity > 0 AND sm.unitCost > 0
+                              AND sm.warehouseId = :warehouseId
+                        """)
+        BigDecimal sumInventoryCostByWarehouse(@Param("warehouseId") Long warehouseId);
+
+        @Query("""
+                            SELECT COALESCE(SUM(sm.quantity * sm.unitCost), 0)
+                            FROM StockMovement sm
+                            WHERE sm.quantity > 0 AND sm.unitCost > 0
+                              AND sm.productId = :productId
+                        """)
+        BigDecimal sumInventoryCostByProduct(@Param("productId") Long productId);
 
         /**
          * Branch-scoped full movement fetch (Phase 10 follow-up — secondary report data paths).
