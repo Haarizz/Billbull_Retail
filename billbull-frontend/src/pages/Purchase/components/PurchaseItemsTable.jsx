@@ -12,8 +12,10 @@ const num = (v) => Number(v ?? 0);
 const qtyOf = (it) => it.quantity ?? it.qty ?? it.orderedQty ?? 0;
 const nameOf = (it) => it.itemName || it.name || it.productName || it.description || it.desc || '';
 const skuOf = (it) => `${it.itemCode || it.code || ''}${it.barcode ? ` · ${it.barcode}` : ''}`.trim();
-const priceOf = (it) => it.price ?? it.unitPrice ?? it.rate ?? it.cost;
+const priceOf = (it) => it.price ?? it.unitPrice ?? it.unitCost ?? it.rate ?? it.cost;
 const lineOf = (it) => it.netAmount ?? it.net ?? it.lineTotal ?? it.total ?? it.amount;
+const discountOf = (it) => it.discountPercent ?? it.discount ?? it.disc ?? 0;
+const taxOf = (it) => it.taxPercent ?? it.purchaseTax ?? it.taxRate ?? it.tax ?? it.vat ?? 0;
 
 function ItemThumb({ it }) {
     const img = it.primaryImage || it.image;
@@ -73,8 +75,8 @@ function ItemsTableView({ items, currency }) {
                             <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{it.unit || it.uom || 'PCS'}</td>
                             <td className="px-3 py-2.5 text-right text-slate-700 tabular-nums whitespace-nowrap">{qtyOf(it)}</td>
                             <td className="px-3 py-2.5 text-right text-slate-700 tabular-nums whitespace-nowrap hidden lg:table-cell"><CurrencyAmount value={priceOf(it)} currency={currency} /></td>
-                            <td className="px-3 py-2.5 text-right text-slate-500 tabular-nums hidden lg:table-cell">{num(it.discount ?? it.disc)}%</td>
-                            <td className="px-3 py-2.5 text-right text-slate-500 tabular-nums hidden xl:table-cell">{num(it.taxRate ?? it.tax ?? it.vat)}%</td>
+                            <td className="px-3 py-2.5 text-right text-slate-500 tabular-nums hidden lg:table-cell">{num(discountOf(it))}%</td>
+                            <td className="px-3 py-2.5 text-right text-slate-500 tabular-nums hidden xl:table-cell">{num(taxOf(it))}%</td>
                             <td className="px-3 py-2.5 text-right font-medium text-slate-800 tabular-nums whitespace-nowrap"><CurrencyAmount value={lineOf(it)} currency={currency} /></td>
                         </tr>
                     ))}
@@ -100,8 +102,8 @@ function ItemsCardView({ items, currency }) {
                     <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] pl-12">
                         <div className="flex justify-between"><span className="text-slate-400">Qty</span><span className="text-slate-700 tabular-nums">{qtyOf(it)} {it.unit || it.uom || ''}</span></div>
                         <div className="flex justify-between"><span className="text-slate-400">Price</span><CurrencyAmount value={priceOf(it)} currency={currency} className="text-slate-700 tabular-nums" /></div>
-                        <div className="flex justify-between"><span className="text-slate-400">Disc</span><span className="text-slate-500 tabular-nums">{num(it.discount ?? it.disc)}%</span></div>
-                        <div className="flex justify-between"><span className="text-slate-400">Tax</span><span className="text-slate-500 tabular-nums">{num(it.taxRate ?? it.tax ?? it.vat)}%</span></div>
+                        <div className="flex justify-between"><span className="text-slate-400">Disc</span><span className="text-slate-500 tabular-nums">{num(discountOf(it))}%</span></div>
+                        <div className="flex justify-between"><span className="text-slate-400">Tax</span><span className="text-slate-500 tabular-nums">{num(taxOf(it))}%</span></div>
                     </div>
                 </div>
             ))}
