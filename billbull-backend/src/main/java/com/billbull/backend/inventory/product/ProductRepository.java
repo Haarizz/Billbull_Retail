@@ -243,6 +243,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         /** Batch lookup by code list — used by POS price override check. */
         List<Product> findByCodeIn(List<String> codes);
 
+        @Query("""
+                        SELECT p.id FROM Product p
+                        WHERE (:departmentId IS NULL OR p.department.id = :departmentId)
+                          AND (:brandId IS NULL OR p.brand.id = :brandId)
+                          AND (:search IS NULL OR LOWER(p.name) LIKE LOWER(CONCAT('%', :search, '%'))
+                               OR LOWER(p.sku) LIKE LOWER(CONCAT('%', :search, '%'))
+                               OR LOWER(p.code) LIKE LOWER(CONCAT('%', :search, '%')))
+                        """)
+        List<Long> findIdsByFilters(
+                        @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
+                        @org.springframework.data.repository.query.Param("brandId") Long brandId,
+                        @org.springframework.data.repository.query.Param("search") String search);
+
         // ─────────────────────────────────────────────────────────────────────
         // Branch-Level Inventory Phase 6 — branch-scoped catalog identity.
         // Same predicate family as DepartmentRepository.findActiveInBranchScope:

@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -61,6 +62,19 @@ public class InventoryReportService {
                 .map(scope -> (java.util.Collection<Long>) scope.branchIds());
     }
 
+    private void requireWarehouseInScope(Long warehouseId, java.util.Optional<java.util.Collection<Long>> scope) {
+        if (warehouseId != null && scope.isPresent()) {
+            Warehouse wh = warehouseRepo.findById(warehouseId).orElse(null);
+            if (wh == null) {
+                throw new AccessDeniedException("Warehouse not found");
+            }
+            Long whBranchId = wh.getBranch() != null ? wh.getBranch().getId() : null;
+            if (whBranchId != null && !scope.get().contains(whBranchId)) {
+                throw new AccessDeniedException("Unauthorized access to warehouse outside permitted branch scope");
+            }
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Helper: build a warehouse-name map (id → name)
     // ─────────────────────────────────────────────────────────────────────────
@@ -73,28 +87,42 @@ public class InventoryReportService {
     // STOCK ON HAND
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getStockOnHand(Long warehouseId) {
-        return getStockOnHand(warehouseId, false);
+        return getStockOnHand(warehouseId, false, null);
     }
 
     public List<StockReportResponse> getStockOnHand(Long warehouseId, boolean allBranches) {
+        return getStockOnHand(warehouseId, allBranches, null);
+    }
+
+    public List<StockReportResponse> getStockOnHand(Long warehouseId, boolean allBranches, LocalDate dateTo) {
 
         // 1. Fetch stock movements aggregated by product (and warehouse if scoped).
         //    Phase 10: a specific warehouse is already branch-correct; the all-warehouses path is
         //    branch-scoped when the toggle is on + a branch is active + branchScope=active.
         java.util.Optional<java.util.Collection<Long>> scope = reportBranchScope(allBranches);
-        List<Object[]> stockRows = (warehouseId != null)
-                ? stockRepo.findStockByWarehouseAndBatch(warehouseId)
-                : scope.map(stockRepo::findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn)
-                       .orElseGet(stockRepo::findAllStockGroupedByProductWarehouseAndBatch);
+        requireWarehouseInScope(warehouseId, scope);
+        
+        List<Object[]> stockRows;
+        if (dateTo != null) {
+            stockRows = (warehouseId != null)
+                    ? stockRepo.findStockByWarehouseAndBatchUpToDate(warehouseId, dateTo)
+                    : scope.map(s -> stockRepo.findAllStockGroupedByProductWarehouseAndBatchAndBranchIdInUpToDate(s, dateTo))
+                           .orElseGet(() -> stockRepo.findAllStockGroupedByProductWarehouseAndBatchUpToDate(dateTo));
+        } else {
+            stockRows = (warehouseId != null)
+                    ? stockRepo.findStockByWarehouseAndBatch(warehouseId)
+                    : scope.map(stockRepo::findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn)
+                           .orElseGet(stockRepo::findAllStockGroupedByProductWarehouseAndBatch);
+        }
 
         if (stockRows == null || stockRows.isEmpty())
             return Collections.emptyList();
 
-        // 2. Collect product IDs that have non-zero stock
+        // 2. Collect product IDs from stock movements (zero-qty allowed)
         Set<Long> productIdSet = new LinkedHashSet<>();
         for (Object[] row : stockRows) {
             Number qtyNum = (Number) row[warehouseId != null ? 3 : 4];
-            if (qtyNum != null && qtyNum.longValue() != 0) {
+            if (qtyNum != null) {
                 productIdSet.add(((Number) row[0]).longValue());
             }
         }
@@ -128,8 +156,7 @@ public class InventoryReportService {
                 Number qtyNum = (Number) row[3];
                 BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
 
-                if (qty.compareTo(BigDecimal.ZERO) == 0)
-                    continue;
+                // Zero-qty rows are preserved for accurate "Zero only" stock condition filtering
                 Product p = productMap.get(pId);
                 if (p == null)
                     continue;
@@ -146,8 +173,7 @@ public class InventoryReportService {
                 Long wId = wIdNum != null ? wIdNum.longValue() : null;
                 BigDecimal qty = qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString());
 
-                if (qty.compareTo(BigDecimal.ZERO) == 0)
-                    continue;
+                // Zero-qty rows are preserved for accurate "Zero only" stock condition filtering
                 Product p = productMap.get(pId);
                 if (p == null)
                     continue;
@@ -177,10 +203,14 @@ public class InventoryReportService {
     // OUT OF STOCK
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getOutOfStock(Long warehouseId) {
-        return getOutOfStock(warehouseId, false);
+        return getOutOfStock(warehouseId, false, null);
     }
 
     public List<StockReportResponse> getOutOfStock(Long warehouseId, boolean allBranches) {
+        return getOutOfStock(warehouseId, allBranches, null);
+    }
+
+    public List<StockReportResponse> getOutOfStock(Long warehouseId, boolean allBranches, LocalDate dateTo) {
 
         // Load all active products (just basics for fast report generation)
         List<Object[]> productBasicsRows = productRepo.findActiveProductReportBasics();
@@ -196,19 +226,13 @@ public class InventoryReportService {
             productMap.put(pId, row);
         }
 
-        // Get total stock per product. Phase 10: a specific warehouse is already branch-correct; the
-        // all-warehouses path is branch-scoped when scoping is active + branchScope=active.
-        java.util.Optional<java.util.Collection<Long>> scope = reportBranchScope(allBranches);
-        List<Object[]> stockRows = (warehouseId != null)
-                ? stockRepo.findStockByWarehouse(warehouseId)
-                : scope.map(ids -> stockRepo.getTotalAvailableStockForProductsAndBranchIdIn(productIds, ids))
-                       .orElseGet(() -> stockRepo.getTotalAvailableStockForProducts(productIds));
-
+        // Get total stock per product using the existing historical/current SOH method
+        List<StockReportResponse> sohList = getStockOnHand(warehouseId, allBranches, dateTo);
         Map<Long, BigDecimal> stockMap = new HashMap<>();
-        for (Object[] row : stockRows) {
-            Long pId = ((Number) row[0]).longValue();
-            Number qtyNum = (Number) row[1];
-            stockMap.put(pId, qtyNum == null ? BigDecimal.ZERO : new BigDecimal(qtyNum.toString()));
+        for (StockReportResponse r : sohList) {
+            if (r.getProductId() != null) {
+                stockMap.merge(r.getProductId(), r.getOnHand(), BigDecimal::add);
+            }
         }
 
         // Find zero-stock product IDs
@@ -254,7 +278,8 @@ public class InventoryReportService {
 
             StockReportResponse res = new StockReportResponse();
             res.setProductId(pId);
-            res.setSku(sku != null ? sku : code);
+            String skuVal = (sku != null && !sku.trim().isEmpty()) ? sku : code;
+            res.setSku((skuVal != null && !skuVal.trim().isEmpty()) ? skuVal : "N/A");
             res.setItem(name);
             res.setCategory(category);
             res.setWarehouse(wName);
@@ -287,20 +312,34 @@ public class InventoryReportService {
     // display method-specific comparison totals in the summary cards.
     // ─────────────────────────────────────────────────────────────────────────
     public List<StockReportResponse> getStockValuation(Long warehouseId) {
-        return getStockValuation(warehouseId, false);
+        return getStockValuation(warehouseId, false, null);
     }
 
     public List<StockReportResponse> getStockValuation(Long warehouseId, boolean allBranches) {
+        return getStockValuation(warehouseId, allBranches, null);
+    }
+
+    public List<StockReportResponse> getStockValuation(Long warehouseId, boolean allBranches, LocalDate dateTo) {
 
         // 1. Fetch stock movements aggregated by product (and warehouse). Phase 10: a specific
         //    warehouse is already branch-correct; the all-warehouses path is branch-scoped when
         //    scoping is active + branchScope=active. Per-warehouse cost maps below then naturally
         //    cover only in-branch warehouses (warehouseIdSet is derived from the scoped rows).
         java.util.Optional<java.util.Collection<Long>> scope = reportBranchScope(allBranches);
-        List<Object[]> stockRows = (warehouseId != null)
-                ? stockRepo.findStockByWarehouseAndBatch(warehouseId)
-                : scope.map(stockRepo::findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn)
-                       .orElseGet(stockRepo::findAllStockGroupedByProductWarehouseAndBatch);
+        requireWarehouseInScope(warehouseId, scope);
+        
+        List<Object[]> stockRows;
+        if (dateTo != null) {
+            stockRows = (warehouseId != null)
+                    ? stockRepo.findStockByWarehouseAndBatchUpToDate(warehouseId, dateTo)
+                    : scope.map(s -> stockRepo.findAllStockGroupedByProductWarehouseAndBatchAndBranchIdInUpToDate(s, dateTo))
+                           .orElseGet(() -> stockRepo.findAllStockGroupedByProductWarehouseAndBatchUpToDate(dateTo));
+        } else {
+            stockRows = (warehouseId != null)
+                    ? stockRepo.findStockByWarehouseAndBatch(warehouseId)
+                    : scope.map(stockRepo::findAllStockGroupedByProductWarehouseAndBatchAndBranchIdIn)
+                           .orElseGet(stockRepo::findAllStockGroupedByProductWarehouseAndBatch);
+        }
 
         if (stockRows == null || stockRows.isEmpty())
             return Collections.emptyList();
@@ -346,9 +385,15 @@ public class InventoryReportService {
         Map<Long, Map<Long, BigDecimal>> fifoByWh = new HashMap<>();
 
         for (Long wId : warehouseIdSet) {
-            wacByWh.put(wId,  toProductCostMap(stockRepo.getBatchWeightedAvgCostByWarehouse(wId)));
-            lifoByWh.put(wId, toProductCostMap(stockRepo.getBatchLifoCostByWarehouse(wId)));
-            fifoByWh.put(wId, toProductCostMap(stockRepo.getBatchFifoCostByWarehouse(wId)));
+            if (dateTo != null) {
+                wacByWh.put(wId,  toProductCostMap(stockRepo.getBatchWeightedAvgCostByWarehouseUpToDate(wId, dateTo)));
+                lifoByWh.put(wId, toProductCostMap(stockRepo.getBatchLifoCostByWarehouseUpToDate(wId, dateTo)));
+                fifoByWh.put(wId, toProductCostMap(stockRepo.getBatchFifoCostByWarehouseUpToDate(wId, dateTo)));
+            } else {
+                wacByWh.put(wId,  toProductCostMap(stockRepo.getBatchWeightedAvgCostByWarehouse(wId)));
+                lifoByWh.put(wId, toProductCostMap(stockRepo.getBatchLifoCostByWarehouse(wId)));
+                fifoByWh.put(wId, toProductCostMap(stockRepo.getBatchFifoCostByWarehouse(wId)));
+            }
         }
 
         // 5. Build valuation responses
@@ -432,7 +477,10 @@ public class InventoryReportService {
 
         StockReportResponse res = new StockReportResponse();
         res.setProductId(p.getId());
-        res.setSku(p.getSku() != null ? p.getSku() : p.getCode());
+        
+        String skuVal = (p.getSku() != null && !p.getSku().trim().isEmpty()) ? p.getSku() : p.getCode();
+        res.setSku((skuVal != null && !skuVal.trim().isEmpty()) ? skuVal : "N/A");
+        
         res.setItem(p.getName());
         res.setCategory(p.getCategory());
         res.setWarehouse(wName);
@@ -440,8 +488,14 @@ public class InventoryReportService {
         res.setExpiryDate(expiryDate);
         res.setOnHand(qty);
 
-        if (p.getDepartment() != null) res.setDepartment(p.getDepartment().getName());
-        if (p.getBrand() != null)      res.setBrand(p.getBrand().getName());
+        if (p.getDepartment() != null) {
+            res.setDepartment(p.getDepartment().getName());
+            res.setDepartmentId(p.getDepartment().getId());
+        }
+        if (p.getBrand() != null) {
+            res.setBrand(p.getBrand().getName());
+            res.setBrandId(p.getBrand().getId());
+        }
 
         // Inventory policy
         if (inv != null) {
@@ -514,7 +568,10 @@ public class InventoryReportService {
 
         StockReportResponse res = new StockReportResponse();
         res.setProductId(p.getId());
-        res.setSku(p.getSku() != null ? p.getSku() : p.getCode());
+
+        String skuVal = (p.getSku() != null && !p.getSku().trim().isEmpty()) ? p.getSku() : p.getCode();
+        res.setSku((skuVal != null && !skuVal.trim().isEmpty()) ? skuVal : "N/A");
+
         res.setItem(p.getName());
         res.setCategory(p.getCategory());
         res.setWarehouse(wName);
@@ -523,10 +580,14 @@ public class InventoryReportService {
         res.setOnHand(qty);
 
         // Department and Brand from product relations
-        if (p.getDepartment() != null)
+        if (p.getDepartment() != null) {
             res.setDepartment(p.getDepartment().getName());
-        if (p.getBrand() != null)
+            res.setDepartmentId(p.getDepartment().getId());
+        }
+        if (p.getBrand() != null) {
             res.setBrand(p.getBrand().getName());
+            res.setBrandId(p.getBrand().getId());
+        }
 
         // Inventory policy fields
         if (inv != null) {

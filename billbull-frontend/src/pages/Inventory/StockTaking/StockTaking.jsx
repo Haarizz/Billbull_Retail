@@ -1123,7 +1123,7 @@ const SessionView = ({
             showNotif('warning', 'Bin Required', 'Please assign a bin to this item before counting.');
             return;
         }
-        if (isInventoryCounting) {
+        if (isInventoryCounting && (item.batchEnabled || item.expiryEnabled)) {
             const coverage = coverageProducts.find(p => String(p.productId) === String(item.productId));
             setCoverageProduct?.(coverage ? { ...coverage, item } : { item, productName: item.productName, productId: item.productId });
             return;
@@ -1460,7 +1460,7 @@ const SessionView = ({
                                                         type="number"
                                                         value={item.countedQty === null ? '' : item.countedQty}
                                                         onChange={(e) => handleCountChange(item.id, e.target.value)}
-                                                        disabled={selectedSession?.status !== 'In Progress' || isInventoryCounting || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled || !item.binId}
+                                                        disabled={selectedSession?.status !== 'In Progress' || entryMode !== 'manual' || item.batchEnabled || item.expiryEnabled || !item.binId}
                                                         title={!item.binId ? 'Assign a bin before counting' : (item.batchEnabled || item.expiryEnabled) ? 'Open the item to manage batches' : undefined}
                                                         placeholder="0"
                                                         className={`w-16 px-1.5 py-0.5 rounded text-[10px] font-bold text-slate-900 text-center focus:ring-1 outline-none transition-all disabled:opacity-50 disabled:bg-slate-100 ${
@@ -2441,8 +2441,10 @@ const StockTaking = () => {
 
     const handleCountChange = (itemId, value) => {
         if (!selectedSession) return;
-        if (isInventoryCountingSession(selectedSession)) {
-            showNotif('info', 'Unit Scan Required', 'Inventory counting uses unit barcodes, so counted quantity is updated by scans.');
+        
+        const oldItem = selectedSession.items.find(i => i.id === itemId);
+        if (isInventoryCountingSession(selectedSession) && (oldItem?.batchEnabled || oldItem?.expiryEnabled)) {
+            showNotif('info', 'Unit Scan Required', 'Inventory counting uses unit barcodes for tracked items, so counted quantity is updated by scans.');
             return;
         }
 
@@ -2450,7 +2452,6 @@ const StockTaking = () => {
         if (counted !== null && isNaN(counted)) return;
 
         // Capture old qty for undo BEFORE optimistic update
-        const oldItem = selectedSession.items.find(i => i.id === itemId);
         const prevQty = oldItem ? oldItem.countedQty : null;
 
         // Optimistic update using functional updater — safe against concurrent state changes
@@ -2480,6 +2481,9 @@ const StockTaking = () => {
         // Background API call
         updateApiCount(itemId, counted).then(() => {
             setLastSaved(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+            if (isInventoryCountingSession(selectedSession)) {
+                refreshCoverage();
+            }
         }).catch(error => {
             console.error("Error updating count in background:", error);
         });

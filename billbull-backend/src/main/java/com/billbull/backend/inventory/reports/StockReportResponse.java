@@ -10,7 +10,9 @@ public class StockReportResponse {
     private String item;
     private String category;
     private String department;
+    private Long departmentId;
     private String brand;
+    private Long brandId;
     private String warehouse;
     private String batchNumber;
     private LocalDate expiryDate;
@@ -57,8 +59,14 @@ public class StockReportResponse {
     public String getDepartment() { return department; }
     public void setDepartment(String department) { this.department = department; }
 
+    public Long getDepartmentId() { return departmentId; }
+    public void setDepartmentId(Long departmentId) { this.departmentId = departmentId; }
+
     public String getBrand() { return brand; }
     public void setBrand(String brand) { this.brand = brand; }
+
+    public Long getBrandId() { return brandId; }
+    public void setBrandId(Long brandId) { this.brandId = brandId; }
 
     public String getWarehouse() { return warehouse; }
     public void setWarehouse(String warehouse) { this.warehouse = warehouse; }

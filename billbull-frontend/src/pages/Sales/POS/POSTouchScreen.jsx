@@ -70,7 +70,7 @@ const POSTouchScreen = React.memo((props) => {
     setShowServiceRepair, setServiceView, setShowReturn, setShowAddShippingDialog,
     openDeliveryModal,
     setShowDeliverySettleModal, setDeliverySettleSearch, setDeliverySettlePersonFilter,
-    setDeliverySettleSelected, setDeliverySettlePayMode, setShowLockPOS,
+    setDeliverySettleSelected, setShowLockPOS,
     // utils
     formatCurrency, showFeedback, sessionId,
     // favourites
@@ -213,7 +213,7 @@ const POSTouchScreen = React.memo((props) => {
     { id: 'orders', label: 'Orders', icon: <Package className={iconCls} />, color: 'bg-orange-50 hover:bg-orange-100 border-orange-200 text-orange-700', action: () => setShowOrdersListDialog() },
     { id: 'reprint', label: 'Reprint', icon: <Printer className={iconCls} />, color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600', action: () => setShowReprintModal(true) },
     { id: 'delivery', label: 'Delivery', icon: <Truck className={iconCls} />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => openDeliveryModal() },
-    { id: 'delivery-settle', label: 'Delivery Settle', icon: <PackageCheck className={iconCls} />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setDeliverySettlePayMode('Cash'); setShowDeliverySettleModal(true); } },
+    { id: 'delivery-settle', label: 'Delivery Settle', icon: <PackageCheck className={iconCls} />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setShowDeliverySettleModal(true); } },
     { id: 'lock-pos', label: 'Lock POS', icon: <Lock className={iconCls} />, color: 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700', action: () => setShowLockPOS(true) },
     { id: 'close-session', label: 'Close Session', icon: <XCircle className={iconCls} />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action: () => { if (currentSession?.status === 'OPEN') setCurrentView('x-report'); } },
   ];

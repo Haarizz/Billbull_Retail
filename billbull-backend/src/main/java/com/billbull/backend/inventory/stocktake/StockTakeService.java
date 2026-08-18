@@ -846,11 +846,6 @@ public class StockTakeService {
             Product product = productId != null ? productById.get(productId) : null;
             if (product == null) continue;
 
-            String batchNumber = normalizeBarcode(row[4] != null ? row[4].toString() : null);
-            if (batchNumber == null) {
-                continue;
-            }
-
             int quantity = row[6] != null ? ((Number) row[6]).intValue() : 0;
             if (quantity <= 0) continue;
 
@@ -866,27 +861,32 @@ public class StockTakeService {
                     createSnapshotItem(session, product, primaryBarcodeByProduct.get(productId), imageByProduct.get(productId), bin, zoneId, locatorId));
             item.setSystemQty((item.getSystemQty() != null ? item.getSystemQty() : 0) + quantity);
 
-            for (int i = 0; i < quantity; i++) {
-                StockTakeExpectedUnit expected = new StockTakeExpectedUnit();
-                expected.setSession(session);
-                expected.setProductId(product.getId());
-                expected.setProductCode(product.getCode());
-                expected.setSku(product.getSku() != null ? product.getSku() : product.getCode());
-                expected.setProductName(product.getName());
-                expected.setProductBarcode(primaryBarcodeByProduct.get(product.getId()));
-                expected.setBrand(product.getBrand() != null ? product.getBrand().getName() : "Generic");
-                expected.setCategory(resolveProductCategoryName(product));
-                expected.setImage(imageByProduct.get(product.getId()));
-                expected.setWarehouseId(session.getWarehouseId());
-                expected.setExpectedBinId(binId);
-                expected.setExpectedBinCode(bin != null ? bin.getCode() : null);
-                expected.setExpectedZoneId(bin != null ? bin.getLocator().getZone().getId() : zoneId);
-                expected.setExpectedLocatorId(bin != null ? bin.getLocator().getId() : locatorId);
-                expected.setUnitBarcode(batchNumber);
-                expected.setBatchNumber(batchNumber);
-                expected.setExpiryDate(expiryDate);
-                expected.setUnitCost(unitCost);
-                expectedUnits.add(expected);
+            if (product.isBatch() || product.isExpiryEnabled()) {
+                String batchNumber = normalizeBarcode(row[4] != null ? row[4].toString() : null);
+                if (batchNumber != null) {
+                    for (int i = 0; i < quantity; i++) {
+                        StockTakeExpectedUnit expected = new StockTakeExpectedUnit();
+                        expected.setSession(session);
+                        expected.setProductId(product.getId());
+                        expected.setProductCode(product.getCode());
+                        expected.setSku(product.getSku() != null ? product.getSku() : product.getCode());
+                        expected.setProductName(product.getName());
+                        expected.setProductBarcode(primaryBarcodeByProduct.get(product.getId()));
+                        expected.setBrand(product.getBrand() != null ? product.getBrand().getName() : "Generic");
+                        expected.setCategory(resolveProductCategoryName(product));
+                        expected.setImage(imageByProduct.get(product.getId()));
+                        expected.setWarehouseId(session.getWarehouseId());
+                        expected.setExpectedBinId(binId);
+                        expected.setExpectedBinCode(bin != null ? bin.getCode() : null);
+                        expected.setExpectedZoneId(bin != null ? bin.getLocator().getZone().getId() : zoneId);
+                        expected.setExpectedLocatorId(bin != null ? bin.getLocator().getId() : locatorId);
+                        expected.setUnitBarcode(batchNumber);
+                        expected.setBatchNumber(batchNumber);
+                        expected.setExpiryDate(expiryDate);
+                        expected.setUnitCost(unitCost);
+                        expectedUnits.add(expected);
+                    }
+                }
             }
         }
 
@@ -967,24 +967,26 @@ public class StockTakeService {
 
         boolean changed = false;
         for (StockTakeItem item : session.getItems()) {
-            int[] counts = totals.get(new SnapshotItemKey(item.getProductId(), item.getBinId()));
-            if (counts == null) continue;
-            int expectedQty = counts[0];
-            int scannedQty = counts[1];
-            item.setSystemQty(expectedQty);
-            item.setCountedQty(scannedQty);
-            item.setVariance(scannedQty - expectedQty);
-            item.setVarianceValue(item.getPrice() != null
-                    ? item.getPrice().multiply(BigDecimal.valueOf(item.getVariance()))
-                    : BigDecimal.ZERO);
-            if (item.getVariance() == 0 && expectedQty > 0) {
-                item.setStatus(StockTakeItem.ItemStatus.MATCHED);
-            } else if (scannedQty == 0) {
-                item.setStatus(StockTakeItem.ItemStatus.PENDING);
-            } else {
-                item.setStatus(StockTakeItem.ItemStatus.VARIANCE);
+            if (item.isBatchEnabled() || item.isExpiryEnabled()) {
+                int[] counts = totals.get(new SnapshotItemKey(item.getProductId(), item.getBinId()));
+                if (counts == null) continue;
+                int expectedQty = counts[0];
+                int scannedQty = counts[1];
+                item.setSystemQty(expectedQty);
+                item.setCountedQty(scannedQty);
+                item.setVariance(scannedQty - expectedQty);
+                item.setVarianceValue(item.getPrice() != null
+                        ? item.getPrice().multiply(BigDecimal.valueOf(item.getVariance()))
+                        : BigDecimal.ZERO);
+                if (item.getVariance() == 0 && expectedQty > 0) {
+                    item.setStatus(StockTakeItem.ItemStatus.MATCHED);
+                } else if (scannedQty == 0) {
+                    item.setStatus(StockTakeItem.ItemStatus.PENDING);
+                } else {
+                    item.setStatus(StockTakeItem.ItemStatus.VARIANCE);
+                }
+                changed = true;
             }
-            changed = true;
         }
 
         if (changed) {
@@ -1050,6 +1052,37 @@ public class StockTakeService {
         }
 
         Map<Long, StockTakeCoverageResponse.ProductCoverage> productCoverage = new LinkedHashMap<>();
+
+        if (session.getItems() != null) {
+            for (StockTakeItem item : session.getItems()) {
+                StockTakeCoverageResponse.ProductCoverage coverage = productCoverage.computeIfAbsent(item.getProductId(), id -> {
+                    StockTakeCoverageResponse.ProductCoverage c = new StockTakeCoverageResponse.ProductCoverage();
+                    c.setProductId(item.getProductId());
+                    c.setProductCode(item.getSku());
+                    c.setSku(item.getSku());
+                    c.setProductName(item.getProductName());
+                    c.setBrand(item.getBrand());
+                    c.setCategory(item.getCategory());
+                    c.setImage(item.getImage());
+                    return c;
+                });
+
+                if (!item.isBatchEnabled() && !item.isExpiryEnabled()) {
+                    int expected = item.getSystemQty() != null ? item.getSystemQty() : 0;
+                    int scanned = item.getCountedQty() != null ? item.getCountedQty() : 0;
+                    int missing = Math.max(0, expected - scanned);
+                    
+                    coverage.setExpectedQty(coverage.getExpectedQty() + expected);
+                    coverage.setScannedQty(coverage.getScannedQty() + scanned);
+                    coverage.setMissingQty(coverage.getMissingQty() + missing);
+                    
+                    response.setExpectedUnits(response.getExpectedUnits() + expected);
+                    response.setScannedUnits(response.getScannedUnits() + scanned);
+                    response.setMissingUnits(response.getMissingUnits() + missing);
+                }
+            }
+        }
+
         List<StockTakeExpectedUnit> expectedUnits = expectedUnitRepo.findBySession(session);
         for (StockTakeExpectedUnit expected : expectedUnits) {
             StockTakeCoverageResponse.ProductCoverage coverage =

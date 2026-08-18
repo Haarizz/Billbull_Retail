@@ -97,7 +97,7 @@ api.interceptors.response.use(
     }
 
     // Session expiration handling (token expired or invalid)
-    if ((error.response?.status === 401 || error.response?.status === 403) && !isAuthEndpoint(error.config)) {
+    if (error.response?.status === 401 && !isAuthEndpoint(error.config)) {
       if (!sessionStorage.getItem("__session_expired")) {
         sessionStorage.setItem("__session_expired", "true");
         toast.error("Your session has expired. Please log in again.", { id: "session-expired", duration: 5000 });
@@ -108,6 +108,12 @@ api.interceptors.response.use(
           window.location.href = "/login";
         }, 1500);
       }
+      return Promise.reject(error);
+    }
+
+    // Permission denied handling (403)
+    if (error.response?.status === 403 && !isAuthEndpoint(error.config)) {
+      toast.error("You do not have permission to perform this action.", { id: "permission-denied", duration: 5000 });
       return Promise.reject(error);
     }
 

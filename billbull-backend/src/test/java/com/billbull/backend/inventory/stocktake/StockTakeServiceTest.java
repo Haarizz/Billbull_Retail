@@ -502,4 +502,64 @@ class StockTakeServiceTest {
         verify(sessionRepo).findActiveWithItemsInBranchScope(scope.branchIds());
         verify(sessionRepo, org.mockito.Mockito.never()).findAllActiveWithItems();
     }
+    @Test
+    void getCoverageForNonBatchedItemReturnsSystemQtyAsExpectedQty() {
+        StockTakeSession session = session();
+        StockTakeItem item = stockTakeItem(30L, session, 15L, 7L, 50, 40);
+        item.setBatchEnabled(false);
+        item.setExpiryEnabled(false);
+        session.setItems(List.of(item));
+
+        when(sessionRepo.findBySessionId("STK-1")).thenReturn(Optional.of(session));
+        when(expectedUnitRepo.existsBySession(session)).thenReturn(true);
+        when(expectedUnitRepo.findBySession(session)).thenReturn(List.of());
+        when(unitScanRepo.findBySessionOrderByCreatedAtDesc(session)).thenReturn(List.of());
+
+        StockTakeCoverageResponse response = service.getCoverage("STK-1");
+
+        assertEquals(50, response.getExpectedUnits());
+        assertEquals(40, response.getScannedUnits());
+        assertEquals(10, response.getMissingUnits());
+        
+        assertEquals(1, response.getProducts().size());
+        StockTakeCoverageResponse.ProductCoverage productCoverage = response.getProducts().get(0);
+        assertEquals(50, productCoverage.getExpectedQty());
+        assertEquals(40, productCoverage.getScannedQty());
+        assertEquals(10, productCoverage.getMissingQty());
+    }
+
+    @Test
+    void getCoverageForMixedItemsReturnsCombinedMetrics() {
+        StockTakeSession session = session();
+        
+        StockTakeItem nonBatchedItem = stockTakeItem(31L, session, 16L, 7L, 50, 40);
+        nonBatchedItem.setBatchEnabled(false);
+        nonBatchedItem.setExpiryEnabled(false);
+
+        StockTakeItem batchedItem = stockTakeItem(32L, session, 17L, 7L, 10, 10);
+        batchedItem.setBatchEnabled(true);
+        batchedItem.setExpiryEnabled(false);
+
+        session.setItems(List.of(nonBatchedItem, batchedItem));
+
+        StockTakeExpectedUnit expectedUnit = new StockTakeExpectedUnit();
+        expectedUnit.setProductId(17L);
+        expectedUnit.setScanned(false);
+
+        when(sessionRepo.findBySessionId("STK-1")).thenReturn(Optional.of(session));
+        when(expectedUnitRepo.existsBySession(session)).thenReturn(true);
+        when(expectedUnitRepo.findBySession(session)).thenReturn(List.of(expectedUnit));
+        when(unitScanRepo.findBySessionOrderByCreatedAtDesc(session)).thenReturn(List.of());
+
+        StockTakeCoverageResponse response = service.getCoverage("STK-1");
+
+        // Expected: 50 (non-batched) + 1 (batched expected unit) = 51
+        assertEquals(51, response.getExpectedUnits());
+        // Scanned: 40 (non-batched) + 0 (batched expected unit is not scanned) = 40
+        assertEquals(40, response.getScannedUnits());
+        // Missing: 10 (non-batched) + 1 (batched expected unit) = 11
+        assertEquals(11, response.getMissingUnits());
+
+        assertEquals(2, response.getProducts().size());
+    }
 }

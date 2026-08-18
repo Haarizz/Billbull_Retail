@@ -107,7 +107,7 @@ public class InventoryReportDataService {
     }
 
     public InventoryReportDataResponse getReport(String reportId, Long warehouseId) {
-        return getReport(reportId, warehouseId, null, null, null, null, null, null);
+        return getReport(reportId, warehouseId, null, null, null, null, null, null, null);
     }
 
     public InventoryReportDataResponse getReport(
@@ -115,11 +115,12 @@ public class InventoryReportDataService {
             Long warehouseId,
             LocalDate dateFrom,
             LocalDate dateTo,
-            String department,
-            String brand,
+            Long departmentId,
+            Long brandId,
+            Long productId,
             String search,
             String stockCondition) {
-        return getReport(reportId, warehouseId, dateFrom, dateTo, department, brand, search, stockCondition, false);
+        return getReport(reportId, warehouseId, dateFrom, dateTo, departmentId, brandId, productId, search, stockCondition, false);
     }
 
     public InventoryReportDataResponse getReport(
@@ -127,8 +128,9 @@ public class InventoryReportDataService {
             Long warehouseId,
             LocalDate dateFrom,
             LocalDate dateTo,
-            String department,
-            String brand,
+            Long departmentId,
+            Long brandId,
+            Long productId,
             String search,
             String stockCondition,
             boolean allBranches) {
@@ -142,13 +144,13 @@ public class InventoryReportDataService {
                                 com.billbull.backend.settings.branch.BranchAccessService.ListScope::branchIds)
                         .orElse(null);
         InventoryReportDataResponse report = switch (id) {
-            case "soh", "stock-on-hand" -> stockOnHand(warehouseId, allBranches);
-            case "low_stock", "low-stock", "low-stock-reorder" -> lowStock(warehouseId, allBranches);
-            case "out_of_stock", "out-of-stock" -> outOfStock(warehouseId, allBranches);
-            case "negative_stock", "negative-stock", "negative-stock-mismatch" -> negativeStock(warehouseId, allBranches, scope);
-            case "valuation", "stock-valuation" -> stockValuation(warehouseId, allBranches);
-            case "expiry", "expiry-batch-ageing", "expiry-batch-aging" -> expiryBatchAgeing(warehouseId, allBranches);
-            case "movement_ledger", "stock-movement-ledger" -> stockMovementLedger(warehouseId, scope);
+            case "soh", "stock-on-hand" -> stockOnHand(warehouseId, allBranches, dateTo, departmentId, brandId, productId, search);
+            case "low_stock", "low-stock", "low-stock-reorder" -> lowStock(warehouseId, allBranches, dateTo, departmentId, brandId, productId, search);
+            case "out_of_stock", "out-of-stock" -> outOfStock(warehouseId, allBranches, dateTo, departmentId, brandId, productId, search);
+            case "negative_stock", "negative-stock", "negative-stock-mismatch" -> negativeStock(warehouseId, allBranches, scope, dateTo, departmentId, brandId, productId, search);
+            case "valuation", "stock-valuation" -> stockValuation(warehouseId, allBranches, dateTo, departmentId, brandId, productId, search);
+            case "expiry", "expiry-batch-ageing", "expiry-batch-aging" -> expiryBatchAgeing(warehouseId, allBranches, dateTo, departmentId, brandId, productId, search);
+            case "movement_ledger", "stock-movement-ledger" -> stockMovementLedger(warehouseId, scope, dateFrom, dateTo, departmentId, brandId, productId, search);
             case "transfer", "stock-transfer-report" -> stockTransferReport(warehouseId, scope);
             case "reconciliation", "stock-reconciliation-report" -> stockReconciliationReport(warehouseId, scope);
             case "wastage", "wastage-internal-consumption" -> wastageInternalConsumption(warehouseId, scope);
@@ -159,13 +161,106 @@ public class InventoryReportDataService {
             case "master_completeness", "item-master-completeness" -> itemMasterCompleteness(scope);
             case "barcode_audit", "barcode-label-audit" -> barcodeLabelAudit(scope);
             case "scale_export", "weighing-scale-export" -> weighingScaleExport(scope);
-            case "dead_stock", "dead-slow-moving-stock" -> deadSlowMovingStock(warehouseId, allBranches);
+            case "dead_stock", "dead-slow-moving-stock" -> deadSlowMovingStock(warehouseId, allBranches, dateTo, departmentId, brandId, productId, search);
             case "fast_moving", "fast-moving-items" -> fastMovingItems(scope);
             case "bin_stock", "warehouse-bin-stock" -> warehouseBinStock(warehouseId, scope);
             default -> throw new IllegalArgumentException("Unknown inventory report: " + reportId);
         };
-        applyFilters(report, dateFrom, dateTo, department, brand, search, stockCondition);
+        applyFilters(report, dateFrom, dateTo, departmentId, brandId, productId, search, stockCondition);
+        recomputeCardsAndCharts(id, report);
         return report;
+    }
+
+    private void recomputeCardsAndCharts(String id, InventoryReportDataResponse report) {
+        List<Map<String, Object>> rows = report.getRows();
+        switch (id) {
+            case "soh":
+            case "stock-on-hand":
+                BigDecimal totalQty = sum(rows, "onHand");
+                BigDecimal totalValue = sum(rows, "value");
+                long totalSkus = rows.stream().map(r -> r.get("productId")).filter(Objects::nonNull).distinct().count();
+                long warehouses = rows.stream().map(r -> r.get("warehouse")).filter(Objects::nonNull).distinct().count();
+
+                report.setCards(List.of(
+                        card("Total SKUs", totalSkus, "across selected warehouses", "number"),
+                        card("Total Units", totalQty, "on hand now", "number"),
+                        card("Total Value", totalValue, "at item cost", "currency"),
+                        card("Warehouses", warehouses, "with stock", "number")));
+                report.setCharts(List.of(
+                        chart("Stock Qty by Category", "bar", sumBy(rows, "category", "onHand")),
+                        chart("Value Distribution", "pie", sumBy(rows, "category", "value"))));
+                break;
+            case "low-stock-reorder":
+                report.setCards(List.of(
+                        card("Items Below Min", rows.size(), "need reorder review", "number"),
+                        card("Critical", countRows(rows, "urgency", "Critical"), "0-50% of minimum", "number"),
+                        card("High", countRows(rows, "urgency", "High"), "50-75% of minimum", "number"),
+                        card("Total Suggested PO", sum(rows, "suggestedPoQty"), "units", "number")));
+                break;
+            case "out-of-stock":
+                report.setCards(List.of(
+                        card("Out of Stock SKUs", rows.size(), "zero inventory", "number"),
+                        card("With Sales Signal", rows.stream().filter(r -> !blank(r.get("lastSold")) && !"N/A".equals(r.get("lastSold"))).count(), "had prior sales", "number"),
+                        card("With Receiving Signal", rows.stream().filter(r -> !blank(r.get("lastReceived")) && !"N/A".equals(r.get("lastReceived"))).count(), "had prior receipts", "number"),
+                        card("Suggested PO Total", sum(rows, "suggestedPoQty"), "units", "number")));
+                break;
+            case "negative-stock-mismatch":
+                long intentional = rows.stream().filter(r -> Boolean.TRUE.equals(r.get("allowNegative"))).count();
+                long unintentional = rows.size() - intentional;
+                report.setCards(List.of(
+                        card("Negative SKUs", rows.size(), "total below-zero items", "number"),
+                        card("Intentional (Override)", intentional, "product allows negative stock", "number"),
+                        card("Unintentional", unintentional, "investigate — possible data error", "number"),
+                        card("Cost Impact", sum(rows, "costImpact"), "financial exposure", "currency")));
+                break;
+            case "stock-valuation":
+                java.math.BigDecimal wacTotal = sum(rows, "value");
+                java.math.BigDecimal glInventoryBalance = glBalanceRepo.findByAccountCode("1200").stream()
+                        .map(b -> b.getClosingBalance() != null ? b.getClosingBalance() : java.math.BigDecimal.ZERO)
+                        .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
+                java.math.BigDecimal glVariance = glInventoryBalance.subtract(wacTotal);
+                report.setCards(List.of(
+                        card("Average/Method Cost", wacTotal, "configured cost method", "currency"),
+                        card("FIFO Cost Method", sum(rows, "fifoValue"), "first-in first-out basis", "currency"),
+                        card("Last Purchase Cost", sum(rows, "lastPurchaseValue"), "latest purchase price", "currency"),
+                        card("GL Account 1120 Balance", glInventoryBalance, "inventory control account (ledger)", "currency"),
+                        card("GL vs WAC Variance", glVariance, glVariance.abs().compareTo(new java.math.BigDecimal("0.01")) < 1 ? "reconciled" : "INVESTIGATE — see audit log", "currency")));
+                report.setCharts(List.of(
+                        chart("Valuation by Category", "bar", sumBy(rows, "category", "value", "fifoValue", "lastPurchaseValue")),
+                        chart("Warehouse Distribution", "pie", sumBy(rows, "warehouse", "value", "fifoValue", "lastPurchaseValue"))));
+                break;
+        }
+    }
+
+    private BigDecimal sum(List<Map<String, Object>> rows, String key) {
+        return rows.stream()
+                .map(r -> bd(r.get(key)))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private List<Map<String, Object>> sumBy(List<Map<String, Object>> rows, String groupKey, String... valueKeys) {
+        Map<String, Map<String, BigDecimal>> totals = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            String label = label(row.get(groupKey));
+            Map<String, BigDecimal> groupValues = totals.computeIfAbsent(label, k -> new HashMap<>());
+            for (String key : valueKeys) {
+                groupValues.merge(key, bd(row.get(key)), BigDecimal::add);
+            }
+        }
+        return totals.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> r = new HashMap<>();
+                    r.put("category", e.getKey());
+                    r.putAll(e.getValue());
+                    return r;
+                })
+                .toList();
+    }
+
+    private long countRows(List<Map<String, Object>> rows, String key, String matchValue) {
+        return rows.stream()
+                .filter(r -> matchValue.equals(String.valueOf(r.get(key))))
+                .count();
     }
 
     /** Movement fetch honouring the branch scope (own branch + legacy/global null rows). */
@@ -177,34 +272,45 @@ public class InventoryReportDataService {
         return movements(scope, Sort.unsorted());
     }
 
+    private java.util.Set<Long> getFilteredProductIds(Long departmentId, Long brandId, Long productId, String search) {
+        if (departmentId == null && brandId == null && productId == null && (search == null || search.isBlank())) {
+            return null;
+        }
+        String searchParam = (search == null || search.isBlank()) ? "" : search;
+        List<Long> allowed = productRepo.findIdsByFilters(departmentId, brandId, searchParam);
+        if (productId != null) {
+            if (allowed.contains(productId)) {
+                return java.util.Set.of(productId);
+            } else {
+                return java.util.Set.of(-1L);
+            }
+        }
+        return allowed.isEmpty() ? java.util.Set.of(-1L) : new java.util.HashSet<>(allowed);
+    }
+
     /** True when the row's branch (null = global) is visible in the given scope. */
     private static boolean inScope(java.util.Collection<Long> scope, Long branchId) {
         return scope == null || branchId == null || scope.contains(branchId);
     }
 
-    private InventoryReportDataResponse stockOnHand(Long warehouseId, boolean allBranches) {
-        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches);
+    private InventoryReportDataResponse stockOnHand(Long warehouseId, boolean allBranches, LocalDate dateTo, Long departmentId, Long brandId, Long productId, String search) {
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches, dateTo);
+        if (allowedProductIds != null) {
+            source = source.stream().filter(s -> allowedProductIds.contains(s.getProductId())).toList();
+        }
         List<Map<String, Object>> rows = source.stream().map(this::stockRow).toList();
-        BigDecimal totalQty = source.stream().map(StockReportResponse::getOnHand).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal totalValue = source.stream().map(StockReportResponse::getValue).reduce(BigDecimal.ZERO, BigDecimal::add);
-
         InventoryReportDataResponse report = base("stock-on-hand", "Stock on Hand (SOH)",
                 "Current available quantity by item, category, batch, and warehouse.");
-        report.setCards(List.of(
-                card("Total SKUs", source.stream().map(StockReportResponse::getProductId).filter(Objects::nonNull).collect(Collectors.toSet()).size(), "across selected warehouses", "number"),
-                card("Total Units", totalQty, "on hand now", "number"),
-                card("Total Value", totalValue, "at item cost", "currency"),
-                card("Warehouses", source.stream().map(StockReportResponse::getWarehouse).filter(Objects::nonNull).collect(Collectors.toSet()).size(), "with stock", "number")));
-        report.setCharts(List.of(
-                chart("Stock Qty by Category", "bar", aggregate(source, r -> label(r.getCategory()), StockReportResponse::getOnHand)),
-                chart("Value Distribution", "pie", aggregate(source, r -> label(r.getCategory()), StockReportResponse::getValue))));
         report.setColumns(stockColumns(true));
         report.setRows(rows);
         return report;
     }
 
-    private InventoryReportDataResponse lowStock(Long warehouseId, boolean allBranches) {
-        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
+    private InventoryReportDataResponse lowStock(Long warehouseId, boolean allBranches, LocalDate dateTo, Long departmentId, Long brandId, Long productId, String search) {
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches, dateTo).stream()
+                .filter(r -> allowedProductIds == null || allowedProductIds.contains(r.getProductId()))
                 .filter(r -> bd(r.getMinStock()).compareTo(BigDecimal.ZERO) > 0)
                 .filter(r -> bd(r.getOnHand()).compareTo(bd(r.getMinStock())) <= 0)
                 .sorted(Comparator.comparing(r -> ratio(bd(r.getOnHand()), bd(r.getMinStock()))))
@@ -234,11 +340,6 @@ public class InventoryReportDataService {
 
         InventoryReportDataResponse report = base("low-stock-reorder", "Low Stock / Reorder",
                 "Items at or below configured minimum stock.");
-        report.setCards(List.of(
-                card("Items Below Min", rows.size(), "need reorder review", "number"),
-                card("Critical", countRows(rows, "urgency", "Critical"), "0-50% of minimum", "number"),
-                card("High", countRows(rows, "urgency", "High"), "50-75% of minimum", "number"),
-                card("Total Suggested PO", sum(rows, "suggestedPoQty"), "units", "number")));
         report.setColumns(List.of(
                 column("SKU", "sku", "text"),
                 column("Item", "item", "text"),
@@ -254,8 +355,12 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse outOfStock(Long warehouseId, boolean allBranches) {
-        List<StockReportResponse> source = stockReportService.getOutOfStock(warehouseId, allBranches);
+    private InventoryReportDataResponse outOfStock(Long warehouseId, boolean allBranches, LocalDate dateTo, Long departmentId, Long brandId, Long productId, String search) {
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        List<StockReportResponse> source = stockReportService.getOutOfStock(warehouseId, allBranches, dateTo).stream()
+                .filter(r -> allowedProductIds == null || allowedProductIds.contains(r.getProductId()))
+                .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) == 0)
+                .toList();
         List<Map<String, Object>> rows = source.stream()
                 .map(r -> row(
                         "sku", r.getSku(),
@@ -272,11 +377,6 @@ public class InventoryReportDataService {
 
         InventoryReportDataResponse report = base("out-of-stock", "Out of Stock",
                 "Zero or negative stock items with last movement signals.");
-        report.setCards(List.of(
-                card("Out of Stock SKUs", rows.size(), "zero inventory", "number"),
-                card("With Sales Signal", rows.stream().filter(r -> !blank(r.get("lastSold")) && !"N/A".equals(r.get("lastSold"))).count(), "had prior sales", "number"),
-                card("With Receiving Signal", rows.stream().filter(r -> !blank(r.get("lastReceived")) && !"N/A".equals(r.get("lastReceived"))).count(), "had prior receipts", "number"),
-                card("Suggested PO Total", sum(rows, "suggestedPoQty"), "units", "number")));
         report.setColumns(List.of(
                 column("SKU", "sku", "text"),
                 column("Item", "item", "text"),
@@ -289,15 +389,16 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse negativeStock(Long warehouseId, boolean allBranches, java.util.Collection<Long> scope) {
+    private InventoryReportDataResponse negativeStock(Long warehouseId, boolean allBranches, java.util.Collection<Long> scope, LocalDate dateTo, Long departmentId, Long brandId, Long productId, String search) {
         // Build a map of productId -> override count so we can flag intentional negatives
         Map<Long, Long> overrideCountByProduct = movements(scope).stream()
                 .filter(m -> m.isNegativeOverride())
                 .collect(Collectors.groupingBy(
                         com.billbull.backend.purchase.stockmovement.StockMovement::getProductId,
                         Collectors.counting()));
-
-        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        List<StockReportResponse> source = stockReportService.getStockOnHand(warehouseId, allBranches, dateTo).stream()
+                .filter(r -> allowedProductIds == null || allowedProductIds.contains(r.getProductId()))
                 .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) < 0)
                 .sorted(Comparator.comparing(StockReportResponse::getValue))
                 .toList();
@@ -330,11 +431,6 @@ public class InventoryReportDataService {
         long unintentional = rows.size() - intentional;
         InventoryReportDataResponse report = base("negative-stock-mismatch", "Negative Stock / Mismatch",
                 "Items with stock below zero. Intentional = product has Allow Negative Stock enabled. Unintentional = data error.");
-        report.setCards(List.of(
-                card("Negative SKUs", rows.size(), "total below-zero items", "number"),
-                card("Intentional (Override)", intentional, "product allows negative stock", "number"),
-                card("Unintentional", unintentional, "investigate — possible data error", "number"),
-                card("Cost Impact", sum(rows, "costImpact"), "financial exposure", "currency")));
         report.setColumns(List.of(
                 column("SKU", "sku", "text"),
                 column("Item", "item", "text"),
@@ -349,8 +445,12 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse stockValuation(Long warehouseId, boolean allBranches) {
-        List<StockReportResponse> source = stockReportService.getStockValuation(warehouseId, allBranches);
+    private InventoryReportDataResponse stockValuation(Long warehouseId, boolean allBranches, LocalDate dateTo, Long departmentId, Long brandId, Long productId, String search) {
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        List<StockReportResponse> source = stockReportService.getStockValuation(warehouseId, allBranches, dateTo);
+        if (allowedProductIds != null) {
+            source = source.stream().filter(s -> allowedProductIds.contains(s.getProductId())).toList();
+        }
         List<Map<String, Object>> rows = source.stream().map(r -> {
             BigDecimal qty = bd(r.getOnHand());
             BigDecimal unitCost = bd(r.getUnitCost());
@@ -375,25 +475,8 @@ public class InventoryReportDataService {
                     "expiryDate", r.getExpiryDate());
         }).toList();
 
-        // GL reconciliation: sum all GlAccountBalance rows for account 1120 (Inventory).
-        // A non-zero variance indicates an unposted adjustment or WAC drift — flag it for review.
-        java.math.BigDecimal glInventoryBalance = glBalanceRepo.findByAccountCode("1200").stream()
-                .map(b -> b.getClosingBalance() != null ? b.getClosingBalance() : java.math.BigDecimal.ZERO)
-                .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
-        java.math.BigDecimal wacTotal = sum(rows, "value");
-        java.math.BigDecimal glVariance = glInventoryBalance.subtract(wacTotal);
-
         InventoryReportDataResponse report = base("stock-valuation", "Stock Valuation",
                 "Inventory valuation by configured cost, FIFO, and last purchase cost. GL account 1120 balance shown for reconciliation.");
-        report.setCards(List.of(
-                card("Average/Method Cost", wacTotal, "configured cost method", "currency"),
-                card("FIFO Cost Method", sum(rows, "fifoValue"), "first-in first-out basis", "currency"),
-                card("Last Purchase Cost", sum(rows, "lastPurchaseValue"), "latest purchase price", "currency"),
-                card("GL Account 1120 Balance", glInventoryBalance, "inventory control account (ledger)", "currency"),
-                card("GL vs WAC Variance", glVariance, glVariance.abs().compareTo(new java.math.BigDecimal("0.01")) < 1 ? "reconciled" : "INVESTIGATE — see audit log", "currency")));
-        report.setCharts(List.of(
-                chart("Valuation by Category", "bar", sumBy(rows, "category", "value")),
-                chart("Warehouse Distribution", "pie", sumBy(rows, "warehouse", "value"))));
         report.setColumns(List.of(
                 column("SKU", "sku", "text"),
                 column("Item", "item", "text"),
@@ -409,9 +492,11 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse expiryBatchAgeing(Long warehouseId, boolean allBranches) {
-        LocalDate today = LocalDate.now();
-        List<Map<String, Object>> rows = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
+    private InventoryReportDataResponse expiryBatchAgeing(Long warehouseId, boolean allBranches, LocalDate dateTo, Long departmentId, Long brandId, Long productId, String search) {
+        LocalDate today = dateTo != null ? dateTo : LocalDate.now();
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        List<Map<String, Object>> rows = stockReportService.getStockOnHand(warehouseId, allBranches, dateTo).stream()
+                .filter(r -> allowedProductIds == null || allowedProductIds.contains(r.getProductId()))
                 .filter(r -> r.getExpiryDate() != null)
                 .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) > 0)
                 .map(r -> {
@@ -453,12 +538,19 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse stockMovementLedger(Long warehouseId, java.util.Collection<Long> scope) {
+    private InventoryReportDataResponse stockMovementLedger(
+            Long warehouseId, java.util.Collection<Long> scope,
+            LocalDate dateFrom, LocalDate dateTo,
+            Long departmentId, Long brandId, Long productId, String search) {
         Map<Long, Product> products = productMapFromMovements(scope);
         Map<Long, String> warehouses = warehouseNameMap();
-        List<Object[]> balanceRows = scope != null
-                ? stockRepo.findAllStockGroupedByProductAndWarehouseAndBranchIdIn(scope)
-                : stockRepo.findAllStockGroupedByProductAndWarehouse();
+        
+        List<Object[]> balanceRows = new ArrayList<>();
+        if (dateFrom != null) {
+            balanceRows = scope != null
+                    ? stockRepo.findOpeningBalanceGroupedByProductAndWarehouseAndBranchIdIn(scope, dateFrom)
+                    : stockRepo.findOpeningBalanceGroupedByProductAndWarehouse(dateFrom);
+        }
         Map<String, BigDecimal> currentBalance = balanceRows.stream()
                 .collect(Collectors.toMap(
                         r -> key(r[0], r[1]),
@@ -466,37 +558,63 @@ public class InventoryReportDataService {
                         BigDecimal::add,
                         LinkedHashMap::new));
 
-        List<Map<String, Object>> rows = movements(scope, Sort.by(Sort.Order.desc("movementDate"), Sort.Order.desc("id"))).stream()
-                .filter(m -> warehouseId == null || Objects.equals(m.getWarehouseId(), warehouseId))
-                .limit(500)
-                .map(m -> {
-                    Product p = products.get(m.getProductId());
-                    BigDecimal qty = bd(m.getQuantity());
-                    return row(
-                            "date", m.getMovementDate(),
-                            "type", movementLabel(m.getSourceType()),
-                            "reference", m.getReferenceNo(),
-                            "item", p != null ? p.getName() : "Product #" + m.getProductId(),
-                            "sku", p != null ? firstNonBlank(p.getSku(), p.getCode()) : m.getProductId(),
-                            "warehouse", warehouses.getOrDefault(m.getWarehouseId(), "Warehouse"),
-                            "inQty", qty.compareTo(BigDecimal.ZERO) > 0 ? qty : null,
-                            "outQty", qty.compareTo(BigDecimal.ZERO) < 0 ? qty.abs() : null,
-                            "balance", currentBalance.getOrDefault(key(m.getProductId(), m.getWarehouseId()), BigDecimal.ZERO),
-                            "unitCost", bd(m.getUnitCost()),
-                            "batchNumber", m.getBatchNumber(),
-                            "negativeOverride", m.isNegativeOverride());
-                })
-                .toList();
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        
+        // Fetch ALL movements within period chronologically.
+        List<StockMovement> periodMovements = stockRepo.findAll(
+                com.billbull.backend.purchase.stockmovement.StockMovementSpecifications.withFilters(scope, warehouseId, dateFrom, dateTo, allowedProductIds),
+                Sort.by(Sort.Order.asc("movementDate"), Sort.Order.asc("id"))
+        );
 
-        long negativeOverrideCount = rows.stream()
-                .filter(r -> Boolean.TRUE.equals(r.get("negativeOverride")))
-                .count();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        long negativeOverrideCount = 0;
+        BigDecimal totalInQty = BigDecimal.ZERO;
+        BigDecimal totalOutQty = BigDecimal.ZERO;
+
+        for (StockMovement m : periodMovements) {
+            Product p = products.get(m.getProductId());
+            BigDecimal qty = bd(m.getQuantity());
+            
+            // Calculate running balance for this warehouse
+            String balKey = key(m.getProductId(), m.getWarehouseId());
+            BigDecimal runningBal = currentBalance.getOrDefault(balKey, BigDecimal.ZERO).add(qty);
+            currentBalance.put(balKey, runningBal);
+
+            if (qty.compareTo(BigDecimal.ZERO) > 0) {
+                totalInQty = totalInQty.add(qty);
+            } else if (qty.compareTo(BigDecimal.ZERO) < 0) {
+                totalOutQty = totalOutQty.add(qty.abs());
+            }
+
+            if (m.isNegativeOverride()) {
+                negativeOverrideCount++;
+            }
+
+            rows.add(row(
+                    "date", m.getMovementDate(),
+                    "type", movementLabel(m),
+                    "reference", firstNonBlank(m.getReferenceNo(), "—"),
+                    "item", p != null ? p.getName() : "Product #" + m.getProductId(),
+                    "sku", p != null ? firstNonBlank(p.getSku(), p.getCode(), "N/A") : "N/A",
+                    "warehouse", warehouses.getOrDefault(m.getWarehouseId(), "Warehouse"),
+                    "inQty", qty.compareTo(BigDecimal.ZERO) > 0 ? qty : null,
+                    "outQty", qty.compareTo(BigDecimal.ZERO) < 0 ? qty.abs() : null,
+                    "balance", runningBal,
+                    "unitCost", bd(m.getUnitCost()),
+                    "batchNumber", m.getBatchNumber(),
+                    "negativeOverride", m.isNegativeOverride()
+            ));
+        }
+
+        // Output descending for UI display (newest first, but preserving computed balances)
+        java.util.Collections.reverse(rows);
+
         InventoryReportDataResponse report = base("stock-movement-ledger", "Stock Movement Ledger",
                 "All stock in/out transactions with current balance.");
         report.setCards(List.of(
                 card("Transactions", rows.size(), "latest ledger rows", "number"),
-                card("Inbound Qty", sum(rows, "inQty"), "units", "number"),
-                card("Outbound Qty", sum(rows, "outQty"), "units", "number"),
+                card("Inbound Qty", totalInQty, "units", "number"),
+                card("Outbound Qty", totalOutQty, "units", "number"),
                 card("Negative Overrides", negativeOverrideCount, "sold below zero stock", "number")));
         report.setColumns(List.of(
                 column("Date", "date", "date"),
@@ -967,12 +1085,14 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse deadSlowMovingStock(Long warehouseId, boolean allBranches) {
-        List<StockReportResponse> stock = stockReportService.getStockOnHand(warehouseId, allBranches).stream()
+    private InventoryReportDataResponse deadSlowMovingStock(Long warehouseId, boolean allBranches, LocalDate dateTo, Long departmentId, Long brandId, Long productId, String search) {
+        java.util.Set<Long> allowedProductIds = getFilteredProductIds(departmentId, brandId, productId, search);
+        List<StockReportResponse> stock = stockReportService.getStockOnHand(warehouseId, allBranches, dateTo).stream()
+                .filter(r -> allowedProductIds == null || allowedProductIds.contains(r.getProductId()))
                 .filter(r -> bd(r.getOnHand()).compareTo(BigDecimal.ZERO) > 0)
                 .toList();
         Map<Long, Timestamp> lastSold = lastSoldMap(stock.stream().map(StockReportResponse::getProductId).filter(Objects::nonNull).toList());
-        LocalDate today = LocalDate.now();
+        LocalDate today = dateTo != null ? dateTo : LocalDate.now();
         List<Map<String, Object>> rows = stock.stream()
                 .map(r -> {
                     Timestamp last = lastSold.get(r.getProductId());
@@ -1131,21 +1251,25 @@ public class InventoryReportDataService {
             InventoryReportDataResponse report,
             LocalDate dateFrom,
             LocalDate dateTo,
-            String department,
-            String brand,
+            Long departmentId,
+            Long brandId,
+            Long productId,
             String search,
             String stockCondition) {
         List<Map<String, Object>> filtered = report.getRows().stream()
-                .filter(row -> matchesDate(row, dateFrom, dateTo))
-                .filter(row -> matchesText(row.get("department"), department))
-                .filter(row -> matchesText(row.get("brand"), brand))
+                .filter(row -> matchesDate(report.getReportId(), row, dateFrom, dateTo))
                 .filter(row -> matchesSearch(row, search))
                 .filter(row -> matchesStockCondition(report.getReportId(), row, stockCondition))
                 .toList();
         report.setRows(filtered);
     }
 
-    private boolean matchesDate(Map<String, Object> row, LocalDate dateFrom, LocalDate dateTo) {
+
+
+    private boolean matchesDate(String reportId, Map<String, Object> row, LocalDate dateFrom, LocalDate dateTo) {
+        if (Set.of("stock-on-hand", "low-stock", "out-of-stock", "negative-stock", "stock-valuation", "warehouse-bin-stock", "dead-slow-moving-stock").contains(reportId)) {
+            return true;
+        }
         if (dateFrom == null && dateTo == null) return true;
         LocalDate rowDate = extractDate(row);
         if (rowDate == null) return true;
@@ -1198,6 +1322,10 @@ public class InventoryReportDataService {
         if ("Positive only".equalsIgnoreCase(stockCondition)) return qty.compareTo(BigDecimal.ZERO) > 0;
         if ("Zero only".equalsIgnoreCase(stockCondition)) return qty.compareTo(BigDecimal.ZERO) == 0;
         if ("Negative only".equalsIgnoreCase(stockCondition)) return qty.compareTo(BigDecimal.ZERO) < 0;
+        if ("Below Minimum".equalsIgnoreCase(stockCondition)) {
+            BigDecimal minStock = bd(row.get("minStock"));
+            return qty.compareTo(minStock) < 0;
+        }
         return true;
     }
 
@@ -1219,7 +1347,9 @@ public class InventoryReportDataService {
                 "item", r.getItem(),
                 "category", r.getCategory(),
                 "department", r.getDepartment(),
+                "departmentId", r.getDepartmentId(),
                 "brand", r.getBrand(),
+                "brandId", r.getBrandId(),
                 "warehouse", r.getWarehouse(),
                 "batchNumber", r.getBatchNumber(),
                 "expiryDate", r.getExpiryDate(),
@@ -1322,8 +1452,8 @@ public class InventoryReportDataService {
         }
     }
 
-    private String label(String value) {
-        return blank(value) ? "Uncategorized" : value;
+    private String label(Object value) {
+        return blank(value) ? "Uncategorized" : String.valueOf(value);
     }
 
     private boolean blank(Object value) {
@@ -1372,9 +1502,7 @@ public class InventoryReportDataService {
         return rows.stream().filter(r -> Objects.equals(r.get(key), value)).count();
     }
 
-    private BigDecimal sum(List<Map<String, Object>> rows, String key) {
-        return rows.stream().map(r -> bd(r.get(key))).reduce(BigDecimal.ZERO, BigDecimal::add);
-    }
+
 
     private List<Map<String, Object>> aggregate(
             List<StockReportResponse> rows,
@@ -1444,12 +1572,18 @@ public class InventoryReportDataService {
         }
     }
 
-    private String movementLabel(StockSourceType sourceType) {
-        if (sourceType == null) return "Adjustment";
+    private String movementLabel(StockMovement m) {
+        if (isWastageMovement(m)) return "Wastage";
+        StockSourceType sourceType = m.getSourceType();
+        if (sourceType == null) {
+            return bd(m.getQuantity()).compareTo(BigDecimal.ZERO) >= 0 ? "Adj+" : "Adj-";
+        }
         return switch (sourceType) {
-            case GRN, DIRECT_PURCHASE, LPO, SALES_RETURN, STOCK_TRANSFER_IN -> "In";
-            case DELIVERY_NOTE, SALES_INVOICE, STOCK_TRANSFER_OUT -> "Out";
-            case STOCK_TAKE_ADJUSTMENT, STOCK_TAKE, STOCK_TAKE_BATCH -> "Adj";
+            case GRN, DIRECT_PURCHASE, LPO -> "GRN";
+            case SALES_INVOICE, DELIVERY_NOTE -> "Sale";
+            case STOCK_TRANSFER_IN, STOCK_TRANSFER_OUT -> "Transfer";
+            case SALES_RETURN -> "Return";
+            case STOCK_TAKE_ADJUSTMENT, STOCK_TAKE, STOCK_TAKE_BATCH -> bd(m.getQuantity()).compareTo(BigDecimal.ZERO) >= 0 ? "Adj+" : "Adj-";
             default -> sourceType.name().replace('_', ' ');
         };
     }

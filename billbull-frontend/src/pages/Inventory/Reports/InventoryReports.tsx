@@ -14,6 +14,8 @@ import {
   CheckCircle2,
   ChevronRight,
   ChevronDown,
+  ArrowUp,
+  ArrowDown,
   BarChart3,
   FileSpreadsheet,
   FileText,
@@ -28,6 +30,7 @@ import { Separator } from "../../Sales/Reports/ui/separator";
 import { Input } from "../../Sales/Reports/ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { getInventoryReportData } from "../../../api/inventoryReportsApi";
+import { searchExactProducts } from "../../../api/productsApi";
 import { getWarehouses } from "../../../api/warehouseApi";
 import { getBrands } from "../../../api/brandsApi";
 import { getDepartments } from "../../../api/departmentsApi";
@@ -343,10 +346,12 @@ let mockRowsSOH: any[] = [];
 let mockRowsLowStock: any[] = [];
 
 let mockRowsValuation: any[] = [];
-let mockValuationByCategory: any[] = [];
-let mockValuationByWarehouse: any[] = [];
+let mockValuationByCategoryChart: any[] = [];
+let mockValuationByWarehouseChart: any[] = [];
 let mockSOH: any[] = [];
-let mockSOHByCategory: any[] = [];
+let mockSOHQtyChart: any[] = [];
+let mockSOHValueChart: any[] = [];
+let mockReportCards: any[] = [];
 let mockLowStock: any[] = [];
 let mockOutOfStock: any[] = [];
 let mockNegativeStock: any[] = [];
@@ -424,7 +429,8 @@ function clearLiveReportData(reportId?: ReportId) {
   if (!reportId || reportId === "soh") {
     mockRowsSOH = [];
     mockSOH = [];
-    mockSOHByCategory = [];
+    mockSOHQtyChart = [];
+    mockSOHValueChart = [];
   }
   if (!reportId || reportId === "low_stock") {
     mockRowsLowStock = [];
@@ -434,8 +440,8 @@ function clearLiveReportData(reportId?: ReportId) {
   if (!reportId || reportId === "negative_stock") mockNegativeStock = [];
   if (!reportId || reportId === "valuation") {
     mockRowsValuation = [];
-    mockValuationByCategory = [];
-    mockValuationByWarehouse = [];
+    mockValuationByCategoryChart = [];
+    mockValuationByWarehouseChart = [];
   }
   if (!reportId || reportId === "expiry") mockExpiry = [];
   if (!reportId || reportId === "movement_ledger") mockMovementLedger = [];
@@ -465,12 +471,18 @@ function clearLiveReportData(reportId?: ReportId) {
 
 function applyLiveReportData(reportId: ReportId, data: any) {
   clearLiveReportData(reportId);
+  mockReportCards = [];
   if (!data) return;
+  mockReportCards = Array.isArray(data.cards) ? data.cards : [];
   const rows = Array.isArray(data.rows) ? data.rows : (Array.isArray(data.data) ? data.data : []);
 
   switch (reportId) {
     case "soh":
       mockSOH = rows.map(row => ({
+        productId: row.productId,
+        warehouseId: row.warehouseId,
+        batchNumber: asText(row.batchNumber, "-"),
+        expiryDate: dateOnly(row.expiryDate, "-"),
         sku: asText(row.sku ?? row.itemCode, "N/A"),
         item: asText(row.itemName ?? row.item, "N/A"),
         category: asText(row.category, "Uncategorized"),
@@ -485,13 +497,17 @@ function applyLiveReportData(reportId: ReportId, data: any) {
       mockRowsSOH = mockSOH.map((row) => ({
         sku: row.sku,
         item: row.item,
+        category: row.category,
         warehouse: row.warehouse,
+        batchNumber: row.batchNumber,
+        expiryDate: row.expiryDate,
         qty: row.qty,
         uom: row.uom,
         cost: row.cost,
         value: row.value
       }));
-      mockSOHByCategory = sumByKey(mockSOH, "category", ["qty", "value"]);
+      mockSOHQtyChart = chartRows(data, 0);
+      mockSOHValueChart = chartRows(data, 1);
       break;
     case "low_stock":
       mockLowStock = rows.map(row => ({
@@ -549,24 +565,25 @@ function applyLiveReportData(reportId: ReportId, data: any) {
         item: asText(row.itemName ?? row.item, "N/A"),
         category: asText(row.category, "Uncategorized"),
         department: asText(row.department, "N/A"),
+        brand: asText(row.brand, "N/A"),
         warehouse: asText(row.warehouseName ?? row.warehouse, "Main WH"),
-        qty: n(row.stockOnHand ?? row.qty),
-        avgCost: n(row.avgCost ?? row.unitCost),
-        fifoCost: n(row.fifoCost ?? row.fifoUnitCost),
-        lastCost: n(row.lastCost ?? row.lastPurchaseCost),
-        avgValue: n(row.avgValue ?? row.value),
+        qty: n(row.qty ?? row.onHand),
+        unitCost: n(row.unitCost ?? row.cost),
+        fifoUnitCost: n(row.fifoUnitCost ?? row.fifoCost),
+        lastPurchaseCost: n(row.lastPurchaseCost ?? row.lastCost),
+        avgValue: n(row.value ?? row.stockValue),
         fifoValue: n(row.fifoValue),
-        lastValue: n(row.lastValue ?? row.lastPurchaseValue)
+        lastValue: n(row.lastPurchaseValue),
+        costMethod: asText(row.costMethod, "Average Cost"),
+        batches: Array.isArray(row.batches) ? row.batches.map((b: any) => ({
+          batchNo: asText(b.batchNumber ?? b.batchNo, "N/A"),
+          qty: n(b.qty),
+          unitCost: n(b.unitCost ?? b.cost),
+          expiryDate: asText(b.expiryDate, "No Expiry"),
+        })) : []
       }));
-      mockValuationByCategory = sumByKey(mockRowsValuation, "category", ["qty", "avgValue", "fifoValue", "lastValue"]);
-      mockValuationByWarehouse = sumByKey(mockRowsValuation, "warehouse", ["qty", "avgValue", "fifoValue", "lastValue"]);
-      {
-        const totalWarehouseValue = mockValuationByWarehouse.reduce((sum, row) => sum + n(row.avgValue), 0);
-        mockValuationByWarehouse = mockValuationByWarehouse.map((row) => ({
-          ...row,
-          percentage: totalWarehouseValue ? Number(((n(row.avgValue) / totalWarehouseValue) * 100).toFixed(1)) : 0
-        }));
-      }
+      mockValuationByCategoryChart = chartRows(data, 0);
+      mockValuationByWarehouseChart = chartRows(data, 1);
       break;
     case "expiry": {
       const grouped = new Map<string, ExpiryItem>();
@@ -814,7 +831,7 @@ function applyLiveReportData(reportId: ReportId, data: any) {
 
 function getInventoryExportRows(reportId: ReportId): any[] {
   switch (reportId) {
-    case "soh": return mockSOH;
+    case "soh": return mockRowsSOH;
     case "low_stock": return mockLowStock;
     case "out_of_stock": return mockOutOfStock;
     case "negative_stock": return mockNegativeStock;
@@ -875,7 +892,9 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     department: "All",
     brand: "All",
     stockCondition: "Positive only",
-    itemSearch: "",
+    productId: null as string | null,
+    productName: "",
+    itemSearch: "", // Fallback
   };
 
   // Pending (input) state — what the user is editing
@@ -885,8 +904,9 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   const [department, setDepartment] = useState(defaultFilters.department);
   const [brand, setBrand] = useState(defaultFilters.brand);
   const [stockCondition, setStockCondition] = useState(defaultFilters.stockCondition);
+  const [productId, setProductId] = useState<string | null>(defaultFilters.productId);
+  const [productName, setProductName] = useState(defaultFilters.productName);
   const [itemSearch, setItemSearch] = useState(defaultFilters.itemSearch);
-
   // Applied (committed) state — what actually fires the query
   const [appliedFilters, setAppliedFilters] = useState(defaultFilters);
 
@@ -901,31 +921,57 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   const [stockConditionSearch, setStockConditionSearch] = useState("");
   const [stockConditionOpen, setStockConditionOpen] = useState(false);
   const stockConditionOptions = ["All", "Positive only", "Zero only", "Negative only"];
+  const [productSearch, setProductSearch] = useState("");
+  const [productOpen, setProductOpen] = useState(false);
+  const [productOptions, setProductOptions] = useState<any[]>([]);
+
+  React.useEffect(() => {
+    if (!productSearch || productSearch.length < 2) {
+      setProductOptions([]);
+      return;
+    }
+    const handler = setTimeout(() => {
+      searchExactProducts(productSearch).then((res) => {
+        setProductOptions(res?.data || []);
+      }).catch(() => {});
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [productSearch]);
 
   const [, setDataRevision] = useState(0);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
+
+  const isSnapshotReport = ["soh", "low_stock", "out_of_stock", "valuation", "bin_stock", "master_completeness", "barcode_audit"].includes(activeReport);
 
   const isDirty =
     dateFrom !== appliedFilters.dateFrom ||
     dateTo !== appliedFilters.dateTo ||
     warehouse !== appliedFilters.warehouse ||
     department !== appliedFilters.department ||
+    department !== appliedFilters.department ||
     brand !== appliedFilters.brand ||
     stockCondition !== appliedFilters.stockCondition ||
+    productId !== appliedFilters.productId ||
     itemSearch !== appliedFilters.itemSearch;
 
   const hasNonDefaultApplied =
     appliedFilters.warehouse !== defaultFilters.warehouse ||
     appliedFilters.department !== defaultFilters.department ||
     appliedFilters.brand !== defaultFilters.brand ||
+    appliedFilters.brand !== defaultFilters.brand ||
     appliedFilters.stockCondition !== defaultFilters.stockCondition ||
+    appliedFilters.productId !== defaultFilters.productId ||
     appliedFilters.itemSearch !== defaultFilters.itemSearch ||
     appliedFilters.dateFrom !== defaultFilters.dateFrom ||
     appliedFilters.dateTo !== defaultFilters.dateTo;
 
   function applyFilters() {
-    const f = { dateFrom, dateTo, warehouse, department, brand, stockCondition, itemSearch };
+    if (dateFrom && dateTo && new Date(dateFrom) > new Date(dateTo)) {
+      setReportError("Date From cannot be later than Date To.");
+      return;
+    }
+    const f = { dateFrom, dateTo, warehouse, department, brand, stockCondition, productId, productName, itemSearch };
     setAppliedFilters(f);
   }
 
@@ -935,8 +981,12 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     setWarehouse(defaultFilters.warehouse);
     setDepartment(defaultFilters.department);
     setBrand(defaultFilters.brand);
+    setBrand(defaultFilters.brand);
     setStockCondition(defaultFilters.stockCondition);
+    setProductId(defaultFilters.productId);
+    setProductName(defaultFilters.productName);
     setItemSearch(defaultFilters.itemSearch);
+    setProductSearch("");
     setAppliedFilters(defaultFilters);
   }
   const [companyProfile, setCompanyProfile] = useState<any>(null);
@@ -945,6 +995,18 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   // Phase 11 — 'active' (default, branch-scoped when the tenant toggle is on) vs 'all'
   // (consolidated company-wide drill for users who can switch branches).
   const [branchScope, setBranchScope] = useState<string>("active");
+
+  const getDepartmentName = (id: string) => {
+    if (id === "All") return "All";
+    const opt = departmentOptions.find(o => String(o.id) === String(id));
+    return opt ? opt.name : id;
+  };
+
+  const getBrandName = (id: string) => {
+    if (id === "All") return "All";
+    const opt = brandOptions.find(o => String(o.id) === String(id));
+    return opt ? opt.name : id;
+  };
 
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
@@ -973,6 +1035,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
         branchId: (activeBranch as any)?.id,
         department: filters.department,
         brand: filters.brand,
+        productId: filters.productId,
         searchQuery: filters.itemSearch,
         stockCondition: filters.stockCondition,
         branchScope,
@@ -1022,7 +1085,7 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
     [activeReport]
   );
 
-  const exportMeta = () => ({ dateFrom: appliedFilters.dateFrom, dateTo: appliedFilters.dateTo, branch: (activeBranch as any)?.name || 'All', companyProfile });
+  const exportMeta = () => ({ dateFrom: appliedFilters.dateFrom, dateTo: appliedFilters.dateTo, branch: branchScope === 'all' ? 'All Branches' : ((activeBranch as any)?.name || 'All Branches'), companyProfile });
 
   function getActiveViewModel(): { reportTitle: string } & ReportViewModel {
     const vm = getReportView(activeReport);
@@ -1356,29 +1419,31 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
             </CardHeader>
             <CardContent className="px-3 pb-3">
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] text-slate-600 flex items-center gap-1">
-                    <Calendar className="h-3.5 w-3.5" />
-                    Date From
-                  </label>
-                  <Input
-                    type="date"
-                    value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200 [color-scheme:light]"
-                  />
-                </div>
+                {!["soh", "low_stock", "out_of_stock", "negative_stock", "valuation", "bin_stock", "expiry", "dead_stock"].includes(activeReport) && (
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] text-slate-600 flex items-center gap-1">
+                      <Calendar className="h-3.5 w-3.5" />
+                      Date From
+                    </label>
+                    <Input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => setDateFrom(e.target.value)}
+                      className="h-8 text-[11px] border-slate-200 [color-scheme:light] bg-slate-50"
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <label className="text-[11px] text-slate-600 flex items-center gap-1">
                     <Calendar className="h-3.5 w-3.5" />
-                    Date To
+                    {["soh", "low_stock", "out_of_stock", "negative_stock", "valuation", "bin_stock", "expiry", "dead_stock"].includes(activeReport) ? "As Of Date" : "Date To"}
                   </label>
                   <Input
                     type="date"
                     value={dateTo}
                     onChange={(e) => setDateTo(e.target.value)}
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200 [color-scheme:light]"
+                    className="h-8 text-[11px] border-slate-200 [color-scheme:light] bg-slate-50"
                   />
                 </div>
 
@@ -1430,8 +1495,8 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                       <div className="relative">
                         <input
                           type="text"
-                          value={departmentOpen ? departmentSearch : (department === "All" ? "" : department)}
-                          placeholder={department === "All" ? "All" : department}
+                          value={departmentOpen ? departmentSearch : (department === "All" ? "" : getDepartmentName(department))}
+                          placeholder={getDepartmentName(department)}
                           onFocus={() => { setDepartmentOpen(true); setDepartmentSearch(""); }}
                           onChange={(e) => { setDepartmentSearch(e.target.value); setDepartmentOpen(true); }}
                           onBlur={() => setTimeout(() => setDepartmentOpen(false), 150)}
@@ -1440,14 +1505,14 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
                         {departmentOpen && (
                           <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                            {[{ id: "0", name: "All" }, ...departmentOptions]
+                            {[{ id: "All", name: "All" }, ...departmentOptions]
                               .filter(o => !departmentSearch || o.name.toLowerCase().includes(departmentSearch.toLowerCase()))
                               .map(o => (
                                 <button
                                   key={o.id}
                                   type="button"
-                                  onMouseDown={() => { setDepartment(o.name === "All" ? "All" : o.name); setDepartmentOpen(false); setDepartmentSearch(""); }}
-                                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${department === (o.name === "All" ? "All" : o.name) ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                                  onMouseDown={() => { setDepartment(o.id); setDepartmentOpen(false); setDepartmentSearch(""); }}
+                                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${department === o.id ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
                                 >
                                   {o.name}
                                 </button>
@@ -1468,8 +1533,8 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                       <div className="relative">
                         <input
                           type="text"
-                          value={brandOpen ? brandSearch : (brand === "All" ? "" : brand)}
-                          placeholder={brand === "All" ? "All" : brand}
+                          value={brandOpen ? brandSearch : (brand === "All" ? "" : getBrandName(brand))}
+                          placeholder={getBrandName(brand)}
                           onFocus={() => { setBrandOpen(true); setBrandSearch(""); }}
                           onChange={(e) => { setBrandSearch(e.target.value); setBrandOpen(true); }}
                           onBlur={() => setTimeout(() => setBrandOpen(false), 150)}
@@ -1478,14 +1543,14 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
                         {brandOpen && (
                           <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                            {[{ id: "0", name: "All" }, ...brandOptions]
+                            {[{ id: "All", name: "All" }, ...brandOptions]
                               .filter(o => !brandSearch || o.name.toLowerCase().includes(brandSearch.toLowerCase()))
                               .map(o => (
                                 <button
                                   key={o.id}
                                   type="button"
-                                  onMouseDown={() => { setBrand(o.name); setBrandOpen(false); setBrandSearch(""); }}
-                                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${brand === o.name ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                                  onMouseDown={() => { setBrand(o.id); setBrandOpen(false); setBrandSearch(""); }}
+                                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${brand === o.id ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
                                 >
                                   {o.name}
                                 </button>
@@ -1498,56 +1563,93 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                       </div>
                     </div>
 
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] text-slate-600 flex items-center gap-1">
-                        <Barcode className="h-3.5 w-3.5" />
-                        Item / SKU
-                      </label>
-                      <Input
-                        value={itemSearch}
-                        onChange={(e) => setItemSearch(e.target.value)}
-                        placeholder="Search item name / SKU / barcode…"
-                        className="h-8 text-[11px] bg-slate-50 border-slate-200"
-                      />
-                    </div>
-
                     <div className="space-y-1.5 relative">
-                      <label className="text-[11px] text-slate-600">
-                        Stock Condition
+                      <label className="text-[11px] text-slate-600 flex items-center justify-between">
+                        <span className="flex items-center gap-1"><Barcode className="h-3.5 w-3.5" /> Item / SKU</span>
+                        {productId && (
+                          <button onClick={() => { setProductId(null); setProductName(""); setItemSearch(""); setProductSearch(""); }} className="text-red-500 hover:text-red-700 text-[10px]">Clear</button>
+                        )}
                       </label>
                       <div className="relative">
-                        <input
-                          type="text"
-                          value={stockConditionOpen ? stockConditionSearch : (stockCondition === "Positive only" ? "" : stockCondition)}
-                          placeholder={stockCondition}
-                          onFocus={() => { setStockConditionOpen(true); setStockConditionSearch(""); }}
-                          onChange={(e) => { setStockConditionSearch(e.target.value); setStockConditionOpen(true); }}
-                          onBlur={() => setTimeout(() => setStockConditionOpen(false), 150)}
-                          className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                        <Input
+                          value={productOpen ? productSearch : (productName ? productName : itemSearch)}
+                          onChange={(e) => {
+                            setProductSearch(e.target.value);
+                            setItemSearch(e.target.value);
+                            setProductOpen(true);
+                            if (productId) {
+                                setProductId(null);
+                                setProductName("");
+                            }
+                          }}
+                          onFocus={() => { setProductOpen(true); setProductSearch(itemSearch); }}
+                          onBlur={() => setTimeout(() => setProductOpen(false), 150)}
+                          placeholder="Search item name / SKU / barcode…"
+                          className="h-8 text-[11px] bg-slate-50 border-slate-200 pr-6"
                         />
-                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
-                        {stockConditionOpen && (
-                          <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg overflow-y-auto">
-                            {stockConditionOptions
-                              .filter(o => !stockConditionSearch || o.toLowerCase().includes(stockConditionSearch.toLowerCase()))
-                              .map(o => (
-                                <button
-                                  key={o}
-                                  type="button"
-                                  onMouseDown={() => { setStockCondition(o); setStockConditionOpen(false); setStockConditionSearch(""); }}
-                                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${stockCondition === o ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
-                                >
-                                  {o}
-                                </button>
-                              ))}
+                        {productOpen && productOptions.length > 0 && (
+                          <div className="absolute z-50 mt-1 max-h-48 w-full min-w-[240px] overflow-auto rounded-md border border-slate-200 bg-white p-1 shadow-lg shadow-slate-200/50">
+                            {productOptions.map((p) => (
+                              <button
+                                key={p.id}
+                                onClick={() => {
+                                  setProductId(String(p.id));
+                                  setProductName(p.name);
+                                  setItemSearch("");
+                                  setProductOpen(false);
+                                }}
+                                className="flex w-full flex-col text-left items-start rounded-sm px-2 py-1.5 text-[11px] hover:bg-[#FFF6D8] hover:text-amber-900 transition-colors"
+                              >
+                                <span className="font-medium truncate">{p.name}</span>
+                                <span className="text-[9px] text-slate-500 font-mono mt-0.5">
+                                  SKU: {p.sku || 'N/A'} {p.barcode ? `| BC: ${p.barcode}` : ''}
+                                </span>
+                              </button>
+                            ))}
                           </div>
                         )}
                       </div>
                     </div>
+
+                    {["soh", "valuation", "expiry", "dead_stock"].includes(activeReport) && (
+                      <div className="space-y-1.5 relative">
+                        <label className="text-[11px] text-slate-600">
+                          Stock Condition
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={stockConditionOpen ? stockConditionSearch : (stockCondition === "Positive only" ? "" : stockCondition)}
+                            placeholder={stockCondition}
+                            onFocus={() => { setStockConditionOpen(true); setStockConditionSearch(""); }}
+                            onChange={(e) => { setStockConditionSearch(e.target.value); setStockConditionOpen(true); }}
+                            onBlur={() => setTimeout(() => setStockConditionOpen(false), 150)}
+                            className="w-full h-8 text-[11px] rounded-lg border border-slate-200 bg-slate-50 px-2 pr-6"
+                          />
+                          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                          {stockConditionOpen && (
+                            <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg overflow-y-auto">
+                              {stockConditionOptions
+                                .filter(o => !stockConditionSearch || o.toLowerCase().includes(stockConditionSearch.toLowerCase()))
+                                .map(o => (
+                                  <button
+                                    key={o}
+                                    type="button"
+                                    onMouseDown={() => { setStockCondition(o); setStockConditionOpen(false); setStockConditionSearch(""); }}
+                                    className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${stockCondition === o ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                                  >
+                                    {o}
+                                  </button>
+                                ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
 
-                <div className={`flex items-end gap-2 md:col-span-2 xl:col-span-4 ${!showAdvanced ? "xl:col-start-4 md:col-start-2" : "xl:col-start-4"}`}>
+                <div className="flex items-end gap-2 md:col-start-2 xl:col-start-4">
                   <Button
                     size="sm"
                     variant="ghost"
@@ -1655,7 +1757,7 @@ function ResultsTable({
         </div>
       </CardHeader>
       <CardContent className="px-3 pb-3">
-        <div className="border border-slate-100 rounded-lg overflow-hidden">
+        <div className="border border-slate-100 rounded-lg overflow-x-auto">
           <table className="bb-nowrap-table w-full text-[11px]">
             <thead className="bg-slate-50 text-slate-500">
               <tr>
@@ -1693,48 +1795,115 @@ function StockValuationReport() {
   
   const COLORS = ['#F5C742', '#3b82f6', '#8b5cf6', '#10b981', '#f97316', '#ef4444'];
   
-  const totalAvgValue = mockRowsValuation.reduce((sum, r) => sum + r.avgValue, 0);
-  const totalFifoValue = mockRowsValuation.reduce((sum, r) => sum + r.fifoValue, 0);
-  const totalLastValue = mockRowsValuation.reduce((sum, r) => sum + r.lastValue, 0);
+  const avgCard = mockReportCards.find(c => c.label.includes("Average/Method Cost"));
+  const fifoCard = mockReportCards.find(c => c.label.includes("FIFO"));
+  const lastCard = mockReportCards.find(c => c.label.includes("Last Purchase Cost"));
+
+  const totalAvgValue = avgCard ? Number(avgCard.value) : mockRowsValuation.reduce((sum, r) => sum + r.avgValue, 0);
+  const totalFifoValue = fifoCard ? Number(fifoCard.value) : mockRowsValuation.reduce((sum, r) => sum + r.fifoValue, 0);
+  const totalLastValue = lastCard ? Number(lastCard.value) : mockRowsValuation.reduce((sum, r) => sum + r.lastValue, 0);
   const totalValuationQty = mockRowsValuation.reduce((sum, r) => sum + r.qty, 0);
   const totalValuationItems = new Set(mockRowsValuation.map((row) => row.sku)).size;
-  
+
+  const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' } | null>(null);
+
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    } else if (sortConfig && sortConfig.key === key && sortConfig.direction === 'desc') {
+      setSortConfig(null);
+      return;
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const sortedRows = React.useMemo(() => {
+    if (!sortConfig) return mockRowsValuation;
+    return [...mockRowsValuation].sort((a, b) => {
+      let aValue: any = a[sortConfig.key];
+      let bValue: any = b[sortConfig.key];
+
+      if (sortConfig.key === 'cost') {
+        aValue = costingMethod === 'avg' ? a.unitCost : costingMethod === 'fifo' ? a.fifoUnitCost : a.lastPurchaseCost;
+        bValue = costingMethod === 'avg' ? b.unitCost : costingMethod === 'fifo' ? b.fifoUnitCost : b.lastPurchaseCost;
+      } else if (sortConfig.key === 'value') {
+        aValue = costingMethod === 'avg' ? a.avgValue : costingMethod === 'fifo' ? a.fifoValue : a.lastValue;
+        bValue = costingMethod === 'avg' ? b.avgValue : costingMethod === 'fifo' ? b.fifoValue : b.lastValue;
+      }
+
+      if (aValue === bValue) {
+          const aId = a.sku || a.item || '';
+          const bId = b.sku || b.item || '';
+          return aId.toString().localeCompare(bId.toString());
+      }
+
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+          return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue;
+      }
+
+      const aStr = aValue != null ? String(aValue).toLowerCase() : "";
+      const bStr = bValue != null ? String(bValue).toLowerCase() : "";
+      
+      if (aStr < bStr) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aStr > bStr) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [mockRowsValuation, sortConfig, costingMethod]);
+
+  const SortIcon = ({ columnKey }: { columnKey: string }) => {
+    if (!sortConfig || sortConfig.key !== columnKey) return null;
+    return sortConfig.direction === 'asc' ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
+  };
+
   return (
     <div className="space-y-3">
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-3">
-        <Card className={`border-2 cursor-pointer transition-all ${costingMethod === 'avg' ? 'border-[#F5C742] bg-[#FFF6D8]' : 'border-slate-200 bg-white'}`} onClick={() => setCostingMethod('avg')}>
-          <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-medium text-slate-600">Average Cost Method</span>
-              <DollarSign className="h-4 w-4 text-[#F5C742]" />
-            </div>
-            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900"><CurrencySymbol /> {totalAvgValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-            <div className="text-[9px] text-slate-500 mt-1">{totalValuationItems} items / {totalValuationQty.toLocaleString()} units</div>
-          </CardContent>
-        </Card>
-        
-        <Card className={`border-2 cursor-pointer transition-all ${costingMethod === 'fifo' ? 'border-[#F5C742] bg-[#FFF6D8]' : 'border-slate-200 bg-white'}`} onClick={() => setCostingMethod('fifo')}>
-          <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-medium text-slate-600">FIFO Cost Method</span>
-              <TrendingUp className="h-4 w-4 text-blue-600" />
-            </div>
-            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900"><CurrencySymbol /> {totalFifoValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-            <div className="text-[9px] text-slate-500 mt-1">First-in, First-out basis</div>
-          </CardContent>
-        </Card>
-        
-        <Card className={`border-2 cursor-pointer transition-all ${costingMethod === 'last' ? 'border-[#F5C742] bg-[#FFF6D8]' : 'border-slate-200 bg-white'}`} onClick={() => setCostingMethod('last')}>
-          <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-medium text-slate-600">Last Purchase Cost</span>
-              <TrendingUp className="h-4 w-4 text-emerald-600" />
-            </div>
-            <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900"><CurrencySymbol /> {totalLastValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-            <div className="text-[9px] text-slate-500 mt-1">Latest purchase price</div>
-          </CardContent>
-        </Card>
+        {[
+          {
+            id: 'avg',
+            title: 'Average Cost Method',
+            value: totalAvgValue,
+            subtitle: `${totalValuationItems} items / ${totalValuationQty.toLocaleString()} units`,
+            icon: <DollarSign className="h-4 w-4 text-[#F5C742]" />
+          },
+          {
+            id: 'fifo',
+            title: 'FIFO Cost Method',
+            value: totalFifoValue,
+            subtitle: 'First-in, First-out basis',
+            icon: <TrendingUp className="h-4 w-4 text-blue-600" />
+          },
+          {
+            id: 'last',
+            title: 'Last Purchase Cost',
+            value: totalLastValue,
+            subtitle: 'Latest purchase price',
+            icon: <TrendingUp className="h-4 w-4 text-emerald-600" />
+          }
+        ].map((method) => (
+          <Card 
+            key={method.id}
+            className="border-2 cursor-pointer transition-all shadow-sm"
+            style={{
+              backgroundColor: costingMethod === method.id ? '#FFF6D8' : '#ffffff',
+              borderColor: costingMethod === method.id ? '#F5C742' : '#e2e8f0'
+            }}
+            onClick={() => setCostingMethod(method.id as 'avg' | 'fifo' | 'last')}
+          >
+            <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left w-full">
+              <div className="flex items-center justify-between mb-2 w-full">
+                <span className="text-[10px] font-medium text-slate-600">{method.title}</span>
+                {method.icon}
+              </div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">
+                <CurrencySymbol /> {method.value.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-[9px] text-slate-500 mt-1">{method.subtitle}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
       
       {/* Charts */}
@@ -1747,7 +1916,7 @@ function StockValuationReport() {
           </CardHeader>
           <CardContent className="px-3 pb-3">
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={mockValuationByCategory}>
+              <BarChart data={mockValuationByCategoryChart}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="category" tick={{ fontSize: 10 }} />
                 <YAxis tick={{ fontSize: 10 }} />
@@ -1755,7 +1924,7 @@ function StockValuationReport() {
                   contentStyle={{ fontSize: '11px' }}
                   formatter={(value: number) => `AED ${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
                 />
-                <Bar dataKey={costingMethod === 'avg' ? 'avgValue' : costingMethod === 'fifo' ? 'fifoValue' : 'lastValue'} fill="#F5C742" />
+                <Bar dataKey={costingMethod === 'avg' ? 'value' : costingMethod === 'fifo' ? 'fifoValue' : 'lastPurchaseValue'} fill="#F5C742" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -1771,15 +1940,15 @@ function StockValuationReport() {
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie
-                  data={mockValuationByWarehouse}
+                  data={mockValuationByWarehouseChart}
                   cx="50%"
                   cy="50%"
                   outerRadius={60}
                   fill="#8884d8"
-                  dataKey={costingMethod === 'avg' ? 'avgValue' : costingMethod === 'fifo' ? 'fifoValue' : 'lastValue'}
-                  label={({ warehouse, percentage }: any) => `${warehouse} (${percentage}%)`}
+                  dataKey={costingMethod === 'avg' ? 'value' : costingMethod === 'fifo' ? 'fifoValue' : 'lastPurchaseValue'}
+                  label={({ category, percent }: any) => `${category} ${(percent * 100).toFixed(0)}%`}
                 >
-                  {mockValuationByWarehouse.map((entry, index) => (
+                  {mockValuationByWarehouseChart.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -1812,7 +1981,23 @@ function StockValuationReport() {
               >
                 BillBull Report
               </Badge>
-              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1">
+              <Button variant="ghost" size="sm" className="h-7 px-2 text-[10px] flex items-center gap-1" onClick={() => {
+                const cols = [
+                  { key: 'sku', header: 'SKU', align: 'left', width: 20 },
+                  { key: 'item', header: 'Item', align: 'left', width: 30 },
+                  { key: 'category', header: 'Category', align: 'left', width: 20 },
+                  { key: 'warehouse', header: 'Warehouse', align: 'left', width: 20 },
+                  { key: 'qty', header: 'Qty', align: 'right', width: 12 },
+                  { key: 'exportCost', header: 'Cost', align: 'right', width: 15 },
+                  { key: 'exportValue', header: 'Value', align: 'right', width: 15 }
+                ];
+                const exportData = sortedRows.map(r => ({
+                  ...r,
+                  exportCost: costingMethod === 'avg' ? r.unitCost : costingMethod === 'fifo' ? r.fifoUnitCost : r.lastPurchaseCost,
+                  exportValue: costingMethod === 'avg' ? r.avgValue : costingMethod === 'fifo' ? r.fifoValue : r.lastValue
+                }));
+                exportToExcel(exportData, cols, `Stock_Valuation_${costingMethod}`, { dateFrom: undefined, dateTo: undefined, branch: 'All Branches' });
+              }}>
                 <Download className="h-3 w-3" />
                 Export
               </Button>
@@ -1820,22 +2005,36 @@ function StockValuationReport() {
           </div>
         </CardHeader>
         <CardContent className="px-3 pb-3">
-          <div className="border border-slate-100 rounded-lg overflow-hidden">
+          <div className="border border-slate-100 rounded-lg overflow-x-auto">
             <table className="bb-nowrap-table w-full text-[11px]">
-              <thead className="bg-slate-50 text-slate-500">
+              <thead className="bg-slate-50 text-slate-500 select-none">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">SKU</th>
-                  <th className="px-3 py-2 text-left font-medium">Item</th>
-                  <th className="px-3 py-2 text-left font-medium">Category</th>
-                  <th className="px-3 py-2 text-left font-medium">Warehouse</th>
-                  <th className="px-3 py-2 text-right font-medium">Qty</th>
-                  <th className="px-3 py-2 text-right font-medium">Cost</th>
-                  <th className="px-3 py-2 text-right font-medium">Value</th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-100" onClick={() => handleSort('sku')}>
+                    SKU <SortIcon columnKey="sku" />
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-100" onClick={() => handleSort('item')}>
+                    Item <SortIcon columnKey="item" />
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-100" onClick={() => handleSort('category')}>
+                    Category <SortIcon columnKey="category" />
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-slate-100" onClick={() => handleSort('warehouse')}>
+                    Warehouse <SortIcon columnKey="warehouse" />
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer hover:bg-slate-100" onClick={() => handleSort('qty')}>
+                    Qty <SortIcon columnKey="qty" />
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer hover:bg-slate-100" onClick={() => handleSort('cost')}>
+                    Cost <SortIcon columnKey="cost" />
+                  </th>
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer hover:bg-slate-100" onClick={() => handleSort('value')}>
+                    Value <SortIcon columnKey="value" />
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {mockRowsValuation.map((r, idx) => {
-                  const cost = costingMethod === 'avg' ? r.avgCost : costingMethod === 'fifo' ? r.fifoCost : r.lastCost;
+                {sortedRows.map((r, idx) => {
+                  const cost = costingMethod === 'avg' ? r.unitCost : costingMethod === 'fifo' ? r.fifoUnitCost : r.lastPurchaseCost;
                   const value = costingMethod === 'avg' ? r.avgValue : costingMethod === 'fifo' ? r.fifoValue : r.lastValue;
                   
                   return (
@@ -1967,7 +2166,7 @@ function ReportHeader({ title, subtitle, rows }: { title: string; subtitle?: str
 
 function Tbl({ children }: { children: React.ReactNode }) {
   return (
-    <div className="border border-slate-100 rounded-lg overflow-hidden">
+    <div className="border border-slate-100 rounded-lg overflow-x-auto">
       <table className="bb-nowrap-table w-full text-[11px]">{children}</table>
     </div>
   );
@@ -1985,19 +2184,26 @@ function Td({ children, right, mono }: { children: React.ReactNode; right?: bool
 
 function StockOnHandReport() {
   const warehouses = Array.from(new Set(mockSOH.map((row) => row.warehouse).filter(Boolean)));
+  const uniqueSkus = new Set(mockSOH.map((r) => r.sku)).size;
+  const cards = mockReportCards.length > 0 ? mockReportCards : [
+    { label: "Total SKUs", value: uniqueSkus.toString(), sub: "across all warehouses", type: "number" },
+    { label: "Total Units", value: mockSOH.reduce((s, r) => s + r.qty, 0), sub: "on hand now", type: "number" },
+    { label: "Total Value", value: mockSOH.reduce((s, r) => s + r.value, 0), sub: "at avg cost", type: "currency" },
+    { label: "Warehouses", value: warehouses.length.toString(), sub: warehouses.join(" / ") || "selected warehouses", type: "number" },
+  ];
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
-        {[
-          { label: "Total SKUs", value: mockSOH.length.toString(), sub: "across all warehouses" },
-          { label: "Total Units", value: mockSOH.reduce((s, r) => s + r.qty, 0).toLocaleString(), sub: "on hand now" },
-          { label: "Total Value", value: <><CurrencySymbol /> {mockSOH.reduce((s, r) => s + r.value, 0).toLocaleString("en-US", { minimumFractionDigits: 0 })}</>, sub: "at avg cost" },
-          { label: "Warehouses", value: warehouses.length.toString(), sub: warehouses.join(" / ") || "selected warehouses" },
-        ].map((c) => (
+        {cards.map((c: any) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
             <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
               <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
-              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">{c.value}</div>
+              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-slate-900">
+                {c.type === 'currency' 
+                  ? <><CurrencySymbol /> {Number(c.value).toLocaleString("en-US", { minimumFractionDigits: 0 })}</> 
+                  : Number(c.value).toLocaleString()}
+              </div>
               <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>
             </CardContent>
           </Card>
@@ -2011,12 +2217,12 @@ function StockOnHandReport() {
           </CardHeader>
           <CardContent className="px-3 pb-3">
             <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={mockSOHByCategory} barSize={20}>
+              <BarChart data={mockSOHQtyChart} barSize={20}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="category" tick={{ fontSize: 9 }} />
                 <YAxis tick={{ fontSize: 9 }} />
                 <Tooltip contentStyle={{ fontSize: "11px" }} />
-                <Bar dataKey="qty" fill="#F5C742" />
+                <Bar dataKey="onHand" fill="#F5C742" />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -2029,10 +2235,10 @@ function StockOnHandReport() {
           <CardContent className="px-3 pb-3">
             <ResponsiveContainer width="100%" height={180}>
               <PieChart>
-                <Pie data={mockSOHByCategory} cx="50%" cy="50%" outerRadius={65} dataKey="value"
-                  label={({ category, percent }) => `${category} ${(percent * 100).toFixed(0)}%`}
+                <Pie data={mockSOHValueChart} cx="50%" cy="50%" outerRadius={65} dataKey="value" nameKey="category"
+                  label={({ name, payload, percent }) => `${payload?.category || name || "Uncategorized"} ${(percent * 100).toFixed(0)}%`}
                   labelLine={false} style={{ fontSize: 9 }}>
-                  {mockSOHByCategory.map((_, i) => <Cell key={i} fill={INV_COLORS[i % INV_COLORS.length]} />)}
+                  {mockSOHValueChart.map((_, i) => <Cell key={i} fill={INV_COLORS[i % INV_COLORS.length]} />)}
                 </Pie>
                 <Tooltip contentStyle={{ fontSize: "11px" }} formatter={(v: number) => `AED ${v.toLocaleString()}`} />
               </PieChart>
@@ -2047,11 +2253,11 @@ function StockOnHandReport() {
         </CardHeader>
         <CardContent className="px-3 pb-3">
           <Tbl>
-            <thead><tr><Th>SKU</Th><Th>Item</Th><Th>Category</Th><Th>Warehouse</Th><Th right>Qty</Th><Th>UOM</Th><Th right>Min Qty</Th><Th right>Unit Cost</Th><Th right>Value</Th></tr></thead>
+            <thead><tr><Th>SKU</Th><Th>Item</Th><Th>Category</Th><Th>Warehouse</Th><Th>Batch</Th><Th>Expiry</Th><Th right>Qty</Th><Th>UOM</Th><Th right>Min Qty</Th><Th right>Unit Cost</Th><Th right>Value</Th></tr></thead>
             <tbody>
               {mockSOH.map((r, i) => (
-                <tr key={r.sku} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
-                  <Td mono>{r.sku}</Td><Td>{r.item}</Td><Td>{r.category}</Td><Td>{r.warehouse}</Td>
+                <tr key={`${r.productId}-${r.warehouse}-${r.batchNumber}-${r.expiryDate}`} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
+                  <Td mono>{r.sku}</Td><Td>{r.item}</Td><Td>{r.category}</Td><Td>{r.warehouse}</Td><Td>{r.batchNumber}</Td><Td>{r.expiryDate}</Td>
                   <Td right>
                     <span className={r.qty <= r.minQty ? "text-red-600 font-semibold" : ""}>{r.qty}</span>
                   </Td>
@@ -2077,19 +2283,26 @@ function StockOnHandReport() {
 function LowStockReport() {
   const critical = mockLowStock.filter((r) => r.urgency === "Critical").length;
   const high     = mockLowStock.filter((r) => r.urgency === "High").length;
+  const cards = mockReportCards.length > 0 ? mockReportCards : [
+    { label: "Items Below Min",   value: mockLowStock.length.toString(), cls: "text-red-600", type: "number" },
+    { label: "Critical (0–50%)",  value: critical.toString(),            cls: "text-red-600", type: "number" },
+    { label: "High (50–75%)",     value: high.toString(),                cls: "text-orange-600", type: "number" },
+    { label: "Total Suggest PO",  value: mockLowStock.reduce((s, r) => s + r.suggested, 0).toString() + " units", cls: "text-slate-900", type: "number" },
+  ];
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
-        {[
-          { label: "Items Below Min",   value: mockLowStock.length.toString(), cls: "text-red-600" },
-          { label: "Critical (0–50%)",  value: critical.toString(),            cls: "text-red-600" },
-          { label: "High (50–75%)",     value: high.toString(),                cls: "text-orange-600" },
-          { label: "Total Suggest PO",  value: mockLowStock.reduce((s, r) => s + r.suggested, 0).toString() + " units", cls: "text-slate-900" },
-        ].map((c) => (
+        {cards.map((c: any) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
             <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
               <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
-              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls}`}>{c.value}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls || 'text-slate-900'}`}>
+                {c.type === 'currency' 
+                  ? <><CurrencySymbol /> {Number(c.value).toLocaleString("en-US", { minimumFractionDigits: 0 })}</> 
+                  : Number(c.value).toLocaleString()}
+              </div>
+              <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>
             </CardContent>
           </Card>
         ))}
@@ -2137,19 +2350,25 @@ function OutOfStockReport() {
   const totalPages = Math.ceil(mockOutOfStock.length / limit);
   const paginatedData = mockOutOfStock.slice((page - 1) * limit, page * limit);
 
+  const cards = mockReportCards.length > 0 ? mockReportCards : [
+    { label: "Out of Stock SKUs",  value: mockOutOfStock.length.toString(), sub: "zero inventory", type: "number", cls: "text-red-600" },
+    { label: "Avg Days Out",       value: avgDaysOut.toFixed(1), sub: "since last stock", type: "number", cls: "text-red-600" },
+    { label: "Daily Sales Lost",   value: `~${totalDailyLoss}`, sub: "units/day based on history", type: "number", cls: "text-red-600" },
+    { label: "Suggested PO Total", value: mockOutOfStock.reduce((s, r) => s + r.suggestedPO, 0).toString() + " units", sub: "to replenish", type: "number", cls: "text-red-600" },
+  ];
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
-        {[
-          { label: "Out of Stock SKUs",  value: mockOutOfStock.length.toString(), sub: "zero inventory" },
-          { label: "Avg Days Out",       value: avgDaysOut.toFixed(1), sub: "since last stock" },
-          { label: "Daily Sales Lost",   value: `~${totalDailyLoss} units/day`, sub: "based on history" },
-          { label: "Suggested PO Total", value: mockOutOfStock.reduce((s, r) => s + r.suggestedPO, 0).toString() + " units", sub: "to replenish" },
-        ].map((c) => (
+        {cards.map((c: any) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
             <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
               <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
-              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-red-600">{c.value}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal ${c.cls || 'text-red-600'}`}>
+                {c.type === 'currency' 
+                  ? <><CurrencySymbol /> {Number(c.value).toLocaleString("en-US", { minimumFractionDigits: 0 })}</> 
+                  : Number(c.value).toLocaleString()}
+              </div>
               <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>
             </CardContent>
           </Card>
@@ -2214,19 +2433,25 @@ function OutOfStockReport() {
 
 function NegativeStockReport() {
   const totalImpact = mockNegativeStock.reduce((s, r) => s + r.impact, 0);
+  const cards = mockReportCards.length > 0 ? mockReportCards : [
+    { label: "Negative SKUs",   value: mockNegativeStock.length.toString(), sub: "data integrity issues", type: "number" },
+    { label: "Critical",        value: mockNegativeStock.filter((r) => r.severity === "Critical").length.toString(), sub: "immediate fix needed", type: "number" },
+    { label: "High Severity",   value: mockNegativeStock.filter((r) => r.severity === "High").length.toString(), sub: "action required", type: "number" },
+    { label: "Cost Impact",     value: totalImpact, sub: "financial exposure", type: "currency" },
+  ];
+
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-4 gap-3">
-        {[
-          { label: "Negative SKUs",   value: mockNegativeStock.length.toString(), sub: "data integrity issues" },
-          { label: "Critical",        value: mockNegativeStock.filter((r) => r.severity === "Critical").length.toString(), sub: "immediate fix needed" },
-          { label: "High Severity",   value: mockNegativeStock.filter((r) => r.severity === "High").length.toString(), sub: "action required" },
-          { label: "Cost Impact",     value: <><CurrencySymbol /> {totalImpact.toFixed(2)}</>, sub: "financial exposure" },
-        ].map((c) => (
+        {cards.map((c: any) => (
           <Card key={c.label} className="border border-slate-200 bg-white">
             <CardContent className="min-h-[92px] p-4 flex flex-col items-start justify-center gap-2 text-left">
               <div className="max-w-full text-[10px] font-semibold leading-snug text-slate-500 whitespace-normal break-words">{c.label}</div>
-              <div className="text-2xl font-bold leading-none tabular-nums tracking-normal text-red-600">{c.value}</div>
+              <div className={`text-2xl font-bold leading-none tabular-nums tracking-normal text-red-600`}>
+                {c.type === 'currency' 
+                  ? <><CurrencySymbol /> {Number(c.value).toLocaleString("en-US", { minimumFractionDigits: 0 })}</> 
+                  : Number(c.value).toLocaleString()}
+              </div>
               <div className="max-w-full text-[10px] leading-snug text-slate-400 break-words">{c.sub}</div>
             </CardContent>
           </Card>
@@ -2371,7 +2596,7 @@ function ExpiryReport() {
           />
         </CardHeader>
         <CardContent className="px-3 pb-3">
-          <div className="border border-slate-100 rounded-lg overflow-hidden">
+          <div className="border border-slate-100 rounded-lg overflow-x-auto">
             <table className="bb-nowrap-table w-full text-[11px]">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
@@ -2486,33 +2711,93 @@ const TXN_COLOR: Record<string, string> = {
 };
 
 function MovementLedgerReport() {
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(25);
+
+  useEffect(() => {
+    setPage(1);
+  }, [mockMovementLedger]);
+
+  const totalPages = Math.ceil(mockMovementLedger.length / limit);
+  const paginatedData = mockMovementLedger.slice((page - 1) * limit, page * limit);
+
   return (
     <Card className="border border-slate-200 bg-white">
       <CardHeader className="py-3 px-3">
         <ReportHeader title="Stock Movement Ledger" subtitle="All transactions with running balance" rows={mockMovementLedger.length} />
       </CardHeader>
       <CardContent className="px-3 pb-3">
-        <Tbl>
-          <thead><tr><Th>Date</Th><Th>Type</Th><Th>Reference</Th><Th>Item</Th><Th>SKU</Th><Th>Warehouse</Th><Th right>In</Th><Th right>Out</Th><Th right>Balance</Th><Th right>Unit Cost</Th></tr></thead>
-          <tbody>
-            {mockMovementLedger.map((r, i) => (
-              <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
-                <Td>{r.date}</Td>
-                <Td>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${TXN_COLOR[r.txnType] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>{r.txnType}</span>
-                </Td>
-                <Td mono>{r.ref}</Td>
-                <Td>{r.item}</Td>
-                <Td mono>{r.sku}</Td>
-                <Td>{r.warehouse}</Td>
-                <Td right>{r.in > 0 ? <span className="text-emerald-600 font-semibold">+{r.in}</span> : "—"}</Td>
-                <Td right>{r.out > 0 ? <span className="text-red-500 font-semibold">-{r.out}</span> : "—"}</Td>
-                <Td right><span className="font-semibold">{r.balance}</span></Td>
-                <Td right>AED {r.cost.toFixed(2)}</Td>
-              </tr>
-            ))}
-          </tbody>
-        </Tbl>
+        {mockMovementLedger.length === 0 ? (
+          <div className="py-12 text-center text-slate-500 text-sm">
+            No stock movements found for the selected filters.
+          </div>
+        ) : (
+          <>
+            <Tbl>
+              <thead><tr><Th>Date</Th><Th>Type</Th><Th>Reference</Th><Th>Item</Th><Th>SKU</Th><Th>Warehouse</Th><Th right>In</Th><Th right>Out</Th><Th right>Balance</Th><Th right>Unit Cost</Th></tr></thead>
+              <tbody>
+                {paginatedData.map((r, i) => (
+                  <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
+                    <Td>{r.date}</Td>
+                    <Td>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${TXN_COLOR[r.txnType] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>{r.txnType}</span>
+                    </Td>
+                    <Td mono>{r.ref}</Td>
+                    <Td>{r.item}</Td>
+                    <Td mono>{r.sku}</Td>
+                    <Td>{r.warehouse}</Td>
+                    <Td right>{r.in > 0 ? <span className="text-emerald-600 font-semibold">+{r.in}</span> : "—"}</Td>
+                    <Td right>{r.out > 0 ? <span className="text-red-500 font-semibold">-{r.out}</span> : "—"}</Td>
+                    <Td right><span className="font-semibold">{r.balance}</span></Td>
+                    <Td right>AED {r.cost.toFixed(2)}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Tbl>
+
+            <div className="mt-4 flex items-center justify-between text-[11px] text-slate-500">
+              <div className="flex items-center gap-3">
+                <div>
+                  Showing {(page - 1) * limit + 1} to {Math.min(page * limit, mockMovementLedger.length)} of {mockMovementLedger.length} entries
+                </div>
+                <select 
+                  className="bg-slate-50 border border-slate-200 rounded px-2 py-1 text-[10px] text-slate-600 outline-none cursor-pointer hover:bg-slate-100 transition-colors"
+                  value={limit}
+                  onChange={(e) => {
+                    setLimit(Number(e.target.value));
+                    setPage(1);
+                  }}
+                >
+                  <option value={25}>25 rows</option>
+                  <option value={50}>50 rows</option>
+                  <option value={100}>100 rows</option>
+                  <option value={500}>500 rows</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-7 px-2 text-[10px]" 
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                >
+                  Previous
+                </Button>
+                <div className="px-2">Page {page} of {totalPages}</div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-7 px-2 text-[10px]" 
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages || totalPages === 0}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );

@@ -68,7 +68,17 @@ const resolveLabelLayout = (template, fields, printerProfile = { dpi: DPI }) => 
         price: isSmallHeight ? toDots(2.8) : toDots(3.6)
     };
 
+    const minFonts = {
+        company: toDots(1.8),
+        productName: toDots(2.0),
+        brand: toDots(1.8),
+        code: toDots(1.8),
+        expiry: toDots(1.8),
+        price: toDots(2.4)
+    };
+
     const textSpacing = toDots(0.5);
+    const avgCharWidthRatio = 0.65; // Estimate of Zebra Font 0 average character width
 
     // Explicitly check for enabled fields that also have truthy values
     const textFields = fields.filter(f => f.type === 'text' && f.enabled && !!f.value);
@@ -78,8 +88,42 @@ const resolveLabelLayout = (template, fields, printerProfile = { dpi: DPI }) => 
     // Measure text requirements
     let requiredTextHeight = 0;
     textFields.forEach(f => {
-        f.fontH = fonts[f.id] || toDots(2.4);
-        f.elementHeight = f.fontH + textSpacing;
+        let maxLines = 1;
+        let fontH = fonts[f.id] || toDots(2.4);
+        const minFontH = minFonts[f.id] || toDots(1.8);
+        
+        const estWidth = f.value.length * (fontH * avgCharWidthRatio);
+        
+        if (estWidth > safeWidthDots) {
+            // Option A: Font scaling
+            const requiredFontH = safeWidthDots / (f.value.length * avgCharWidthRatio);
+            if (requiredFontH >= minFontH) {
+                fontH = Math.floor(requiredFontH);
+            } else {
+                fontH = minFontH;
+                // Option B: Controlled wrapping
+                if (f.id === 'productName' || f.id === 'company') {
+                    maxLines = 2; // Allow up to 2 lines for long names
+                }
+            }
+        }
+        
+        // Option C: Controlled truncation
+        // Prevent ^FB max-line overwrite by explicitly truncating the string if it still overflows
+        const maxAllowedChars = Math.floor((safeWidthDots * maxLines) / (fontH * avgCharWidthRatio));
+        if (f.value.length > maxAllowedChars) {
+            if (maxAllowedChars > 3) {
+                f.displayValue = f.value.substring(0, maxAllowedChars - 3) + '...';
+            } else {
+                f.displayValue = f.value.substring(0, maxAllowedChars);
+            }
+        } else {
+            f.displayValue = f.value;
+        }
+
+        f.fontH = fontH;
+        f.maxLines = maxLines;
+        f.elementHeight = (f.fontH * f.maxLines) + textSpacing;
         requiredTextHeight += f.elementHeight;
     });
 
@@ -223,7 +267,7 @@ const buildLabelZpl = (data) => {
         }
 
         if (el.type === 'text') {
-            out.push(`^FO0,${el.y}^FB${layout.labelWidthDots},1,0,C,0^A0N,${el.fontH},${el.fontH}^FD${escapeZpl(el.value)}^FS`);
+            out.push(`^FO0,${el.y}^FB${layout.labelWidthDots},${el.maxLines || 1},0,C,0^A0N,${el.fontH},${el.fontH}^FD${escapeZpl(el.displayValue || el.value)}^FS`);
         } else if (el.type === 'barcode') {
             out.push(`^BY${el.by},2,${el.barcodeHeight}`);
             out.push(`^FO${el.x},${el.y}^BCN,${el.barcodeHeight},Y,N,N^FD${escapeZpl(el.value)}^FS`);

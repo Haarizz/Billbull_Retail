@@ -10190,9 +10190,19 @@ export default function POSSales() {
               className="bg-[#327F74] hover:bg-[#286660] text-white"
               onClick={async () => {
                 const sessionId = prevDaySessionOpenId;
+                const isDayClosePending = prevDaySessionOpenMsg?.includes('Day Close has not been run') || prevDaySessionOpenMsg?.includes('All sessions for this Business Day are already closed');
+
                 setPrevDaySessionOpenMsg(null);
                 setPrevDaySessionOpenId(null);
                 setShowStartSessionDialog(false);
+
+                if (isDayClosePending) {
+                  const dateMatch = prevDaySessionOpenMsg?.match(/Business Day (\d{4}-\d{2}-\d{2})/);
+                  const targetDate = dateMatch ? dateMatch[1] : null;
+                  handleTradingEndedOpenDayClose(targetDate);
+                  return;
+                }
+
                 if (!sessionId) {
                   // Couldn't parse the session id out of the server message — fall
                   // back to the old (best-effort) behavior rather than dead-ending.
@@ -10211,7 +10221,7 @@ export default function POSSales() {
                 }
               }}
             >
-              Go to Close Session
+              {prevDaySessionOpenMsg?.includes('Day Close has not been run') || prevDaySessionOpenMsg?.includes('All sessions for this Business Day are already closed') ? 'Go to Day Close' : 'Go to Close Session'}
             </Button>
           </div>
         </DialogContent>
