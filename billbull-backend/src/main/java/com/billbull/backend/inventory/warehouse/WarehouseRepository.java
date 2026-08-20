@@ -12,6 +12,8 @@ public interface WarehouseRepository extends JpaRepository<Warehouse, Long> {
 
 	List<Warehouse> findByBranch_Id(Long branchId);
 
+	List<Warehouse> findByBranch_IdAndStatusOrderByIdAsc(Long branchId, String status);
+
 	List<Warehouse> findByBranchIsNull();
 
 	/**

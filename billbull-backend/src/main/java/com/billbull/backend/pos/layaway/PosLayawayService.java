@@ -55,6 +55,8 @@ public class PosLayawayService {
     /** Used only to read the originating session's tradingDate, so a layaway deposit and
      *  its instalments are dated into the Business Day they were taken in. */
     private final com.billbull.backend.pos.session.PosSessionRepository sessionRepository;
+    private final com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService warehouseSourceResolutionService;
+    private final com.billbull.backend.sales.settings.SalesSettingsService settingsService;
 
     public PosLayawayService(PosLayawayRepository repo,
                              PosLayawayPaymentRepository paymentRepo,
@@ -69,7 +71,11 @@ public class PosLayawayService {
                              PosAuditService auditService,
                              com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService,
                              com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock,
-                             com.billbull.backend.pos.session.PosSessionRepository sessionRepository) {
+                             com.billbull.backend.pos.session.PosSessionRepository sessionRepository,
+                             com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService warehouseSourceResolutionService,
+                             com.billbull.backend.sales.settings.SalesSettingsService settingsService) {
+        this.settingsService = settingsService;
+        this.warehouseSourceResolutionService = warehouseSourceResolutionService;
         this.repo = repo;
         this.paymentRepo = paymentRepo;
         this.productRepository = productRepository;
@@ -227,7 +233,36 @@ public class PosLayawayService {
         PosLayaway saved = repo.save(layaway);
 
         boolean reserveStock = Boolean.TRUE.equals(saved.getReserveStockRequested());
-        Long defaultWarehouseId = reserveStock ? resolveBranchDefaultWarehouseId(saved.getBranchId()) : null;
+        Long branchDefaultWarehouseId = reserveStock ? resolveBranchDefaultWarehouseId(saved.getBranchId()) : null;
+        Long resolvedSourceWarehouseId = branchDefaultWarehouseId;
+
+        if (reserveStock && saved.getItems() != null) {
+            java.util.List<com.billbull.backend.inventory.warehouse.WarehouseResolutionItem> resolutionItems = new java.util.ArrayList<>();
+            for (PosLayawayItem item : saved.getItems()) {
+                if (!item.isVoided()) {
+                    Product product = productRepository.findByCode(item.getItemCode()).orElse(null);
+                    if (product != null && !product.isService() && item.getQuantity() > 0) {
+                        resolutionItems.add(new com.billbull.backend.inventory.warehouse.WarehouseResolutionItem(product.getId(), item.getQuantity()));
+                    }
+                }
+            }
+
+            if (!resolutionItems.isEmpty()) {
+                com.billbull.backend.inventory.warehouse.WarehouseResolutionResult resolutionResult = 
+                        warehouseSourceResolutionService.resolveSourceWarehouseForTransaction(
+                                saved.getBranchId(),
+                                resolutionItems,
+                                branchDefaultWarehouseId,
+                                settingsService.getSettings().isStockCheckRequired()
+                        );
+                if (resolutionResult == null) {
+                    throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,
+                            "Insufficient available stock for the requested layaway items in any single eligible warehouse for this branch.");
+                }
+                resolvedSourceWarehouseId = resolutionResult.getWarehouseId();
+            }
+        }
+
         for (PosLayawayItem item : saved.getItems()) {
             if (item.isVoided() || !reserveStock) {
                 continue;
@@ -251,7 +286,7 @@ public class PosLayawayService {
                 if (product != null) {
                     stockReservationService.reserveForLayawayLine(
                             saved.getId(), item.getId(), product.getId(), item.getItemCode(),
-                            defaultWarehouseId, item.getQuantity());
+                            resolvedSourceWarehouseId, item.getQuantity());
                 }
             }
         }

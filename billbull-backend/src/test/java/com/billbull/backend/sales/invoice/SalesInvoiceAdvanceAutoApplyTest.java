@@ -193,6 +193,7 @@ class SalesInvoiceAdvanceAutoApplyTest {
                 mock(com.billbull.backend.notification.NotificationEventPublisher.class),
                 mock(com.billbull.backend.pos.dayclose.PosDayCloseRepository.class),
                 advanceApplicationService,
-                mock(com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService.class));
+                mock(com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService.class),
+                mock(com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService.class));
     }
 }
