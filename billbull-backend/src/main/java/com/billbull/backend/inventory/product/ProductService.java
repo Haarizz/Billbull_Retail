@@ -20,6 +20,7 @@ import com.billbull.backend.inventory.subdepartment.SubDepartmentRepository;
 import com.billbull.backend.inventory.units.UnitRepository;
 import com.billbull.backend.inventory.warehouse.BinRepository;
 import com.billbull.backend.inventory.warehouse.LocatorRepository;
+import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.inventory.warehouse.WarehouseRepository;
 import com.billbull.backend.inventory.warehouse.ZoneRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementRepository;
@@ -70,6 +71,7 @@ public class ProductService {
     // Branch-Level Inventory Phase 6 — catalog identity scoping + master-data governance (§15)
     // and cross-branch reference validation (§16), same helper the Dept/Brand/Unit services use.
     private final com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch;
+    private final com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService;
 
     public ProductService(
             ProductRepository productRepo,
@@ -96,7 +98,8 @@ public class ProductService {
             UserFavouriteProductRepository favouriteRepo,
             UserRepository userRepository,
             com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
-            com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch) {
+            com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch,
+            @org.springframework.context.annotation.Lazy com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
@@ -122,6 +125,7 @@ public class ProductService {
         this.userRepository = userRepository;
         this.branchScopeResolver = branchScopeResolver;
         this.masterBranch = masterBranch;
+        this.warehouseStockService = warehouseStockService;
     }
 
     /** Phase 6: the active branch-id scope for catalog reads, or null when scoping is inactive. */
@@ -138,9 +142,37 @@ public class ProductService {
      */
     private List<Object[]> availableStockRows(List<Long> productIds) {
         java.util.Collection<Long> scope = catalogScope();
-        return scope != null
+        
+        List<Object[]> onHandRows = scope != null
                 ? stockMovementRepo.getTotalAvailableStockForProductsAndBranchIdIn(productIds, scope)
                 : stockMovementRepo.getTotalAvailableStockForProducts(productIds);
+
+        List<Product> products = productRepo.findAllById(productIds);
+        java.util.Map<Long, java.util.Map<Long, Integer>> allocations = warehouseStockService.getReservedQuantitiesByProductAndWarehouse(products);
+        
+        java.util.Set<Long> scopeWarehouseIds = null;
+        if (scope != null) {
+            scopeWarehouseIds = warehouseRepo.findByBranchIdInOrGlobal(scope).stream().map(Warehouse::getId).collect(Collectors.toSet());
+        }
+
+        List<Object[]> netRows = new java.util.ArrayList<>();
+        for (Object[] row : onHandRows) {
+            Long productId = (Long) row[0];
+            int onHand = ((Number) row[1]).intValue();
+            
+            int totalReserved = 0;
+            java.util.Map<Long, Integer> productAllocations = allocations.get(productId);
+            if (productAllocations != null) {
+                for (java.util.Map.Entry<Long, Integer> entry : productAllocations.entrySet()) {
+                    Long warehouseId = entry.getKey();
+                    if (scopeWarehouseIds == null || scopeWarehouseIds.contains(warehouseId)) {
+                        totalReserved += entry.getValue();
+                    }
+                }
+            }
+            netRows.add(new Object[]{productId, onHand - totalReserved});
+        }
+        return netRows;
     }
 
     /**
@@ -558,17 +590,6 @@ public class ProductService {
         inventory.setSafetyStock(reqInventory.getSafetyStock());
         inventory.setMinStock(reqInventory.getMinStock());
         inventory.setMaxStock(reqInventory.getMaxStock());
-        // Only users with inventory.approve permission can enable negative-stock override.
-        // If the caller lacks the permission, silently preserve the existing value (no error
-        // so the rest of the inventory save succeeds).
-        if (reqInventory.isAllowNegative()) {
-            if (modulePermissionService.canApprove("inventory")) {
-                inventory.setAllowNegative(true);
-            }
-            // else: leave existing value unchanged — no escalation
-        } else {
-            inventory.setAllowNegative(false);
-        }
         inventory.setProcurementType(reqInventory.getProcurementType());
         inventory.setDefaultVendor(reqInventory.getDefaultVendor());
 
@@ -850,10 +871,7 @@ public class ProductService {
     @Transactional(readOnly = true)
     public int branchScopedStockForPos(Long productId) {
         if (productId == null) return 0;
-        List<Object[]> rows = branchScopeResolver.activeListScope()
-                .map(scope -> stockMovementRepo.getTotalAvailableStockForProductsAndBranchIdIn(
-                        List.of(productId), scope.branchIds()))
-                .orElseGet(() -> stockMovementRepo.getTotalAvailableStockForProducts(List.of(productId)));
+        List<Object[]> rows = availableStockRows(java.util.Collections.singletonList(productId));
         return rows.isEmpty() ? 0 : ((Number) rows.get(0)[1]).intValue();
     }
 

@@ -49,6 +49,15 @@ export const installGlobalClientLogging = () => {
     }
     logClientError("Unhandled promise rejection", event.reason);
   });
+
+  const originalConsoleError = console.error;
+  console.error = (...args) => {
+    originalConsoleError.apply(console, args);
+    const message = args
+      .map((a) => (typeof a === "object" ? sanitize(a) : String(a)))
+      .join(" ");
+    logClientEvent("error", "Console error", { consoleMessage: message });
+  };
 };
 
 export const logApiError = (error) => {
@@ -131,7 +140,6 @@ export const logClientEvent = (level, message, metadata = {}) => {
     method: "POST",
     headers: buildHeaders(requestId),
     body,
-    keepalive: body.length < 60000,
   }).catch(() => {});
 };
 

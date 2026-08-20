@@ -66,7 +66,7 @@ public class StockMovement extends BaseEntity {
 	private java.math.BigDecimal unitCost;
 
 	// True when this deduction was permitted to proceed despite insufficient stock
-	// because the product's allowNegative flag was set. Enables negative-stock audit queries.
+	// because the global stock check requirement was bypassed. Enables negative-stock audit queries.
 	private boolean negativeOverride;
 
 	// Getters and Setters

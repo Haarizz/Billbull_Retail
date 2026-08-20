@@ -94,6 +94,7 @@ public class SalesInvoiceService {
     private final PosDayCloseRepository dayCloseRepository;
     private final com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService;
     private final com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService historyService;
+    private final com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService warehouseSourceResolutionService;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -123,7 +124,9 @@ public class SalesInvoiceService {
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
             PosDayCloseRepository dayCloseRepository,
             com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService,
-            com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService historyService) {
+            com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService historyService,
+            com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService warehouseSourceResolutionService) {
+        this.warehouseSourceResolutionService = warehouseSourceResolutionService;
         this.historyService = historyService;
         this.invoiceRepo = invoiceRepo;
         this.postingEngineService = postingEngineService;
@@ -291,11 +294,12 @@ public class SalesInvoiceService {
         applyBranchSnapshot(invoice, existing, resolvedBranch);
         validateInvoiceWarehouses(invoice, resolvedBranch != null ? resolvedBranch.getId() : null);
 
+        SalesSettings settings = settingsService.getSettings();
+
         if (invoice.getId() == null) {
             invoice.setInvoiceNumber(numberingService.resolveNumberForCreate(
                     SalesDocumentType.SALES_INVOICE,
                     invoice.getInvoiceNumber()));
-            SalesSettings settings = settingsService.getSettings();
             invoice.setFastSale(settings.getSalesMode() == SalesMode.FAST_SALE);
         } else if (existing != null) {
             invoice.setInvoiceNumber(numberingService.resolveNumberForUpdate(
@@ -320,7 +324,40 @@ public class SalesInvoiceService {
         Long branchDefaultWarehouseId = resolveBranchDefaultWarehouseId(
                 resolvedBranch != null ? resolvedBranch.getId() : invoice.getBranchId());
 
+        Long resolvedSourceWarehouseId = branchDefaultWarehouseId;
         if (invoice.getItems() != null) {
+            java.util.List<com.billbull.backend.inventory.warehouse.WarehouseResolutionItem> resolutionItems = new java.util.ArrayList<>();
+            for (SalesInvoiceItem item : invoice.getItems()) {
+                if (item.isVoided()) {
+                    continue;
+                }
+                Product product = item.getItemCode() != null
+                        ? productRepo.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null)
+                        : null;
+                if (item.getWarehouseId() == null && product != null && !product.isService()) {
+                    int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
+                            + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
+                    if (requiredQty > 0) {
+                        resolutionItems.add(new com.billbull.backend.inventory.warehouse.WarehouseResolutionItem(product.getId(), requiredQty));
+                    }
+                }
+            }
+
+            if (!resolutionItems.isEmpty()) {
+                com.billbull.backend.inventory.warehouse.WarehouseResolutionResult resolutionResult = 
+                        warehouseSourceResolutionService.resolveSourceWarehouseForTransaction(
+                                resolvedBranch != null ? resolvedBranch.getId() : invoice.getBranchId(),
+                                resolutionItems,
+                                branchDefaultWarehouseId,
+                                settings.isStockCheckRequired()
+                        );
+                if (resolutionResult == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "Insufficient available stock for the requested items in any single eligible warehouse for this branch.");
+                }
+                resolvedSourceWarehouseId = resolutionResult.getWarehouseId();
+            }
+
             for (SalesInvoiceItem item : invoice.getItems()) {
                 item.setSalesInvoice(invoice);
 
@@ -344,9 +381,9 @@ public class SalesInvoiceService {
 
                 // Default warehouse from the branch when the line carries none.
                 // Service products own no stock, so they don't need a location.
-                if (item.getWarehouseId() == null && branchDefaultWarehouseId != null
+                if (item.getWarehouseId() == null && resolvedSourceWarehouseId != null
                         && (product == null || !product.isService())) {
-                    item.setWarehouseId(branchDefaultWarehouseId);
+                    item.setWarehouseId(resolvedSourceWarehouseId);
                 }
                 if (product != null && product.isBatch()) {
                     int requiredQty = resolveBaseQty(product.getId(), item.getUnit(),
@@ -371,8 +408,7 @@ public class SalesInvoiceService {
         BigDecimal paid = nz(invoice.getAmountPaid());
 
         // Fetch settings ONCE for this entire request — passed through the call chain
-        // to avoid redundant DB hits.
-        SalesSettings settings = settingsService.getSettings();
+        // to avoid redundant DB hits. (Already fetched at the top of the method)
 
         // Status logic
         if (invoice.getStatus() == null) {
@@ -1356,10 +1392,7 @@ public class SalesInvoiceService {
             if (product.isService())
                 continue;
 
-            // Per-product negative-stock override: if the product is explicitly configured to
-            // allow negative stock, skip the shortage check for this line only.
-            if (product.getInventory() != null && product.getInventory().isAllowNegative())
-                continue;
+            // No product-level negative-stock override; governed globally.
 
             int requiredQty = resolveBaseQty(product.getId(), item.getUnit(), item.getQuantity() != null ? item.getQuantity() : 0)
                     + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
@@ -1765,13 +1798,29 @@ public class SalesInvoiceService {
         req.branchName = invoice.getBranchName();
         req.branchCode = invoice.getBranchCode();
 
-        // Pick the first non-null warehouseId from any item
+        // Pick the warehouseId from the items, ensuring ALL inventory items resolve to the SAME warehouse
         if (invoice.getItems() != null) {
-            req.warehouseId = invoice.getItems().stream()
-                    .filter(i -> i.getWarehouseId() != null)
+            java.util.Set<Long> uniqueWarehouses = invoice.getItems().stream()
+                    .filter(i -> !i.isVoided())
+                    .filter(i -> {
+                        Product p = i.getItemCode() != null
+                                ? productRepo.findByCodeAndIsActiveTrue(i.getItemCode()).orElse(null)
+                                : null;
+                        return p != null && !p.isService();
+                    })
                     .map(SalesInvoiceItem::getWarehouseId)
-                    .findFirst()
-                    .orElse(null);
+                    .filter(java.util.Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toSet());
+
+            if (uniqueWarehouses.size() > 1) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Multi-warehouse transactions are not supported for auto-delivery. "
+                        + "All inventory-bearing items must resolve to the same source warehouse.");
+            }
+            
+            if (!uniqueWarehouses.isEmpty()) {
+                req.warehouseId = uniqueWarehouses.iterator().next();
+            }
         }
 
         // Cannot create delivery note without a warehouse.

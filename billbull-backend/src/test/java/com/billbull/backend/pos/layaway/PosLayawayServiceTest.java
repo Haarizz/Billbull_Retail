@@ -54,6 +54,16 @@ class PosLayawayServiceTest {
 
     @BeforeEach
     void setUp() {
+        com.billbull.backend.sales.settings.SalesSettingsService settingsMock = org.mockito.Mockito.mock(com.billbull.backend.sales.settings.SalesSettingsService.class);
+        com.billbull.backend.sales.settings.SalesSettings defaultSettings = new com.billbull.backend.sales.settings.SalesSettings();
+        defaultSettings.setStockCheckRequired(true);
+        lenient().when(settingsMock.getSettings()).thenReturn(defaultSettings);
+
+        com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService resolutionMock = org.mockito.Mockito.mock(com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService.class);
+        lenient().when(resolutionMock.resolveSourceWarehouseForTransaction(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenAnswer(inv -> new com.billbull.backend.inventory.warehouse.WarehouseResolutionResult(
+                        inv.getArgument(2) != null ? (Long) inv.getArgument(2) : 1L, "Default", "Default Reason"));
+
         service = new PosLayawayService(repo, paymentRepo, productRepository, batchSelectionService,
                 stockReservationService, permissionService,
                 // Real resolver, not a mock: the deposit runs through the same pure allocation
@@ -64,7 +74,9 @@ class PosLayawayServiceTest {
                 // Real clock on a non-JVM-default zone: layaway dates/timestamps must come
                 // from the Business Day timezone, never LocalDate(Time).now().
                 new com.billbull.backend.pos.businessdate.BusinessDayClock("Asia/Kolkata"),
-                sessionRepository);
+                sessionRepository,
+                resolutionMock,
+                settingsMock);
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(java.math.BigDecimal.ZERO);
         // save() returns the same entity with ids assigned, so the reserve loop can run.

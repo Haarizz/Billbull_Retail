@@ -92,6 +92,17 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
       """)
   List<Object[]> sumReservedQtyForProducts(@Param("productIds") List<Long> productIds);
 
+  @Query("""
+          SELECT i.product.id, dn.warehouse.id, COALESCE(SUM(i.currentQty * COALESCE(pp.conversion, 1)), 0)
+          FROM DeliveryNote dn JOIN dn.items i
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = i.product.id AND LOWER(pp.unit.name) = LOWER(i.unit) AND pp.isActive = true
+          WHERE i.product.id IN :productIds
+            AND dn.status IN ('DRAFT', 'DISPATCHED')
+          GROUP BY i.product.id, dn.warehouse.id
+      """)
+  List<Object[]> sumReservedQtyInDispatchedNotesForProductsByWarehouse(@Param("productIds") List<Long> productIds);
+
   List<DeliveryNote> findBySourceDocumentTypeAndSourceDocumentId(String sourceDocumentType,
       Long sourceDocumentId);
 

@@ -407,9 +407,9 @@ public class InventoryReportDataService {
                 .map(r -> {
                     Product p = productRepo.findByCodeAndIsActiveTrue(r.getSku()).orElse(null);
                     long overrides = p != null ? overrideCountByProduct.getOrDefault(p.getId(), 0L) : 0L;
-                    boolean allowNegative = p != null && p.getInventory() != null && p.getInventory().isAllowNegative();
-                    String rootIssue = allowNegative && overrides > 0
-                            ? "Intentional — product allows negative stock (" + overrides + " override txns)"
+                    boolean intentional = overrides > 0;
+                    String rootIssue = intentional
+                            ? "Intentional — global stock check bypassed (" + overrides + " override txns)"
                             : "Negative stock ledger balance — investigate";
                     return row(
                             "sku", r.getSku(),
@@ -418,17 +418,17 @@ public class InventoryReportDataService {
                             "warehouse", r.getWarehouse(),
                             "qty", r.getOnHand(),
                             "rootIssue", rootIssue,
-                            "allowNegative", allowNegative,
+                            "allowNegative", false, // Kept for API backwards compatibility
                             "overrideTxns", overrides,
                             "lastTxn", r.getLastSold(),
                             "costImpact", r.getValue(),
-                            "severity", allowNegative ? "Intentional" : severityForCost(r.getValue().abs()),
+                            "severity", intentional ? "Intentional" : severityForCost(r.getValue().abs()),
                             "batchNumber", r.getBatchNumber());
                 })
                 .toList();
 
-        long intentional = rows.stream().filter(r -> Boolean.TRUE.equals(r.get("allowNegative"))).count();
-        long unintentional = rows.size() - intentional;
+        long intentionalCount = rows.stream().filter(r -> ((Long) r.get("overrideTxns")) > 0).count();
+        long unintentional = rows.size() - intentionalCount;
         InventoryReportDataResponse report = base("negative-stock-mismatch", "Negative Stock / Mismatch",
                 "Items with stock below zero. Intentional = product has Allow Negative Stock enabled. Unintentional = data error.");
         report.setColumns(List.of(
