@@ -837,12 +837,16 @@ const BarcodePrinter = () => {
         try {
             const data = await getStockTakeSession(sessionId);
             setOpenedStockTakeSession(data);
-            // Default-select all batched rows with labelCount = batch quantity
+            // Default-select all batched and non-batched rows with appropriate label counts
             const initial = {};
             (data?.items || []).forEach(item => {
-                (item.batches || []).forEach(b => {
-                    initial[`${item.id}:${b.id}`] = { selected: true, labelCount: b.quantity || 1 };
-                });
+                if (item.batches && item.batches.length > 0) {
+                    item.batches.forEach(b => {
+                        initial[`${item.id}:${b.id}`] = { selected: true, labelCount: b.quantity || 1 };
+                    });
+                } else {
+                    initial[`${item.id}:nobatch`] = { selected: true, labelCount: item.countedQty ?? item.systemQty ?? 1 };
+                }
             });
             setSelectedBatchKeys(initial);
         } catch (e) {
@@ -856,41 +860,64 @@ const BarcodePrinter = () => {
         if (!openedStockTakeSession) return;
         let added = 0;
         (openedStockTakeSession.items || []).forEach(item => {
-            (item.batches || []).forEach(b => {
-                const key = `${item.id}:${b.id}`;
+            const product = {
+                code: item.sku,
+                name: item.productName,
+                sku: item.sku,
+                brand: item.brand || item.brandName || null,
+                brandName: item.brandName || item.brand || null,
+                price: item.price,
+                image: item.image,
+                barcode: item.barcode || null,
+                packings: item.barcode ? [{ isSale: true, barcode: item.barcode }] : [],
+                isBatch: !!item.batchEnabled,
+                batchEnabled: !!item.batchEnabled,
+                expiryEnabled: !!item.expiryEnabled,
+            };
+
+            if (item.batches && item.batches.length > 0) {
+                item.batches.forEach(b => {
+                    const key = `${item.id}:${b.id}`;
+                    const sel = selectedBatchKeys[key];
+                    if (!sel?.selected) return;
+                    const labels = parseInt(sel.labelCount, 10) || 1;
+                    
+                    setCart(prev => [...prev, {
+                        cartKey: `stocktake-${openedStockTakeSession.id}-${item.id}-${b.id || b.batchNumber}`,
+                        product: { ...product, id: `stk-${item.productId}-${b.id}` },
+                        qty: labels,
+                        barcode: item.barcode || null,
+                        productBarcode: item.barcode || null,
+                        unit: null,
+                        batchNumber: b.batchNumber,
+                        batchBarcode: b.batchNumber,
+                        expiryDate: b.expiryDate,
+                        batchEnabled: !!item.batchEnabled,
+                        expiryEnabled: !!item.expiryEnabled,
+                    }]);
+                    added++;
+                });
+            } else {
+                const key = `${item.id}:nobatch`;
                 const sel = selectedBatchKeys[key];
                 if (!sel?.selected) return;
                 const labels = parseInt(sel.labelCount, 10) || 1;
-                const product = {
-                    id: `stk-${item.productId}-${b.id}`,
-                    code: item.sku,
-                    name: item.productName,
-                    sku: item.sku,
-                    brand: item.brand || item.brandName || null,
-                    brandName: item.brandName || item.brand || null,
-                    price: item.price,
-                    image: item.image,
-                    barcode: item.barcode || null,
-                    packings: item.barcode ? [{ isSale: true, barcode: item.barcode }] : [],
-                    isBatch: !!item.batchEnabled,
-                    batchEnabled: !!item.batchEnabled,
-                    expiryEnabled: !!item.expiryEnabled,
-                };
+                
                 setCart(prev => [...prev, {
-                    cartKey: `stocktake-${openedStockTakeSession.id}-${item.id}-${b.id || b.batchNumber}`,
-                    product,
+                    cartKey: `stocktake-${openedStockTakeSession.id}-${item.id}-nobatch`,
+                    product: { ...product, id: `stk-${item.productId}-nobatch` },
                     qty: labels,
                     barcode: item.barcode || null,
                     productBarcode: item.barcode || null,
                     unit: null,
-                    batchNumber: b.batchNumber,
-                    batchBarcode: b.batchNumber,
-                    expiryDate: b.expiryDate,
+                    batchNumber: null,
+                    batchBarcode: null,
+                    expiryDate: null,
                     batchEnabled: !!item.batchEnabled,
                     expiryEnabled: !!item.expiryEnabled,
                 }]);
                 added++;
-            });
+            }
         });
         if (added > 0) {
             setShowStockTakeModal(false);
@@ -2001,14 +2028,14 @@ const BarcodePrinter = () => {
                                             <ArrowLeft size={12} /> Back to sessions
                                         </button>
 
-                                        {(openedStockTakeSession.items || []).filter(it => (it.batches || []).length > 0).length === 0 && (
+                                        {(openedStockTakeSession.items || []).length === 0 && (
                                             <div className="text-center text-sm text-slate-500 py-6">
-                                                No batched items in this session.
+                                                No printable items in this session.
                                             </div>
                                         )}
 
                                         {(openedStockTakeSession.items || []).map(item => {
-                                            if (!item.batches || item.batches.length === 0) return null;
+                                            const hasBatches = item.batches && item.batches.length > 0;
                                             return (
                                                 <div key={item.id} className="border border-slate-200 rounded-lg overflow-hidden">
                                                     <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
@@ -2019,46 +2046,82 @@ const BarcodePrinter = () => {
                                                         <thead className="bg-white text-[10px] uppercase tracking-wide text-slate-500">
                                                             <tr>
                                                                 <th className="px-3 py-1.5 w-8"></th>
-                                                                <th className="px-3 py-1.5 text-left">Batch #</th>
-                                                                <th className="px-3 py-1.5 text-left">Expiry</th>
+                                                                <th className="px-3 py-1.5 text-left">{hasBatches ? 'Batch #' : 'Type'}</th>
+                                                                <th className="px-3 py-1.5 text-left">{hasBatches ? 'Expiry' : ''}</th>
                                                                 <th className="px-3 py-1.5 text-right">Qty</th>
                                                                 <th className="px-3 py-1.5 text-right">Labels</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {item.batches.map(b => {
-                                                                const key = `${item.id}:${b.id}`;
-                                                                const sel = selectedBatchKeys[key] || { selected: false, labelCount: b.quantity || 1 };
-                                                                return (
-                                                                    <tr key={b.id} className="border-t border-slate-100">
-                                                                        <td className="px-3 py-1.5">
-                                                                            <input
-                                                                                type="checkbox"
-                                                                                checked={!!sel.selected}
-                                                                                onChange={(e) => setSelectedBatchKeys(prev => ({
-                                                                                    ...prev,
-                                                                                    [key]: { ...sel, selected: e.target.checked }
-                                                                                }))}
-                                                                            />
-                                                                        </td>
-                                                                        <td className="px-3 py-1.5 font-mono text-[11px]">{b.batchNumber}</td>
-                                                                        <td className="px-3 py-1.5">{b.expiryDate || '—'}</td>
-                                                                        <td className="px-3 py-1.5 text-right">{b.quantity}</td>
-                                                                        <td className="px-3 py-1.5 text-right">
-                                                                            <input
-                                                                                type="number"
-                                                                                min={1}
-                                                                                value={sel.labelCount}
-                                                                                onChange={(e) => setSelectedBatchKeys(prev => ({
-                                                                                    ...prev,
-                                                                                    [key]: { ...sel, labelCount: e.target.value }
-                                                                                }))}
-                                                                                className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
-                                                                            />
-                                                                        </td>
-                                                                    </tr>
-                                                                );
-                                                            })}
+                                                            {hasBatches ? (
+                                                                item.batches.map(b => {
+                                                                    const key = `${item.id}:${b.id}`;
+                                                                    const sel = selectedBatchKeys[key] || { selected: false, labelCount: b.quantity || 1 };
+                                                                    return (
+                                                                        <tr key={b.id} className="border-t border-slate-100">
+                                                                            <td className="px-3 py-1.5">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={!!sel.selected}
+                                                                                    onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                        ...prev,
+                                                                                        [key]: { ...sel, selected: e.target.checked }
+                                                                                    }))}
+                                                                                />
+                                                                            </td>
+                                                                            <td className="px-3 py-1.5 font-mono text-[11px]">{b.batchNumber}</td>
+                                                                            <td className="px-3 py-1.5">{b.expiryDate || '—'}</td>
+                                                                            <td className="px-3 py-1.5 text-right">{b.quantity}</td>
+                                                                            <td className="px-3 py-1.5 text-right">
+                                                                                <input
+                                                                                    type="number"
+                                                                                    min={1}
+                                                                                    value={sel.labelCount}
+                                                                                    onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                        ...prev,
+                                                                                        [key]: { ...sel, labelCount: e.target.value }
+                                                                                    }))}
+                                                                                    className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
+                                                                                />
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })
+                                                            ) : (
+                                                                (() => {
+                                                                    const key = `${item.id}:nobatch`;
+                                                                    const sel = selectedBatchKeys[key] || { selected: false, labelCount: item.countedQty ?? item.systemQty ?? 1 };
+                                                                    return (
+                                                                        <tr className="border-t border-slate-100 bg-slate-50/50">
+                                                                            <td className="px-3 py-1.5">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={!!sel.selected}
+                                                                                    onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                        ...prev,
+                                                                                        [key]: { ...sel, selected: e.target.checked }
+                                                                                    }))}
+                                                                                />
+                                                                            </td>
+                                                                            <td className="px-3 py-1.5 text-slate-500 italic">Non-batch</td>
+                                                                            <td className="px-3 py-1.5 text-slate-400">—</td>
+                                                                            <td className="px-3 py-1.5 text-right">{item.countedQty ?? item.systemQty ?? '—'}</td>
+                                                                            <td className="px-3 py-1.5 text-right">
+                                                                                <input
+                                                                                    type="number"
+                                                                                    min={1}
+                                                                                    value={sel.labelCount}
+                                                                                    onChange={(e) => setSelectedBatchKeys(prev => ({
+                                                                                        ...prev,
+                                                                                        [key]: { ...sel, labelCount: e.target.value }
+                                                                                    }))}
+                                                                                    className="w-16 border border-slate-200 rounded px-1 py-0.5 text-[11px] text-right"
+                                                                                />
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })()
+                                                            )}
                                                         </tbody>
                                                     </table>
                                                 </div>

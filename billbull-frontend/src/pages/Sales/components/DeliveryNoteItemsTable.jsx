@@ -9,7 +9,7 @@ import { getImageUrl } from '../../../utils/urlUtils';
 // list's normalized shape.
 
 const num = (v) => Number(v ?? 0);
-const nameOf = (it) => it.name || it.itemName || it.productName || it.desc || '';
+const nameOf = (it) => it.name || it.itemName || it.productName || it.description || it.desc || '';
 const skuOf = (it) => `${it.itemCode || it.code || ''}${it.barcode ? ` · ${it.barcode}` : ''}`.trim();
 const orderedOf = (it) => it.orderedQty ?? it.quantity ?? it.qty ?? it.currentQty ?? 0;
 const prevOf = (it) => it.prevDelivered ?? it.prevDeliveredQty ?? it.deliveredQty ?? 0;
