@@ -33,7 +33,7 @@ public class ProductExportService {
                 "Retail Price", "Wholesale Price", "Min Price", "Max Price", "Online Price", "Markup (%)", "GP (%)",
                 "Purchase Tax (%)", "Sales Tax (%)", "Tax Category", "HSN Code",
                 "Default Unit", "Reorder Unit", "Reorder Level", "Reorder Qty", 
-                "Safety Stock", "Min Stock", "Max Stock", "Allow Negative Stock?",
+                "Safety Stock", "Min Stock", "Max Stock",
                 "Procurement Type", "Default Vendor", "Warehouse", "Zone", "Locator", "Bin",
                 "Serial Tracking?", "Batch Tracking?", "Weighing Scale Item?", "Tags", "Packings"
             };
@@ -192,26 +192,22 @@ public class ProductExportService {
                     row.createCell(33).setCellValue(p.getInventory().getSafetyStock());
                     row.createCell(34).setCellValue(p.getInventory().getMinStock());
                     row.createCell(35).setCellValue(p.getInventory().getMaxStock());
-                    row.createCell(36).setCellValue(p.getInventory().isAllowNegative() ? "Yes" : "No");
-                    row.createCell(37).setCellValue(p.getInventory().getProcurementType());
-                    if (p.getInventory().getDefaultVendor() != null) row.createCell(38).setCellValue(p.getInventory().getDefaultVendor().getName());
-                    if (p.getInventory().getWarehouse() != null) row.createCell(39).setCellValue(p.getInventory().getWarehouse().getName());
-                    if (p.getInventory().getZone() != null) row.createCell(40).setCellValue(p.getInventory().getZone().getName());
-                    if (p.getInventory().getLocator() != null) row.createCell(41).setCellValue(p.getInventory().getLocator().getName());
-                    if (p.getInventory().getBin() != null) row.createCell(42).setCellValue(p.getInventory().getBin().getName());
+                    row.createCell(36).setCellValue(p.getInventory().getProcurementType());
+                    if (p.getInventory().getDefaultVendor() != null) row.createCell(37).setCellValue(p.getInventory().getDefaultVendor().getName());
+                    if (p.getInventory().getWarehouse() != null) row.createCell(38).setCellValue(p.getInventory().getWarehouse().getName());
+                    if (p.getInventory().getZone() != null) row.createCell(39).setCellValue(p.getInventory().getZone().getName());
+                    if (p.getInventory().getLocator() != null) row.createCell(40).setCellValue(p.getInventory().getLocator().getName());
+                    if (p.getInventory().getBin() != null) row.createCell(41).setCellValue(p.getInventory().getBin().getName());
                 }
 
                 // --- FLAGS ---
-                row.createCell(43).setCellValue(p.getProduct().isSerial() ? "Yes" : "No");
-                row.createCell(44).setCellValue(p.getProduct().isBatch() ? "Yes" : "No");
-                row.createCell(45).setCellValue(p.getProduct().isWeighing() ? "Yes" : "No");
+                row.createCell(42).setCellValue(p.getProduct().isSerial() ? "Yes" : "No");
+                row.createCell(43).setCellValue(p.getProduct().isBatch() ? "Yes" : "No");
+                row.createCell(44).setCellValue(p.getProduct().isWeighing() ? "Yes" : "No");
 
                 // --- TAGS ---
                 // Tags are not available in Product entity
-                // List<String> tags = p.getProduct().getTags();
-                // if (tags != null) {
-                //     row.createCell(46).setCellValue(String.join(", ", tags));
-                // }
+                row.createCell(45).setCellValue("");
 
                 // --- PACKINGS ---
                 if (p.getInventory() != null && p.getInventory().getPackings() != null) {
@@ -227,7 +223,7 @@ public class ProductExportService {
 
                         packingsStr.append(" | ");
                     }
-                    row.createCell(47).setCellValue(packingsStr.toString());
+                    row.createCell(46).setCellValue(packingsStr.toString());
                 }
             }
 

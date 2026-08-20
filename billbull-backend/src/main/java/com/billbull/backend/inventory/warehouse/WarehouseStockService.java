@@ -150,6 +150,51 @@ public class WarehouseStockService {
         return salesOrderReserved + deliveryNoteReserved + layawayReserved;
     }
 
+    public Map<Long, Map<Long, Integer>> getReservedQuantitiesByProductAndWarehouse(List<Product> products) {
+        Map<Long, Map<Long, Integer>> allocations = new HashMap<>();
+        if (products == null || products.isEmpty()) {
+            return allocations;
+        }
+
+        List<Long> batchProductIds = products.stream().filter(Product::isBatch).map(Product::getId).toList();
+        List<Long> nonBatchProductIds = products.stream().filter(p -> !p.isBatch()).map(Product::getId).toList();
+        List<String> nonBatchProductCodes = products.stream().filter(p -> !p.isBatch()).map(Product::getCode).toList();
+
+        if (!batchProductIds.isEmpty()) {
+            for (Object[] row : batchAllocationRepository.sumReservedQuantityForProductsByWarehouse(batchProductIds)) {
+                Long productId = (Long) row[0];
+                Long warehouseId = (Long) row[1];
+                int reservedQty = ((Number) row[2]).intValue();
+                allocations.computeIfAbsent(productId, k -> new HashMap<>()).merge(warehouseId, reservedQty, Integer::sum);
+            }
+        }
+
+        if (!nonBatchProductIds.isEmpty()) {
+            Map<Long, Map<Long, Integer>> soAllocations = getSalesOrderReservationAllocations(products);
+            for (Map.Entry<Long, Map<Long, Integer>> entry : soAllocations.entrySet()) {
+                Long productId = entry.getKey();
+                for (Map.Entry<Long, Integer> wEntry : entry.getValue().entrySet()) {
+                    allocations.computeIfAbsent(productId, k -> new HashMap<>()).merge(wEntry.getKey(), wEntry.getValue(), Integer::sum);
+                }
+            }
+
+            for (Object[] row : deliveryNoteRepo.sumReservedQtyInDispatchedNotesForProductsByWarehouse(nonBatchProductIds)) {
+                Long productId = (Long) row[0];
+                Long warehouseId = (Long) row[1];
+                int reservedQty = ((Number) row[2]).intValue();
+                allocations.computeIfAbsent(productId, k -> new HashMap<>()).merge(warehouseId, reservedQty, Integer::sum);
+            }
+
+            for (Object[] row : posStockReservationRepository.sumReservedQuantityForProductsByWarehouse(nonBatchProductCodes)) {
+                Long productId = (Long) row[0];
+                Long warehouseId = (Long) row[1];
+                int reservedQty = ((Number) row[2]).intValue();
+                allocations.computeIfAbsent(productId, k -> new HashMap<>()).merge(warehouseId, reservedQty, Integer::sum);
+            }
+        }
+        return allocations;
+    }
+
     public List<WarehouseStockResponse> getStock(Long warehouseId) {
         List<Object[]> rows = stockRepo.findStockByWarehouse(warehouseId);
         Warehouse warehouse = warehouseRepo.findById(warehouseId)

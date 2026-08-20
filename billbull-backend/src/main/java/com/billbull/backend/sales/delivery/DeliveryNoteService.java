@@ -370,10 +370,8 @@ public class DeliveryNoteService {
                         item.getProduct().getId())
                         .add(BigDecimal.valueOf(baseQty));
 
-                // Only enforce when stock check is enabled AND the product does not allow negative stock.
-                boolean productAllowsNegative = item.getProduct().getInventory() != null
-                        && item.getProduct().getInventory().isAllowNegative();
-                if (stockCheckRequired && !productAllowsNegative && available.compareTo(requested) < 0) {
+                // Only enforce when stock check is enabled
+                if (stockCheckRequired && available.compareTo(requested) < 0) {
                     throw new IllegalStateException(
                             "Insufficient stock for " + item.getProduct().getCode() +
                                     " | Available: " + available +
@@ -467,9 +465,7 @@ public class DeliveryNoteService {
                             dn.getWarehouse().getId(),
                             item.getProduct().getId());
 
-                    boolean productAllowsNegative = item.getProduct().getInventory() != null
-                            && item.getProduct().getInventory().isAllowNegative();
-                    if (stockCheckRequired && !productAllowsNegative && physicalAvailable.compareTo(requested) < 0) {
+                    if (stockCheckRequired && physicalAvailable.compareTo(requested) < 0) {
                         throw new IllegalStateException(
                                 "Concurrency/Stock Error: Insufficient physical stock for " + item.getProduct().getCode() +
                                         " | Available: " + physicalAvailable +
@@ -477,7 +473,8 @@ public class DeliveryNoteService {
                     }
 
                     // Deduct exact batch/bin identities so visible stock is reduced.
-                    postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc, productAllowsNegative && physicalAvailable.compareTo(requested) < 0);
+                    boolean allowNegative = !stockCheckRequired;
+                    postBatchAwareDeliveryDeduction(dn, item, baseQty + baseFoc, allowNegative);
                 }
 
             }
@@ -562,32 +559,56 @@ public class DeliveryNoteService {
         Long productId = item.getProduct().getId();
         int remaining = totalToDeduct;
 
+        java.util.Map<Long, Integer> binDeductions = new java.util.HashMap<>();
+
         if (item.getBinId() != null) {
-            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, item.getBinId(), remaining, negativeOverride);
+            remaining = collectDeductionsFromBin(warehouseId, productId, item.getBinId(), remaining, binDeductions);
             if (remaining > 0 && !negativeOverride) {
                 throw new IllegalStateException(
                         "Selected bin does not have enough batch stock for " + item.getProduct().getCode()
                                 + ". Short by: " + remaining);
             }
-            return;
-        }
-
-        for (Object[] row : stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId)) {
-            if (remaining <= 0) {
-                break;
+        } else {
+            for (Object[] row : stockMovementRepo.findActiveBinsByWarehouseAndProduct(warehouseId, productId)) {
+                if (remaining <= 0) {
+                    break;
+                }
+                Long binId = (Long) row[0];
+                remaining = collectDeductionsFromBin(warehouseId, productId, binId, remaining, binDeductions);
             }
-            Long binId = (Long) row[0];
-            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, binId, remaining, negativeOverride);
+
+            if (remaining > 0) {
+                remaining = collectDeductionsFromBin(warehouseId, productId, null, remaining, binDeductions);
+            }
+
+            if (remaining > 0 && !negativeOverride && salesSettingsService.getSettings().isStockCheckRequired()) {
+                throw new IllegalStateException(
+                        "Insufficient batch/bin stock for " + item.getProduct().getCode()
+                                + ". Short by: " + remaining);
+            }
         }
 
-        if (remaining > 0) {
-            remaining = postDeductionFromBinIdentities(dn, productId, warehouseId, null, remaining, negativeOverride);
+        if (remaining > 0 && negativeOverride) {
+            binDeductions.merge(item.getBinId(), remaining, Integer::sum);
         }
 
-        if (remaining > 0 && !negativeOverride && salesSettingsService.getSettings().isStockCheckRequired()) {
-            throw new IllegalStateException(
-                    "Insufficient batch/bin stock for " + item.getProduct().getCode()
-                            + ". Short by: " + remaining);
+        for (java.util.Map.Entry<Long, Integer> entry : binDeductions.entrySet()) {
+            Long binId = entry.getKey();
+            int deductQty = entry.getValue();
+            BinLocation location = resolveBinLocation(binId);
+            stockMovementService.postOutboundStock(
+                    StockSourceType.DELIVERY_NOTE,
+                    dn.getId(),
+                    productId,
+                    warehouseId,
+                    binId,
+                    location.zoneId,
+                    location.locatorId,
+                    null,
+                    null,
+                    deductQty,
+                    dn.getDnNumber(),
+                    negativeOverride);
         }
     }
 
@@ -626,18 +647,16 @@ public class DeliveryNoteService {
         batchSelectionService.markConsumedForDelivery(dn, item, allocations);
     }
 
-    private int postDeductionFromBinIdentities(
-            DeliveryNote dn,
-            Long productId,
+    private int collectDeductionsFromBin(
             Long warehouseId,
+            Long productId,
             Long binId,
             int requestedQty,
-            boolean negativeOverride) {
+            java.util.Map<Long, Integer> binDeductions) {
         if (requestedQty <= 0) {
             return 0;
         }
 
-        BinLocation location = resolveBinLocation(binId);
         int remaining = requestedQty;
 
         for (StockIdentity identity : loadPositiveStockIdentities(warehouseId, productId, binId)) {
@@ -646,19 +665,7 @@ public class DeliveryNoteService {
             }
 
             int deductQty = Math.min(remaining, identity.quantity);
-            stockMovementService.postOutboundStock(
-                    StockSourceType.DELIVERY_NOTE,
-                    dn.getId(),
-                    productId,
-                    warehouseId,
-                    binId,
-                    location.zoneId,
-                    location.locatorId,
-                    identity.batchNumber,
-                    identity.expiryDate,
-                    deductQty,
-                    dn.getDnNumber(),
-                    negativeOverride);
+            binDeductions.merge(binId, deductQty, Integer::sum);
             remaining -= deductQty;
         }
 

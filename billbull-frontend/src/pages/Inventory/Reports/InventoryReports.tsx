@@ -30,7 +30,7 @@ import { Separator } from "../../Sales/Reports/ui/separator";
 import { Input } from "../../Sales/Reports/ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { getInventoryReportData } from "../../../api/inventoryReportsApi";
-import { searchExactProducts } from "../../../api/productsApi";
+import { getProductsList } from "../../../api/productsApi";
 import { getWarehouses } from "../../../api/warehouseApi";
 import { getBrands } from "../../../api/brandsApi";
 import { getDepartments } from "../../../api/departmentsApi";
@@ -924,18 +924,90 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
   const [productSearch, setProductSearch] = useState("");
   const [productOpen, setProductOpen] = useState(false);
   const [productOptions, setProductOptions] = useState<any[]>([]);
+  const [productHighlightedIndex, setProductHighlightedIndex] = useState(-1);
+  const [isProductSearching, setIsProductSearching] = useState(false);
+  const searchContainerRef = React.useRef<HTMLDivElement>(null);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setProductOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   React.useEffect(() => {
     if (!productSearch || productSearch.length < 2) {
       setProductOptions([]);
+      setIsProductSearching(false);
       return;
     }
+    
+    setIsProductSearching(true);
+    const controller = new AbortController();
+    
     const handler = setTimeout(() => {
-      searchExactProducts(productSearch).then((res) => {
-        setProductOptions(res?.data || []);
-      }).catch(() => {});
+      getProductsList(0, 20, productSearch, controller.signal).then((res: any) => {
+        if (!res || !res.content) {
+          setProductOptions([]);
+          setIsProductSearching(false);
+          return;
+        }
+        const options = res.content;
+        
+        // Sort results to prioritize exact matches and starts-with matches
+        const q = productSearch.toLowerCase().trim();
+        options.sort((a: any, b: any) => {
+          const aCode = String(a.code || "").toLowerCase();
+          const aSku = String(a.sku || "").toLowerCase();
+          const aBar = String(a.barcode || "").toLowerCase();
+          const aName = String(a.name || "").toLowerCase();
+          
+          const bCode = String(b.code || "").toLowerCase();
+          const bSku = String(b.sku || "").toLowerCase();
+          const bBar = String(b.barcode || "").toLowerCase();
+          const bName = String(b.name || "").toLowerCase();
+          
+          // 1. Exact matches (SKU, Code, Barcode)
+          const aExactId = aCode === q || aSku === q || aBar === q;
+          const bExactId = bCode === q || bSku === q || bBar === q;
+          if (aExactId && !bExactId) return -1;
+          if (!aExactId && bExactId) return 1;
+          
+          // 2. Starts-with matches (SKU, Code, Barcode)
+          const aStartsId = aCode.startsWith(q) || aSku.startsWith(q) || aBar.startsWith(q);
+          const bStartsId = bCode.startsWith(q) || bSku.startsWith(q) || bBar.startsWith(q);
+          if (aStartsId && !bStartsId) return -1;
+          if (!aStartsId && bStartsId) return 1;
+          
+          // 3. Exact name match
+          if (aName === q && bName !== q) return -1;
+          if (aName !== q && bName === q) return 1;
+          
+          // 4. Starts-with name match
+          if (aName.startsWith(q) && !bName.startsWith(q)) return -1;
+          if (!aName.startsWith(q) && bName.startsWith(q)) return 1;
+          
+          return 0;
+        });
+        
+        setProductOptions(options);
+        setIsProductSearching(false);
+        setProductHighlightedIndex(-1);
+      }).catch((err: any) => {
+        if (err.name !== "CanceledError" && err.code !== "ERR_CANCELED") {
+           setIsProductSearching(false);
+        }
+      });
     }, 300);
-    return () => clearTimeout(handler);
+    
+    return () => {
+      clearTimeout(handler);
+      controller.abort();
+    };
   }, [productSearch]);
 
   const [, setDataRevision] = useState(0);
@@ -1566,47 +1638,101 @@ export default function InventoryReports({ onNavigate }: InventoryReportsProps) 
                     <div className="space-y-1.5 relative">
                       <label className="text-[11px] text-slate-600 flex items-center justify-between">
                         <span className="flex items-center gap-1"><Barcode className="h-3.5 w-3.5" /> Item / SKU</span>
-                        {productId && (
-                          <button onClick={() => { setProductId(null); setProductName(""); setItemSearch(""); setProductSearch(""); }} className="text-red-500 hover:text-red-700 text-[10px]">Clear</button>
-                        )}
                       </label>
-                      <div className="relative">
-                        <Input
-                          value={productOpen ? productSearch : (productName ? productName : itemSearch)}
-                          onChange={(e) => {
-                            setProductSearch(e.target.value);
-                            setItemSearch(e.target.value);
-                            setProductOpen(true);
-                            if (productId) {
-                                setProductId(null);
-                                setProductName("");
-                            }
-                          }}
-                          onFocus={() => { setProductOpen(true); setProductSearch(itemSearch); }}
-                          onBlur={() => setTimeout(() => setProductOpen(false), 150)}
-                          placeholder="Search item name / SKU / barcode…"
-                          className="h-8 text-[11px] bg-slate-50 border-slate-200 pr-6"
-                        />
-                        {productOpen && productOptions.length > 0 && (
-                          <div className="absolute z-50 mt-1 max-h-48 w-full min-w-[240px] overflow-auto rounded-md border border-slate-200 bg-white p-1 shadow-lg shadow-slate-200/50">
-                            {productOptions.map((p) => (
-                              <button
-                                key={p.id}
-                                onClick={() => {
-                                  setProductId(String(p.id));
-                                  setProductName(p.name);
-                                  setItemSearch("");
-                                  setProductOpen(false);
-                                }}
-                                className="flex w-full flex-col text-left items-start rounded-sm px-2 py-1.5 text-[11px] hover:bg-[#FFF6D8] hover:text-amber-900 transition-colors"
-                              >
-                                <span className="font-medium truncate">{p.name}</span>
-                                <span className="text-[9px] text-slate-500 font-mono mt-0.5">
-                                  SKU: {p.sku || 'N/A'} {p.barcode ? `| BC: ${p.barcode}` : ''}
-                                </span>
-                              </button>
-                            ))}
+                      <div className="relative" ref={searchContainerRef}>
+                        {productId ? (
+                          <div className="flex items-center justify-between h-8 text-[11px] bg-amber-50 border border-amber-200 text-amber-900 rounded-md px-2 w-full transition-colors">
+                            <span className="truncate font-medium flex-1 mr-2">{productName}</span>
+                            <button 
+                              onClick={() => { setProductId(null); setProductName(""); setItemSearch(""); setProductSearch(""); setTimeout(() => searchInputRef.current?.focus(), 0); }}
+                              className="text-amber-500 hover:text-amber-800 focus:outline-none flex-shrink-0"
+                              title="Clear selection"
+                            >
+                              <span className="text-sm font-bold leading-none">&times;</span>
+                            </button>
                           </div>
+                        ) : (
+                          <>
+                            <Input
+                              ref={searchInputRef}
+                              value={productSearch}
+                              onChange={(e) => {
+                                setProductSearch(e.target.value);
+                                setItemSearch(e.target.value);
+                                setProductOpen(true);
+                              }}
+                              onFocus={() => setProductOpen(true)}
+                              onKeyDown={(e) => {
+                                if (e.key === "ArrowDown") {
+                                  e.preventDefault();
+                                  setProductHighlightedIndex(prev => (prev < productOptions.length - 1 ? prev + 1 : prev));
+                                } else if (e.key === "ArrowUp") {
+                                  e.preventDefault();
+                                  setProductHighlightedIndex(prev => (prev > 0 ? prev - 1 : prev));
+                                } else if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (productHighlightedIndex >= 0 && productHighlightedIndex < productOptions.length) {
+                                    const p = productOptions[productHighlightedIndex];
+                                    setProductId(String(p.id));
+                                    setProductName(p.name);
+                                    setItemSearch("");
+                                    setProductSearch("");
+                                    setProductOpen(false);
+                                  }
+                                } else if (e.key === "Escape") {
+                                  setProductOpen(false);
+                                }
+                              }}
+                              placeholder="Search item name / SKU / barcode…"
+                              className="h-8 text-[11px] bg-slate-50 border-slate-200 pr-6"
+                            />
+                            {productOpen && (productOptions.length > 0 || isProductSearching || (productSearch.length > 0 && productSearch.length < 2)) && (
+                              <div className="absolute z-50 mt-1 max-h-60 w-full min-w-[320px] overflow-auto rounded-md border border-slate-200 bg-white shadow-lg shadow-slate-200/50">
+                                {isProductSearching ? (
+                                  <div className="p-3 text-center text-[11px] text-slate-500 flex items-center justify-center gap-2">
+                                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-amber-500"></div>
+                                    Searching products...
+                                  </div>
+                                ) : productSearch.length > 0 && productSearch.length < 2 ? (
+                                  <div className="p-3 text-center text-[11px] text-slate-500">Type at least 2 characters to search.</div>
+                                ) : productOptions.length === 0 ? (
+                                  <div className="p-4 text-center text-[11px] text-slate-500 flex flex-col gap-1">
+                                    <span className="font-medium text-slate-700">No products found</span>
+                                    <span>Try searching by name, SKU, barcode, or item code.</span>
+                                  </div>
+                                ) : (
+                                  <div className="p-1">
+                                    {productOptions.map((p, idx) => (
+                                      <button
+                                        key={p.id}
+                                        onClick={() => {
+                                          setProductId(String(p.id));
+                                          setProductName(p.name);
+                                          setItemSearch("");
+                                          setProductSearch("");
+                                          setProductOpen(false);
+                                        }}
+                                        onMouseEnter={() => setProductHighlightedIndex(idx)}
+                                        className={`flex w-full flex-col text-left items-start rounded-sm px-3 py-2 text-[11px] transition-colors border-b border-slate-50 last:border-0 ${productHighlightedIndex === idx ? 'bg-[#FFF6D8]' : 'hover:bg-slate-50'}`}
+                                      >
+                                        <span className={`font-semibold truncate w-full ${productHighlightedIndex === idx ? 'text-amber-900' : 'text-slate-800'}`}>{p.name}</span>
+                                        <div className="flex flex-wrap items-center gap-x-3 mt-1 text-[10px] text-slate-500 font-mono">
+                                          {p.sku && <span>SKU: <span className="text-slate-700">{p.sku}</span></span>}
+                                          {p.barcode && <span>BC: <span className="text-slate-700">{p.barcode}</span></span>}
+                                          {p.code && p.code !== p.sku && p.code !== p.barcode && <span>Code: <span className="text-slate-700">{p.code}</span></span>}
+                                        </div>
+                                        {p.departmentName && (
+                                          <div className="mt-1 text-[9px] text-slate-400">
+                                            Category: <span className="text-slate-500">{p.departmentName}</span>
+                                          </div>
+                                        )}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>

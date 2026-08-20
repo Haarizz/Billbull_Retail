@@ -156,7 +156,6 @@ const INITIAL_FORM_STATE = {
   safetyStock: 0,
   minStock: 0,
   maxStock: 0,
-  allowNegative: false,
   defaultVendor: '',
   procurementType: 'Normal Purchase',
   warehouse: '',
@@ -309,7 +308,6 @@ const buildProductPayload = (formData) => {
       safetyStock: formData.safetyStock,
       minStock: formData.minStock,
       maxStock: formData.maxStock,
-      allowNegative: formData.allowNegative,
       defaultVendor: formData.defaultVendor ? { id: Number(formData.defaultVendor) } : null,
       procurementType: formData.procurementType,
       warehouse: formData.warehouse ? { id: Number(formData.warehouse) } : null,
@@ -342,7 +340,6 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   const { hasAnyRole, canApprove } = usePermissions();
   const { activeBranchId } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
-  const canSetNegativeStock = canApprove('inventory');
   const [currentStep, setCurrentStep] = useState(1);
   const [subDepartments, setSubDepartments] = useState([]);
   const [zones, setZones] = useState([]);
@@ -1336,21 +1333,6 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Max Stock</label>
                     <input type="number" value={formData.maxStock} onChange={(e) => handleInputChange('maxStock', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50" placeholder="0" />
-                  </div>
-                  <div className="pt-2">
-                    <label className={`flex items-center gap-2 text-sm ${canSetNegativeStock ? 'cursor-pointer text-slate-600' : 'cursor-not-allowed text-slate-400'}`}>
-                      <input
-                        type="checkbox"
-                        checked={formData.allowNegative}
-                        onChange={(e) => canSetNegativeStock && handleInputChange('allowNegative', e.target.checked)}
-                        disabled={!canSetNegativeStock}
-                        className="rounded text-[#F5C742] focus:ring-[#F5C742] disabled:opacity-50 disabled:cursor-not-allowed"
-                      />
-                      Allow Negative Stock (Role Based)
-                      {!canSetNegativeStock && (
-                        <span className="text-xs text-slate-400">(Requires Inventory Approve permission)</span>
-                      )}
-                    </label>
                   </div>
                 </div>
               </div>

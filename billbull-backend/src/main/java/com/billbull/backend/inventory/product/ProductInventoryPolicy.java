@@ -30,7 +30,6 @@ public class ProductInventoryPolicy extends BaseEntity {
     private Integer safetyStock;
     private Integer minStock;
     private Integer maxStock;
-    private boolean allowNegative;
 
     @ManyToOne
     private Vendor defaultVendor;
@@ -124,14 +123,6 @@ public class ProductInventoryPolicy extends BaseEntity {
 
     public void setMaxStock(Integer maxStock) {
         this.maxStock = maxStock;
-    }
-
-    public boolean isAllowNegative() {
-        return allowNegative;
-    }
-
-    public void setAllowNegative(boolean allowNegative) {
-        this.allowNegative = allowNegative;
     }
 
     public Vendor getDefaultVendor() {

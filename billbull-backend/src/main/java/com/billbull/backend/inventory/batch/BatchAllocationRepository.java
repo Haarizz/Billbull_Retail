@@ -112,4 +112,14 @@ public interface BatchAllocationRepository extends JpaRepository<BatchAllocation
     BigDecimal sumReservedByProductAndBin(
             @Param("productId") Long productId,
             @Param("binId") Long binId);
+
+    @Query("""
+            SELECT a.productId, b.warehouseId, COALESCE(SUM(a.quantity), 0)
+            FROM BatchAllocation a
+            JOIN a.batchMaster b
+            WHERE a.productId IN :productIds
+              AND a.status = com.billbull.backend.inventory.batch.BatchAllocationStatus.RESERVED
+            GROUP BY a.productId, b.warehouseId
+            """)
+    List<Object[]> sumReservedQuantityForProductsByWarehouse(@Param("productIds") Collection<Long> productIds);
 }
