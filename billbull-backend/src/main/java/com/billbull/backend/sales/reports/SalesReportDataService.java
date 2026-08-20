@@ -1177,9 +1177,9 @@ public class SalesReportDataService {
                 .map(row -> row(
                         "item", row.get("item"),
                         "category", row.get("category"),
-                        "qtySold", row.get("qtySold"),
-                        "turnoverDays", n(row.get("qtySold")) <= 0 ? 999 : Math.max(1, 90 / n(row.get("qtySold"))),
-                        "stockSignal", n(row.get("qtySold")) > 100 ? "Fast" : n(row.get("qtySold")) < 10 ? "Slow" : "Normal",
+                        "qtySold", row.get("netQty"),
+                        "turnoverDays", n(row.get("netQty")) <= 0 ? 999 : Math.max(1, 90 / n(row.get("netQty"))),
+                        "stockSignal", n(row.get("netQty")) > 100 ? "Fast" : n(row.get("netQty")) < 10 ? "Slow" : "Normal",
                         "netRevenue", row.get("netRevenue")))
                 .sorted(Comparator.comparingDouble(r -> n(r.get("turnoverDays"))))
                 .collect(Collectors.toList());
