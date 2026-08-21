@@ -257,6 +257,9 @@ public class LedgerService {
         }
 
         // 5. Finalize and Save Entry
+        if (entry.getBranch() == null) {
+            entry.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        }
         entry.setRunningBalance(acc.getBalanceAmount());
         entry.setBalanceType(acc.getBalanceType());
         entry.setAccountName(acc.getName());

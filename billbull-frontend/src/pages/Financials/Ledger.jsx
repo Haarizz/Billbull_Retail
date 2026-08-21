@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import toast from 'react-hot-toast';
 import {
   BookOpen,
   FileText,
@@ -770,11 +771,13 @@ const Ledger = () => {
 
     try {
       await api.createTransaction(newTxn);
+      toast.success("Transaction recorded successfully");
       await fetchData();
       setIsTransactionModalOpen(false);
     } catch (err) {
       console.error("Error saving transaction", err);
-      alert("Failed to save transaction");
+      const msg = err.response?.data?.message || err.message || "Failed to save transaction";
+      toast.error(msg);
     }
   };
 
@@ -1146,8 +1149,9 @@ const Ledger = () => {
   // BB-033: Filter GL entries by account, date range, and text search
   const filteredGlData = glData.filter(entry => {
     const matchesAccount = !glFilterAccount || entry.accCode === glFilterAccount || entry.accName === glFilterAccount;
-    const matchesFrom = !glFilterFrom || (entry.date && entry.date >= glFilterFrom);
-    const matchesTo = !glFilterTo || (entry.date && entry.date <= glFilterTo);
+    const entryDateStr = entry.date ? String(entry.date).split('T')[0] : '';
+    const matchesFrom = !glFilterFrom || (entryDateStr && entryDateStr >= glFilterFrom);
+    const matchesTo = !glFilterTo || (entryDateStr && entryDateStr <= glFilterTo);
     const q = glTextSearch.toLowerCase();
     const matchesText = !q || (
       (entry.accCode && entry.accCode.toLowerCase().includes(q)) ||
@@ -1980,8 +1984,9 @@ const glAccountOptions = accounts
             (entry.accName && entry.accName.toLowerCase().includes(q)) ||
             (entry.desc && entry.desc.toLowerCase().includes(q))
           );
-          const matchesFrom = !txnFilterFrom || (entry.date && entry.date >= txnFilterFrom);
-          const matchesTo = !txnFilterTo || (entry.date && entry.date <= txnFilterTo);
+          const entryDateStr = entry.date ? String(entry.date).split('T')[0] : '';
+          const matchesFrom = !txnFilterFrom || (entryDateStr && entryDateStr >= txnFilterFrom);
+          const matchesTo = !txnFilterTo || (entryDateStr && entryDateStr <= txnFilterTo);
           const matchesAccount = !txnFilterAccount || entry.accCode === txnFilterAccount;
           return matchesText && matchesFrom && matchesTo && matchesAccount;
         });
