@@ -192,6 +192,7 @@ public class JournalEntryService {
             le.setTransactionDate(entry.getDate());
             le.setVoucherNo(entry.getEntryNumber());
             le.setJournalId(entry.getId().toString());
+            le.setBranch(entry.getBranch());
 
             String accountCode = line.getAccountCode();
             if (accountCode == null || accountCode.trim().isEmpty()) {
