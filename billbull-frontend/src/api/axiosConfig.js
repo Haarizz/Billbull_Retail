@@ -113,7 +113,10 @@ api.interceptors.response.use(
 
     // Permission denied handling (403)
     if (error.response?.status === 403 && !isAuthEndpoint(error.config)) {
-      toast.error("You do not have permission to perform this action.", { id: "permission-denied", duration: 5000 });
+      const errMsg = error.response?.data?.message;
+      if (errMsg !== 'SUPERVISOR_AUTHORIZATION_REQUIRED') {
+        toast.error("You do not have permission to perform this action.", { id: "permission-denied", duration: 5000 });
+      }
       return Promise.reject(error);
     }
 
