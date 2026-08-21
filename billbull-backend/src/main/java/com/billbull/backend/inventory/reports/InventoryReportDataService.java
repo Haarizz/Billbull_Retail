@@ -51,6 +51,10 @@ import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
+import com.billbull.backend.sales.returns.SalesReturn;
+import com.billbull.backend.sales.returns.SalesReturnItem;
+import com.billbull.backend.sales.returns.SalesReturnRepository;
+import com.billbull.backend.sales.returns.SalesReturnStatus;
 
 @Service
 @Transactional(readOnly = true)
@@ -74,6 +78,7 @@ public class InventoryReportDataService {
     // Branch-Level Inventory Phase 10 follow-up — branch-scopes the /data/{reportId} report family
     // (the primary SOH/low/out/valuation reports were already scoped via InventoryReportService).
     private final com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver;
+    private final SalesReturnRepository salesReturnRepo;
 
     public InventoryReportDataService(
             InventoryReportService stockReportService,
@@ -89,7 +94,8 @@ public class InventoryReportDataService {
             PurchaseInvoiceRepository purchaseInvoiceRepo,
             GrnRepository grnRepo,
             com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepo,
-            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver) {
+            com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
+            SalesReturnRepository salesReturnRepo) {
         this.stockReportService = stockReportService;
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
@@ -104,6 +110,7 @@ public class InventoryReportDataService {
         this.grnRepo = grnRepo;
         this.glBalanceRepo = glBalanceRepo;
         this.branchScopeResolver = branchScopeResolver;
+        this.salesReturnRepo = salesReturnRepo;
     }
 
     public InventoryReportDataResponse getReport(String reportId, Long warehouseId) {
@@ -162,7 +169,7 @@ public class InventoryReportDataService {
             case "barcode_audit", "barcode-label-audit" -> barcodeLabelAudit(scope);
             case "scale_export", "weighing-scale-export" -> weighingScaleExport(scope);
             case "dead_stock", "dead-slow-moving-stock" -> deadSlowMovingStock(warehouseId, allBranches, dateTo, departmentId, brandId, productId, search);
-            case "fast_moving", "fast-moving-items" -> fastMovingItems(scope);
+            case "fast_moving", "fast-moving-items" -> fastMovingItems(scope, dateFrom, dateTo);
             case "bin_stock", "warehouse-bin-stock" -> warehouseBinStock(warehouseId, scope);
             default -> throw new IllegalArgumentException("Unknown inventory report: " + reportId);
         };
@@ -1132,28 +1139,52 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse fastMovingItems(java.util.Collection<Long> scope) {
-        LocalDate cutoff = LocalDate.now().minusDays(30);
+    private InventoryReportDataResponse fastMovingItems(java.util.Collection<Long> scope, LocalDate dateFrom, LocalDate dateTo) {
+        if (dateFrom == null) dateFrom = LocalDate.now().minusDays(30);
+        if (dateTo == null) dateTo = LocalDate.now();
+
         Map<String, MarginAccumulator> acc = new LinkedHashMap<>();
         for (SalesInvoice invoice : salesInvoiceRepo.findAll()) {
-            if (invoice.getStatus() == SalesInvoiceStatus.CANCELLED || invoice.getInvoiceDate() == null || invoice.getInvoiceDate().isBefore(cutoff)) {
-                continue;
-            }
+            if (invoice.getStatus() == SalesInvoiceStatus.CANCELLED || invoice.getStatus() == SalesInvoiceStatus.DRAFT || invoice.getInvoiceDate() == null) continue;
+            if (invoice.getInvoiceDate().isBefore(dateFrom) || invoice.getInvoiceDate().isAfter(dateTo)) continue;
             if (!inScope(scope, invoice.getBranchId())) continue;
+
             for (SalesInvoiceItem item : invoice.getItems()) {
                 String key = firstNonBlank(item.getSku(), item.getItemCode(), item.getItemName());
                 MarginAccumulator a = acc.computeIfAbsent(key, k -> new MarginAccumulator(key, item.getItemName()));
                 a.qty = a.qty.add(bd(item.getQuantity()));
-                a.sales = a.sales.add(bd(item.getNetAmount()));
+                if (item.getFoc() != null) {
+                    a.qty = a.qty.add(bd(item.getFoc()));
+                }
+                a.sales = a.sales.add(bd(item.getNetAmount() != null ? item.getNetAmount() : item.getGrossAmount()));
             }
         }
+        
+        for (SalesReturn ret : salesReturnRepo.findAll()) {
+            if (ret.getStatus() != null && ret.getStatus() != SalesReturnStatus.APPROVED) continue;
+            if (ret.getReturnDate() == null || ret.getReturnDate().isBefore(dateFrom) || ret.getReturnDate().isAfter(dateTo)) continue;
+            if (ret.getBranch() != null && !inScope(scope, ret.getBranch().getId())) continue;
+            if (ret.getItems() == null) continue;
+
+            for (SalesReturnItem item : ret.getItems()) {
+                String key = firstNonBlank(item.getItemCode(), item.getItemName());
+                MarginAccumulator a = acc.computeIfAbsent(key, k -> new MarginAccumulator(key, item.getItemName()));
+                a.qty = a.qty.subtract(bd(item.getReturnQty()));
+                a.sales = a.sales.subtract(bd(item.getTotal()));
+            }
+        }
+
+        long days = ChronoUnit.DAYS.between(dateFrom, dateTo) + 1;
+        if (days < 1) days = 1;
+        BigDecimal daysBd = new BigDecimal(days);
+
         List<Map<String, Object>> rows = acc.values().stream()
                 .map(a -> row(
                         "sku", a.sku,
                         "item", a.item,
                         "qtySold", a.qty,
                         "salesValue", a.sales,
-                        "avgDailyQty", a.qty.divide(new BigDecimal("30"), 2, RoundingMode.HALF_UP),
+                        "avgDailyQty", a.qty.divide(daysBd, 2, RoundingMode.HALF_UP),
                         "rankBy", "Qty"))
                 .sorted((a, b) -> bd(b.get("qtySold")).compareTo(bd(a.get("qtySold"))))
                 .toList();

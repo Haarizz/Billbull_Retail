@@ -87,6 +87,7 @@ public class PosCheckoutController {
      *  time, QR fallback). POS *business dates* do NOT come from here — see
      *  {@link #posBusinessDate(Long)}. */
     private final com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock;
+    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -107,7 +108,9 @@ public class PosCheckoutController {
                                   com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock,
                                   com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate,
                                   com.billbull.backend.security.ModulePermissionService modulePermissionService,
-                                  com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService) {
+                                  com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService,
+                                  com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
+        this.ownershipAccessService = ownershipAccessService;
         this.creditVoucherService = creditVoucherService;
         this.modulePermissionService = modulePermissionService;
         this.closureWorkflowGate = closureWorkflowGate;
@@ -653,10 +656,21 @@ public class PosCheckoutController {
         SalesInvoice invoice = invoiceRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
 
+        boolean isOwner = ownershipAccessService.canAccessRecord(invoice.getCreatedByUserId(), java.util.List.of());
+        boolean isAuthorized = isOwner;
+        if (!isOwner) {
+            if (verifySupervisorCredentials(req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(), req.getSupervisorOverridePin(), req.getTerminalId())) {
+                isAuthorized = true;
+                auditService.logDeliverySettlementAuthorized(req.getSessionId(), req.getTerminalId(), req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(), invoice.getId(), invoice.getInvoiceNumber());
+            } else {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "SUPERVISOR_AUTHORIZATION_REQUIRED");
+            }
+        }
+
         double invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal().doubleValue() : 0.0;
         double alreadyPaid = invoice.getAmountPaid() != null ? invoice.getAmountPaid().doubleValue() : 0.0;
         double balanceDue  = Math.max(0, invoiceTotal - alreadyPaid);
-        if (balanceDue <= 0.001) return ResponseEntity.ok(invoiceService.getById(id));
+        if (balanceDue <= 0.001) return ResponseEntity.ok(isAuthorized && !isOwner ? invoiceService.getByIdBypassingOwnership(id) : invoiceService.getById(id));
 
         // Delivery settlement runs through the same allocation engine as checkout: same
         // over-allocation guard, same cash capping, same summary label. There is one
@@ -673,18 +687,27 @@ public class PosCheckoutController {
         for (ResolvedPaymentAllocation allocation : plan.getAllocations()) {
             if (allocation.getAmount() <= 0.001) continue;
             if (!allocation.isReceipt()) continue; // credit stays on the customer's ledger
-            invoiceService.recordPayment(id, allocation.getAmount(), allocation.getModeLabel(),
-                    allocation.getReference(),
-                    invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : posBusinessDate(req.getSessionId()),
-                    allocation.getBankAccountName(),
-                    null, splitGroupId, combinedMode);
+            
+            if (isAuthorized && !isOwner) {
+                invoiceService.recordPaymentForAuthorizedDeliverySettlement(id, allocation.getAmount(), allocation.getModeLabel(),
+                        allocation.getReference(),
+                        invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : posBusinessDate(req.getSessionId()),
+                        allocation.getBankAccountName(),
+                        null, splitGroupId, combinedMode);
+            } else {
+                invoiceService.recordPayment(id, allocation.getAmount(), allocation.getModeLabel(),
+                        allocation.getReference(),
+                        invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : posBusinessDate(req.getSessionId()),
+                        allocation.getBankAccountName(),
+                        null, splitGroupId, combinedMode);
+            }
         }
 
         auditService.logCheckoutCompleted(req.getSessionId(), req.getTerminalId(),
                 req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(),
                 id, invoice.getInvoiceNumber());
         terminalActivityService.recordActivity(req.getTerminalId(), "CHECKOUT");
-        return ResponseEntity.ok(invoiceService.getById(id));
+        return ResponseEntity.ok(isAuthorized && !isOwner ? invoiceService.getByIdBypassingOwnership(id) : invoiceService.getById(id));
     }
 
     /**
@@ -741,8 +764,18 @@ public class PosCheckoutController {
         private Long sessionId;
         private String terminalId;
         private Long branchId;
+        private String supervisorOverrideEmail;
+        private String supervisorOverridePassword;
+        private String supervisorOverridePin;
         /** Progressive payment allocations — the canonical shape, same as checkout. */
         private List<PosPaymentAllocation> paymentAllocations;
+
+        public String getSupervisorOverrideEmail() { return supervisorOverrideEmail; }
+        public void setSupervisorOverrideEmail(String supervisorOverrideEmail) { this.supervisorOverrideEmail = supervisorOverrideEmail; }
+        public String getSupervisorOverridePassword() { return supervisorOverridePassword; }
+        public void setSupervisorOverridePassword(String supervisorOverridePassword) { this.supervisorOverridePassword = supervisorOverridePassword; }
+        public String getSupervisorOverridePin() { return supervisorOverridePin; }
+        public void setSupervisorOverridePin(String supervisorOverridePin) { this.supervisorOverridePin = supervisorOverridePin; }
 
         public List<PosPaymentAllocation> getPaymentAllocations() { return paymentAllocations; }
         public void setPaymentAllocations(List<PosPaymentAllocation> paymentAllocations) { this.paymentAllocations = paymentAllocations; }
@@ -1073,18 +1106,20 @@ public class PosCheckoutController {
                 invoice.getBranchEntity());
     }
 
-    private boolean verifySupervisorPriceOverride(PosCheckoutRequest req) {
-        if (req.getSupervisorOverridePin() != null && !req.getSupervisorOverridePin().isBlank()) {
-            return posSettingsService.verifyPin(req.getSupervisorOverridePin());
+    private boolean verifySupervisorCredentials(String email, String password, String pin, String terminalId) {
+        if (pin != null && !pin.isBlank()) {
+            return posSettingsService.verifyPin(pin);
         }
-        if (req.getSupervisorOverrideEmail() != null && !req.getSupervisorOverrideEmail().isBlank()
-                && req.getSupervisorOverridePassword() != null && !req.getSupervisorOverridePassword().isBlank()) {
+        if (email != null && !email.isBlank() && password != null && !password.isBlank()) {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             String cashier = auth != null ? auth.getName() : null;
             return posSettingsService.verifySupervisorCredentials(
-                    req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(),
-                    req.getTerminalId(), cashier).isValid();
+                    email, password, terminalId, cashier).isValid();
         }
         return false;
+    }
+
+    private boolean verifySupervisorPriceOverride(PosCheckoutRequest req) {
+        return verifySupervisorCredentials(req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(), req.getSupervisorOverridePin(), req.getTerminalId());
     }
 }

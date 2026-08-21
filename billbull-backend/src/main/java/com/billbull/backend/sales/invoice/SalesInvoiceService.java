@@ -891,6 +891,23 @@ public class SalesInvoiceService {
         return invoice;
     }
 
+    /**
+     * Internal variant exclusively for authorized Delivery Settlement, where a supervisor
+     * has authenticated to bypass the strict cashier ownership rule for a single transaction.
+     */
+    @Transactional(readOnly = true)
+    public SalesInvoice getByIdBypassingOwnership(Long id) {
+        SalesInvoice invoice = invoiceRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Sales Invoice not found: " + id));
+        branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Sales Invoice");
+        // DELIBERATELY OMITTED: ownershipAccessService.assertCanAccessRecord()
+
+        Hibernate.initialize(invoice.getItems());
+        enrichItems(invoice.getItems());
+        applyBatchSelectionSummary(invoice);
+        return invoice;
+    }
+
     // ----------------------------
     // ----------------------------
     // STATS
@@ -1322,6 +1339,34 @@ public class SalesInvoiceService {
         }
 
         return getById(id);
+    }
+
+    /**
+     * Special authorized variant for Delivery Settlement, allowing a cashier
+     * to collect payment for a delivery they did not create, provided supervisor credentials were given.
+     */
+    @Transactional
+    public SalesInvoice recordPaymentForAuthorizedDeliverySettlement(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
+            String splitGroupId, String combinedPaymentMode) {
+        SalesInvoice invoice = getByIdBypassingOwnership(id);
+
+        if (paymentAmount == null || paymentAmount <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
+        }
+
+        createSalesPaymentForInvoice(invoice, BigDecimal.valueOf(paymentAmount), paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId);
+
+        if (paymentMode != null && !paymentMode.isBlank()) {
+            SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
+            String stampMode = (combinedPaymentMode != null && !combinedPaymentMode.isBlank())
+                    ? combinedPaymentMode
+                    : paymentMode;
+            toUpdate.setPaymentMode(stampMode);
+            invoiceRepo.save(toUpdate);
+        }
+
+        return getByIdBypassingOwnership(id);
     }
 
     private void createSalesPaymentForInvoice(SalesInvoice invoice, BigDecimal paymentAmount, String paymentMode,

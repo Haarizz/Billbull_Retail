@@ -43,6 +43,7 @@ public enum PosAuditAction {
 
     // Supervisor
     SUPERVISOR_OVERRIDE,
+    DELIVERY_SETTLEMENT_AUTHORIZED,
 
     /** One pending checkout released by a supervisor after the Business Day closed.
      *  This authorizes a single sale; it never reopens or extends the Business Day. */

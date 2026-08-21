@@ -3602,6 +3602,12 @@ export default function POSSales() {
         setPendingSupervisorAction(null);
         if (action.type === 'DAY_CLOSE') {
           handleCloseDay(action.payload?.acknowledgeExclusions);
+        } else if (action.type === 'DELIVERY_SETTLEMENT') {
+          action.retry(
+            supervisorApprovalMode === 'PASSWORD'
+              ? { email: supervisorPinEmail, password: supervisorPinValue }
+              : { pin: supervisorPinValue }
+          );
         }
       }
       setSupervisorPinValue('');
@@ -11178,7 +11184,7 @@ export default function POSSales() {
 
       {/* Supervisor PIN Dialog */}
       {showSupervisorPin && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/50 z-[300] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[480px] flex flex-col max-h-[90vh]">
             <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-t-2xl px-5 py-4 shrink-0">
               <div className="flex items-center gap-3">
@@ -11196,6 +11202,8 @@ export default function POSSales() {
                       ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve price override${pendingPriceOverride.itemName ? ` for ${pendingPriceOverride.itemName}` : ''} (below min ${pendingPriceOverride.minPrice})`
                       : pendingSupervisorAction?.type === 'DAY_CLOSE'
                       ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize Business Day Close' : 'Enter PIN to authorize Business Day Close')
+                      : pendingSupervisorAction?.type === 'DELIVERY_SETTLEMENT'
+                      ? `Supervisor authorization is required to settle this delivery because it was created by another user.`
                       : pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION'
                       ? 'Authorize force closure of this session.'
                       : pendingLayawayAbortAction
@@ -15026,16 +15034,25 @@ export default function POSSales() {
           && deliverySettlePayment.paymentLines.length > 0;
         const displayPaymentMode = deliverySettleFields.paymentSummary;
 
-        const handleFinalize = async () => {
+        const handleFinalize = async (supervisorOverrideOrEvent = null) => {
           if (!sel || selBalance <= 0 || deliverySettleLoading || !canFinalizeSettlement) return;
           setDeliverySettleLoading(true);
+          const supervisorOverride = (supervisorOverrideOrEvent && !supervisorOverrideOrEvent.nativeEvent) ? supervisorOverrideOrEvent : null;
+          
           try {
-            const settledInvoice = await settleDeliveryOrder(sel.id, {
+            const payload = {
               ...deliverySettleFields,
               sessionId: currentSession?.id || null,
               terminalId: currentTerminal?.terminalId || null,
               branchId: currentTerminal?.branchId || null,
-            });
+            };
+            if (supervisorOverride) {
+              if (supervisorOverride.email) payload.supervisorOverrideEmail = supervisorOverride.email;
+              if (supervisorOverride.password) payload.supervisorOverridePassword = supervisorOverride.password;
+              if (supervisorOverride.pin) payload.supervisorOverridePin = supervisorOverride.pin;
+            }
+
+            const settledInvoice = await settleDeliveryOrder(sel.id, payload);
 
             try {
               // recordPayment() stamps the invoice's own paymentMode per settlement leg
@@ -15101,7 +15118,16 @@ export default function POSSales() {
             syncPosData();
           } catch (err) {
             console.error('Delivery settle failed', err);
-            alert(err?.response?.data?.message || 'Failed to finalize delivery. Please try again.');
+            const errMsg = err?.response?.data?.message || err.message;
+            if (err?.response?.status === 403 && errMsg === 'SUPERVISOR_AUTHORIZATION_REQUIRED') {
+                setPendingSupervisorAction({ type: 'DELIVERY_SETTLEMENT', retry: handleFinalize });
+                setSupervisorPinValue('');
+                setSupervisorPinEmail('');
+                setSupervisorPinError('');
+                setShowSupervisorPin(true);
+            } else {
+                alert(errMsg || 'Failed to finalize delivery. Please try again.');
+            }
           } finally {
             setDeliverySettleLoading(false);
           }

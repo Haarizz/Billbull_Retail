@@ -201,6 +201,12 @@ public class PosAuditService {
                 closedAt, null);
     }
 
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logDeliverySettlementAuthorized(Long sessionId, String terminalId, Long branchId, Long invoiceId, String invoiceNumber) {
+        save(sessionId, terminalId, branchId, PosAuditAction.DELIVERY_SETTLEMENT_AUTHORIZED, "SALES_INVOICE", String.valueOf(invoiceId),
+                "Supervisor authorized delivery settlement for invoice " + invoiceNumber, null, null);
+    }
+
     // ── Terminal Auto-Archive lifecycle ─────────────────────────────────────
 
     @Async
