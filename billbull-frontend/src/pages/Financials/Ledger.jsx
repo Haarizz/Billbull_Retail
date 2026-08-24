@@ -44,7 +44,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { formatDisplayDate, toLocalInputDate } from '../../utils/dateUtils';
 import { generateNextAccountCode } from '../../utils/accountCodeGenerator';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
@@ -196,15 +196,15 @@ const Ledger = () => {
   const [glAccountOpen, setGlAccountOpen] = useState(false);
   const [glTextSearch, setGlTextSearch] = useState('');
   const glAccountRef = useRef(null);
-  const today = new Date().toISOString().split('T')[0];
-  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+  const today = toLocalInputDate(new Date());
+  const firstOfMonth = toLocalInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [glFilterFrom, setGlFilterFrom] = useState(firstOfMonth);
   const [glFilterTo, setGlFilterTo] = useState(today);
 
   // --- TRANSACTION TAB FILTER STATES ---
   const [txnSearch, setTxnSearch] = useState('');
-  const [txnFilterFrom, setTxnFilterFrom] = useState('');
-  const [txnFilterTo, setTxnFilterTo] = useState('');
+  const [txnFilterFrom, setTxnFilterFrom] = useState(firstOfMonth);
+  const [txnFilterTo, setTxnFilterTo] = useState(today);
   const [txnFilterAccount, setTxnFilterAccount] = useState('');
 
   // --- CORE DATA STATES ---
@@ -2031,9 +2031,9 @@ const glAccountOptions = accounts
                   <input type="date" value={txnFilterTo} onChange={e => setTxnFilterTo(e.target.value)}
                     className="px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700 outline-none focus:border-blue-400" />
                 </div>
-                {(txnSearch || txnFilterFrom || txnFilterTo || txnFilterAccount) && (
+                {(txnSearch || txnFilterAccount || txnFilterFrom !== firstOfMonth || txnFilterTo !== today) && (
                   <button
-                    onClick={() => { setTxnSearch(''); setTxnFilterFrom(''); setTxnFilterTo(''); setTxnFilterAccount(''); }}
+                    onClick={() => { setTxnSearch(''); setTxnFilterFrom(firstOfMonth); setTxnFilterTo(today); setTxnFilterAccount(''); }}
                     className="px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-500 hover:bg-slate-50 flex items-center gap-1"
                   >
                     <X size={12} /> Clear

@@ -49,3 +49,16 @@ export const formatDisplayDate = (value, fallback = '-') => {
  * but the default fallback is an empty string (useful in concatenation).
  */
 export const formatDisplayDateOrEmpty = (value) => formatDisplayDate(value, '');
+
+/**
+ * Format a Date as the 'YYYY-MM-DD' string an <input type="date"> expects,
+ * using the browser's local calendar day. Unlike toISOString(), this never
+ * shifts the day for non-UTC timezones.
+ */
+export const toLocalInputDate = (date = new Date()) => {
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) return '';
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${month}-${day}`;
+};
