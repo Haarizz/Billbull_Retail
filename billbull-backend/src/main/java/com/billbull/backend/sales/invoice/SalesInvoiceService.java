@@ -344,14 +344,23 @@ public class SalesInvoiceService {
             }
 
             if (!resolutionItems.isEmpty()) {
+                // POS sells only from the branch's default warehouse — it never switches to another
+                // warehouse behind the cashier's back. Every other sales type keeps the existing
+                // automatic resolution across the branch's active warehouses.
+                boolean posSale = com.billbull.backend.sales.invoice.SalesType.POS_SALE.equals(invoice.getSalesType());
                 com.billbull.backend.inventory.warehouse.WarehouseResolutionResult resolutionResult = 
                         warehouseSourceResolutionService.resolveSourceWarehouseForTransaction(
                                 resolvedBranch != null ? resolvedBranch.getId() : invoice.getBranchId(),
                                 resolutionItems,
                                 branchDefaultWarehouseId,
-                                settings.isStockCheckRequired()
+                                settings.isStockCheckRequired(),
+                                !posSale
                         );
                 if (resolutionResult == null) {
+                    if (posSale) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                "Insufficient available stock in the branch default warehouse for the requested items.");
+                    }
                     throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                             "Insufficient available stock for the requested items in any single eligible warehouse for this branch.");
                 }

@@ -16,6 +16,8 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import org.mockito.MockitoAnnotations;
 
@@ -327,5 +329,70 @@ class WarehouseSourceResolutionServiceTest {
 
         assertNotNull(result);
         assertEquals(1L, result.getWarehouseId());
+    }
+
+    // ── POS single-warehouse mode (allowAutomaticFallback = false) ──────────────
+    // POS sells only from the branch default warehouse; the resolver must never
+    // scan the branch's other warehouses for it.
+
+    @Test
+    void testPosMode_DefaultSufficient_ShouldSelectDefault() {
+        // Default = 10, B = 194, Requested = 5 -> Default selected
+        Warehouse wA = createWarehouse(1L, branchA, "A");
+
+        when(warehouseRepository.findById(1L)).thenReturn(Optional.of(wA));
+        when(warehouseStockService.getAvailableStock(1L, 100L)).thenReturn(BigDecimal.valueOf(10));
+
+        WarehouseResolutionResult result = resolver.resolveSourceWarehouseForTransaction(
+                10L, List.of(new WarehouseResolutionItem(100L, 5)), 1L, true, false);
+
+        assertNotNull(result);
+        assertEquals(1L, result.getWarehouseId());
+    }
+
+    @Test
+    void testPosMode_DefaultInsufficient_ShouldReturnNullWithoutScanningOtherWarehouses() {
+        // Default = 10, B = 194, Requested = 11 -> null (no fallback to B)
+        Warehouse wA = createWarehouse(1L, branchA, "A");
+
+        when(warehouseRepository.findById(1L)).thenReturn(Optional.of(wA));
+        when(warehouseStockService.getAvailableStock(1L, 100L)).thenReturn(BigDecimal.valueOf(10));
+
+        WarehouseResolutionResult result = resolver.resolveSourceWarehouseForTransaction(
+                10L, List.of(new WarehouseResolutionItem(100L, 11)), 1L, true, false);
+
+        assertNull(result);
+        // The branch-wide candidate scan must never run in POS mode.
+        verify(warehouseRepository, never()).findByBranch_IdAndStatusOrderByIdAsc(anyLong(), eq("Active"));
+    }
+
+    @Test
+    void testPosMode_DefaultEmpty_ShouldReturnNull() {
+        // Default = 0, B = 194, Requested = 1 -> null
+        Warehouse wA = createWarehouse(1L, branchA, "A");
+
+        when(warehouseRepository.findById(1L)).thenReturn(Optional.of(wA));
+        when(warehouseStockService.getAvailableStock(1L, 100L)).thenReturn(BigDecimal.ZERO);
+
+        WarehouseResolutionResult result = resolver.resolveSourceWarehouseForTransaction(
+                10L, List.of(new WarehouseResolutionItem(100L, 1)), 1L, true, false);
+
+        assertNull(result);
+        verify(warehouseRepository, never()).findByBranch_IdAndStatusOrderByIdAsc(anyLong(), eq("Active"));
+    }
+
+    @Test
+    void testPosMode_StockCheckOff_ShouldStillSelectDefaultOnly() {
+        // Default = 0, Requested = 2, Stock Check OFF -> Default still selected
+        Warehouse wA = createWarehouse(1L, branchA, "A");
+
+        when(warehouseRepository.findById(1L)).thenReturn(Optional.of(wA));
+
+        WarehouseResolutionResult result = resolver.resolveSourceWarehouseForTransaction(
+                10L, List.of(new WarehouseResolutionItem(100L, 2)), 1L, false, false);
+
+        assertNotNull(result);
+        assertEquals(1L, result.getWarehouseId());
+        verify(warehouseRepository, never()).findByBranch_IdAndStatusOrderByIdAsc(anyLong(), eq("Active"));
     }
 }
