@@ -1904,7 +1904,8 @@ export default function POSSales() {
     setProductSearchLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const data = await getProductsList(0, 30, query, controller.signal, null, null, null, true);
+        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+        const data = await getProductsList(0, 30, query, controller.signal, null, null, null, true, posBranchId);
         const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
         mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
         setProductSearchResults(mapped);
@@ -1933,7 +1934,8 @@ export default function POSSales() {
     setBarcodeSuggestionsLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const data = await getProductsList(0, 8, query, controller.signal, null, null, null, true);
+        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+        const data = await getProductsList(0, 8, query, controller.signal, null, null, null, true, posBranchId);
         const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
         mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
         setBarcodeSuggestions(mapped);
@@ -2552,6 +2554,7 @@ export default function POSSales() {
         }
       } else {
         const departmentId = (hasSearch || selectedCategory === 'all') ? null : Number(selectedCategory);
+        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
         data = await getProductsList(
           page,
           POS_PRODUCT_PAGE_SIZE,
@@ -2560,7 +2563,8 @@ export default function POSSales() {
           null,
           Number.isFinite(departmentId) ? departmentId : null,
           null,
-          true
+          true,
+          posBranchId
         );
       }
 
@@ -12795,7 +12799,8 @@ export default function POSSales() {
               return;
             }
             // Fallback: name/keyword search via product list
-            const searchData = await getProductsList(0, 1, q, undefined, null, null, null, true);
+            const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+            const searchData = await getProductsList(0, 1, q, undefined, null, null, null, true, posBranchId);
             if (Array.isArray(searchData?.content) && searchData.content.length > 0) {
               setPriceCheckResult(mapPosProductListItem(searchData.content[0]));
               return;
@@ -12829,7 +12834,8 @@ export default function POSSales() {
                         if (resolved?.type === 'PRODUCT' && resolved.product) {
                           return [mapPosProductAggregateItem(resolved.product, query)];
                         }
-                        const searchData = await getProductsList(0, 10, query, undefined, null, null, null, true);
+                        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+                        const searchData = await getProductsList(0, 10, query, undefined, null, null, null, true, posBranchId);
                         if (Array.isArray(searchData?.content)) {
                           return searchData.content.map(p => mapPosProductListItem(p));
                         }
@@ -13739,7 +13745,8 @@ export default function POSSales() {
                           fetchOptions={async (query) => {
                             if (!query) return [];
                             try {
-                              const res = await getProductsList(0, 5, query, undefined, null, null, null, true);
+                              const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+                              const res = await getProductsList(0, 5, query, undefined, null, null, null, true, posBranchId);
                               return res?.content || [];
                             } catch { return []; }
                           }}
