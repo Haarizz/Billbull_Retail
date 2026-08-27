@@ -166,13 +166,21 @@ const POSConsole = React.memo((props) => {
       { value: 'KITCHEN_PRINTER', label: 'Kitchen Printer' },
       { value: 'LABEL_PRINTER', label: 'Label Printer' },
     ];
+    // Full set, including the retired transport — connectionLabel() still needs it so
+    // existing client rows render as a name rather than a raw enum constant.
     const connectionOptions = [
       { value: 'WINDOWS_QUEUE', label: 'Windows Queue' },
       { value: 'USB', label: 'USB' },
       { value: 'NETWORK_IP', label: 'Network / IP' },
       { value: 'BLUETOOTH', label: 'Bluetooth' },
-      { value: 'ZEBRA_BROWSER_PRINT', label: 'Zebra Browser Print' },
+      { value: 'ZEBRA_BROWSER_PRINT', label: 'Zebra Browser Print (retired)' },
     ];
+    // What an admin may pick for a NEW printer. Zebra Browser Print is retired — it
+    // required an HTTPS listener on localhost:9101 whose certificate broke the page's
+    // secure state, and printing now goes through the local Print Agent (Windows queue)
+    // or the backend relay (network). The enum value itself is deliberately kept so
+    // existing rows stay readable and are never silently rewritten.
+    const selectableConnectionOptions = connectionOptions.filter((c) => c.value !== 'ZEBRA_BROWSER_PRINT');
     const paperSizeOptions = ['58mm', '80mm', '100x150mm'];
     const printTemplateOptions = ['Receipt', 'Kitchen', 'Label'];
 
@@ -181,7 +189,7 @@ const POSConsole = React.memo((props) => {
       deviceCode: '',
       deviceName: '',
       modelName: '',
-      connectionType: type === 'LABEL_PRINTER' ? 'ZEBRA_BROWSER_PRINT' : 'WINDOWS_QUEUE',
+      connectionType: 'WINDOWS_QUEUE',
       systemPrinterName: '',
       deviceIdentifier: '',
       ipAddress: '',
@@ -375,7 +383,7 @@ const POSConsole = React.memo((props) => {
           // — so the modal collects that one connection-dependent field up front, then
           // opens the full edit dialog for the rest (paper size, template, etc.).
           const printerConn = ({ USB: 'USB', NETWORK_IP: 'NETWORK_IP', BLUETOOTH: 'BLUETOOTH', COM_PORT: 'USB', SERIAL: 'USB' }[addDeviceForm.connectionType]) || 'WINDOWS_QUEUE';
-          const resolvedConn = addDeviceForm.deviceType === 'LABEL_PRINTER' ? 'ZEBRA_BROWSER_PRINT' : printerConn;
+          const resolvedConn = printerConn;
           if (resolvedConn === 'NETWORK_IP') {
             if (!addDeviceForm.ipAddress.trim() || !addDeviceForm.portNumber) {
               setAddDeviceError('Network printers need an IP address and port.'); setAddDeviceSaving(false); return;
@@ -1632,7 +1640,7 @@ const POSConsole = React.memo((props) => {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-6 pb-4 overflow-y-auto">
                       <div>
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Printer Type</label>
-                        <select value={printerForm.deviceType} onChange={e=>setPrinterForm(f => ({ ...f, deviceType: e.target.value, connectionType: e.target.value === 'LABEL_PRINTER' ? 'ZEBRA_BROWSER_PRINT' : (f.connectionType === 'ZEBRA_BROWSER_PRINT' ? 'WINDOWS_QUEUE' : f.connectionType), printTemplate: e.target.value === 'KITCHEN_PRINTER' ? 'Kitchen' : e.target.value === 'LABEL_PRINTER' ? 'Label' : 'Receipt', paperSize: e.target.value === 'LABEL_PRINTER' ? '100x150mm' : (f.paperSize === '100x150mm' ? '80mm' : f.paperSize) }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
+                        <select value={printerForm.deviceType} onChange={e=>setPrinterForm(f => ({ ...f, deviceType: e.target.value, connectionType: (f.connectionType === 'ZEBRA_BROWSER_PRINT' ? 'WINDOWS_QUEUE' : f.connectionType), printTemplate: e.target.value === 'KITCHEN_PRINTER' ? 'Kitchen' : e.target.value === 'LABEL_PRINTER' ? 'Label' : 'Receipt', paperSize: e.target.value === 'LABEL_PRINTER' ? '100x150mm' : (f.paperSize === '100x150mm' ? '80mm' : f.paperSize) }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
                           {printerTypeOptions.map(t=><option key={t.value} value={t.value}>{t.label}</option>)}
                         </select>
                       </div>
@@ -1651,7 +1659,12 @@ const POSConsole = React.memo((props) => {
                       <div>
                         <label className="text-[10px] font-bold text-gray-400 uppercase">Connection Type</label>
                         <select value={printerForm.connectionType} onChange={e=>setPrinterForm(f => ({ ...f, connectionType: e.target.value }))} className="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742]">
-                          {connectionOptions.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
+                          {selectableConnectionOptions.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
+                          {/* Legacy rows keep their own value visible so opening the form
+                              can't silently rewrite an existing client's configuration. */}
+                          {printerForm.connectionType === 'ZEBRA_BROWSER_PRINT' && (
+                            <option value="ZEBRA_BROWSER_PRINT">Zebra Browser Print (retired — change to Windows Queue)</option>
+                          )}
                         </select>
                       </div>
                       <div>
@@ -2290,7 +2303,7 @@ const POSConsole = React.memo((props) => {
                             ['Show Arabic (Bilingual) Text', t2cfg.showArabic, t2cfg.setShowArabic],
                           ])}
                           {fieldToggleSection('CUSTOMER DETAILS', [
-                            ['Show Customer Details', t2cfg.showCustomerDetails, t2cfg.setShowCustomerDetails],
+                            ['Show Customer Details (Name, Mobile, Email, TRN, Address)', t2cfg.showCustomerDetails, t2cfg.setShowCustomerDetails],
                           ])}
                           {fieldToggleSection('ACCOUNT', [
                             ['Show Account Balance', t2cfg.showAccountBalance, t2cfg.setShowAccountBalance],

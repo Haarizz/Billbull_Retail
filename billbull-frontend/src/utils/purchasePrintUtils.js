@@ -1727,7 +1727,7 @@ export const buildCustomerSoaPrintData = (statement, customer, companyProfile, o
     const party = {
         name: firstValue(customer?.name, customer?.customerName, safeStatement.accountName, "Unknown Customer"),
         code: firstValue(customer?.code, customer?.customerCode, safeStatement.accountCode),
-        address: firstValue(customer?.billingAddress, customer?.address, customer?.location),
+        address: firstValue(customer?.defaultShippingAddress, customer?.address, customer?.location),
         phone: firstValue(customer?.contact, customer?.mobile, customer?.phone, customer?.primaryPhone, customer?.secondaryPhone),
         email: firstValue(customer?.email),
         taxId: firstValue(customer?.trn, customer?.taxId),

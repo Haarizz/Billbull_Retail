@@ -761,6 +761,9 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   showFooterText = true,
   cashierName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
+  // Customer TRN + address on file — printed in the CUSTOMER block when the
+  // customer record carries them (parity with buildThermalReceiptHtml).
+  customerTrn = null, customerAddress = null,
   depositApplied = null, balanceDue = null,
   shippingCharge = null,
   cashGiven = null, changeAmount = null,
@@ -1040,6 +1043,19 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.gline(gutter, buildFixedWidthLine('Name:', invoice.customerName || 'Walk-in Customer', width));
     if (customerPhone) w.gline(gutter, buildFixedWidthLine('Mobile:', customerPhone, width));
     if (customerEmail) w.gline(gutter, buildFixedWidthLine('Email:', customerEmail, width));
+    const custCode = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
+    if (custCode) w.gline(gutter, buildFixedWidthLine('Customer Code:', custCode, width));
+    const custTrn = customerTrn || invoice.customerTrn || '';
+    if (custTrn) w.gline(gutter, buildFixedWidthLine('TRN:', custTrn, width));
+    // Address is free text and routinely longer than the paper width, so it goes
+    // on its own wrapped lines under an 'Address:' label rather than a fixed-width
+    // right-aligned row (which would clip it).
+    const custAddr = String(customerAddress || invoice.customerAddress || '')
+      .split(/[\n,]+/).map((v) => v.trim()).filter(Boolean).join(', ');
+    if (custAddr) {
+      w.gline(gutter, 'Address:');
+      for (const ln of wrapToWidth(custAddr, width, '  ')) w.gline(gutter, ln);
+    }
     emitDivider(w, gutter, hr);
   }
 

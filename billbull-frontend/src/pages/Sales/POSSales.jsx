@@ -52,6 +52,7 @@ import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer'
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
+import { CASH_NOTE_KEYS, CASH_COIN_KEYS, DENOM_KEYS, DENOM_LABELS, emptyDenominations } from '../../utils/cashDenominations';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -696,12 +697,8 @@ export default function POSSales() {
 
   // Session opening/closing states
   const [openingCash, setOpeningCash] = useState('');
-  const [denominations, setDenominations] = useState({
-    '1000': 0, '500': 0, '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0, '0.50': 0, '0.25': 0
-  });
-  const [closingDenominations, setClosingDenominations] = useState({
-    '1000': 0, '500': 0, '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0, '0.50': 0, '0.25': 0
-  });
+  const [denominations, setDenominations] = useState(emptyDenominations);
+  const [closingDenominations, setClosingDenominations] = useState(emptyDenominations);
   const [cardSettlementAmount, setCardSettlementAmount] = useState('');
 
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
@@ -1480,6 +1477,10 @@ export default function POSSales() {
         // Customer code (Fix 2 — Template 2 Customer Details) + credit TRN.
         customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
         customerTrn: customer?.trn || '',
+        // Customer's address on file (mapPosCustomer.address = default shipping,
+        // falling back to billing) — printed in the CUSTOMER block by both
+        // templates, separate from the sale's DELIVERY ADDRESS section.
+        customerAddress: customer?.address || '',
         saleType: currentInvoice.saleType || '',
         shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
@@ -1904,7 +1905,8 @@ export default function POSSales() {
     setProductSearchLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const data = await getProductsList(0, 30, query, controller.signal, null, null, null, true);
+        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+        const data = await getProductsList(0, 30, query, controller.signal, null, null, null, true, posBranchId);
         const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
         mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
         setProductSearchResults(mapped);
@@ -1933,7 +1935,8 @@ export default function POSSales() {
     setBarcodeSuggestionsLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const data = await getProductsList(0, 8, query, controller.signal, null, null, null, true);
+        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+        const data = await getProductsList(0, 8, query, controller.signal, null, null, null, true, posBranchId);
         const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
         mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
         setBarcodeSuggestions(mapped);
@@ -2552,6 +2555,7 @@ export default function POSSales() {
         }
       } else {
         const departmentId = (hasSearch || selectedCategory === 'all') ? null : Number(selectedCategory);
+        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
         data = await getProductsList(
           page,
           POS_PRODUCT_PAGE_SIZE,
@@ -2560,7 +2564,8 @@ export default function POSSales() {
           null,
           Number.isFinite(departmentId) ? departmentId : null,
           null,
-          true
+          true,
+          posBranchId
         );
       }
 
@@ -4120,6 +4125,8 @@ export default function POSSales() {
             customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
+            customerTrn: customer?.trn,
+            customerAddress: customer?.address,
             creditPreviousBalance: creditPrevBalAuto,
             creditInvoiceCredit: creditInvoiceCreditAuto,
             creditAmountPaid: creditAmountPaidAuto,
@@ -4726,6 +4733,12 @@ export default function POSSales() {
     customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
+    // TRN + address of the selected customer. Neither is persisted on
+    // SalesInvoice (it stores only customerCode/customerName), so callers pass
+    // them from the live customer object; when they don't, they're resolved
+    // below from the loaded customer list by code — see resolvedCustomer*.
+    customerTrn = null,
+    customerAddress = null,
     creditPreviousBalance = null,
     creditInvoiceCredit = null,
     creditAmountPaid = null,
@@ -4750,6 +4763,21 @@ export default function POSSales() {
     const full = (customerNameOverride && customerNameOverride.trim())
       ? { ...fullArg, customerName: customerNameOverride.trim() }
       : fullArg;
+    // Customer contact block (Name / Mobile / Email / TRN / Address): only the
+    // code + name round-trip on the invoice, so everything else is read off the
+    // loaded customer record. Callers that hold the live `customer` object pass
+    // it explicitly; reprints (and any site that doesn't) fall back to this
+    // lookup by code so a reprint prints the same block the original sale did.
+    // `address` is mapPosCustomer's default *shipping* address (its own
+    // preference chain already falls back to billing) — the customer's address
+    // on file, distinct from the sale's own DELIVERY ADDRESS section.
+    const custRecForPrint = full.customerCode
+      ? customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode)
+      : null;
+    const resolvedCustomerPhone = customerPhone || custRecForPrint?.phone || full.customerPhone || null;
+    const resolvedCustomerEmail = customerEmail || custRecForPrint?.email || full.customerEmail || null;
+    const resolvedCustomerTrn = customerTrn || custRecForPrint?.trn || full.customerTrn || null;
+    const resolvedCustomerAddress = customerAddress || custRecForPrint?.address || full.customerAddress || null;
     // Tax-registered sales keep today's Tax Invoice template untouched; a
     // no-tax sale (e.g. a zero-rated/exempt walk-in) prints the POS Receipt
     // tab's own header/footer/TRN/VAT-summary config instead. Computed here
@@ -4858,8 +4886,10 @@ export default function POSSales() {
       depositApplied,
       balanceDue,
       shippingCharge,
-      customerPhone,
-      customerEmail,
+      customerPhone: resolvedCustomerPhone,
+      customerEmail: resolvedCustomerEmail,
+      customerTrn: resolvedCustomerTrn,
+      customerAddress: resolvedCustomerAddress,
       showCreditBalance: resolvedShowCreditBalance,
       creditPreviousBalance,
       creditInvoiceCredit,
@@ -4936,8 +4966,10 @@ export default function POSSales() {
       depositApplied,
       balanceDue,
       shippingCharge,
-      customerPhone,
-      customerEmail,
+      customerPhone: resolvedCustomerPhone,
+      customerEmail: resolvedCustomerEmail,
+      customerTrn: resolvedCustomerTrn,
+      customerAddress: resolvedCustomerAddress,
       showCustomerDetails: activeShowCustomerDetails,
       // Match the HTML/ESC-POS path: no tax content on a no-tax sale.
       hasTax,
@@ -4954,7 +4986,7 @@ export default function POSSales() {
     tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
     tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
     tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
-    tplReceiptColDiscount, tplReceiptShowNotes,
+    tplReceiptColDiscount, tplReceiptShowNotes, customerOptions,
     t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
     t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails,
@@ -5260,6 +5292,8 @@ export default function POSSales() {
                 customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
                 customerPhone: customer?.phone,
                 customerEmail: customer?.email,
+                customerTrn: customer?.trn,
+                customerAddress: customer?.address,
                 creditPreviousBalance: creditPrevBalAuto,
                 creditInvoiceCredit: creditInvoiceCreditAuto,
                 creditAmountPaid: creditAmountPaidAuto,
@@ -5373,7 +5407,6 @@ export default function POSSales() {
       return;
     }
     const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
-    openCashDrawer(cashDropType === 'in' ? 'CASH_DROP' : 'CASH_OUT');
     try {
       if (currentSession?.id && typeof currentSession.id === 'number') {
         await addPosCashMovement(currentSession.id, {
@@ -5383,6 +5416,9 @@ export default function POSSales() {
           categoryId: cashDropCategoryId || undefined,
         });
       }
+      // Drawer opens only once the movement is accepted — a refused cash out (e.g. more
+      // than the drawer holds) must not pop the drawer.
+      openCashDrawer(cashDropType === 'in' ? 'CASH_DROP' : 'CASH_OUT');
       setCashDropFeedback({ type: 'success', message: cashDropType === 'in' ? 'Cash drop recorded.' : 'Cash out recorded.' });
     } catch (err) {
       console.warn('Cash movement API error', err);
@@ -5393,7 +5429,14 @@ export default function POSSales() {
         showClosureRequiredBlock(err?.response?.data?.message || err?.response?.data);
         return;
       }
-      setCashDropFeedback({ type: 'error', message: 'Failed to record cash movement.' });
+      // Surface the server's reason (insufficient cash in drawer, category required, …)
+      // and keep the dialog open with the typed amount so it can be corrected.
+      const apiMessage = typeof err?.response?.data === 'string'
+        ? err.response.data
+        : err?.response?.data?.message;
+      setCashDropFeedback({ type: 'error', message: apiMessage || 'Failed to record cash movement.' });
+      setTimeout(() => setCashDropFeedback(null), 5000);
+      return;
     }
     setCashDropAmount('');
     setCashDropDescription('');
@@ -5462,6 +5505,8 @@ export default function POSSales() {
             isReprint: true,
             customerPhone: custRec?.phone,
             customerEmail: custRec?.email,
+            customerTrn: custRec?.trn,
+            customerAddress: custRec?.address,
             // Suppress the CREDIT ACCOUNT block on a reprint of a historical invoice.
             // The block is a point-in-time snapshot of the ledger AS OF the original
             // sale, and those figures are not persisted on the invoice. Re-querying
@@ -6958,8 +7003,8 @@ export default function POSSales() {
     const otherSalesV = fmt(xSummary.otherSales ?? 0);
     const totalPaidV = fmt(xSummary.totalPaid ?? totalSalesV);
     const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
+    const denomKeys = DENOM_KEYS;
+    const denomLabels = DENOM_LABELS;
     // Consolidated Cash Position — additive, informational-only (see buildXReportViewModel).
     const cashPosition = xSummary.cashPosition || {};
     const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
@@ -7914,7 +7959,7 @@ export default function POSSales() {
                     <div className={`absolute top-2.5 left-[50%] w-full h-0.5 ${isCompleted ? 'bg-emerald-500' : 'bg-gray-200'} z-0`}></div>
                   )}
                   {/* Step Item */}
-                  <div className="flex flex-col items-center relative z-10">
+                  <div className="flex flex-col items-center relative z-[1]">
                     <div className={`h-5 w-5 rounded-full flex items-center justify-center border-2 mb-2 bg-white transition-colors ${
                       isCompleted ? 'border-emerald-500 bg-emerald-500 text-white' : 
                       isActive ? 'border-[#327F74] bg-white text-[#327F74] shadow-sm' : 
@@ -7939,7 +7984,7 @@ export default function POSSales() {
     return (
       <div className="bg-[#F7F7FA] min-h-full p-4 lg:p-6">
         {/* Sticky Header */}
-        <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
+        <div className="sticky top-0 z-30 bg-[#F7F7FA] pt-1 pb-3 border-b border-[#327F74]/10 mb-4">
           <div className="flex flex-wrap items-start lg:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-gray-400 mb-0.5">
@@ -8467,8 +8512,8 @@ export default function POSSales() {
 
   // X-Report View (Session Close Report)
   const renderXReport = () => {
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
+    const denomKeys = DENOM_KEYS;
+    const denomLabels = DENOM_LABELS;
     const reportDenominations = getReportClosingDenominations();
     const actualCash = calculateDenominationTotal(reportDenominations);
     // Once closed, reportDenominations comes from the immutable backend snapshot and
@@ -9365,7 +9410,7 @@ export default function POSSales() {
         city: quickCustomerForm.city,
         country: quickCustomerForm.country,
         notes: quickCustomerForm.notes,
-        billingAddress: quickCustomerForm.deliveryAddress,
+        defaultShippingAddress: quickCustomerForm.deliveryAddress,
         creditStatus: quickCustomerForm.isCreditCustomer ? 'ALLOWED' : 'NONE',
         creditLimitAmount: quickCustomerForm.creditLimit ? parseFloat(quickCustomerForm.creditLimit) : 0,
         balance: quickCustomerForm.openingBalance ? parseFloat(quickCustomerForm.openingBalance) : 0
@@ -9381,8 +9426,8 @@ export default function POSSales() {
       setSelectedCustomer(newCustId);
       if (showDeliveryModal) {
         setDeliveryCustomerId(String(newCust.id));
-        if (newCust.billingAddress || newCust.address) {
-          setDeliveryAddress(newCust.billingAddress || newCust.address);
+        if (newCust.defaultShippingAddress || newCust.address) {
+          setDeliveryAddress(newCust.defaultShippingAddress || newCust.address);
         }
       }
       setShowQuickCustomerModal(false);
@@ -10270,7 +10315,7 @@ export default function POSSales() {
                   <div className="h-px flex-1 bg-slate-200"></div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
+                  {CASH_NOTE_KEYS.map((note) => (
                     <div key={note} className="flex items-center space-x-3">
                       <DenominationLabel value={note} />
                       <Input
@@ -10302,7 +10347,7 @@ export default function POSSales() {
                   <div className="h-px flex-1 bg-amber-200"></div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {['1', '0.50', '0.25'].map((coin) => (
+                  {CASH_COIN_KEYS.map((coin) => (
                     <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                       <DenominationLabel value={coin} />
                       <Input
@@ -10539,7 +10584,7 @@ export default function POSSales() {
                       <div className="h-px flex-1 bg-slate-200"></div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
+                      {CASH_NOTE_KEYS.map((note) => (
                         <div key={note} className="flex items-center space-x-3">
                           <DenominationLabel value={note} />
                           <Input type="number" min="0"
@@ -10563,7 +10608,7 @@ export default function POSSales() {
                       <div className="h-px flex-1 bg-[#F5C742]/40"></div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {['1', '0.50', '0.25'].map((coin) => (
+                      {CASH_COIN_KEYS.map((coin) => (
                         <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                           <DenominationLabel value={coin} />
                           <Input type="number" min="0"
@@ -10936,7 +10981,7 @@ export default function POSSales() {
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
                           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-                            full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
+                            full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                           });
                           await printThermalReceiptWithConfiguredPrinter({
                             full, text, escPosBase64, title: `Receipt ${full.invoiceNumber || ''}`.trim(),
@@ -11773,6 +11818,8 @@ export default function POSSales() {
                     changeAmount: lastPaidInvoice?.changeAmount,
                     customerPhone: lastPaidInvoice?.customer?.phone,
                     customerEmail: lastPaidInvoice?.customer?.email,
+                    customerTrn: lastPaidInvoice?.customer?.trn,
+                    customerAddress: lastPaidInvoice?.customer?.address,
                     creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
                     creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
                     creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
@@ -12795,7 +12842,8 @@ export default function POSSales() {
               return;
             }
             // Fallback: name/keyword search via product list
-            const searchData = await getProductsList(0, 1, q, undefined, null, null, null, true);
+            const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+            const searchData = await getProductsList(0, 1, q, undefined, null, null, null, true, posBranchId);
             if (Array.isArray(searchData?.content) && searchData.content.length > 0) {
               setPriceCheckResult(mapPosProductListItem(searchData.content[0]));
               return;
@@ -12829,7 +12877,8 @@ export default function POSSales() {
                         if (resolved?.type === 'PRODUCT' && resolved.product) {
                           return [mapPosProductAggregateItem(resolved.product, query)];
                         }
-                        const searchData = await getProductsList(0, 10, query, undefined, null, null, null, true);
+                        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+                        const searchData = await getProductsList(0, 10, query, undefined, null, null, null, true, posBranchId);
                         if (Array.isArray(searchData?.content)) {
                           return searchData.content.map(p => mapPosProductListItem(p));
                         }
@@ -13739,7 +13788,8 @@ export default function POSSales() {
                           fetchOptions={async (query) => {
                             if (!query) return [];
                             try {
-                              const res = await getProductsList(0, 5, query, undefined, null, null, null, true);
+                              const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
+                              const res = await getProductsList(0, 5, query, undefined, null, null, null, true, posBranchId);
                               return res?.content || [];
                             } catch { return []; }
                           }}
@@ -14758,7 +14808,7 @@ export default function POSSales() {
                             onClick={() => {
                               setDeliveryCustomerId(String(c.id));
                               setDeliveryValidationErrors(prev => ({ ...prev, customer: '' }));
-                              if (c.address || c.billingAddress) setDeliveryAddress(prev => prev?.trim() ? prev : (c.address || c.billingAddress));
+                              if (c.address || c.defaultShippingAddress) setDeliveryAddress(prev => prev?.trim() ? prev : (c.address || c.defaultShippingAddress));
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-left transition-colors">
                             <div className="w-8 h-8 rounded-full bg-[#327F74]/10 text-[#327F74] flex items-center justify-center font-bold text-xs">
@@ -15087,6 +15137,8 @@ export default function POSSales() {
                   cashGiven: selBalance,
                   customerPhone: custRec?.phone,
                   customerEmail: custRec?.email,
+                  customerTrn: custRec?.trn,
+                  customerAddress: custRec?.address,
                   // Force the CREDIT ACCOUNT block on for the settlement receipt.
                   showCreditBalanceOverride: creditPreviousBalanceSettle != null,
                   creditPreviousBalance: creditPreviousBalanceSettle,

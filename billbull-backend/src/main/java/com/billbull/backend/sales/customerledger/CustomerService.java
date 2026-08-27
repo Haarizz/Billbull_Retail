@@ -384,15 +384,25 @@ public class CustomerService {
                 addr.setCustomer(customer);
                 customer.getSavedAddresses().add(addr);
             }
-            // Sync denormalised field so the customer list response always has it
+            // Sync denormalised field so the customer list response always has it.
+            // Falls back to the first saved address when none is flagged default,
+            // and — now that defaultShippingAddress is the customer's ONLY stored
+            // address (the redundant billingAddress field is gone) — an empty
+            // savedAddresses list leaves the existing value alone rather than
+            // nulling it. Otherwise editing any unrelated tab on a customer whose
+            // address came from an import or a quick-create form (neither of which
+            // creates savedAddresses rows) would silently erase that address.
             String defaultAddr = customer.getSavedAddresses().stream()
                     .filter(SavedAddress::isDefault)
                     .findFirst()
+                    .or(() -> customer.getSavedAddresses().stream().findFirst())
                     .map(a -> java.util.stream.Stream.of(a.getAddress1(), a.getAddress2(), a.getCity(), a.getCountry())
                             .filter(s -> s != null && !s.isBlank())
                             .collect(java.util.stream.Collectors.joining(", ")))
                     .orElse(null);
-            customer.setDefaultShippingAddress(defaultAddr);
+            if (defaultAddr != null && !defaultAddr.isBlank()) {
+                customer.setDefaultShippingAddress(defaultAddr);
+            }
         }
 
         // Opening Invoices

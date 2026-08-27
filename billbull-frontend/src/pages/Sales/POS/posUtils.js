@@ -69,11 +69,14 @@ export const mapPosCustomer = (customer = {}) => ({
   name: customer.name || customer.customerName || customer.fullName || 'Unnamed Customer',
   phone: customer.phone || customer.mobile || customer.mobileNo || '',
   email: customer.email || '',
-  // Default delivery address: prefer the customer's saved shipping address,
-  // then billing address, then any single address field. Used to pre-fill the
-  // POS delivery dialog (cashier can still override).
+  // Tax Registration Number — printed in the receipt CUSTOMER block (both
+  // templates) whenever the customer record carries one.
+  trn: customer.trn || '',
+  // The customer's address on file — the default entry of their Shipping
+  // Address tab, denormalised onto defaultShippingAddress by the backend. Used
+  // to pre-fill the POS delivery dialog (cashier can still override) and to
+  // print the Address row in the receipt's CUSTOMER block.
   address: customer.defaultShippingAddress
-    || customer.billingAddress
     || customer.address
     || customer.shippingAddress
     || customer.city

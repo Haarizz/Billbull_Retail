@@ -29,6 +29,24 @@ public class WarehouseSourceResolutionService {
                                                                           List<WarehouseResolutionItem> items,
                                                                           Long preferredWarehouseId,
                                                                           boolean enforceStockAvailability) {
+        return resolveSourceWarehouseForTransaction(branchId, items, preferredWarehouseId,
+                enforceStockAvailability, true);
+    }
+
+    /**
+     * Same as {@link #resolveSourceWarehouseForTransaction(Long, List, Long, boolean)}, but lets the
+     * caller opt out of step 2 (scanning the branch's other active warehouses).
+     *
+     * <p>POS is single-warehouse by design: it sells only from the branch's default warehouse, so it
+     * passes {@code allowAutomaticFallback = false} and gets {@code null} back rather than a silent
+     * switch to another warehouse. Every other flow (standard/B2B sales, layaway) keeps the default
+     * {@code true} behaviour.
+     */
+    public WarehouseResolutionResult resolveSourceWarehouseForTransaction(Long branchId,
+                                                                          List<WarehouseResolutionItem> items,
+                                                                          Long preferredWarehouseId,
+                                                                          boolean enforceStockAvailability,
+                                                                          boolean allowAutomaticFallback) {
         if (items == null || items.isEmpty()) {
             throw new IllegalStateException("Cannot resolve warehouse for empty transaction items.");
         }
@@ -43,6 +61,10 @@ public class WarehouseSourceResolutionService {
                     return new WarehouseResolutionResult(preferredWarehouseId, preferred.getName(), "PREFERRED_SUFFICIENT");
                 }
             }
+        }
+        
+        if (!allowAutomaticFallback) {
+            return null;
         }
 
         // 2. Fetch fallback candidates in same branch

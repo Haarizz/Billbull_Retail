@@ -53,9 +53,10 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
       showFooterText: on(toggles.showFooterText),
       showBarcode: on(toggles.showBarcode),
       // Whether the sale carries tax. false ⇒ the receipt body drops ALL tax
-      // content (Taxable Amount, VAT rows, per-line VAT label, Customer TRN, VAT
-      // summary). Undefined ⇒ ON, so standalone/sample renders stay a full tax
-      // invoice.
+      // content (Taxable Amount, VAT rows, per-line VAT label, VAT summary).
+      // The CUSTOMER block's TRN is exempt from this: it is the customer's own
+      // registration number and prints whenever the record carries one.
+      // Undefined ⇒ ON, so standalone/sample renders stay a full tax invoice.
       hasTax: on(toggles.hasTax),
     },
     business: {
@@ -93,8 +94,12 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
       ? {
           name: txn.customer.name || "",
           mobile: txn.customer.mobile || "",
+          email: txn.customer.email || "",
           customerCode: txn.customer.code || "",
           customerTrn: txn.customer.trn || "",
+          // Customer's address on file (default shipping, falling back to
+          // billing) — distinct from the sale's own DELIVERY block below.
+          address: txn.customer.address || "",
         }
       : null,
     balance: on(toggles.showAccountBalance) ? txn.balance || null : null,
@@ -297,8 +302,10 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
       : {
           name: invoice.customerName || "",
           mobile: opts.customerPhone || invoice.customerPhone || "",
+          email: opts.customerEmail || invoice.customerEmail || "",
           code: invoice.customerCode || invoice.customerId || "",
-          trn: invoice.customerTrn || "",
+          trn: opts.customerTrn || invoice.customerTrn || "",
+          address: opts.customerAddress || invoice.customerAddress || "",
         },
     balance,
     delivery,
@@ -384,8 +391,10 @@ export function buildSampleTxn() {
     customer: {
       name: "Sarah Johnson",
       mobile: "+971 50 123 4567",
+      email: "sarah@email.com",
       code: "CUST-00847",
-      trn: "",
+      trn: "100987654300003",
+      address: "Villa 22, Street 7, Al Faseel, Fujairah",
     },
     // Account balance + delivery blocks so the designer Live Preview exercises
     // EVERY section the live checkout receipt can render (kept in lock-step with

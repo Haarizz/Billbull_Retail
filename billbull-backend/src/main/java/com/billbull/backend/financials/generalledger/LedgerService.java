@@ -17,6 +17,8 @@ import java.util.UUID;
 import com.billbull.backend.common.UuidV7;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,8 @@ public class LedgerService {
     private BranchAccessService branchAccessService;
     @Autowired
     private BranchRepository branchRepository;
+    @Autowired
+    private ApplicationContext applicationContext;
 
     private String normalizeBranchKey(String value) {
         return value == null ? null : value.trim().toLowerCase(Locale.ROOT);
@@ -155,6 +159,20 @@ public class LedgerService {
         return accountRepo.save(account);
     }
 
+    /**
+     * The single branch the caller is currently scoped to, or null under "All Branches"
+     * (or a multi-branch scope). Mirrors the branch resolution in
+     * {@link #resolveBranchScopedBalances()} so a journal posted here is visible to the
+     * same COA-tree query that reads it back.
+     */
+    public Branch currentScopedBranchOrNull() {
+        BranchAccessService.ListScope scope = branchAccessService.currentExactScope();
+        if (scope.allBranches() || scope.branchIds().size() != 1) {
+            return null;
+        }
+        return branchRepository.findById(scope.branchIds().iterator().next()).orElse(null);
+    }
+
     public Account archiveAccount(String id) {
         Account acc = accountRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Account not found: " + id));
@@ -202,6 +220,21 @@ public class LedgerService {
 
     @Transactional
     public LedgerEntry recordTransaction(LedgerEntry entry) {
+        // 0. Replay guard. Recording a transaction is not a pure insert — it also advances the
+        // account balance and the cost-center spend below — so a repeated submit of the same form
+        // (double click, impatient re-click, retry after a slow response) corrupts the ledger,
+        // not merely the entry list. The client mints one key per open form and resends it
+        // unchanged, so a POST carrying a key already on file is the same click arriving twice:
+        // return what was written the first time instead of posting again.
+        String requestId = trimToNull(entry.getClientRequestId());
+        entry.setClientRequestId(requestId);
+        if (requestId != null) {
+            LedgerEntry replayed = entryRepo.findByClientRequestId(requestId).orElse(null);
+            if (replayed != null) {
+                return replayed;
+            }
+        }
+
         // 1. Validate Account
         Account acc = accountRepo.findByCode(entry.getAccountCode());
         if (acc == null)
@@ -257,11 +290,74 @@ public class LedgerService {
         }
 
         // 5. Finalize and Save Entry
+        if (entry.getBranch() == null) {
+            entry.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        }
         entry.setRunningBalance(acc.getBalanceAmount());
         entry.setBalanceType(acc.getBalanceType());
         entry.setAccountName(acc.getName());
 
-        return entryRepo.save(entry);
+        try {
+            // flush() so the unique index on client_request_id raises here rather than at commit,
+            // where the violation would escape this method as an opaque transaction failure.
+            LedgerEntry saved = entryRepo.save(entry);
+            entryRepo.flush();
+            return saved;
+        } catch (DataIntegrityViolationException e) {
+            // Two truly simultaneous submits can both pass the step-0 pre-check; the index decides
+            // which one wins. The loser reports the winner's entry — but its own balance updates
+            // above are part of this transaction, so it must roll back rather than commit a second
+            // balance advance. Re-read outside this transaction to answer the caller.
+            if (requestId == null) {
+                throw e;
+            }
+            throw new ConcurrentLedgerReplayException(requestId, e);
+        }
+    }
+
+    /**
+     * Signals that a concurrent request already recorded the transaction for this idempotency key.
+     * Thrown so the failed transaction rolls back (its balance updates must not commit) and
+     * {@link #recordTransactionIdempotent} can return the winning entry from a fresh transaction.
+     */
+    static class ConcurrentLedgerReplayException extends RuntimeException {
+        private final String clientRequestId;
+
+        ConcurrentLedgerReplayException(String clientRequestId, Throwable cause) {
+            super("Ledger transaction already recorded for request " + clientRequestId, cause);
+            this.clientRequestId = clientRequestId;
+        }
+
+        String getClientRequestId() {
+            return clientRequestId;
+        }
+    }
+
+    /**
+     * Entry point for the Record Transaction endpoint: {@link #recordTransaction} plus recovery of
+     * the concurrent-replay case. Kept separate so the rollback of the losing transaction has
+     * completed before the winning entry is read back.
+     */
+    public LedgerEntry recordTransactionIdempotent(LedgerEntry entry) {
+        try {
+            return self().recordTransaction(entry);
+        } catch (ConcurrentLedgerReplayException e) {
+            return entryRepo.findByClientRequestId(e.getClientRequestId())
+                    .orElseThrow(() -> e);
+        }
+    }
+
+    /** Self-reference so the {@code @Transactional} boundary on recordTransaction is honoured. */
+    private LedgerService self() {
+        return applicationContext.getBean(LedgerService.class);
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     public List<LedgerEntry> getTransactionHistory() {

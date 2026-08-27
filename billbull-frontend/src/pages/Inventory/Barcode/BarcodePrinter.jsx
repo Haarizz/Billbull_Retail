@@ -15,13 +15,16 @@ import { getBarcodeTemplates, createBarcodeTemplate, updateBarcodeTemplate, dele
 import { getStockTakeSessions, getStockTakeSession } from '../../../api/stockTakeApi';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCompany } from "../../../context/CompanyContext";
+import { useBranch } from "../../../context/BranchContext";
 import { getImageUrl } from "../../../utils/urlUtils";
 import {
     resolveCurrencyDisplayConfig,
     resolveCurrencyDisplayCode,
     UAE_DIRHAM_SYMBOL_IMAGE
 } from "../../../utils/countryCurrencyOptions";
-import { printZplBatch, isBrowserPrintReachable } from "../../../utils/zebraZpl";
+import { buildZplBatch } from "../../../utils/zebraZpl";
+import { getPosPrinters, printPosPrinterEscPos } from "../../../api/posPrinterApi";
+import { resolvePrinterForContext, printEscPosThroughAgent } from "../../../utils/localPrintAgent";
 
 const TEMPLATES = [
     {
@@ -416,6 +419,7 @@ const BarcodePrinter = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { company } = useCompany();
+    const { activeBranchId, isAllBranches, activeBranch } = useBranch();
     const currencyCode = company?.currency || 'AED';
     const currencyLabel = resolveCurrencyDisplayCode(company || {});
     const [products, setProducts] = useState([]);
@@ -1100,21 +1104,55 @@ const BarcodePrinter = () => {
         const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
         if (!t || cart.length === 0) return;
 
-        const reachable = await isBrowserPrintReachable();
-        if (!reachable) {
-            const host = window.location.host; // e.g. "77.37.49.42" or "app.billbull.io"
-            alert(
-                'Could not reach Zebra Browser Print.\n\n' +
-                'Check each of these on the workstation connected to the Zebra:\n\n' +
-                '1) Browser Print is installed and running (look for its icon in the system tray).\n' +
-                '   Install: https://www.zebra.com/us/en/support-downloads/printer-software/printer-setup-utilities.html\n\n' +
-                '2) This site is in Browser Print\'s "Accepted Hosts" list.\n' +
-                '   Open the Browser Print Settings window and add:\n' +
-                `       ${host}\n` +
-                '   (then close/save the dialog)\n\n' +
-                '3) Visit https://localhost:9101/available once in this browser and accept the certificate prompt if shown.\n\n' +
-                'Then click "Print to Zebra" again.'
-            );
+        // Label printers are owned by the BRANCH, not by a POS terminal — Barcode
+        // Print & Design is an Inventory screen and must never require the operator
+        // to have registered this PC as a till. The branch comes from BranchContext;
+        // the company profile carries no branchId at all, and reading it from there
+        // is what made this screen fetch an empty printer list in every tenant.
+        const branchId = (activeBranchId != null && activeBranchId !== 'ALL') ? Number(activeBranchId) : null;
+        if (isAllBranches || branchId == null) {
+            // Never guess. Picking "the first branch" would spool labels to hardware
+            // in another building with no error and no way to tell it happened.
+            alert('Select a branch before printing barcode labels.');
+            return;
+        }
+
+        let printers = [];
+        let printerLoadError = null;
+        try {
+            printers = await getPosPrinters({ branchId, deviceType: 'LABEL_PRINTER' });
+        } catch (e) {
+            console.error("Failed to load printers", e);
+            // Held rather than thrown so a lookup failure isn't reported as
+            // "no printer configured" — those need different fixes.
+            printerLoadError = e;
+        }
+
+        // terminalId is deliberately omitted: "give me the branch-scoped label
+        // printer, and do not narrow this Inventory operation to a POS terminal."
+        const resolvedPrinter = resolvePrinterForContext(printers, {
+            deviceType: 'LABEL_PRINTER',
+            branchId,
+        });
+
+        const branchLabel = activeBranch?.name || 'this branch';
+        if (!resolvedPrinter && printerLoadError) {
+            alert(`Could not load the printer configuration for ${branchLabel}.\n\n${printerLoadError.message || printerLoadError}`);
+            return;
+        }
+        if (!resolvedPrinter) {
+            alert(`No barcode printer is configured for ${branchLabel}.\n\n`
+                + 'Add one under POS → Devices → Add Device → Label Printer, '
+                + 'leave "assign to this terminal" unchecked, and set it as the default.');
+            return;
+        }
+        if (resolvedPrinter.connectionType === 'NETWORK_IP') {
+            if (!resolvedPrinter.id || !resolvedPrinter.ipAddress || !resolvedPrinter.portNumber) {
+                alert(`The label printer configured for ${branchLabel} is missing an IP address or port.`);
+                return;
+            }
+        } else if (!resolvedPrinter.systemPrinterName) {
+            alert(`The label printer configured for ${branchLabel} has no system printer name.`);
             return;
         }
 
@@ -1180,8 +1218,28 @@ const BarcodePrinter = () => {
         });
 
         try {
-            const device = await printZplBatch(labels);
-            console.info('Sent ZPL to Zebra device:', device?.name);
+            const zpl = buildZplBatch(labels);
+            const base64Zpl = btoa(unescape(encodeURIComponent(zpl)));
+            // Same transport fork the receipt path uses (see
+            // sendEscPosReceiptToConfiguredPrinter): Network/IP printers are relayed
+            // through the backend's raw socket, so they print from any device with no
+            // agent installed. USB/Bluetooth/Windows-queue printers can only be reached
+            // by the machine they're physically attached to, so those go through the
+            // local agent. Both carry the ZPL bytes untouched to the RAW spooler.
+            if (resolvedPrinter.connectionType === 'NETWORK_IP') {
+                await printPosPrinterEscPos(resolvedPrinter.id, base64Zpl);
+                console.info('Relayed ZPL through backend to network printer:', `${resolvedPrinter.ipAddress}:${resolvedPrinter.portNumber}`);
+            } else {
+                await printEscPosThroughAgent({
+                    printerName: resolvedPrinter.systemPrinterName,
+                    dataBase64: base64Zpl,
+                    connectionType: resolvedPrinter.connectionType,
+                    ipAddress: resolvedPrinter.ipAddress,
+                    portNumber: resolvedPrinter.portNumber,
+                    title: 'BillBull Barcode Labels',
+                });
+                console.info('Sent ZPL to BillBull Print Agent for printer:', resolvedPrinter.systemPrinterName);
+            }
         } catch (err) {
             console.error(err);
             alert(`Could not send to Zebra.\n\n${err.message}`);

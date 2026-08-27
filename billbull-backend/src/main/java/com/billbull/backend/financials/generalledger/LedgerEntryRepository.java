@@ -24,6 +24,9 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
 
     boolean existsByAccountCode(String accountCode);
 
+    /** Replay lookup for a client-supplied idempotency key — see LedgerEntry.clientRequestId. */
+    java.util.Optional<LedgerEntry> findByClientRequestId(String clientRequestId);
+
     @Query("select distinct le.accountCode from LedgerEntry le where le.accountCode is not null")
     List<String> findDistinctAccountCodes();
 

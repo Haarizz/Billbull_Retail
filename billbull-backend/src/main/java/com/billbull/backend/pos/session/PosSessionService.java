@@ -251,6 +251,18 @@ public class PosSessionService {
         return nz(session.getOpeningCash()).add(tenderCash).add(cashDropIn).subtract(cashDropOut);
     }
 
+    /** Cash physically in the drawer right now for an open session: the same Expected Cash
+     *  formula used by closeSession()/getXReport(), evaluated mid-shift. Used to refuse a
+     *  cash out larger than the drawer holds. */
+    private BigDecimal availableCashInDrawer(PosSession session) {
+        List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(session.getId());
+        List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(session.getId());
+        TenderTotals tender = aggregateTender(invoices, advances);
+        BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
+        BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
+        return computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
+    }
+
     /** SUM(amount) grouped by movementType (DROP_IN / DROP_OUT) across a set of sessions.
      *  Now fetches entities, detaches them, resolves overlays, and sums in-memory to ensure
      *  corrections are accurately reflected. */
@@ -1343,6 +1355,22 @@ public class PosSessionService {
             type = PosCashMovementType.valueOf(movementType);
         } catch (IllegalArgumentException | NullPointerException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid movement type: " + movementType);
+        }
+
+        if (amount == null || amount.signum() <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cash movement amount must be greater than zero.");
+        }
+
+        // A cash out can never remove more cash than the drawer actually holds. "Available"
+        // is the same Expected Cash figure closeSession()/getXReport() compute, so the POS
+        // quick action, the back-office Add New form and the X-Report all agree on one number.
+        if (type == PosCashMovementType.DROP_OUT) {
+            BigDecimal available = availableCashInDrawer(session);
+            if (amount.compareTo(available) > 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Cash out of " + amount.toPlainString() + " exceeds the cash available in the drawer ("
+                                + available.toPlainString() + ").");
+            }
         }
 
         PosCashMovementCategory category = null;

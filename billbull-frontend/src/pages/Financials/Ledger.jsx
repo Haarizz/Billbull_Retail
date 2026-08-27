@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import toast from 'react-hot-toast';
 import {
   BookOpen,
   FileText,
@@ -43,7 +44,7 @@ import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
 import { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { formatDisplayDate, toLocalInputDate } from '../../utils/dateUtils';
 import { generateNextAccountCode } from '../../utils/accountCodeGenerator';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
@@ -195,15 +196,15 @@ const Ledger = () => {
   const [glAccountOpen, setGlAccountOpen] = useState(false);
   const [glTextSearch, setGlTextSearch] = useState('');
   const glAccountRef = useRef(null);
-  const today = new Date().toISOString().split('T')[0];
-  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+  const today = toLocalInputDate(new Date());
+  const firstOfMonth = toLocalInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [glFilterFrom, setGlFilterFrom] = useState(firstOfMonth);
   const [glFilterTo, setGlFilterTo] = useState(today);
 
   // --- TRANSACTION TAB FILTER STATES ---
   const [txnSearch, setTxnSearch] = useState('');
-  const [txnFilterFrom, setTxnFilterFrom] = useState('');
-  const [txnFilterTo, setTxnFilterTo] = useState('');
+  const [txnFilterFrom, setTxnFilterFrom] = useState(firstOfMonth);
+  const [txnFilterTo, setTxnFilterTo] = useState(today);
   const [txnFilterAccount, setTxnFilterAccount] = useState('');
 
   // --- CORE DATA STATES ---
@@ -539,6 +540,7 @@ const Ledger = () => {
 
   // --- MODAL STATES ---
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isSavingAccount, setIsSavingAccount] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isCostCenterModalOpen, setIsCostCenterModalOpen] = useState(false);
   const [isViewCostCenterModalOpen, setIsViewCostCenterModalOpen] = useState(false);
@@ -626,6 +628,21 @@ const Ledger = () => {
   const [txnAmount, setTxnAmount] = useState('');
   const [txnDesc, setTxnDesc] = useState('');
   const [txnDate, setTxnDate] = useState(new Date().toISOString().split('T')[0]);
+  const [isSavingTxn, setIsSavingTxn] = useState(false);
+  // Idempotency key for the Record Transaction form: minted once when the modal opens and resent
+  // unchanged on every submit of that form, so the backend can recognise a repeated click as a
+  // replay of the first one rather than a second transaction. Cleared on a successful save so the
+  // next transaction gets a fresh key.
+  const txnRequestIdRef = useRef(null);
+
+  const newTxnRequestId = () => (
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+          const r = Math.random() * 16 | 0;
+          return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        })
+  );
 
   // --- ACTIONS STATE ---
   const [openActionMenuId, setOpenActionMenuId] = useState(null);
@@ -732,23 +749,47 @@ const Ledger = () => {
       level: parentAccount ? (parentAccount.level || 1) + 1 : 1
     };
 
+    // A second click while the first POST is still in flight creates the account twice
+    // (or trips the server-side duplicate-code 409 on the retry, which used to surface as
+    // "Failed to save Account" even though the first click had already saved it).
+    if (isSavingAccount) return;
+    setIsSavingAccount(true);
+
     try {
       if (accId) {
         await api.updateAccount(accountData);
       } else {
         await api.createAccount(accountData);
       }
-      await fetchData();
+
+      // Close and confirm before reloading: the save is already committed at this point,
+      // so a slow or failing list refresh must never be reported as a failed save.
       setIsAccountModalOpen(false);
+      toast.success(accId ? "Account updated successfully" : "Account created successfully");
+      await fetchData();
     } catch (err) {
       console.error("Error saving Account", err);
       // Surface the backend reason (e.g. 409 duplicate code) instead of a blanket failure.
       const reason = err?.response?.data?.message || err?.response?.data?.error;
-      alert(reason ? `Failed to save Account: ${reason}` : "Failed to save Account");
+      if (reason) {
+        toast.error(`Failed to save Account: ${reason}`);
+      } else if (!err?.response) {
+        // The request never came back (network drop, proxy timeout, aborted request), so the
+        // account may well have been written. Saying "failed" here would be a lie.
+        toast.error("Couldn't confirm the save — the server did not respond. Refresh the Ledger to check whether the account was created.");
+      } else {
+        toast.error("Failed to save Account");
+      }
+    } finally {
+      setIsSavingAccount(false);
     }
   };
 
   const handleSaveTransaction = async () => {
+    // A second click while the first POST is still in flight would post the transaction twice —
+    // and recording a transaction also advances the account balance and cost-center spend, so a
+    // duplicate corrupts the ledger rather than just adding a stray row.
+    if (isSavingTxn) return;
     if (!txnAccount || !txnAmount) return alert("Account and Amount are required");
     const amount = parseFloat(txnAmount);
     const isTxnDebit = txnType === 'Debit';
@@ -757,7 +798,12 @@ const Ledger = () => {
     const targetAccount = accounts.find(acc => acc.name === selectedAccName);
     if (!targetAccount) return;
 
+    // Survives a re-render; only a fresh modal open (or a completed save) rotates it, so every
+    // retry of this same submit carries the key the backend already knows.
+    if (!txnRequestIdRef.current) txnRequestIdRef.current = newTxnRequestId();
+
     const newTxn = {
+      clientRequestId: txnRequestIdRef.current,
       transactionDate: txnDate,
       voucherNo: `V-${Date.now().toString().slice(-6)}`,
       type: isTxnDebit ? 'Debit' : 'Credit',
@@ -768,13 +814,23 @@ const Ledger = () => {
       creditAmount: !isTxnDebit ? amount : null
     };
 
+    setIsSavingTxn(true);
     try {
       await api.createTransaction(newTxn);
-      await fetchData();
+      // Committed — retire the key so the next transaction is not mistaken for this one, and
+      // close before refreshing so a slow list reload is never reported as a failed save.
+      txnRequestIdRef.current = null;
       setIsTransactionModalOpen(false);
+      toast.success("Transaction recorded successfully");
+      await fetchData();
     } catch (err) {
       console.error("Error saving transaction", err);
-      alert("Failed to save transaction");
+      // Keep txnRequestIdRef so a retry reuses the same key: if the request actually reached the
+      // server and only the response was lost, the retry returns that entry instead of a second one.
+      const msg = err.response?.data?.message || err.message || "Failed to save transaction";
+      toast.error(msg);
+    } finally {
+      setIsSavingTxn(false);
     }
   };
 
@@ -1131,6 +1187,23 @@ const Ledger = () => {
   }
 
   // --- FILTER LOGIC ---
+  // Shared account-group matcher. Handles plural/singular ("Liabilities" vs
+  // "Liability") and accounts that carry the type on accountType rather than group,
+  // so the KPI cards and the account list always agree on what belongs to a group.
+  const singularise = (value) => value
+    .replace(/ies$/, 'y')
+    .replace(/ses$/, 'se')
+    .replace(/s$/, '');
+
+  const matchesAccountGroup = (acc, type) => {
+    const target = type.toLowerCase().trim();
+    const singular = singularise(target);
+    const group = (acc.group || '').toLowerCase().trim();
+    const actType = (acc.accountType || '').toLowerCase().trim();
+    return group === target || group === singular ||
+           actType === target || actType === singular;
+  };
+
   const filteredAccounts = accounts.filter(acc => {
     const matchesSearch = searchQuery === '' ||
       acc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1146,8 +1219,9 @@ const Ledger = () => {
   // BB-033: Filter GL entries by account, date range, and text search
   const filteredGlData = glData.filter(entry => {
     const matchesAccount = !glFilterAccount || entry.accCode === glFilterAccount || entry.accName === glFilterAccount;
-    const matchesFrom = !glFilterFrom || (entry.date && entry.date >= glFilterFrom);
-    const matchesTo = !glFilterTo || (entry.date && entry.date <= glFilterTo);
+    const entryDateStr = entry.date ? String(entry.date).split('T')[0] : '';
+    const matchesFrom = !glFilterFrom || (entryDateStr && entryDateStr >= glFilterFrom);
+    const matchesTo = !glFilterTo || (entryDateStr && entryDateStr <= glFilterTo);
     const q = glTextSearch.toLowerCase();
     const matchesText = !q || (
       (entry.accCode && entry.accCode.toLowerCase().includes(q)) ||
@@ -1317,21 +1391,18 @@ const glAccountOptions = accounts
           {/* STATS */}
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
-              const typeAccounts = accounts.filter(a => {
-                if (a.status === 'archived') return false;
-                if (a.isGroup) return false; // Avoid double counting groups
-                
-                const group = (a.group || '').toLowerCase().trim();
-                const actType = (a.accountType || '').toLowerCase().trim();
-                const target = type.toLowerCase();
+              // Group nodes roll up their children's balances, so they are excluded
+              // from the monetary total to avoid double counting.
+              const typeAccounts = accounts.filter(a =>
+                a.status !== 'archived' && !a.isGroup && matchesAccountGroup(a, type)
+              );
 
-                // Robust matching for plural/singular and empty groups
-                return group === target ||
-                       group === target.replace(/s$/, '').replace(/ies$/, 'y') ||
-                       actType === target ||
-                       actType === target.replace(/s$/, '').replace(/ies$/, 'y');
-              });
-              
+              // The "N active" caption counts what the account list shows for this
+              // group — group nodes included — so the two views cannot disagree.
+              const activeCount = accounts.filter(a =>
+                a.status === 'active' && matchesAccountGroup(a, type)
+              ).length;
+
               let total = 0;
               typeAccounts.forEach(acc => {
                 // Prefer the branch-scoped balance from the COA tree; fall back to the
@@ -1370,7 +1441,7 @@ const glAccountOptions = accounts
                     <span className="text-xs font-bold text-slate-500">{type}</span>
                   </div>
                   <div className="text-xl font-bold text-slate-800 mb-1"><CurrencySymbol /> {total.toLocaleString()}</div>
-                  <div className="text-[10px] text-slate-400 font-medium">{typeAccounts.length} active</div>
+                  <div className="text-[10px] text-slate-400 font-medium">{activeCount} active</div>
                 </div>
               )
             })}
@@ -1980,8 +2051,9 @@ const glAccountOptions = accounts
             (entry.accName && entry.accName.toLowerCase().includes(q)) ||
             (entry.desc && entry.desc.toLowerCase().includes(q))
           );
-          const matchesFrom = !txnFilterFrom || (entry.date && entry.date >= txnFilterFrom);
-          const matchesTo = !txnFilterTo || (entry.date && entry.date <= txnFilterTo);
+          const entryDateStr = entry.date ? String(entry.date).split('T')[0] : '';
+          const matchesFrom = !txnFilterFrom || (entryDateStr && entryDateStr >= txnFilterFrom);
+          const matchesTo = !txnFilterTo || (entryDateStr && entryDateStr <= txnFilterTo);
           const matchesAccount = !txnFilterAccount || entry.accCode === txnFilterAccount;
           return matchesText && matchesFrom && matchesTo && matchesAccount;
         });
@@ -2026,9 +2098,9 @@ const glAccountOptions = accounts
                   <input type="date" value={txnFilterTo} onChange={e => setTxnFilterTo(e.target.value)}
                     className="px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-700 outline-none focus:border-blue-400" />
                 </div>
-                {(txnSearch || txnFilterFrom || txnFilterTo || txnFilterAccount) && (
+                {(txnSearch || txnFilterAccount || txnFilterFrom !== firstOfMonth || txnFilterTo !== today) && (
                   <button
-                    onClick={() => { setTxnSearch(''); setTxnFilterFrom(''); setTxnFilterTo(''); setTxnFilterAccount(''); }}
+                    onClick={() => { setTxnSearch(''); setTxnFilterFrom(firstOfMonth); setTxnFilterTo(today); setTxnFilterAccount(''); }}
                     className="px-3 py-2 text-xs border border-slate-200 rounded-md text-slate-500 hover:bg-slate-50 flex items-center gap-1"
                   >
                     <X size={12} /> Clear
@@ -2036,7 +2108,7 @@ const glAccountOptions = accounts
                 )}
                 <div className="ml-auto">
                   <button
-                    onClick={() => { setTxnAccount(''); setTxnAmount(''); setTxnDesc(''); setIsTransactionModalOpen(true); }}
+                    onClick={() => { setTxnAccount(''); setTxnAmount(''); setTxnDesc(''); txnRequestIdRef.current = newTxnRequestId(); setIsTransactionModalOpen(true); }}
                     className="flex items-center gap-2 px-5 py-2 bg-[#F5C742] text-slate-900 rounded-md text-xs font-bold hover:bg-yellow-400 shadow-sm"
                   >
                     <Plus size={14} /> Add Transaction
@@ -2285,7 +2357,7 @@ const glAccountOptions = accounts
 
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
               <button onClick={() => setIsAccountModalOpen(false)} className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-slate-800 transition-colors">Cancel</button>
-              <button onClick={handleSaveAccount} className="px-5 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors">{accId ? 'Update Account' : 'Create Account'}</button>
+              <button onClick={handleSaveAccount} disabled={isSavingAccount} className="px-5 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed">{isSavingAccount ? 'Saving…' : (accId ? 'Update Account' : 'Create Account')}</button>
             </div>
           </div>
         </div>
@@ -2393,7 +2465,7 @@ const glAccountOptions = accounts
             </div>
             <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
               <button onClick={() => setIsTransactionModalOpen(false)} className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
-              <button onClick={handleSaveTransaction} className="px-5 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm">Save Transaction</button>
+              <button onClick={handleSaveTransaction} disabled={isSavingTxn} className="px-5 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed">{isSavingTxn ? 'Saving…' : 'Save Transaction'}</button>
             </div>
           </div>
         </div>

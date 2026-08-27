@@ -171,7 +171,6 @@ export default function ProformaPreview({
     const isExpired = String(proforma?.status || '').toUpperCase() === 'EXPIRED';
 
     const notes = proforma?.notesToCustomer || proforma?.customerNotes || proforma?.notes || '';
-    const billingAddress = customer?.billingAddress || customer?.address || '';
     const shippingAddress = proforma?.shippingAddress || (customer ? resolveDefaultShippingAddress(customer) : '');
 
     const relatedDocs = proforma ? [
@@ -338,7 +337,6 @@ export default function ProformaPreview({
                     <InfoRow label="Phone" value={customer?.phone || customer?.mobile} />
                     <InfoRow label="Email" value={customer?.email} />
                     <InfoRow label="VAT / TRN" value={customer?.trn || proforma.customerTrn} copyable copyLabel="TRN" />
-                    <InfoRow label="Billing" value={billingAddress} />
                     <InfoRow label="Shipping" value={shippingAddress} />
                 </div>
             </RailCard>

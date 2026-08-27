@@ -3878,7 +3878,7 @@ const normaliseSalesDesignerLayout = (template, data, companyProfile, renderTarg
         party: {
             name: firstNonEmpty(customer.name, customer.customerName, 'Unknown Customer'),
             code: firstNonEmpty(customer.code, customer.customerCode),
-            address: firstNonEmpty(customer.address, customer.billingAddress),
+            address: firstNonEmpty(customer.address, customer.defaultShippingAddress),
             phone: firstNonEmpty(customer.phone, customer.mobile),
             email: firstNonEmpty(customer.email),
             taxId: firstNonEmpty(customer.trn, customer.taxId)
@@ -4015,7 +4015,7 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
         party: {
             name: firstNonEmpty(customer.name, customer.customerName, 'Unknown Customer'),
             code: firstNonEmpty(customer.code, customer.customerCode),
-            address: firstNonEmpty(customer.address, customer.billingAddress),
+            address: firstNonEmpty(customer.address, customer.defaultShippingAddress),
             phone: firstNonEmpty(customer.phone, customer.mobile),
             email: firstNonEmpty(customer.email),
             taxId: firstNonEmpty(customer.trn, customer.taxId)

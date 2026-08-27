@@ -42,7 +42,7 @@ const CustomerSelector = ({
         code: '',
         name: '',
         group: 'Retail',
-        billingAddress: '',
+        address: '',
         mobile: '',
         email: '',
         trn: ''
@@ -173,7 +173,7 @@ const CustomerSelector = ({
                 code: newCust.code.trim() || undefined,
                 name: newCust.name.trim(),
                 group: newCust.group,
-                billingAddress: newCust.billingAddress.trim(),
+                defaultShippingAddress: newCust.address.trim(),
                 mobile: newCust.mobile.trim(),
                 email: newCust.email.trim(),
                 trn: newCust.trn.trim(),
@@ -187,7 +187,7 @@ const CustomerSelector = ({
             const saved = await createCustomer(payload);
 
             // Reset form
-            setNewCust({ code: '', name: '', group: 'Retail', billingAddress: '', mobile: '', email: '', trn: '' });
+            setNewCust({ code: '', name: '', group: 'Retail', address: '', mobile: '', email: '', trn: '' });
             setIsNewCustomerOpen(false);
 
             // Refresh parent list
@@ -385,8 +385,8 @@ const CustomerSelector = ({
                             <textarea
                                 rows={2}
                                 placeholder="Enter address"
-                                value={newCust.billingAddress}
-                                onChange={(e) => setNewCust({ ...newCust, billingAddress: e.target.value })}
+                                value={newCust.address}
+                                onChange={(e) => setNewCust({ ...newCust, address: e.target.value })}
                                 className="w-full text-sm p-2 border border-slate-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400"
                             />
                         </div>

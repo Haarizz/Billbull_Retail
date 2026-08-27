@@ -11,9 +11,10 @@ import {
   submitDenominationCorrection, approveDenominationCorrection, rejectDenominationCorrection,
   applyDenominationCorrection, cancelDenominationCorrection,
 } from '../../api/posSessionDenominationCorrectionApi';
+import { DENOM_KEYS } from '../../utils/cashDenominations';
 
 const PAGE_SIZE = 20;
-const DENOMINATIONS = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
+const DENOMINATIONS = DENOM_KEYS;
 
 const STATUS_BADGE = {
   REQUESTED: 'bg-slate-100 text-slate-600',

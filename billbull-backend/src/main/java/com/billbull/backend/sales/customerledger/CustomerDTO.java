@@ -36,7 +36,6 @@ public class CustomerDTO {
     private String branch;
     private String warehouse;
     
-    private String billingAddress;
     private String defaultShippingAddress;
     private String notes;
     private String avatar; // Base64 string from frontend
@@ -107,8 +106,6 @@ public class CustomerDTO {
     public void setBranch(String branch) { this.branch = branch; }
     public String getWarehouse() { return warehouse; }
     public void setWarehouse(String warehouse) { this.warehouse = warehouse; }
-    public String getBillingAddress() { return billingAddress; }
-    public void setBillingAddress(String billingAddress) { this.billingAddress = billingAddress; }
     public String getDefaultShippingAddress() { return defaultShippingAddress; }
     public void setDefaultShippingAddress(String defaultShippingAddress) { this.defaultShippingAddress = defaultShippingAddress; }
     public String getNotes() { return notes; }

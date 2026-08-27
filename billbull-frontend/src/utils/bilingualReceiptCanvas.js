@@ -94,6 +94,10 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   outletAddress = '', outletPhone = '',
   cashierName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
+  // Customer TRN + the customer's address on file. Printed in the CUSTOMER
+  // block whenever the record carries them (parity with Template 1 and with
+  // Template 2's HTML/component renderer).
+  customerTrn = null, customerAddress = null,
   deliveryAddress = null,
   depositApplied = null, balanceDue = null,
   shippingCharge = null,
@@ -307,7 +311,20 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
     // Customer code + TRN (parity with the HTML template's Customer Details).
     const custCode = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
     if (custCode) kv2(L.CUSTOMER_CODE, custCode);
-    if (invoice.customerTrn) kv2(L.CUSTOMER_TRN, invoice.customerTrn);
+    // TRN prints whenever the customer record carries one — it is the customer's
+    // registration number, not this sale's tax content, so it isn't gated on hasTax.
+    const custTrn = customerTrn || invoice.customerTrn || '';
+    if (custTrn) kv2(L.CUSTOMER_TRN, custTrn);
+    // Address: rendered as a label row + wrapped full-width lines (like the
+    // delivery block below) instead of a right-aligned kv2 value, which would
+    // shrink a long address down to an unreadable size to fit one line.
+    const custAddr = oneLine(customerAddress || invoice.customerAddress || '');
+    if (custAddr) {
+      drawEn(L.ADDRESS.en, M, 16);
+      if (showArabic) { drawAr(L.ADDRESS.ar, W - M, 16, { align: 'right' }); }
+      y += lineH(16);
+      for (const ln of wrap(custAddr, 16, false, CW)) { drawEn(ln, M, 16); y += lineH(16); }
+    }
   }
 
   // ── Delivery address ──────────────────────────────────────────────────────

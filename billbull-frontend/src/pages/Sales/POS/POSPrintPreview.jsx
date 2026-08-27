@@ -267,6 +267,9 @@ export const ThermalMock = ({
               <Row left="Name:" right="Sarah Johnson" />
               <Row left="Mobile:" right="+971 50 123 4567" />
               <Row left="Email:" right="sarah@email.com" />
+              <Row left="Customer Code:" right="CUST-00847" />
+              <Row left="TRN:" right="100987654300003" />
+              <Row left="Address:" right="Villa 22, Street 7, Al Faseel, Fujairah" small />
             </>
           )}
 

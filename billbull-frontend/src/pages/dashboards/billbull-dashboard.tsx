@@ -436,16 +436,36 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
   );
 
   // --- Global search ---
+  // Holds the in-flight search so the next keystroke can cancel it: without this
+  // every superseded request still competes for the browser's connection pool and
+  // a slow early one can land after — and overwrite — a newer result set.
+  const searchRequestRef = useRef<AbortController | null>(null);
+
   const searchGlobal = useCallback(
     async (term: string) => {
+      searchRequestRef.current?.abort();
       if (!term.trim()) {
+        searchRequestRef.current = null;
         setSearchResults([]);
         setShowSearchResults(false);
+        setIsSearching(false);
         return;
       }
+      const controller = new AbortController();
+      searchRequestRef.current = controller;
       setIsSearching(true);
       try {
-        const res = await billbullDashboardService.globalSearch(term);
+        const res = await billbullDashboardService.globalSearch(term, {
+          signal: controller.signal,
+          // Paint each source as it lands rather than holding the dropdown
+          // hostage to the slowest endpoint.
+          onPartial: (partial) => {
+            if (controller.signal.aborted || partial.length === 0) return;
+            setSearchResults(partial);
+            setShowSearchResults(true);
+          },
+        });
+        if (controller.signal.aborted) return;
         if (res.success) {
           setSearchResults(res.data || []);
           setShowSearchResults(true);
@@ -454,11 +474,15 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
           setShowSearchResults(false);
         }
       } catch (error) {
+        if (controller.signal.aborted) return;
         console.error("Search error", error);
         setSearchResults([]);
         setShowSearchResults(false);
       } finally {
-        setIsSearching(false);
+        if (searchRequestRef.current === controller) {
+          searchRequestRef.current = null;
+          setIsSearching(false);
+        }
       }
     },
     []
@@ -468,9 +492,12 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
   useEffect(() => {
     const t = setTimeout(() => {
       searchGlobal(searchTerm);
-    }, 300);
+    }, 200);
     return () => clearTimeout(t);
   }, [searchTerm, searchGlobal]);
+
+  // Drop any in-flight search when the dashboard unmounts.
+  useEffect(() => () => searchRequestRef.current?.abort(), []);
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -542,6 +569,34 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
     if (dateFilter === "custom") {
       setDateFilter("year");
     }
+  };
+
+  // Picking "Custom Range" has no meaning without dates, so reveal the From/To
+  // inputs and seed them with month-to-date; switching back to a preset drops
+  // the custom dates so the preset alone drives the range.
+  const handleDateFilterChange = (next: DateFilter) => {
+    if (next === "custom") {
+      const now = new Date();
+      const defaults = {
+        fromDate:
+          advancedFilters.fromDate ||
+          format(new Date(now.getFullYear(), now.getMonth(), 1), "yyyy-MM-dd"),
+        toDate: advancedFilters.toDate || format(now, "yyyy-MM-dd"),
+      };
+      billbullDashboardService.invalidateCaches();
+      setAdvancedFilters((current) => ({ ...current, ...defaults }));
+      setAppliedAdvancedFilters((current) => ({ ...current, ...defaults }));
+      setShowAdvancedFilters(true);
+    } else if (dateFilter === "custom") {
+      billbullDashboardService.invalidateCaches();
+      setAdvancedFilters((current) => ({ ...current, fromDate: "", toDate: "" }));
+      setAppliedAdvancedFilters((current) => ({
+        ...current,
+        fromDate: "",
+        toDate: "",
+      }));
+    }
+    setDateFilter(next);
   };
 
   // Quick actions
@@ -650,7 +705,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
           {/* Date filter */}
           <Select
             value={dateFilter}
-            onValueChange={(v: DateFilter) => setDateFilter(v)}
+            onValueChange={handleDateFilterChange}
           >
             <SelectTrigger className="w-[150px] bg-white border-slate-200 shadow-sm hover:border-[#F5C742] focus:border-[#F5C742] focus:ring-2 focus:ring-[#F5C742]/20 transition-colors duration-150">
               <SelectValue />
@@ -870,7 +925,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
               </div>
               {searchResults.map((item) => (
                 <button
-                  key={item.id}
+                  key={`${item.type}-${item.id}`}
                   onClick={() => handleSearchResultClick(item)}
                   className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-[#FFF9DF] transition-colors duration-100"
                 >

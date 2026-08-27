@@ -28,6 +28,7 @@ export const RECEIPT_LABELS = {
   EMAIL:             { en: 'Email',                  ar: 'البريد الإلكتروني' },
   CUSTOMER_CODE:     { en: 'Customer Code',          ar: 'رمز العميل' },
   CUSTOMER_TRN:      { en: 'Customer TRN',           ar: 'الرقم الضريبي للعميل' },
+  ADDRESS:           { en: 'Address',                ar: 'العنوان' },
   WALK_IN:           { en: 'Walk-in Customer',       ar: 'عميل نقدي' },
 
   ACCOUNT_BALANCE:   { en: 'ACCOUNT BALANCE',        ar: 'رصيد الحساب' },

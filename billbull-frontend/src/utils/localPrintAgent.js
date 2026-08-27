@@ -1,4 +1,4 @@
-import { printZplBatch } from "./zebraZpl";
+
 import { createPrintJob, dispatchPrintJob, reportPrintJobResult } from "../api/posPrintJobApi";
 import { printPosPrinterEscPos } from "../api/posPrinterApi";
 import { startPrintTimer } from "./printTiming";
@@ -213,17 +213,7 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
     throw new Error("Printer configuration is missing.");
   }
   if (printer.connectionType === "ZEBRA_BROWSER_PRINT") {
-    const labels = Array.isArray(labelPayload) && labelPayload.length
-      ? labelPayload
-      : [{
-          company: printer.branchName || "BillBull",
-          productName: "BillBull Printer Test",
-          code: printer.deviceCode || printer.deviceName || "BB-TEST",
-          productBarcode: printer.deviceCode || "BB-TEST",
-          price: "TEST",
-        }];
-    await printZplBatch(labels, printer.deviceIdentifier || printer.systemPrinterName || null);
-    return { ok: true, message: "Test label sent to Zebra printer." };
+    throw new Error("Zebra Browser Print is no longer supported. Please edit this printer in POS Settings and change its connection type to Windows Queue.");
   }
   // Network/IP printers test straight through the backend relay — no local agent
   // needed, so this works from any device including phones/tablets. Only USB/
@@ -472,6 +462,15 @@ export const resolvePrinterForContext = (printers, {
     if (!printer || printer.status !== "ACTIVE") return false;
     if (deviceType && printer.deviceType !== deviceType) return false;
     if (branchId != null && printer.branchId != null && Number(printer.branchId) !== Number(branchId)) return false;
+    // Terminal eligibility, decided BEFORE ranking. A printer scoped to a terminal
+    // is physically at that terminal — usually a USB/queue device only the machine
+    // it's plugged into can reach — so it must never be a candidate for any other
+    // context, no matter how it would have ranked. Branch-scoped printers
+    // (terminalId null) stay eligible everywhere in the branch, which is what lets
+    // a caller with no terminal at all (Inventory labels, back-office thermal
+    // invoices) resolve the branch default.
+    const printerTerminal = isBlank(printer.terminalId) ? null : String(printer.terminalId).trim().toUpperCase();
+    if (printerTerminal && printerTerminal !== normalizedTerminalId) return false;
     return true;
   });
 

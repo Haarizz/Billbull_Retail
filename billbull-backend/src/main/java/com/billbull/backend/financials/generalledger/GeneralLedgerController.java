@@ -28,6 +28,8 @@ import com.billbull.backend.financials.chartofaccounts.CostCenter;
 @CrossOrigin(origins = "*")
 public class GeneralLedgerController {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(GeneralLedgerController.class);
+
     private final LedgerService ledgerService;
     private final ModulePermissionService modulePermissionService;
     private final PostingEngineService postingEngineService;
@@ -83,7 +85,34 @@ public class GeneralLedgerController {
     @PreAuthorize("isAuthenticated()")
     public Account createOrUpdateAccount(@RequestBody Account account) {
         modulePermissionService.requireCanEdit("finance.ledger");
-        return ledgerService.saveAccount(account);
+
+        boolean isNew = account.getId() == null || account.getId().isBlank();
+        BigDecimal opening = account.getBalanceAmount();
+        String openingType = account.getBalanceType();
+
+        Account saved = ledgerService.saveAccount(account);
+
+        // An opening balance typed on the create form used to be written only to
+        // Account.balanceAmount, which no GL-derived view reads — the COA tree, Trial
+        // Balance and Balance Sheet all aggregate posted ledger entries, so the new
+        // account showed 0.00. Post the matching opening-balance journal (same contra
+        // account as the bulk opening-balance screen) so the figure actually appears.
+        if (isNew && opening != null && opening.abs().compareTo(new BigDecimal("0.005")) >= 0
+                && !Boolean.TRUE.equals(saved.getIsGroup())) {
+            try {
+                postingEngineService.postAccountOpeningBalance(
+                        saved.getCode(), opening, openingType, LocalDate.now(),
+                        ledgerService.currentScopedBranchOrNull());
+            } catch (RuntimeException ex) {
+                // The account itself is already committed. Failing the request here would
+                // report "failed to save" for an account that exists, so surface the reason
+                // in the log and let the caller keep the created account.
+                log.warn("[Ledger] Account {} was created but its opening balance {} {} could not be posted: {}",
+                        saved.getCode(), opening, openingType, ex.getMessage());
+            }
+        }
+
+        return saved;
     }
 
     @PostMapping("/accounts/{id}/archive")
@@ -131,7 +160,9 @@ public class GeneralLedgerController {
     @PreAuthorize("isAuthenticated()")
     public LedgerEntry recordTransaction(@RequestBody LedgerEntry entry) {
         modulePermissionService.requireCanCreate("finance.ledger");
-        return ledgerService.recordTransaction(entry);
+        // Idempotent variant: a repeated submit carrying the same clientRequestId returns the
+        // entry recorded by the first one instead of posting a duplicate.
+        return ledgerService.recordTransactionIdempotent(entry);
     }
 
     // ---------------- OPENING BALANCES ----------------

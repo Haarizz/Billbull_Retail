@@ -196,6 +196,33 @@ const STEPS = [
   { id: 6, key: 'branches', label: 'Branches & Status', icon: <Building2 className="h-4 w-4" /> },
 ];
 
+// Required fields per wizard step. Drives the inline "field is required" markers, the
+// blocked-Next message, and the pre-save check — so a missing value (notably Brand, which
+// the backend rejects outright) surfaces on its own step instead of at the final save.
+const STEP_REQUIRED_FIELDS = {
+  1: [
+    { key: 'code', label: 'Product Code' },
+    { key: 'name', label: 'Product Name' },
+    { key: 'brand', label: 'Brand' },
+  ],
+  2: [
+    { key: 'cost', label: 'Cost' },
+    { key: 'retailPrice', label: 'Retail Price' },
+  ],
+  3: [
+    { key: 'defaultUnit', label: 'Default Unit' },
+  ],
+  4: [
+    { key: 'packings', label: 'At least one packing row' },
+  ],
+};
+
+const missingRequiredFields = (formData, step) =>
+  (STEP_REQUIRED_FIELDS[step] || []).filter(({ key }) => {
+    const value = formData[key];
+    return Array.isArray(value) ? value.length === 0 : !value;
+  });
+
 const toMoneyNumber = (value) => {
   const parsed = parseFloat(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -341,6 +368,8 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   const { activeBranchId } = useBranch();
   const isAdmin = hasAnyRole('ADMIN');
   const [currentStep, setCurrentStep] = useState(1);
+  // Set when the user tries to leave a step (or save) with required fields still empty.
+  const [showStepErrors, setShowStepErrors] = useState(false);
   const [subDepartments, setSubDepartments] = useState([]);
   const [zones, setZones] = useState([]);
   const [locators, setLocators] = useState([]);
@@ -864,18 +893,44 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
     return (metricsBreakdown.taxableAmount - cost).toFixed(2);
   };
 
-  const isStepValid = () => {
-    switch (currentStep) {
-      case 1: return formData.name && formData.code;
-      case 2: return formData.cost && formData.retailPrice;
-      case 3: return !!formData.defaultUnit;
-      case 4: return formData.packings.length > 0;
-      default: return true;
-    }
+  const missingOnStep = missingRequiredFields(formData, currentStep);
+  const isStepValid = () => missingOnStep.length === 0;
+
+  // Inline marker rendered under a required field once the user has been blocked on this step.
+  const requiredFieldError = (key) =>
+    showStepErrors && missingOnStep.some(f => f.key === key)
+      ? <p className="text-xs font-medium text-red-600">This field is required.</p>
+      : null;
+
+  const goToStep = (step) => {
+    setShowStepErrors(false);
+    setCurrentStep(step);
   };
 
   const handleNext = () => {
-    if (currentStep < STEPS.length && isStepValid()) setCurrentStep(curr => curr + 1);
+    if (currentStep >= STEPS.length) return;
+    if (missingOnStep.length > 0) {
+      setShowStepErrors(true);
+      return;
+    }
+    goToStep(currentStep + 1);
+  };
+
+  // The wizard lets the user jump back to earlier steps, so a required field on any step can
+  // still be empty at save time — find the first offending step and send the user there.
+  const firstIncompleteStep = () => {
+    for (const step of STEPS) {
+      if (missingRequiredFields(formData, step.id).length > 0) return step.id;
+    }
+    return null;
+  };
+
+  const requireCompleteForm = () => {
+    const step = firstIncompleteStep();
+    if (step === null) return true;
+    setCurrentStep(step);
+    setShowStepErrors(true);
+    return false;
   };
 
   const validateTrackingMode = () => {
@@ -887,10 +942,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
   };
 
   const handleSaveActive = () => {
+    if (!requireCompleteForm()) return;
     if (!validateTrackingMode()) return;
     onSave({ ...formData, status: 'Active' });
   };
   const handleSaveDraft = () => {
+    if (!requireCompleteForm()) return;
     if (!validateTrackingMode()) return;
     onSave({ ...formData, status: 'Draft' });
   };
@@ -920,7 +977,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
             {STEPS.map(step => (
               <button
                 key={step.id}
-                onClick={() => { if (step.id < currentStep) setCurrentStep(step.id); }}
+                onClick={() => { if (step.id < currentStep) goToStep(step.id); }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap border transition-all
                   ${currentStep === step.id
                     ? 'bg-[#F5C742] border-[#F5C742] text-slate-900 shadow-md transform scale-105'
@@ -952,10 +1009,12 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Product Code <span className="text-red-500">*</span></label>
                     <input value={formData.code} onChange={(e) => handleInputChange('code', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm text-slate-900 focus:ring-2 focus:ring-[#F5C742]/50 outline-none transition-all font-mono" />
+                    {requiredFieldError('code')}
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Product Name <span className="text-red-500">*</span></label>
                     <input value={formData.name} onChange={(e) => handleInputChange('name', e.target.value)} placeholder="e.g. Nike Air Max" className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-[#F5C742]/50 outline-none transition-all" />
+                    {requiredFieldError('name')}
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
@@ -1059,7 +1118,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
 
                 {/* Brand */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-500">Brand</label>
+                  <label className="text-xs font-semibold text-slate-500">Brand <span className="text-red-500">*</span></label>
                   <ClassificationDropdown
                     options={brands.map(b => ({ value: b.id, label: b.name }))}
                     value={formData.brand}
@@ -1068,6 +1127,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                     placeholder="Select Brand…"
                     creating={creatingType === 'brand'}
                   />
+                  {requiredFieldError('brand')}
                 </div>
 
                 {/* Department */}
@@ -1087,7 +1147,9 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">Sub-Department</label>
                   <ClassificationDropdown
-                    options={subDepartments.map(sd => ({ value: sd.id, label: sd.name }))}
+                    options={subDepartments
+                      .filter(sd => sd.active !== false || Number(sd.id) === Number(formData.subDepartment))
+                      .map(sd => ({ value: sd.id, label: sd.active === false ? `${sd.name} (Inactive)` : sd.name }))}
                     value={formData.subDepartment}
                     onChange={(val) => handleInputChange('subDepartment', val)}
                     onCreateNew={formData.department ? (name) => handleInlineCreate('subdepartment', name) : undefined}
@@ -1150,6 +1212,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Cost (<CurrencySymbol />) <span className="text-red-500">*</span></label>
                     <input type="number" value={formData.cost} onChange={(e) => handleInputChange('cost', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#F5C742]/50 font-medium" />
+                    {requiredFieldError('cost')}
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Landing Cost</label>
@@ -1193,6 +1256,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Retail Price (<CurrencySymbol />) <span className="text-red-500">*</span></label>
                     <input type="number" value={formData.retailPrice} onChange={(e) => handleInputChange('retailPrice', e.target.value)} className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-[#F5C742]/50 text-lg" />
+                    {requiredFieldError('retailPrice')}
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">Wholesale Price (<CurrencySymbol />)</label>
@@ -1297,6 +1361,7 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                       placeholder="Select Default Unit…"
                       creating={creatingType === 'defaultUnit'}
                     />
+                    {requiredFieldError('defaultUnit')}
                   </div>
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-1.5">
@@ -1792,14 +1857,24 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
 
       {/* FOOTER ACTIONS */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t p-4 z-40 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] print:hidden">
+        {showStepErrors && missingOnStep.length > 0 && (
+          <div className="max-w-[1600px] mx-auto mb-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>
+              Complete this step before continuing — missing: {missingOnStep.map(f => f.label).join(', ')}.
+            </span>
+          </div>
+        )}
         <div className="max-w-[1600px] mx-auto flex items-center justify-between">
           <button onClick={onCancel} className="px-6 py-2.5 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors text-slate-700">Cancel</button>
           <div className="flex gap-3">
             <button onClick={handleSaveDraft} className="flex items-center gap-2 px-6 py-2.5 border border-slate-200 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors text-slate-600">
               <FileText className="h-4 w-4" /> Save as Draft
             </button>
+            {/* Next stays clickable while the step is incomplete so the click reports what is
+                missing instead of silently doing nothing — the muted styling still signals it. */}
             {currentStep < STEPS.length ? (
-              <button onClick={handleNext} disabled={!isStepValid()} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-colors ${isStepValid() ? 'bg-slate-900 hover:bg-slate-800 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+              <button onClick={handleNext} className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold shadow-sm transition-colors ${isStepValid() ? 'bg-slate-900 hover:bg-slate-800 text-white' : 'bg-slate-200 text-slate-500 hover:bg-slate-300'}`}>
                 Next Step <ChevronRight className="h-4 w-4" />
               </button>
             ) : (

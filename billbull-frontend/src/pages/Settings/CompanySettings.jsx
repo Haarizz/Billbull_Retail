@@ -44,6 +44,21 @@ const EMPTY_FORM = {
   showStampInEmail: true,
 };
 
+const PHONE_ALLOWED_CHARS = /^[0-9+()\-\s]+$/;
+
+const validatePhoneNumber = (value, label) => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) return '';
+  if (!PHONE_ALLOWED_CHARS.test(trimmed)) {
+    return `${label} can only contain digits and + - ( ) characters`;
+  }
+  const digitCount = trimmed.replace(/\D/g, '').length;
+  if (digitCount < 7 || digitCount > 15) {
+    return `${label} must contain between 7 and 15 digits`;
+  }
+  return '';
+};
+
 const resolveCurrencySymbol = (symbol, currency) => {
   const normalizedCurrency = normalizeCurrencyValue(currency);
   const normalizedSymbol = typeof symbol === 'string' ? symbol.trim() : '';
@@ -121,6 +136,9 @@ const CompanySettings = () => {
   const handleChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
+
+  const phoneError = validatePhoneNumber(form.phone, 'Phone');
+  const mobileError = validatePhoneNumber(form.mobile, 'Mobile');
 
   const handleCurrencyChange = (value) => {
     const currency = normalizeCurrencyValue(value);
@@ -219,6 +237,11 @@ const CompanySettings = () => {
   const handleSave = async () => {
     if (!form.companyName.trim()) {
       toast.error('Company name is required');
+      return;
+    }
+
+    if (phoneError || mobileError) {
+      toast.error(phoneError || mobileError);
       return;
     }
 
@@ -457,6 +480,7 @@ const CompanySettings = () => {
                   value={form.phone}
                   onChange={(value) => handleChange('phone', value)}
                   placeholder="e.g. +971 6 526 0000"
+                  error={phoneError}
                 />
                 <FormField
                   label="Mobile"
@@ -464,6 +488,7 @@ const CompanySettings = () => {
                   value={form.mobile}
                   onChange={(value) => handleChange('mobile', value)}
                   placeholder="e.g. +971 50 123 4567"
+                  error={mobileError}
                 />
                 <FormField
                   label="Email"
@@ -612,7 +637,7 @@ const SectionCard = ({ title, description, children }) => (
   </section>
 );
 
-const FormField = ({ label, required, icon, value, onChange, placeholder, fullRow }) => (
+const FormField = ({ label, required, icon, value, onChange, placeholder, fullRow, error }) => (
   <div style={{ gridColumn: fullRow ? '1 / -1' : undefined }}>
     <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 7, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
       {label}
@@ -630,7 +655,7 @@ const FormField = ({ label, required, icon, value, onChange, placeholder, fullRo
         style={{
           width: '100%',
           padding: '11px 12px 11px 34px',
-          border: '1px solid #DCE3EB',
+          border: `1px solid ${error ? '#ef4444' : '#DCE3EB'}`,
           borderRadius: 12,
           fontSize: 14,
           color: '#1e293b',
@@ -640,15 +665,18 @@ const FormField = ({ label, required, icon, value, onChange, placeholder, fullRo
           transition: 'border-color 0.15s, box-shadow 0.15s',
         }}
         onFocus={(e) => {
-          e.target.style.borderColor = '#F5C742';
-          e.target.style.boxShadow = '0 0 0 4px rgba(245, 199, 66, 0.15)';
+          e.target.style.borderColor = error ? '#ef4444' : '#F5C742';
+          e.target.style.boxShadow = error ? '0 0 0 4px rgba(239, 68, 68, 0.15)' : '0 0 0 4px rgba(245, 199, 66, 0.15)';
         }}
         onBlur={(e) => {
-          e.target.style.borderColor = '#DCE3EB';
+          e.target.style.borderColor = error ? '#ef4444' : '#DCE3EB';
           e.target.style.boxShadow = 'none';
         }}
       />
     </div>
+    {error && (
+      <div style={{ marginTop: 6, fontSize: 12, color: '#ef4444', fontWeight: 500 }}>{error}</div>
+    )}
   </div>
 );
 

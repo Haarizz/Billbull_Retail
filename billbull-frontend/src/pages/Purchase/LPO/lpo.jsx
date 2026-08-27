@@ -1430,7 +1430,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       await onSave(payload);
     } catch (error) {
       console.error('Save failed:', error);
-      toast.error('Failed to save LPO. Please try again.');
+      toast.error(error?.response?.data?.message || 'Failed to save LPO. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -1485,7 +1485,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
       await onSubmit(payload);
     } catch (error) {
       console.error('Submit failed:', error);
-      toast.error('Failed to submit LPO. Please try again.');
+      toast.error(error?.response?.data?.message || 'Failed to submit LPO. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -2389,7 +2389,10 @@ const LPOList = () => {
         id: detailedLpo.lpoNumber, // align with editor expectation
         dbId: detailedLpo.id        // align with editor expectation
       });
-      setIsViewOnly(false); // Reset to edit mode
+      // Only DRAFT LPOs are editable server-side (LpoService.update rejects the
+      // rest with 409). Open anything else read-only so the editor offers
+      // "Revert to Draft" instead of a Save that is guaranteed to fail.
+      setIsViewOnly(detailedLpo.status !== 'DRAFT');
       setActiveNavTab('editor');
     } catch (error) {
       console.error('Failed to fetch LPO details:', error);

@@ -414,7 +414,6 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         branch: defaultBranchName || '',
         allocatedBranches: [],
         warehouse: '',
-        billingAddress: '',
         shippingAddress: '',
         notes: '',
         savedAddresses: [],
@@ -468,6 +467,11 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
     // ✅ SYNC FORM STATE WHEN EDITING
     useEffect(() => {
+        // Always land on General Information whenever the modal is opened,
+        // otherwise the tab last used for the previous customer sticks.
+        if (isOpen) {
+            setActiveTab('general');
+        }
         if (isOpen && customerToEdit) {
             const initialFormState = createInitialFormState();
             const normalizedCustomer = normalizeCustomerFormData(customerToEdit);
@@ -483,7 +487,6 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         } else if (isOpen && !customerToEdit) {
             setFormData(createInitialFormState());
             setAvatarPreview(null);
-            setActiveTab('general');
         }
     }, [customerToEdit, defaultBranchName, defaultCurrency, isOpen]);
 
@@ -538,6 +541,8 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
         // 2. Contact Tab Requirements
         if (!formData.mobile?.trim()) return false;
+        if (!formData.email?.trim()) return false;
+        if (!formData.country?.trim()) return false;
 
         // 3. Photo Tab Requirement (Mandatory) -> NOW OPTIONAL
         // if (!avatarPreview) return false;
@@ -560,6 +565,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         { id: 'contact', label: 'Contact Details', icon: Phone },
         { id: 'financial', label: 'Financial & Credit', icon: Wallet },
         { id: 'defaults', label: 'Price List & Defaults', icon: Tag },
+        { id: 'branches', label: 'Branch Allocation', icon: Building },
         { id: 'shipping', label: 'Shipping Address', icon: Truck },
         { id: 'opening', label: 'Opening Balances', icon: DollarSign },
         { id: 'documents', label: 'Documents', icon: FileText },
@@ -751,7 +757,6 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Customer Group <span className="text-red-500">*</span></label><div className="relative"><select name="group" value={formData.group} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 appearance-none bg-white focus:outline-none focus:border-[#F5C742] text-slate-700"><option value="">Select group</option><option value="Retail">Retail</option><option value="Wholesale">Wholesale</option><option value="VIP">VIP</option><option value="Corporate">Corporate</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Customer Name <span className="text-red-500">*</span></label><input name="name" value={formData.name} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Local Name (Optional)</label><input name="localName" value={formData.localName} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742] text-right" /></div>
-                            <div className="md:col-span-2"><label className="block text-xs font-medium text-slate-500 mb-1.5">Address</label><textarea name="billingAddress" value={formData.billingAddress} onChange={handleInputChange} rows="2" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742] resize-none"></textarea></div>
                             <div className="md:col-span-2"><label className="block text-xs font-medium text-slate-500 mb-1.5">Tax Registration Number (TRN)</label><input name="trn" value={formData.trn} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div className="md:col-span-2"><label className="block text-xs font-medium text-slate-500 mb-1.5">Status</label><div className="relative"><select name="status" value={formData.status} onChange={handleInputChange} className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none"><option value="Active">Active</option><option value="Inactive">Inactive</option></select><ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" /></div></div>
                         </div>
@@ -769,10 +774,10 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Mobile Number <span className="text-red-500">*</span></label><input name="mobile" value={formData.mobile} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Phone (Optional)</label><input name="phone" value={formData.phone} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
-                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Email (Optional)</label><input name="email" value={formData.email} onChange={handleInputChange} type="email" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
+                            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Email <span className="text-red-500">*</span></label><input name="email" value={formData.email} onChange={handleInputChange} type="email" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">WhatsApp (Optional)</label><input name="whatsapp" value={formData.whatsapp} onChange={handleInputChange} type="text" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]" /></div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Country (Optional)</label>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Country <span className="text-red-500">*</span></label>
                                 <SearchableDropdown
                                     options={countryOptions}
                                     value={formData.country}
@@ -861,73 +866,81 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 
                         </div>
 
-                        {/* Branch Allocation Section */}
-                        <div className="pt-6 mt-6 border-t border-slate-100">
-                            <h4 className="text-sm font-semibold text-slate-800 mb-4">Branch Allocation</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch <span className="text-red-500">*</span></label>
-                                    <div className="relative">
-                                        <select 
-                                            name="branch" 
-                                            value={formData.branch || activeBranch?.name || ''} 
-                                            onChange={(e) => {
-                                                handleInputChange(e);
-                                                const selectedBranch = e.target.value;
-                                                setFormData(prev => {
-                                                    const current = prev.allocatedBranches || [];
-                                                    if (!current.includes(selectedBranch)) {
-                                                        return { ...prev, allocatedBranches: [...current, selectedBranch] };
-                                                    }
-                                                    return prev;
-                                                });
-                                            }}
-                                            className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none focus:outline-none focus:border-[#F5C742]"
-                                        >
-                                            {availableBranches?.map(b => (
-                                                 <option key={b.id} value={b.name}>{b.name} {b.isDefault ? '(Default)' : ''}</option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-slate-500 mb-1.5">Allocate to Branches</label>
-                                    <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-2">
-                                        {availableBranches?.map(b => {
-                                            const isDefaultBranch = formData.branch === b.name || (!formData.branch && activeBranch?.name === b.name);
-                                            const isChecked = isDefaultBranch || formData.allocatedBranches?.includes(b.id) || formData.allocatedBranches?.includes(b.name);
-                                            
-                                            return (
-                                                <div key={b.id} className="flex items-center gap-2">
-                                                    <input 
-                                                        type="checkbox" 
-                                                        id={`branch-${b.id}`}
-                                                        checked={isChecked}
-                                                        disabled={isDefaultBranch}
-                                                        onChange={(e) => {
-                                                            if (isDefaultBranch) return;
-                                                            const checked = e.target.checked;
-                                                            setFormData(prev => {
-                                                                const current = prev.allocatedBranches || [];
-                                                                if (checked) return { ...prev, allocatedBranches: [...current, b.name] };
-                                                                return { ...prev, allocatedBranches: current.filter(x => x !== b.name) };
-                                                            });
-                                                        }}
-                                                        className="rounded border-slate-300 text-[#F5C742] focus:ring-[#F5C742] disabled:opacity-50 disabled:cursor-not-allowed" 
-                                                    />
-                                                    <label htmlFor={`branch-${b.id}`} className={`text-xs ${isDefaultBranch ? 'text-slate-400 cursor-not-allowed' : 'text-slate-600 cursor-pointer'}`}>
-                                                        {b.name} <span className="text-[10px] text-slate-400">{b.isDefault ? '(Default)' : ''}</span>
-                                                    </label>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                    <p className="text-[10px] text-slate-400 mt-1">Select branches this customer can interact with. Uncheck to restrict.</p>
+
+                    </div>
+                </div>
+            );
+
+            case 'branches': return (
+                <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
+                    <div className="bg-white border border-slate-200 rounded-lg p-6 shadow-sm">
+                        <div className="flex items-center gap-2 mb-6 pb-2 border-b border-slate-50">
+                            <Building className="text-[#F5C742]" size={18} />
+                            <h3 className="text-sm font-semibold text-slate-700">Branch Allocation</h3>
+                            <span className="text-xs text-slate-400 ml-auto">Default branch and branch access</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Default Branch <span className="text-red-500">*</span></label>
+                                <div className="relative">
+                                    <select 
+                                        name="branch" 
+                                        value={formData.branch || activeBranch?.name || ''} 
+                                        onChange={(e) => {
+                                            handleInputChange(e);
+                                            const selectedBranch = e.target.value;
+                                            setFormData(prev => {
+                                                const current = prev.allocatedBranches || [];
+                                                if (!current.includes(selectedBranch)) {
+                                                    return { ...prev, allocatedBranches: [...current, selectedBranch] };
+                                                }
+                                                return prev;
+                                            });
+                                        }}
+                                        className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 bg-white text-slate-700 appearance-none focus:outline-none focus:border-[#F5C742]"
+                                    >
+                                        {availableBranches?.map(b => (
+                                             <option key={b.id} value={b.name}>{b.name} {b.isDefault ? '(Default)' : ''}</option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                 </div>
                             </div>
+                            <div>
+                                <label className="block text-xs font-medium text-slate-500 mb-1.5">Allocate to Branches</label>
+                                <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-2">
+                                    {availableBranches?.map(b => {
+                                        const isDefaultBranch = formData.branch === b.name || (!formData.branch && activeBranch?.name === b.name);
+                                        const isChecked = isDefaultBranch || formData.allocatedBranches?.includes(b.id) || formData.allocatedBranches?.includes(b.name);
+                                        
+                                        return (
+                                            <div key={b.id} className="flex items-center gap-2">
+                                                <input 
+                                                    type="checkbox" 
+                                                    id={`branch-${b.id}`}
+                                                    checked={isChecked}
+                                                    disabled={isDefaultBranch}
+                                                    onChange={(e) => {
+                                                        if (isDefaultBranch) return;
+                                                        const checked = e.target.checked;
+                                                        setFormData(prev => {
+                                                            const current = prev.allocatedBranches || [];
+                                                            if (checked) return { ...prev, allocatedBranches: [...current, b.name] };
+                                                            return { ...prev, allocatedBranches: current.filter(x => x !== b.name) };
+                                                        });
+                                                    }}
+                                                    className="rounded border-slate-300 text-[#F5C742] focus:ring-[#F5C742] disabled:opacity-50 disabled:cursor-not-allowed" 
+                                                />
+                                                <label htmlFor={`branch-${b.id}`} className={`text-xs ${isDefaultBranch ? 'text-slate-400 cursor-not-allowed' : 'text-slate-600 cursor-pointer'}`}>
+                                                    {b.name} <span className="text-[10px] text-slate-400">{b.isDefault ? '(Default)' : ''}</span>
+                                                </label>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-1">Select branches this customer can interact with. Uncheck to restrict.</p>
+                            </div>
                         </div>
-
                     </div>
                 </div>
             );

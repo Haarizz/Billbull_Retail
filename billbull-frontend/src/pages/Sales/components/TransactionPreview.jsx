@@ -256,7 +256,6 @@ export default function TransactionPreview({
     ].filter(Boolean) : [];
 
     const notes = invoice?.customerNotes || invoice?.notes || '';
-    const billingAddress = customer?.billingAddress || customer?.address || '';
     const shippingAddress = invoice?.shippingAddress || (customer ? resolveDefaultShippingAddress(customer) : '');
 
     // ── Section 1: Transaction header — identity + the single action toolbar ──
@@ -499,7 +498,6 @@ export default function TransactionPreview({
                     <InfoRow label="Phone" value={customer?.phone || customer?.mobile} />
                     <InfoRow label="Email" value={customer?.email} />
                     <InfoRow label="VAT / TRN" value={customer?.trn} copyable copyLabel="TRN" />
-                    <InfoRow label="Billing" value={billingAddress} />
                     <InfoRow label="Shipping" value={shippingAddress} />
                 </div>
             </RailCard>

@@ -55,8 +55,10 @@ export const SAMPLE_DATA = {
   customer: {
     name: "Mohammed Al Suwaidi",
     mobile: "+971 50 123 4567",
+    email: "m.alsuwaidi@email.com",
     customerCode: "CUST-00847",
-    customerTrn: "—",
+    customerTrn: "100987654300003",
+    address: "Villa 22, Street 7, Al Faseel, Fujairah",
   },
   balance: {
     previousBalance: 340.0,
@@ -211,6 +213,9 @@ export const TEMPLATE2_CSS = `
   .bb-receipt .kv2 .lbl .ar { color: var(--gray); font-size: 10px; display: block; margin-top: 0.2mm; }
   .bb-receipt .kv2 .val { text-align: right; font-weight: 600; white-space: nowrap; padding-top: 0.3mm; flex: 0 0 auto; }
   .bb-receipt .kv2 .lbl { min-width: 0; }
+  /* Free-text values (email, address) wrap within the paper width instead of
+     running off the right edge like the nowrap numeric/short values above. */
+  .bb-receipt .kv2.wrap-val .val { white-space: normal; word-break: break-word; overflow-wrap: anywhere; flex: 1 1 auto; }
   .bb-receipt .kv2 .lbl .en .en-line { display: block; line-height: 13.5px; }
   .bb-receipt .kv2.bold .lbl .en,
   .bb-receipt .kv2.bold .lbl .ar,
@@ -409,8 +414,13 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
           <SectionTitle en="CUSTOMER DETAILS" ar="بيانات العميل" />
           <KV en="Name" ar="الاسم" value={customer.name || "—"} />
           {customer.mobile && <KV en="Mobile" ar="الجوال" value={customer.mobile} />}
+          {customer.email && <KV en="Email" ar="البريد الإلكتروني" value={customer.email} className="wrap-val" />}
           {customer.customerCode && <KV en="Customer Code" ar="رمز العميل" value={customer.customerCode} />}
-          {hasTax && <KV en="Customer TRN" ar="الرقم الضريبي للعميل" value={customer.customerTrn || "—"} />}
+          {/* TRN prints whenever the customer record carries one — it is the
+              customer's registration number, not this sale's tax content, so it
+              is NOT gated on hasTax (unlike the VAT rows below). */}
+          {customer.customerTrn && <KV en="Customer TRN" ar="الرقم الضريبي للعميل" value={customer.customerTrn} />}
+          {customer.address && <KV en="Address" ar="العنوان" value={customer.address} className="wrap-val" />}
           <div className="dashed" />
         </>
       )}

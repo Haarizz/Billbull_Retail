@@ -121,7 +121,6 @@ public class CustomerImportService {
 
                             customer.setCode(limit(code.trim(), 255));
                             customer.setName(limit(name.trim(), 255));
-                            customer.setBillingAddress(limit(address, 1000));
                             customer.setDefaultShippingAddress(limit(address, 1000));
                             customer.setCity(limit(state, 255));
                             customer.setTrn(limit(trn, 255));
@@ -159,7 +158,6 @@ public class CustomerImportService {
 
                             customer.setCode(code);
                             customer.setName(limit(name.trim(), 255));
-                            customer.setBillingAddress(limit(address, 1000));
                             customer.setDefaultShippingAddress(limit(address, 1000));
                             customer.setPhone(limit(cleanPhone(phone), 255));
                             customer.setMobile(limit(cleanPhone(phone), 255));
@@ -209,7 +207,6 @@ public class CustomerImportService {
 
                             customer.setCode(limit(code.trim(), 255));
                             customer.setName(limit(name.trim(), 255));
-                            customer.setBillingAddress(limit(address, 1000));
                             customer.setDefaultShippingAddress(limit(joinNonBlank(", ", address, city, location), 1000));
                             customer.setCity(limit(city, 255));
                             customer.setTrn(limit(trn, 255));

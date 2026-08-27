@@ -221,6 +221,16 @@ public class ProductService {
     // 2. HELPER: RESOLVE RELATIONSHIPS (Fixes Null ID Error)
     // ==================================================
     private void resolveRelationships(Product product) {
+        resolveRelationships(product, null);
+    }
+
+    /**
+     * @param existingSubDepartmentId the sub-department already assigned to the product being
+     *        updated (null on create). An inactive sub-department is rejected for any new or
+     *        changed assignment, but an existing product that already sits under one that was
+     *        later deactivated can still be edited without being forced to re-file it.
+     */
+    private void resolveRelationships(Product product, Long existingSubDepartmentId) {
         // Resolve Brand
         if (product.getBrand() != null && product.getBrand().getId() != null) {
             Brand brand = brandRepo.findById(product.getBrand().getId())
@@ -244,6 +254,11 @@ public class ProductService {
         if (product.getSubDepartment() != null && product.getSubDepartment().getId() != null) {
             SubDepartment subDept = subDepartmentRepo.findById(product.getSubDepartment().getId())
                     .orElse(null);
+            if (subDept != null && !subDept.isActive()
+                    && !subDept.getId().equals(existingSubDepartmentId)) {
+                throw new IllegalArgumentException(
+                        "Sub-Department '" + subDept.getName() + "' is inactive and cannot be assigned to a product.");
+            }
             product.setSubDepartment(subDept);
         } else {
             product.setSubDepartment(null);
@@ -498,7 +513,8 @@ public class ProductService {
         updated.setBranch(existing.getBranch());
 
         // 1. Resolve relationships again
-        resolveRelationships(updated);
+        resolveRelationships(updated,
+                existing.getSubDepartment() != null ? existing.getSubDepartment().getId() : null);
         validateMasterReferences(updated);
 
         // 2. Save Product
@@ -871,8 +887,88 @@ public class ProductService {
     @Transactional(readOnly = true)
     public int branchScopedStockForPos(Long productId) {
         if (productId == null) return 0;
-        List<Object[]> rows = availableStockRows(java.util.Collections.singletonList(productId));
-        return rows.isEmpty() ? 0 : ((Number) rows.get(0)[1]).intValue();
+        
+        Long activeBranchId = activeBranchId();
+        if (activeBranchId == null) {
+            // Fallback to unscoped company-wide total
+            List<Object[]> rows = availableStockRows(java.util.Collections.singletonList(productId));
+            return rows.isEmpty() ? 0 : ((Number) rows.get(0)[1]).intValue();
+        }
+
+        com.billbull.backend.settings.branch.Branch branch = branchRepo.findById(activeBranchId).orElse(null);
+        Long defaultWarehouseId = null;
+        if (branch != null && branch.getDefaultWarehouse() != null && branch.getDefaultWarehouse().getId() != null) {
+            defaultWarehouseId = branch.getDefaultWarehouse().getId();
+        } else {
+            defaultWarehouseId = warehouseRepo.findByBranch_Id(activeBranchId).stream()
+                    .filter(w -> w.getId() != null && w.isActive())
+                    .map(com.billbull.backend.inventory.warehouse.Warehouse::getId)
+                    .findFirst().orElse(null);
+        }
+
+        if (defaultWarehouseId == null) {
+            return 0; // No valid warehouse for this branch
+        }
+
+        java.math.BigDecimal available = warehouseStockService.getAvailableStock(defaultWarehouseId, productId);
+        return available != null ? available.intValue() : 0;
+    }
+
+    @Transactional(readOnly = true)
+    public java.util.Map<Long, Integer> batchBranchScopedStockForPos(List<Long> productIds) {
+        if (productIds == null || productIds.isEmpty()) return new java.util.HashMap<>();
+        
+        Long activeBranchId = activeBranchId();
+        if (activeBranchId == null) {
+            // CRITICAL SAFETY RULE: Never fall back to company-wide stock for POS!
+            // If branch is unknown, return 0 stock to match the default warehouse validation fail-safe.
+            return new java.util.HashMap<>();
+        }
+
+        com.billbull.backend.settings.branch.Branch branch = branchRepo.findById(activeBranchId).orElse(null);
+        Long defaultWarehouseId = null;
+        if (branch != null && branch.getDefaultWarehouse() != null && branch.getDefaultWarehouse().getId() != null) {
+            defaultWarehouseId = branch.getDefaultWarehouse().getId();
+        } else {
+            defaultWarehouseId = warehouseRepo.findByBranch_Id(activeBranchId).stream()
+                    .filter(w -> w.getId() != null && w.isActive())
+                    .map(com.billbull.backend.inventory.warehouse.Warehouse::getId)
+                    .findFirst().orElse(null);
+        }
+
+        if (defaultWarehouseId == null) {
+            return new java.util.HashMap<>(); // No valid warehouse for this branch
+        }
+
+        java.util.Map<Long, Integer> result = new java.util.HashMap<>();
+        
+        // 1. Bulk fetch available stock (on hand) from stockRepo for this warehouse
+        List<Object[]> onHandRows = stockMovementRepo.getAvailableStockForProductsInWarehouse(defaultWarehouseId, productIds);
+        java.util.Map<Long, Integer> onHandMap = new java.util.HashMap<>();
+        for (Object[] row : onHandRows) {
+            Long productId = (Long) row[0];
+            java.math.BigDecimal qty = (java.math.BigDecimal) row[1];
+            if (qty != null) {
+                onHandMap.put(productId, qty.intValue());
+            }
+        }
+
+        // 2. Bulk fetch reservations
+        List<Product> products = productRepo.findAllById(productIds);
+        java.util.Map<Long, java.util.Map<Long, Integer>> allReservations = warehouseStockService.getReservedQuantitiesByProductAndWarehouse(products);
+        
+        for (Long productId : productIds) {
+            int onHand = onHandMap.getOrDefault(productId, 0);
+            int reserved = 0;
+            java.util.Map<Long, Integer> whReservations = allReservations.get(productId);
+            if (whReservations != null) {
+                reserved = whReservations.getOrDefault(defaultWarehouseId, 0);
+            }
+            int available = onHand - reserved;
+            result.put(productId, Math.max(0, available));
+        }
+
+        return result;
     }
 
     /**
@@ -1026,10 +1122,16 @@ public class ProductService {
 
         // Query 8: available stock totals (QA-007 fix — stock was missing, showing 0 everywhere).
         // Phase 6: branch-scoped when scoping is active so the stock column reflects the branch.
+        // POS Fix: If querying for POS specifically, MUST use the branch's Default Warehouse only.
         java.util.Map<Long, Integer> stockMap = new java.util.HashMap<>();
-        for (Object[] row : availableStockRows(ids)) {
-            stockMap.put((Long) row[0], ((Number) row[1]).intValue());
+        if (Boolean.TRUE.equals(availableInPos)) {
+            stockMap.putAll(batchBranchScopedStockForPos(ids));
+        } else {
+            for (Object[] row : availableStockRows(ids)) {
+                stockMap.put((Long) row[0], ((Number) row[1]).intValue());
+            }
         }
+
 
         List<java.util.Map<String, Object>> content = products.stream().map(p -> {
             java.util.Map<String, Object> item = new java.util.HashMap<>();
@@ -1287,10 +1389,9 @@ public class ProductService {
         java.util.Map<Long, List<ProductPacking>> packingMap = packingRepo.findByProductIdIn(ids)
                 .stream().collect(Collectors.groupingBy(p -> p.getProduct().getId()));
 
+        // POS Fix: fetchProductContent is used for POS favorites/recent/top, so use batchBranchScopedStockForPos
         java.util.Map<Long, Integer> stockMap = new java.util.HashMap<>();
-        for (Object[] row : availableStockRows(ids)) {
-            stockMap.put((Long) row[0], ((Number) row[1]).intValue());
-        }
+        stockMap.putAll(batchBranchScopedStockForPos(ids));
 
         return products.stream().map(p -> {
             java.util.Map<String, Object> item = new java.util.HashMap<>();

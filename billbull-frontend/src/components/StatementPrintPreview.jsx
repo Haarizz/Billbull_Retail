@@ -41,7 +41,7 @@ const resolvePartyDetails = (party) => {
         name: firstNonEmpty(safeParty.name, safeParty.companyName, safeParty.localName),
         code: firstNonEmpty(safeParty.code, safeParty.customerCode, safeParty.vendorCode),
         address: firstNonEmpty(
-            joinAddress(safeParty.billingAddress, safeParty.shippingAddress, safeParty.address, safeParty.location),
+            joinAddress(safeParty.defaultShippingAddress, safeParty.shippingAddress, safeParty.address, safeParty.location),
             joinAddress(safeParty.city, safeParty.country)
         ),
         phone: firstNonEmpty(safeParty.contact, safeParty.mobile, safeParty.phone, safeParty.primaryPhone, safeParty.secondaryPhone),
