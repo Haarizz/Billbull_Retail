@@ -45,9 +45,13 @@ const writeLocalStorageCache = (timeRange, data) => {
     }
 };
 
-const fetchDashboardSummary = async (timeRange, branchId) => {
+const fetchDashboardSummary = async (timeRange, branchId, fromDate, toDate) => {
     const params = { timeRange };
     if (branchId) params.branchId = branchId;
+    // The backend windows the aggregation itself when explicit dates are supplied,
+    // so a custom range never falls back to the client-side full fetch.
+    if (fromDate) params.fromDate = fromDate;
+    if (toDate) params.toDate = toDate;
     const response = await api.get('/api/dashboard/summary', { params });
     return response.data;
 };
@@ -694,7 +698,32 @@ const buildEmployeeDirectory = (employees) => {
     return map;
 };
 
+// The fallback path pulls 15 full datasets, so it is the expensive one. Cache the
+// result and dedupe concurrent callers: every widget on the dashboard asks for the
+// same datasets, and only the post-fetch filtering differs between them.
+let datasetsCache = null;      // { timestamp, data }
+let datasetsInFlight = null;
+const DATASETS_TTL_MS = CACHE_TTL_MS;
+
 const loadDashboardDatasets = async () => {
+    if (datasetsCache && Date.now() - datasetsCache.timestamp < DATASETS_TTL_MS) {
+        return datasetsCache.data;
+    }
+    if (datasetsInFlight) return datasetsInFlight;
+
+    datasetsInFlight = fetchDashboardDatasets()
+        .then((data) => {
+            datasetsCache = { timestamp: Date.now(), data };
+            return data;
+        })
+        .finally(() => {
+            datasetsInFlight = null;
+        });
+
+    return datasetsInFlight;
+};
+
+const fetchDashboardDatasets = async () => {
     const [
         invoices,
         orders,
@@ -1322,14 +1351,19 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
 
     const request = (async () => {
         // Fast path: single aggregated backend endpoint.
-        // Use it when there are no client-side-only filters (custom date range / amount / status).
-        // Branch-only filtering is handled server-side, so it qualifies for the fast path.
-        const hasClientOnlyFilters = filters.fromDate || filters.toDate ||
-            (filters.invoiceStatus && filters.invoiceStatus !== 'all') ||
+        // Use it when there are no client-side-only filters (amount / invoice status).
+        // Branch and date-range filtering are both handled server-side, so they qualify
+        // for the fast path — only amount/status still need the full client-side fetch.
+        const hasClientOnlyFilters = (filters.invoiceStatus && filters.invoiceStatus !== 'all') ||
             filters.minAmount || filters.maxAmount;
         if (!hasClientOnlyFilters && !forceClient) {
             try {
-                const backend = await fetchDashboardSummary(effectiveTimeRange, filters.branchId || null);
+                const backend = await fetchDashboardSummary(
+                    effectiveTimeRange,
+                    filters.branchId || null,
+                    filters.fromDate || null,
+                    filters.toDate || null
+                );
                 return transformBackendDashboard(backend, effectiveTimeRange);
             } catch (backendError) {
                 console.warn('Dashboard summary endpoint unavailable, falling back to full fetch:', backendError?.message);
@@ -1361,4 +1395,5 @@ export const getDashboardData = async (timeRange = 'Today', options = {}) => {
 export const clearDashboardApiCache = () => {
     dashboardCache.clear();
     inFlightRequests.clear();
+    datasetsCache = null;
 };

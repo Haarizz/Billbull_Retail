@@ -22,6 +22,8 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -40,6 +42,14 @@ public class DashboardService {
     private record CacheEntry(DashboardSummaryResponse data, long ts) {}
     private static final Map<String, CacheEntry> SUMMARY_CACHE = new ConcurrentHashMap<>();
     private static final long CACHE_TTL_MS = 3 * 60 * 1_000L; // 3 minutes
+
+    /** LPOs that have left the purchase pipeline — everything else counts as "open". */
+    private static final Set<LpoStatus> CLOSED_LPO_STATUSES =
+            EnumSet.of(LpoStatus.COMPLETED, LpoStatus.CANCELLED);
+
+    /** Open LPOs with no goods received yet; their value adds to purchase value alongside GRNs. */
+    private static final Set<LpoStatus> UNRECEIVED_LPO_STATUSES =
+            EnumSet.of(LpoStatus.DRAFT, LpoStatus.PENDING_APPROVAL, LpoStatus.APPROVED, LpoStatus.SENT_TO_VENDOR);
 
     private final SalesInvoiceRepository invoiceRepo;
     private final LpoRepository lpoRepo;
@@ -80,22 +90,34 @@ public class DashboardService {
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public DashboardSummaryResponse getSummary(String timeRange) {
-        return getSummary(timeRange, null);
+        return getSummary(timeRange, null, null, null);
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public DashboardSummaryResponse getSummary(String timeRange, Long branchId) {
-        String cacheKey = (timeRange == null ? "All Time" : timeRange) + ":" + (branchId == null ? "all" : branchId);
+        return getSummary(timeRange, branchId, null, null);
+    }
+
+    /**
+     * When {@code from}/{@code to} are supplied they define the reporting window directly
+     * (a "Custom" range from the dashboard date pickers); otherwise the window is derived
+     * from {@code timeRange}. Either way the aggregation stays server-side.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public DashboardSummaryResponse getSummary(String timeRange, Long branchId, LocalDate from, LocalDate to) {
+        LocalDate[] range = resolveRange(timeRange, from, to);
+        LocalDate startDate = range[0];
+        LocalDate endDate = range[1];
+
+        String cacheKey = (timeRange == null ? "All Time" : timeRange)
+                + ":" + (branchId == null ? "all" : branchId)
+                + ":" + startDate + ":" + endDate;
 
         // Serve from cache if still fresh
         CacheEntry cached = SUMMARY_CACHE.get(cacheKey);
         if (cached != null && System.currentTimeMillis() - cached.ts() < CACHE_TTL_MS) {
             return cached.data();
         }
-
-        LocalDate[] range = resolveRange(timeRange);
-        LocalDate startDate = range[0];
-        LocalDate endDate = range[1];
 
         // Run all independent queries in parallel.
         LocalDate today = LocalDate.now();
@@ -110,7 +132,9 @@ public class DashboardService {
         CompletableFuture<List<Object[]>> topProductsF  = CompletableFuture.supplyAsync(() -> invoiceRepo.findTopProductsBetween(startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<Long>           totalLposF    = CompletableFuture.supplyAsync(() -> lpoRepo.count(), QUERY_POOL);
         CompletableFuture<Long>           pendingLposF  = CompletableFuture.supplyAsync(() ->
-                lpoRepo.countByStatus(LpoStatus.PENDING_APPROVAL) + lpoRepo.countByStatus(LpoStatus.APPROVED), QUERY_POOL);
+                lpoRepo.countOpen(CLOSED_LPO_STATUSES, branchId), QUERY_POOL);
+        CompletableFuture<BigDecimal>     openLpoValueF = CompletableFuture.supplyAsync(() ->
+                lpoRepo.sumGrandTotalByStatusBetween(UNRECEIVED_LPO_STATUSES, startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<Long>           grnCountF     = CompletableFuture.supplyAsync(() -> grnRepo.countBetween(startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<BigDecimal>     grnValueF     = CompletableFuture.supplyAsync(() -> grnRepo.sumGrandTotalBetween(startDate, endDate, branchId), QUERY_POOL);
         CompletableFuture<Long>           vendorCountF  = CompletableFuture.supplyAsync(() -> vendorRepo.count(), QUERY_POOL);
@@ -130,7 +154,7 @@ public class DashboardService {
         CompletableFuture<Double>         totalReturnsF = CompletableFuture.supplyAsync(() -> returnRepo.getTotalReturnsBetweenDates(startDate, endDate, branchId), QUERY_POOL);
 
         CompletableFuture.allOf(trendF, payF, deptF, revenueF, invCountF, outstandingF, recentF,
-                customerF, topProductsF, totalLposF, pendingLposF, grnCountF, grnValueF,
+                customerF, topProductsF, totalLposF, pendingLposF, openLpoValueF, grnCountF, grnValueF,
                 totalEmpF, activeEmpF, totalProdF, productStockF,
                 expenseTotalF, expenseTaxF, expenseCatF, vatOnSalesF, vendorCountF,
                 hourlySalesF, branchPerfF, dailyProfitF, totalProfitF, dailyReturnsF, totalReturnsF).join();
@@ -211,8 +235,10 @@ public class DashboardService {
             );
         }).collect(Collectors.toList()));
 
-        // Purchase metrics
-        double grnTotal = grnValueF.join() != null ? grnValueF.join().doubleValue() : 0d;
+        // Purchase metrics — purchase value is goods received (GRN) plus the committed
+        // value of LPOs still awaiting receipt, so a new order is reflected right away.
+        double grnTotal = (grnValueF.join() != null ? grnValueF.join().doubleValue() : 0d)
+                + (openLpoValueF.join() != null ? openLpoValueF.join().doubleValue() : 0d);
         response.setPurchaseMetrics(new DashboardSummaryResponse.PurchaseMetrics(
                 totalLposF.join(), pendingLposF.join(), grnCountF.join(), grnTotal, vendorCountF.join()));
 
@@ -303,13 +329,26 @@ public class DashboardService {
         return response;
     }
 
-    private LocalDate[] resolveRange(String timeRange) {
+    private LocalDate[] resolveRange(String timeRange, LocalDate from, LocalDate to) {
         LocalDate today = LocalDate.now();
+
+        // Explicit dates win over the named range. endDate is exclusive everywhere below,
+        // so the caller's inclusive "to" is bumped by a day.
+        if (from != null || to != null) {
+            LocalDate start = from != null ? from : LocalDate.of(2000, 1, 1);
+            LocalDate end = (to != null ? to : today).plusDays(1);
+            if (end.isBefore(start)) {
+                end = start.plusDays(1);
+            }
+            return new LocalDate[]{ start, end };
+        }
+
         return switch (timeRange == null ? "All Time" : timeRange) {
             case "Today"      -> new LocalDate[]{ today, today.plusDays(1) };
             case "Yesterday"  -> new LocalDate[]{ today.minusDays(1), today };
             case "This Week"  -> new LocalDate[]{ today.with(java.time.DayOfWeek.MONDAY), today.plusDays(1) };
             case "This Month" -> new LocalDate[]{ today.withDayOfMonth(1), today.plusDays(1) };
+            case "Last Month" -> new LocalDate[]{ today.minusMonths(1).withDayOfMonth(1), today.withDayOfMonth(1) };
             case "This Year"  -> new LocalDate[]{ today.withDayOfYear(1), today.plusDays(1) };
             default           -> new LocalDate[]{ LocalDate.of(2000, 1, 1), today.plusDays(1) };
         };

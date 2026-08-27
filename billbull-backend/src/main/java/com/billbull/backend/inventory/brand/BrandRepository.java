@@ -16,6 +16,13 @@ public interface BrandRepository extends JpaRepository<Brand, Long> {
 
     boolean existsByBarcode(String barcode);
 
+    // Soft-deleted rows still occupy the DB-level unique indexes on brands(name)/brands(code)
+    // (V37's partial indexes key on the branch tier only, not on `active`), so creating a brand
+    // that reuses a deleted name has to find and revive that row instead of inserting a new one.
+    List<Brand> findByActiveFalseAndNameIgnoreCase(String name);
+
+    List<Brand> findByActiveFalseAndCodeIgnoreCase(String code);
+
     java.util.Optional<Brand> findByNameIgnoreCase(String name);
 
     java.util.Optional<Brand> findByCodeIgnoreCase(String code);

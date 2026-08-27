@@ -15,6 +15,7 @@
 // live rendering can never diverge.
 
 import { resolveSessionBusinessDate } from './posSessionBusinessDay';
+import { DENOM_KEYS, DENOM_LABELS } from './cashDenominations';
 
 export const parseUTCDate = (ts) => {
   if (!ts) return null;
@@ -42,11 +43,6 @@ export const calculateDenominationTotal = (denom) => {
   }, 0);
 };
 
-const DENOM_KEYS = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-const DENOM_LABELS = {
-  '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50',
-  '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin',
-};
 
 const fmtTs = (t) => {
   const d = parseUTCDate(t);

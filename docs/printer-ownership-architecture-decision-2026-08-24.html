@@ -1,0 +1,1091 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Printer Scope Decision</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+  :root {
+    --ground:      #F4F6F7;
+    --surface:     #FFFFFF;
+    --surface-alt: #EAEEF1;
+    --rule:        #D3DAE0;
+    --rule-soft:   #E3E8EC;
+    --ink:         #14171B;
+    --ink-soft:    #4A555F;
+    --ink-faint:   #77838D;
+    --accent:      #B8860B;
+    --accent-mark: #F5C742;
+    --accent-wash: #FBF2D8;
+    --bad:         #A63421;
+    --bad-wash:    #F8E7E3;
+    --good:        #256B4E;
+    --good-wash:   #E0EFE7;
+    --code-bg:     #ECF0F3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #101317;
+      --surface:     #171B20;
+      --surface-alt: #1E242A;
+      --rule:        #2D353D;
+      --rule-soft:   #232A31;
+      --ink:         #E2E6EA;
+      --ink-soft:    #A8B3BC;
+      --ink-faint:   #7B868F;
+      --accent:      #F5C742;
+      --accent-mark: #F5C742;
+      --accent-wash: #2E2716;
+      --bad:         #E8877A;
+      --bad-wash:    #2E1D19;
+      --good:        #79C3A1;
+      --good-wash:   #16281F;
+      --code-bg:     #1C2228;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #101317;
+    --surface:     #171B20;
+    --surface-alt: #1E242A;
+    --rule:        #2D353D;
+    --rule-soft:   #232A31;
+    --ink:         #E2E6EA;
+    --ink-soft:    #A8B3BC;
+    --ink-faint:   #7B868F;
+    --accent:      #F5C742;
+    --accent-mark: #F5C742;
+    --accent-wash: #2E2716;
+    --bad:         #E8877A;
+    --bad-wash:    #2E1D19;
+    --good:        #79C3A1;
+    --good-wash:   #16281F;
+    --code-bg:     #1C2228;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 17px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0 20px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    padding: 64px 0 34px;
+    border-bottom: 2px solid var(--ink);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .eyebrow {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5.4vw, 3.15rem);
+    line-height: 1.04;
+    letter-spacing: -0.022em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .standfirst {
+    font-size: 1.16rem;
+    color: var(--ink-soft);
+    max-width: 60ch;
+    margin: 0;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 26px;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.02em;
+  }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ---------- verdict strip ---------- */
+  .verdict {
+    margin: 34px 0 8px;
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--accent-mark);
+    background: var(--surface);
+    padding: 22px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .verdict .label {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .verdict .call {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 1.3rem;
+    line-height: 1.25;
+    letter-spacing: -0.012em;
+  }
+  .verdict p { margin: 0; color: var(--ink-soft); font-size: 0.97rem; }
+
+  /* ---------- sections ---------- */
+  section { padding-top: 52px; }
+  h2 {
+    font-family: "Archivo", sans-serif;
+    font-weight: 600;
+    font-size: 1.42rem;
+    letter-spacing: -0.014em;
+    line-height: 1.2;
+    text-wrap: balance;
+    margin: 0 0 18px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  h2 .num {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+    flex: none;
+  }
+  h3 {
+    font-family: "Archivo", sans-serif;
+    font-weight: 600;
+    font-size: 1.02rem;
+    letter-spacing: 0.002em;
+    margin: 30px 0 10px;
+  }
+  h4 {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 11.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 26px 0 8px;
+  }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; max-width: 68ch; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--ink-faint); }
+  strong { font-weight: 600; }
+  em { font-style: italic; color: var(--ink-soft); }
+
+  code {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 0.845em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--ink);
+  }
+
+  pre {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--rule-soft);
+    border-radius: 4px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 0 0 18px;
+    color: var(--ink-soft);
+  }
+  pre b { color: var(--ink); font-weight: 700; }
+  pre .hi { color: var(--accent); font-weight: 500; }
+  pre .no { color: var(--bad); }
+
+  /* ---------- tables ---------- */
+  .tablewrap { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 640px;
+    font-family: "Archivo", sans-serif;
+    font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  th {
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    background: var(--surface-alt);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.rowname { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  tr.pick td { background: var(--accent-wash); }
+  tr.pick td.rowname { box-shadow: inset 3px 0 0 var(--accent-mark); }
+
+  .score { font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: 0.05em; }
+
+  /* ---------- pills ---------- */
+  .pill {
+    display: inline-block;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .pill.bad  { background: var(--bad-wash);  color: var(--bad); }
+  .pill.good { background: var(--good-wash); color: var(--good); }
+  .pill.warn { background: var(--accent-wash); color: var(--accent); }
+
+  /* ---------- finding cards ---------- */
+  .findings { display: flex; flex-direction: column; gap: 14px; margin-bottom: 22px; }
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .finding.is-bad  { border-left: 3px solid var(--bad); }
+  .finding.is-good { border-left: 3px solid var(--good); }
+  .finding .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+  }
+  .finding .title {
+    font-family: "Archivo", sans-serif;
+    font-weight: 600;
+    font-size: 0.99rem;
+  }
+  .finding .loc {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+  }
+  .finding p { margin: 0; font-size: 0.95rem; color: var(--ink-soft); }
+  .finding p strong { color: var(--ink); }
+
+  /* ---------- Q&A ---------- */
+  .qa { display: flex; flex-direction: column; gap: 0; border-top: 1px solid var(--rule); margin-bottom: 20px; }
+  .qa .row {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 0 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--rule-soft);
+  }
+  .qa .n {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+    padding-top: 4px;
+  }
+  .qa .q { font-weight: 600; font-size: 0.98rem; margin: 0 0 3px; max-width: 62ch; }
+  .qa .a { margin: 0; font-size: 0.94rem; color: var(--ink-soft); max-width: 66ch; }
+  .qa .a::before { content: "→ "; color: var(--accent); font-family: "JetBrains Mono", monospace; }
+
+  /* ---------- phases ---------- */
+  .phases { display: flex; flex-direction: column; gap: 0; }
+  .phase {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 0 20px;
+    padding: 18px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .phase:last-child { border-bottom: 1px solid var(--rule); }
+  .phase .tag {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    padding-top: 3px;
+  }
+  .phase h3 { margin: 0 0 6px; }
+  .phase p, .phase ul { margin-bottom: 0; }
+
+  /* ---------- final ---------- */
+  .final {
+    margin-top: 58px;
+    border: 2px solid var(--ink);
+    background: var(--surface);
+    padding: 30px 30px 32px;
+  }
+  .final h2 { border-bottom-color: var(--ink); }
+  .status {
+    margin-top: 26px;
+    padding: 18px 22px;
+    background: var(--accent-wash);
+    border: 1px solid var(--accent-mark);
+    border-radius: 4px;
+  }
+  .status .label {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 7px;
+  }
+  .status .val {
+    font-family: "Archivo", sans-serif;
+    font-weight: 700;
+    font-size: 1.22rem;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .status .alts {
+    margin-top: 9px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .status .alts s { opacity: 0.72; }
+
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent-mark); outline-offset: 2px; }
+
+  @media (max-width: 620px) {
+    body { font-size: 16px; padding: 0 16px 64px; }
+    .phase { grid-template-columns: 1fr; gap: 6px; }
+    .final { padding: 22px 20px 24px; }
+  }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <span class="eyebrow">Architecture Decision · BillBull Retail ERP</span>
+  <h1>Where a printer belongs</h1>
+  <p class="standfirst">Barcode Print &amp; Design is an Inventory module resolving printers through a POS terminal. This audit establishes what the codebase actually models, and decides the ownership scope for every printer role.</p>
+  <div class="meta">
+    <span><b>Branch</b> feature/posclient</span>
+    <span><b>Scope</b> pos.printer · pos.device · Inventory/Barcode · print-agent</span>
+    <span><b>Code changed</b> none — audit only</span>
+  </div>
+</header>
+
+<div class="verdict">
+  <span class="label">Decision</span>
+  <span class="call">Branch-scoped printer registry with an optional terminal override — one <code>PosPrinter</code> table, role says <em>what</em>, scope says <em>where</em>.</span>
+  <p>This is not a new architecture. It is the architecture BillBull already implements in the entity, the service validator, the resolver and the config UI. Barcode printing fails because of four call-site defects in one function, not because Inventory is modelled wrongly.</p>
+</div>
+
+<!-- 1 -->
+<section id="s1">
+<h2><span class="num">01</span> Executive summary</h2>
+
+<p>The reported symptom — <em>“No barcode printer is configured for this terminal.”</em> — reads like an architectural mismatch: an Inventory screen demanding a POS terminal. It is not.</p>
+
+<p>Reading the actual implementation, <code>PosPrinter.terminal_id</code> is nullable, <code>PosPrinterService</code> validates printer defaults separately for <strong>“branch” scope</strong> and <strong>“terminal” scope</strong>, the frontend resolver already ranks branch-scoped printers as a fallback when no terminal matches, and the POS device UI already labels an unassigned printer <code>· Branch default</code>. A label printer registered to a branch with no terminal is a first-class, fully supported configuration today.</p>
+
+<p>What is broken is <code>handlePrintZebra()</code> in <a href="billbull-frontend/src/pages/Inventory/Barcode/BarcodePrinter.jsx#L1100">BarcodePrinter.jsx:1100</a>. It asks for printers using a branch id that does not exist on the object it reads it from, reads the terminal id from a localStorage key nothing ever writes, and calls the print-agent helper with the wrong argument shape. Any one of those three is sufficient to produce the failure. The alert text then misattributes the cause to the terminal.</p>
+
+<p>So the recommendation is deliberately unexciting: <strong>fix the four call-site defects, tighten one ranking rule in the shared resolver, and change nothing in the schema.</strong> The ERP-level printer-management layer is a real future need, but it is a Phase 3 concern gated on a second non-POS consumer appearing — not a prerequisite for printing a barcode label.</p>
+</section>
+
+<!-- 2 -->
+<section id="s2">
+<h2><span class="num">02</span> Current architecture, as implemented</h2>
+
+<h4>The two-table device model</h4>
+<p><code>pos_devices</code> (<a href="billbull-backend/src/main/java/com/billbull/backend/pos/device/PosDevice.java">PosDevice.java</a>) is the generic parent row for any piece of hardware. Type-specific configuration lives in the feature package — <code>pos_printers</code>, <code>pos_scanners</code>, <code>pos_cash_drawers</code> — linked back via <code>device_id</code>. Discovery, Health, Hardware Profiles and the Device Dashboard all address the parent row and never need to know the concrete type.</p>
+
+<pre>pos_devices                    pos_printers
+  device_code   UNIQUE   ◄──────  device_id       (FK, backfilled by V22)
+  branch_id     NULL-able         device_code     UNIQUE
+  terminal_id   NULL-able         <b>branch_id       NOT NULL</b>
+  counter_name  NULL-able         <b>terminal_id     NULL-able</b>  ← the scope switch
+  device_type   PRINTER|…         counter_name    NULL-able
+  runtime_health                  device_type     RECEIPT|KITCHEN|<b>LABEL</b>
+  last_heartbeat                  connection_type USB|BLUETOOTH|WINDOWS_QUEUE|
+                                                  NETWORK_IP|<span class="no">ZEBRA_BROWSER_PRINT</span>
+                                  system_printer_name
+                                  ip_address / port_number
+                                  is_default_printer</pre>
+
+<p>Note the asymmetry that answers the whole question: <strong><code>branch_id</code> is <code>NOT NULL</code>, <code>terminal_id</code> is nullable.</strong> Branch is the mandatory owner. Terminal is an optional narrowing.</p>
+
+<h4>The scope rule is enforced server-side</h4>
+<p><a href="billbull-backend/src/main/java/com/billbull/backend/pos/printer/PosPrinterService.java#L216">PosPrinterService.java:216</a> makes the two-tier model explicit — it permits one default per <em>scope</em>, and names the scopes in the error text:</p>
+
+<pre>private boolean sameDefaultScope(String existingTerminalId, String requestedTerminalId) {
+    return Objects.equals(blankToNull(existingTerminalId), blankToNull(requestedTerminalId));
+}
+…
+String scope = isBlank(req.terminalId()) ? <span class="hi">"branch"</span> : <span class="hi">"terminal"</span>;
+throw new ResponseStatusException(CONFLICT,
+        "A default " + labelFor(req.deviceType()) + " is already configured for this " + scope + ".");</pre>
+
+<p>A branch may hold one default <code>LABEL_PRINTER</code> with <code>terminal_id = NULL</code> <em>and</em> one default <code>LABEL_PRINTER</code> per terminal, simultaneously. <code>requiresUniqueDefault()</code> covers <code>RECEIPT_PRINTER</code> and <code>LABEL_PRINTER</code> — label printers were deliberately given the same default-uniqueness discipline as receipt printers.</p>
+
+<h4>The resolver already falls back to branch</h4>
+<p><a href="billbull-frontend/src/utils/localPrintAgent.js#L453">localPrintAgent.js:453</a>, <code>resolvePrinterForContext()</code>, computes two flags per candidate — <code>exactTerminal</code> and <code>branchScope</code> (<code>= !printerTerminal</code>) — and ranks: exact-terminal default → exact-terminal → branch-scope default → any default → name. Passing <code>terminalId: undefined</code> is already a legitimate call: every terminal-scoped printer simply loses its ranking boost and the branch default wins.</p>
+
+<h4>The config UI already exposes the choice</h4>
+<p><a href="billbull-frontend/src/pages/Sales/POS/POSConsole.jsx#L485">POSConsole.jsx:485</a> writes <code>terminalId: printerForm.assignToCurrentTerminal ? currentTerminal.terminalId : null</code> from an explicit checkbox, and line 1406 renders <code>printer.terminalId ? "· Terminal: …" : "· Branch default"</code>. The two-tier model is already a user-facing concept with a visible label.</p>
+
+<h4>Transport</h4>
+<p>Routing is a clean binary, decided by <code>connectionType</code>: <code>NETWORK_IP</code> goes through the backend socket relay (<code>PosPrinterService.printEscPos</code>, reachable from any device); everything else goes through the local agent on <code>127.0.0.1:19777</code>. <code>sendEscPosReceiptToConfiguredPrinter()</code> implements this fork correctly. <strong><code>handlePrintZebra()</code> does not implement it at all</strong> — it calls the agent unconditionally, so a LAN Zebra could never work from the barcode screen.</p>
+</section>
+
+<!-- 3 -->
+<section id="s3">
+<h2><span class="num">03</span> The root problem</h2>
+
+<p>Barcode Print &amp; Design is <strong>not</strong> incorrectly coupled to the POS terminal/counter model at the architecture level. It is incorrectly coupled at the <em>call site</em>. Four defects, all inside one function:</p>
+
+<div class="findings">
+
+  <div class="finding is-bad">
+    <div class="head">
+      <span class="pill bad">Root cause</span>
+      <span class="title">Branch id read from an object that has no branch id</span>
+      <span class="loc">BarcodePrinter.jsx:1107, 1115</span>
+    </div>
+    <p><code>getPosPrinters({ branchId: company?.branchId })</code>. <code>CompanyContext</code> stores the company profile — <code>companyName</code>, <code>logoUrl</code>, <code>currency</code> — and <strong>never sets <code>branchId</code></strong>. So <code>branchId</code> is <code>undefined</code>, and <code>PosPrinterService.list()</code> opens with <code>if (branchId == null) return List.of();</code>. The screen receives an empty printer list every single time, in every tenant, regardless of configuration. This alone produces the reported alert.</p>
+  </div>
+
+  <div class="finding is-bad">
+    <div class="head">
+      <span class="pill bad">Defect</span>
+      <span class="title">Print-agent helper called with the wrong argument shape</span>
+      <span class="loc">BarcodePrinter.jsx:1186</span>
+    </div>
+    <p><code>printEscPosThroughAgent(resolvedPrinter, { dataBase64: base64Zpl })</code> — but the helper takes <strong>a single options object</strong>: <code>({ printerName, dataBase64, connectionType, ipAddress, portNumber, title })</code>. The printer object is destructured as if it were that options bag, yielding <code>printerName: undefined</code> and <code>dataBase64: undefined</code>; the second argument is discarded. The agent answers <code>400 "printerName is required for workstation printers."</code> Even with a correctly resolved printer, no ZPL is ever transmitted.</p>
+  </div>
+
+  <div class="finding is-bad">
+    <div class="head">
+      <span class="pill warn">Defect</span>
+      <span class="title">Terminal id read from a key nothing writes</span>
+      <span class="loc">BarcodePrinter.jsx:1112</span>
+    </div>
+    <p><code>localStorage.getItem('terminalId')</code>. The registration flow in <a href="billbull-frontend/src/pages/Sales/POSSales.jsx#L2096">POSSales.jsx:2096</a> writes <code>billbull:pos:terminal_id:${activeBranchId}</code>. The plain <code>terminalId</code> key is never written anywhere in the codebase, so this is always <code>null</code>. Benign today because the resolver falls back to branch — but it is dead code that <em>looks</em> like terminal coupling, and it is the reason the failure was diagnosed as architectural.</p>
+  </div>
+
+  <div class="finding is-bad">
+    <div class="head">
+      <span class="pill warn">Defect</span>
+      <span class="title">Network label printers unreachable from this screen</span>
+      <span class="loc">BarcodePrinter.jsx:1186</span>
+    </div>
+    <p>No <code>connectionType === "NETWORK_IP"</code> branch, so a LAN Zebra is never routed to <code>printPosPrinterEscPos()</code>. It also bypasses <code>PosPrintJob</code> tracking entirely, so label prints leave no audit row while every receipt print does.</p>
+  </div>
+
+  <div class="finding is-bad">
+    <div class="head">
+      <span class="pill warn">Latent</span>
+      <span class="title">Resolver can select a printer wired to a different PC</span>
+      <span class="loc">localPrintAgent.js:483–490</span>
+    </div>
+    <p>The fourth tie-break ranks on <code>printer.defaultPrinter</code> alone, without re-checking terminal match. A <code>LABEL_PRINTER</code> scoped to Terminal&nbsp;2 with <code>defaultPrinter = true</code> therefore outranks a branch-scoped non-default printer. For POS this rarely bites — a terminal id is always supplied and defaults are unique per scope. For Inventory, where <code>terminalId</code> is legitimately <code>null</code>, <strong>every</strong> terminal-scoped printer becomes an eligible candidate, and jobs can silently spool to a USB printer plugged into a till on the other side of the shop.</p>
+  </div>
+
+  <div class="finding is-good">
+    <div class="head">
+      <span class="pill good">Not a defect</span>
+      <span class="title">Branch-scoped label printers</span>
+      <span class="loc">entity · service · resolver · UI</span>
+    </div>
+    <p>Nothing in the schema, service, resolver or config screen requires a label printer to have a terminal. The capability is present and enforced end-to-end. It has simply never been exercised, because the barcode screen could not get past its own branch-id bug to reach it.</p>
+  </div>
+
+</div>
+
+<p>The alert text — <em>“No barcode printer is configured for this terminal”</em> — is itself a misstatement. The lookup is branch-scoped. The message invented the architectural problem being audited.</p>
+</section>
+
+<!-- 4 -->
+<section id="s4">
+<h2><span class="num">04</span> Existing capabilities to reuse</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Capability</th><th>Where it lives</th><th>Reuse verdict</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">Nullable terminal scope</td><td>PosPrinter.terminal_id</td><td>Reuse as-is. This <em>is</em> the branch/terminal scope switch.</td></tr>
+    <tr><td class="rowname">Per-scope default validation</td><td>PosPrinterService.sameDefaultScope</td><td>Reuse as-is. Already names “branch” vs “terminal”.</td></tr>
+    <tr><td class="rowname">Role typing</td><td>PosPrinterType</td><td>Reuse. RECEIPT / KITCHEN / LABEL is a clean role axis.</td></tr>
+    <tr><td class="rowname">Hierarchical resolver</td><td>resolvePrinterForContext</td><td>Reuse with one ranking fix. Do not rewrite.</td></tr>
+    <tr><td class="rowname">Transport fork</td><td>sendEscPosReceiptToConfiguredPrinter</td><td>Reuse the NETWORK_IP / agent fork pattern in the label path.</td></tr>
+    <tr><td class="rowname">Backend socket relay</td><td>POST /api/pos/printers/{id}/print/escpos</td><td>Reuse. Transport-agnostic — carries ZPL as happily as ESC/POS.</td></tr>
+    <tr><td class="rowname">Agent RAW spooling</td><td>pos-print-agent /print/escpos</td><td>Reuse. Byte-transparent; ZPL needs no agent change.</td></tr>
+    <tr><td class="rowname">Print-job audit spine</td><td>PosPrintJob + PrintJobType</td><td>Reuse — extend label prints onto it (LABEL job type).</td></tr>
+    <tr><td class="rowname">Agent-backed discovery</td><td>POSConsole “Load Workstation Printers”</td><td>Reuse. Only place in the app that can enumerate local queues.</td></tr>
+    <tr><td class="rowname">Branch context</td><td>BranchContext.activeBranchId / isAllBranches</td><td>Reuse — this is the correct branch source, not CompanyContext.</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- 5 -->
+<section id="s5">
+<h2><span class="num">05</span> Ownership models — which one is BillBull?</h2>
+
+<p>Against the five candidate models: BillBull implements <strong>Model E, a mixed architecture</strong> — but not in the loose sense of “different types behave differently by accident”. It implements a specific, disciplined variant:</p>
+
+<pre><b>Branch</b>  ──(mandatory owner, branch_id NOT NULL)──►  <b>Printer</b>
+   │                                                  ├─ role  = device_type
+   └──(optional narrowing, terminal_id NULL-able)─►    ├─ scope = branch | terminal
+       <b>Terminal</b>                                      └─ transport = connection_type</pre>
+
+<p>Every printer role uses the same two-tier scope. What differs is the <em>convention</em> each role follows in practice, and that is a configuration habit rather than a schema constraint:</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Role</th><th>Natural scope</th><th>Why</th><th>Schema support</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">RECEIPT_PRINTER</td><td>Terminal</td><td>Physically at a till; a receipt must emerge where the customer is standing.</td><td>Present</td></tr>
+    <tr><td class="rowname">KITCHEN_PRINTER</td><td>Branch</td><td>One kitchen serves every till. Notably it is excluded from <code>requiresUniqueDefault</code> — multiple kitchen stations per branch are anticipated.</td><td>Present</td></tr>
+    <tr><td class="rowname">LABEL_PRINTER</td><td><strong>Branch</strong>, terminal as override</td><td>Labels are produced by Inventory from wherever stock is handled; a till-bound label printer is the exception, not the rule.</td><td>Present</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The correct reading of the current system is therefore: <strong>BillBull is a Branch-owned printer registry that permits terminal narrowing.</strong> It is not, and has never been, Model A.</p>
+</section>
+
+<!-- 6 -->
+<section id="s6">
+<h2><span class="num">06</span> Scenario coverage under the current data model</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Scenario</th><th>Supported today</th><th>How</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">A · POS terminal + label printer</td><td><span class="pill good">Yes</span></td><td>Two rows, both <code>terminal_id = T1</code>, different <code>device_type</code>.</td></tr>
+    <tr><td class="rowname">B · Inventory PC, no POS</td><td><span class="pill good">Yes</span></td><td>One <code>LABEL_PRINTER</code>, <code>terminal_id = NULL</code>, <code>defaultPrinter = true</code>. Requires the agent installed on that PC — nothing else.</td></tr>
+    <tr><td class="rowname">C · Warehouse PC</td><td><span class="pill good">Yes</span></td><td>Identical to B.</td></tr>
+    <tr><td class="rowname">D · Shared network Zebra</td><td><span class="pill good">Yes</span></td><td><code>connection_type = NETWORK_IP</code>, <code>terminal_id = NULL</code>. Backend relay — no agent needed anywhere.</td></tr>
+    <tr><td class="rowname">E · Two Inventory PCs, two USB Zebras</td><td><span class="pill bad">No</span></td><td><strong>The one genuine gap.</strong> Two branch-scoped USB label printers are indistinguishable to the resolver, and only one may be the branch default. See below.</td></tr>
+    <tr><td class="rowname">F · POS + Inventory on one PC</td><td><span class="pill good">Yes</span></td><td>Two rows sharing a <code>system_printer_name</code> is legal — <code>device_code</code> is unique, the queue name is not. Roles keep them apart.</td></tr>
+    <tr><td class="rowname">G · Many terminals, one shared Zebra</td><td><span class="pill good">Yes</span></td><td>Branch-scoped label printer; every terminal and Inventory resolve to it.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Scenario E is the only real limitation — and it is narrower than it looks</h3>
+<p>It requires <em>all</em> of: two or more Inventory workstations in one branch, each with its own <strong>directly-attached USB</strong> label printer, both needing to print concurrently. A LAN Zebra dissolves it (Scenario D). A single shared Zebra dissolves it (Scenario G). Registering the Inventory PCs as terminals dissolves it, at the cost of the coupling this audit exists to avoid.</p>
+
+<p>The honest resolution for Scenario E, when a client actually hits it, is a <strong>per-workstation printer preference stored locally</strong> — a <code>localStorage</code> override naming which of the branch's label printers this PC should use, falling back to the branch default. That is a browser-local UI preference, not an ownership model: it needs no table, no server round-trip, and no new identity concept. It is Phase 2, and only on demand.</p>
+</section>
+
+<!-- 7 -->
+<section id="s7">
+<h2><span class="num">07</span> Is “workstation” already a first-class concept?</h2>
+
+<p>The audit brief correctly flags that the POS UI says <em>“printers installed on this specific PC”</em> and that the agent runs per-machine. Two candidates were examined.</p>
+
+<h4>Candidate 1 — PosTerminal.device_fingerprint</h4>
+<p>This is a genuine persistent workstation identity. <a href="billbull-frontend/src/pages/Sales/POSSales.jsx#L2091">POSSales.jsx:2091</a> mints a <code>crypto.randomUUID()</code> into <code>billbull:pos:device_fingerprint</code> and it is unique per <code>(fingerprint, branch_id)</code> at the DB level (<code>V47__pos_terminal_device_branch_composite_unique.sql</code>). <strong>A PosTerminal is, structurally, a registered workstation.</strong></p>
+<p>But it is unusable for Inventory as it stands. It is a <em>browser-profile</em> identity, not a machine identity — a different browser or profile on the same PC is a different terminal, while the print agent is genuinely per-machine, so the two disagree about what a workstation is. Registration only occurs on the POSSales mount, behind terminal approval and POS permissions. Reaching it from Inventory would mean registering warehouse PCs as POS terminals — <em>tightening</em> the coupling this audit exists to remove.</p>
+
+<h4>Candidate 2 — the print agent</h4>
+<p>It has <strong>no identity whatsoever</strong>. <code>GET /health</code> returns exactly <code>{ ok, service, version }</code> (<a href="tools/pos-print-agent/server.js#L667">server.js:667</a>). No hostname, no machine id, no agent id, no persisted config. <code>os</code> is imported solely for <code>tmpdir()</code> and <code>homedir()</code>. The agent is a stateless byte pipe that knows about Windows queue names and nothing else.</p>
+
+<pre>if (req.method === "GET" && req.url === "/health") {
+  sendJson(res, 200, { ok: true, service: "billbull-pos-print-agent", version: VERSION });
+}</pre>
+
+<p><strong>Conclusion: BillBull has no usable workstation identity for non-POS contexts.</strong> Creating one means a new agent capability, a new registration flow reachable outside POS, a new table, and a migration across fourteen tenant databases — to solve Scenario E, which a LAN printer or a <code>localStorage</code> preference solves for free. <strong>Do not introduce a workstation entity.</strong></p>
+</section>
+
+<!-- 8 -->
+<section id="s8">
+<h2><span class="num">08</span> User-based vs workstation-based vs branch-based</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Anchor</th><th>Operational consequence</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">User</td><td>Breaks the moment a user walks to another PC — the assignment follows the person, the hardware does not. Shared warehouse logins make it meaningless. A multi-branch user needs an assignment per branch anyway.</td><td><span class="pill bad">Reject</span></td></tr>
+    <tr><td class="rowname">Workstation</td><td>Physically correct for USB printers, but BillBull has no workstation identity (§07). Requires new agent identity + registration + table + 14-tenant migration.</td><td><span class="pill bad">Reject as ownership; allow as a local preference</span></td></tr>
+    <tr><td class="rowname">Terminal</td><td>Right for receipt printers. Wrong as a <em>requirement</em> for labels — forces warehouse PCs into POS registration and drags in session/day-close/approval machinery irrelevant to printing a label.</td><td><span class="pill warn">Keep as optional override only</span></td></tr>
+    <tr><td class="rowname"><strong>Branch</strong></td><td>Survives user movement and PC replacement. Matches how label printers are actually deployed — one or two per site, shared. Already <code>NOT NULL</code>, already indexed, already the API's required filter. Multi-branch users resolve through the active branch.</td><td><span class="pill good">Adopt as primary</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Branch is the ownership anchor. Terminal is a narrowing. Workstation, if ever needed, is a client-side preference over the branch's printers — never an owner.</strong></p>
+</section>
+
+<!-- 9 -->
+<section id="s9">
+<h2><span class="num">09</span> Connection types</h2>
+
+<p>The right abstraction is not the physical bus but <strong>who can reach the printer</strong>. That binary is already what the code branches on:</p>
+
+<pre><b>BACKEND-REACHABLE</b>   NETWORK_IP        → PosPrinterService.printEscPos (raw socket)
+                                       works from any device: phone, tablet, any PC
+
+<b>AGENT-REACHABLE</b>     USB
+                     BLUETOOTH         → agent POST /print/escpos (Windows RAW spooler)
+                     WINDOWS_QUEUE        only the machine physically holding the printer
+
+<b>DEPRECATED</b>          <span class="no">ZEBRA_BROWSER_PRINT</span>  → already throws a migration message at test time</pre>
+
+<p>No new connection type is needed. <code>WINDOWS_QUEUE</code> already covers a shared Windows queue (<code>\\SERVER\Zebra</code>) — the agent passes the name straight to PowerShell.</p>
+
+<h4>ZEBRA_BROWSER_PRINT</h4>
+<p>Deprecate it as a <em>choice</em>, retain it as a <em>value</em>. <code>testConfiguredPrinter()</code> already refuses it with a migration instruction, and the device-type change handler already rewrites it to <code>WINDOWS_QUEUE</code>. The remaining step is removing it from the <code>connectionTypeOptions</code> picker at <a href="billbull-frontend/src/pages/Sales/POS/POSConsole.jsx#L174">POSConsole.jsx:174</a>, so no new row can be created with it. <strong>Do not remove the enum constant</strong> — existing client rows still carry it, and Hibernate's <code>EnumType.STRING</code> mapping would fail to read them. It retires by attrition.</p>
+</section>
+
+<!-- 10 -->
+<section id="s10">
+<h2><span class="num">10</span> Role versus scope</h2>
+
+<p>Yes — this distinction is correct, and the encouraging finding is that BillBull already separates the two cleanly on separate columns. The vocabulary just needs stating plainly:</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Axis</th><th>Answers</th><th>Column</th><th>Values</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">Role</td><td>What is it for?</td><td><code>device_type</code></td><td>RECEIPT_PRINTER · KITCHEN_PRINTER · LABEL_PRINTER</td></tr>
+    <tr><td class="rowname">Scope</td><td>Who may claim it?</td><td><code>branch_id</code> + <code>terminal_id</code></td><td>branch (terminal NULL) · terminal (terminal set)</td></tr>
+    <tr><td class="rowname">Transport</td><td>How do bytes reach it?</td><td><code>connection_type</code></td><td>agent-reachable · backend-reachable</td></tr>
+    <tr><td class="rowname">Preference</td><td>Which one wins?</td><td><code>is_default_printer</code></td><td>one per (role, scope)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><code>LABEL_PRINTER</code> is a role. It carries no implication about POS. Scope is expressed entirely by the nullability of <code>terminal_id</code>. <strong>No schema change is required to make role and scope orthogonal — they already are.</strong> What is missing is only that the barcode screen never exercised the branch-scope half.</p>
+</section>
+
+<!-- 11 -->
+<section id="s11">
+<h2><span class="num">11</span> Should <code>PosPrinter</code> remain the model?</h2>
+
+<p><strong>Yes. Option 1 — keep <code>PosPrinter</code> as-is. Do not rename.</strong></p>
+
+<p>The name is mildly misleading and that is a real cost. It is far outweighed by what a rename touches: the <code>pos_printers</code> table across fourteen tenant databases; the <code>device_id</code> FK from <code>pos_devices</code> and the V22 backfill that established it; <code>HardwareProfileAssignmentEngine</code>'s reverse lookup <code>findByDeviceId</code>; <code>PosPrinterDeviceBackfillSeeder</code>; the <code>/api/pos/printers</code> contract consumed by seven frontend call sites; <code>PosPrintJob</code>'s printer references. That is a multi-day, multi-tenant migration whose entire benefit is a better identifier.</p>
+
+<p>Option 3 — keeping <code>PosPrinter</code> as persistence and layering an ERP abstraction over it — is the right <em>eventual</em> shape, and the cheap version of it costs nothing today: a thin, well-named frontend module (<code>src/api/printerRegistry.js</code> or similar) that both POS and Inventory call, delegating to <code>/api/pos/printers</code>. That gives non-POS callers a non-POS-sounding entry point without touching the database. Even that is Phase 3, not now.</p>
+</section>
+
+<!-- 12 -->
+<section id="s12">
+<h2><span class="num">12</span> Decision matrix</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr>
+    <th>Approach</th><th>Reuses existing code</th><th>ERP correctness</th><th>Complexity</th><th>Multi-workstation</th><th>Multi-branch</th><th>Future scalability</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td class="rowname">Terminal-only</td>
+      <td class="score">Full</td>
+      <td class="score"><span class="pill bad">Poor</span></td>
+      <td class="score">None</td>
+      <td class="score">Forces POS registration</td>
+      <td class="score">Via terminal</td>
+      <td class="score">Dead end</td>
+    </tr>
+    <tr>
+      <td class="rowname">Branch-only</td>
+      <td class="score">Full</td>
+      <td class="score">Good</td>
+      <td class="score">None</td>
+      <td class="score">Fails Scenario&nbsp;E</td>
+      <td class="score">Native</td>
+      <td class="score">Loses per-till receipts</td>
+    </tr>
+    <tr>
+      <td class="rowname">Workstation-only</td>
+      <td class="score">None</td>
+      <td class="score">Good</td>
+      <td class="score"><span class="pill bad">High</span></td>
+      <td class="score">Native</td>
+      <td class="score">Needs new mapping</td>
+      <td class="score">Good, at high cost</td>
+    </tr>
+    <tr>
+      <td class="rowname">Branch + Terminal</td>
+      <td class="score">Full</td>
+      <td class="score">Good</td>
+      <td class="score">None</td>
+      <td class="score">Scenario&nbsp;E only</td>
+      <td class="score">Native</td>
+      <td class="score">Good</td>
+    </tr>
+    <tr>
+      <td class="rowname">Branch + Workstation</td>
+      <td class="score">Partial</td>
+      <td class="score">Good</td>
+      <td class="score"><span class="pill bad">High</span></td>
+      <td class="score">Native</td>
+      <td class="score">Native</td>
+      <td class="score">Loses terminal defaults</td>
+    </tr>
+    <tr class="pick">
+      <td class="rowname">Branch-first + terminal override<br><span style="font-weight:400;color:var(--ink-soft)">+ local preference escape hatch</span></td>
+      <td class="score"><span class="pill good">Full</span></td>
+      <td class="score"><span class="pill good">Correct</span></td>
+      <td class="score"><span class="pill good">~15 lines</span></td>
+      <td class="score">All scenarios</td>
+      <td class="score">Native</td>
+      <td class="score"><span class="pill good">Extensible</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p>The selected row is not a proposal. It is a description of the system as built, plus one ranking correction and a documented escape hatch for Scenario E.</p>
+</section>
+
+<!-- 13 -->
+<section id="s13">
+<h2><span class="num">13</span> Recommended architecture</h2>
+
+<pre>                        <b>BRANCH</b>   ← ownership anchor (branch_id NOT NULL)
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+  <b>branch-scoped</b>      <b>branch-scoped</b>     <b>terminal-scoped</b>
+  LABEL_PRINTER      KITCHEN_PRINTER    RECEIPT_PRINTER
+  terminal_id=NULL   terminal_id=NULL   terminal_id=T1
+        │                  │                  │
+        └──────────────────┴──────────────────┘
+                           │
+                  <b>connection_type</b>
+             ┌─────────────┴─────────────┐
+       NETWORK_IP                 USB / BT / WINDOWS_QUEUE
+             │                           │
+   backend raw socket            local print agent :19777
+   (any device)                  (that PC only)
+             │                           │
+             └─────────────┬─────────────┘
+                     physical printer</pre>
+
+<p>Consumers differ only in the context they present to the resolver:</p>
+
+<pre>POS checkout      → { branchId, terminalId: &lt;registered&gt;, role: RECEIPT_PRINTER }
+Kitchen ticket    → { branchId, terminalId: &lt;registered&gt;, role: KITCHEN_PRINTER }
+<b>Inventory label</b>   → { branchId, terminalId: <b>null</b>,           role: LABEL_PRINTER }</pre>
+
+<p>One registry, one resolver, one transport layer. Inventory is not forced into POS — it simply declines to supply the optional narrowing.</p>
+</section>
+
+<!-- 14 -->
+<section id="s14">
+<h2><span class="num">14</span> Printer ownership model</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Concept</th><th>Definition</th><th>Backed by</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">Branch</td><td>Mandatory owner of every printer. The unit of physical premises.</td><td><code>pos_printers.branch_id NOT NULL</code></td></tr>
+    <tr><td class="rowname">Terminal</td><td>Optional narrowing to one registered POS workstation. Meaningful for RECEIPT; permitted for any role.</td><td><code>pos_printers.terminal_id NULL-able</code> → <code>pos_terminals.terminal_id</code></td></tr>
+    <tr><td class="rowname">Workstation</td><td><strong>Not an ownership concept in BillBull.</strong> Exists only as a client-side preference selecting among the branch's printers.</td><td>None. Deliberately.</td></tr>
+    <tr><td class="rowname">Printer role</td><td>What the printer is used for. Single-valued; a dual-purpose device is two rows.</td><td><code>device_type</code> (PosPrinterType)</td></tr>
+    <tr><td class="rowname">Printer connection</td><td>Transport reachability: backend-reachable or agent-reachable.</td><td><code>connection_type</code></td></tr>
+    <tr><td class="rowname">Printer assignment</td><td>Which printer wins for a (role, scope) pair.</td><td><code>is_default_printer</code>, uniqueness enforced per scope</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- 15 -->
+<section id="s15">
+<h2><span class="num">15</span> Resolution hierarchy</h2>
+
+<p>Existing behaviour, with the terminal-leak fixed:</p>
+
+<pre>resolvePrinter({ branchId (required), terminalId?, role })
+
+  1  branchId missing               → <span class="no">hard error</span>, never guess a branch
+  2  filter: isActive · status=ACTIVE · device_type = role · branch matches
+  3  <b>drop candidates scoped to a DIFFERENT terminal than the one supplied
+     — and, when no terminalId is supplied, drop ALL terminal-scoped rows</b>   ← the fix
+  4  rank:
+       a. terminal match  AND  is_default_printer
+       b. terminal match
+       c. terminal IS NULL  AND  is_default_printer      ← branch default
+       d. terminal IS NULL
+       e. name, ascending                                 (deterministic tie-break)
+  5  none → actionable error naming the branch and the role</pre>
+
+<p>Step 3 is the substantive change and it is <strong>strictly narrowing</strong> — it can only remove candidates that were never physically reachable from the calling context. It cannot alter POS behaviour, where a terminal id is always supplied and per-scope default uniqueness already guarantees the winner is at rank (a) or (c).</p>
+
+<p>The optional Phase-2 escape hatch inserts one step ahead of ranking: <em>if this browser holds a local preferred-printer id for this branch and role, and that printer is still in the candidate set, take it.</em> It never widens the set, so it cannot reach another branch's hardware.</p>
+</section>
+
+<!-- 16 -->
+<section id="s16">
+<h2><span class="num">16</span> The three flows</h2>
+
+<h3>Inventory label print</h3>
+<pre>Barcode Print &amp; Design
+  → branchId  = BranchContext.activeBranchId        <span class="hi">(not company.branchId)</span>
+  → require an explicit branch when isAllBranches
+  → getPosPrinters({ branchId, deviceType: 'LABEL_PRINTER' })
+  → resolvePrinter({ branchId, terminalId: <b>null</b>, role: LABEL_PRINTER })
+  → buildZplBatch(labels) → base64
+  → NETWORK_IP ?  backend relay  :  local agent /print/escpos
+  → Windows RAW spooler → Zebra</pre>
+
+<h3>POS receipt print — unchanged</h3>
+<pre>Checkout
+  → branchId = currentTerminal.branchId · terminalId = currentTerminal.terminalId
+  → resolvePrinter({ branchId, terminalId, role: RECEIPT_PRINTER })
+  → buildEscPosReceiptBase64
+  → NETWORK_IP ? backend relay : agent /print/escpos → text/GDI fallback
+  → PosPrintJob create → dispatch → report</pre>
+
+<h3>Shared workstation — POS and Inventory on one PC</h3>
+<pre>One Windows PC, one agent, two rows in pos_printers:
+
+  RECEIPT_PRINTER   terminal_id = T1      system_printer_name = "EPSON TM-T20"
+  LABEL_PRINTER     terminal_id = NULL    system_printer_name = "ZDesigner GK420d"
+
+POS console  resolves role=RECEIPT + terminal=T1  → the Epson
+Barcode      resolves role=LABEL   + terminal=null → the Zebra
+
+No conflict: role and scope disambiguate independently, and both rows reach the
+same agent on the same machine. The two flows never see each other's printer.</pre>
+</section>
+
+<!-- 17 -->
+<section id="s17">
+<h2><span class="num">17</span> Multi-branch behaviour</h2>
+
+<p><strong>Option A, with a specific correction: printing requires a resolved branch, and “All Branches” must block rather than guess.</strong></p>
+
+<p>Option C — resolve from the document's branch — does not apply here. Labels are printed for <em>products</em>, from a cart the operator assembles; there is no document carrying a branch. Option B needs a workstation identity that does not exist.</p>
+
+<p>The branch source must be <code>BranchContext.activeBranchId</code>, not <code>company?.branchId</code>. When <code>isAllBranches</code> is true (admins default to <code>'ALL'</code> per <a href="billbull-frontend/src/context/BranchContext.jsx#L263">BranchContext.jsx:263</a>), the barcode screen must ask the operator to pick a branch before printing. Silently taking the first branch would spool a job to hardware in a different building — a failure mode with no error message and no recovery.</p>
+
+<p>This matches the pattern POS already uses: <code>registerTerminalAndResumeSession()</code> reads <code>activeBranchId</code> and treats <code>'ALL'</code> as a distinct case rather than resolving it to a branch.</p>
+</section>
+
+<!-- 18 -->
+<section id="s18">
+<h2><span class="num">18</span> Zebra migration impact</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Fact</th><th>Old — Browser Print</th><th>New — Print Agent</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">Which printer</td><td>Implicit — auto-discovered default Zebra</td><td><strong>Explicit</strong> — <code>system_printer_name</code> on a config row</td></tr>
+    <tr><td class="rowname">Which branch</td><td>Implicit — whatever the PC could see</td><td><strong>Explicit</strong> — <code>branch_id</code>, required</td></tr>
+    <tr><td class="rowname">Scope</td><td>Implicit — the physical PC</td><td><strong>Explicit</strong> — branch, optionally terminal</td></tr>
+    <tr><td class="rowname">Transport</td><td>HTTPS to <code>localhost:9101</code></td><td>HTTP to <code>127.0.0.1:19777</code>, or backend socket</td></tr>
+    <tr><td class="rowname">Page security</td><td><span class="pill bad">Broke HTTPS</span> — cert chain</td><td><span class="pill good">Clean</span> — loopback HTTP, or no local call at all</td></tr>
+    <tr><td class="rowname">Reach</td><td>That PC only</td><td>That PC, or any device for NETWORK_IP</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>The migration converted <strong>implicit workstation-local discovery into explicit branch-scoped configuration</strong>. That is the trade the new architecture makes, and it is the right one: it is what makes a shared LAN Zebra, a phone-initiated print, and a per-branch default possible at all. The cost is a one-time configuration step per branch — register the label printer once in POS → Devices — which is precisely the step that had never been performed, and which the branch-id bug would have made invisible even if it had.</p>
+
+<p>What the old model got right and must not be lost: <em>the operator never had to think about which printer.</em> The branch default preserves that. Where a branch genuinely has two USB Zebras, the local preference of §06 restores it.</p>
+</section>
+
+<!-- 19 -->
+<section id="s19">
+<h2><span class="num">19</span> Immediate implementation plan</h2>
+
+<p>Five edits, two files, no schema change, no migration, no new table, no rename, no UI redesign.</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>#</th><th>File</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td class="score">1</td><td class="rowname">BarcodePrinter.jsx</td><td>Take <code>activeBranchId</code> / <code>isAllBranches</code> from <code>BranchContext</code> instead of <code>company?.branchId</code>. Block with a “choose a branch” prompt when <code>isAllBranches</code>.</td></tr>
+    <tr><td class="score">2</td><td class="rowname">BarcodePrinter.jsx</td><td>Remove the <code>localStorage.getItem('terminalId')</code> read. Call <code>resolvePrinterForContext(printers, { deviceType: 'LABEL_PRINTER', branchId })</code> — no terminal.</td></tr>
+    <tr><td class="score">3</td><td class="rowname">BarcodePrinter.jsx</td><td>Fix the transport call: route <code>NETWORK_IP</code> through <code>printPosPrinterEscPos(printer.id, base64)</code>, otherwise <code>printEscPosThroughAgent({ printerName: printer.systemPrinterName, dataBase64, connectionType, title })</code> — one options object. Prefer extracting a shared <code>sendLabelToConfiguredPrinter()</code> next to the receipt helper so the fork is written once.</td></tr>
+    <tr><td class="score">4</td><td class="rowname">BarcodePrinter.jsx</td><td>Replace the alert text with the truth: <em>“No label printer is configured for {branchName}. Add one under POS → Devices → Add Device → Label Printer.”</em></td></tr>
+    <tr><td class="score">5</td><td class="rowname">localPrintAgent.js</td><td>Add step 3 of §15 to <code>resolvePrinterForContext</code>: drop candidates scoped to a non-matching terminal, and drop all terminal-scoped candidates when no terminal is supplied.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h4>Optional, same change-set</h4>
+<ul>
+  <li>Remove <code>ZEBRA_BROWSER_PRINT</code> from the <code>connectionTypeOptions</code> picker (POSConsole.jsx:174). Keep the enum constant.</li>
+  <li>Record label prints as <code>PosPrintJob</code> rows, matching receipts — best-effort, never blocking.</li>
+</ul>
+
+<h4>Configuration step, per branch — not code</h4>
+<p>POS → Devices → Add Device → Label Printer → Load Workstation Printers → pick the Zebra queue → leave “assign to this terminal” <strong>unchecked</strong> → set as default. One row per branch.</p>
+
+<h4>Verification</h4>
+<ul>
+  <li>Branch with a branch-scoped label printer, no terminal registered on the PC → prints.</li>
+  <li>Same branch, POS open on the same PC → receipt still goes to the Epson, label still to the Zebra.</li>
+  <li>Branch with a label printer scoped to Terminal&nbsp;2 only, printing from Inventory → refuses with the actionable message rather than spooling to Terminal&nbsp;2.</li>
+  <li>Admin on “All Branches” → prompted to choose, never silently routed.</li>
+  <li>NETWORK_IP Zebra → prints with the agent stopped.</li>
+</ul>
+</section>
+
+<!-- 20 -->
+<section id="s20">
+<h2><span class="num">20</span> Roadmap</h2>
+
+<div class="phases">
+  <div class="phase">
+    <span class="tag">Phase 1 · now</span>
+    <div>
+      <h3>Fix the call site</h3>
+      <p>The five edits above. Restores label printing on the existing model. No schema, no migration, no new concept.</p>
+    </div>
+  </div>
+  <div class="phase">
+    <span class="tag">Phase 2 · on demand</span>
+    <div>
+      <h3>Local printer preference</h3>
+      <p>Only when a client actually presents Scenario E. A <code>localStorage</code> preferred-printer id per (branch, role), applied as a filter over the branch's candidates. Client-side only — no table, no endpoint, no ownership change.</p>
+    </div>
+  </div>
+  <div class="phase">
+    <span class="tag">Phase 3 · when justified</span>
+    <div>
+      <h3>ERP-wide printer management</h3>
+      <p>Triggered by a second non-POS print consumer — warehouse pick lists, GRN labels, shelf-edge tickets. Move the device-config component under <em>Settings → Devices &amp; Printers</em> with its own permission and route, keeping <code>/api/pos/printers</code> and the table untouched. Introduce a neutrally-named frontend registry module. Optionally give the agent a stable <code>agentId</code> — for diagnostics and health attribution, not for ownership.</p>
+    </div>
+  </div>
+  <div class="phase">
+    <span class="tag">Phase 4 · future</span>
+    <div>
+      <h3>Label platform</h3>
+      <p>Label template versioning, ZPL preview, a designer surface, per-template printer binding. Builds on the same registry and the same resolver. Labelary is explicitly out of scope and not implemented now.</p>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- 21 -->
+<section id="s21">
+<h2><span class="num">21</span> Risks</h2>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td class="rowname">Resolver change alters POS printer selection</td><td><span class="pill warn">Medium</span></td><td>The change is strictly narrowing and only removes non-matching-terminal candidates. POS always supplies a terminal id and per-scope defaults are unique, so the winner stays at rank (a)/(c). Verify against a branch holding two terminal-scoped receipt printers before release.</td></tr>
+    <tr><td class="rowname">Existing clients have no branch-scoped label printer row</td><td><span class="pill warn">Medium</span></td><td>Certain, not merely likely — the barcode path never worked, so nobody configured one. This is a rollout task, not a code task: one configuration step per branch, and the new error message states it.</td></tr>
+    <tr><td class="rowname">Hardware Profiles overwrite a branch-scoped label printer's terminal</td><td><span class="pill warn">Medium</span></td><td><code>HardwareProfileAssignmentEngine</code> writes <code>terminalId</code> onto <code>PosPrinter</code> rows when a profile is assigned. A profile containing a LABEL_PRINTER would silently convert a branch default into a terminal-scoped printer and break Inventory printing. Do not include label printers in hardware profiles; the v2 spec (§17) already flags profile-vs-resolver conflict as an open risk.</td></tr>
+    <tr><td class="rowname">Agent not installed on the Inventory PC</td><td><span class="pill warn">Medium</span></td><td>Inherent to USB/queue printers and unchanged by this decision. NETWORK_IP removes it entirely — recommend LAN Zebras for warehouse deployments.</td></tr>
+    <tr><td class="rowname">Two dual-purpose rows drift out of sync</td><td><span class="pill good">Low</span></td><td>Shared <code>system_printer_name</code> across a RECEIPT and a LABEL row is intentional and legal; the rows are independent by design.</td></tr>
+    <tr><td class="rowname">Legacy ZEBRA_BROWSER_PRINT rows</td><td><span class="pill good">Low</span></td><td>Enum retained; test path already emits a migration instruction. Retires by attrition.</td></tr>
+    <tr><td class="rowname">Deferring the workstation model</td><td><span class="pill good">Low</span></td><td>Only Scenario E is affected, and Phase 2's local preference resolves it without an ownership change. Nothing in Phase 1 forecloses Phase 3.</td></tr>
+  </tbody>
+</table>
+</div>
+</section>
+
+<!-- 22 -->
+<section id="s22">
+<h2><span class="num">22</span> The twelve questions</h2>
+
+<div class="qa">
+  <div class="row"><span class="n">01</span><div><p class="q">Should Barcode Print &amp; Design use <code>terminalId</code>?</p><p class="a">No. Pass no terminal at all. The resolver treats its absence as “branch scope”, which is exactly right for Inventory.</p></div></div>
+  <div class="row"><span class="n">02</span><div><p class="q">Should <code>LABEL_PRINTER</code> belong to a POS terminal?</p><p class="a">No. Its default scope is branch. Terminal remains available as an optional override for a genuinely till-bound label printer.</p></div></div>
+  <div class="row"><span class="n">03</span><div><p class="q">Should Inventory barcode printing use workstation context?</p><p class="a">No. BillBull has no usable workstation identity, and creating one costs a new agent capability, a registration flow, a table and a 14-tenant migration to solve one scenario a LAN printer solves for free.</p></div></div>
+  <div class="row"><span class="n">04</span><div><p class="q">Should branch-level defaults be supported?</p><p class="a">Yes — they already are, in the entity, the validator, the resolver and the UI. This is the primary scope, not a fallback.</p></div></div>
+  <div class="row"><span class="n">05</span><div><p class="q">Should a printer be assignable to both POS and Inventory?</p><p class="a">Not as one row. A dual-purpose device is two rows sharing a <code>system_printer_name</code> — already legal, since <code>device_code</code> is unique and the queue name is not. Do not add multi-role.</p></div></div>
+  <div class="row"><span class="n">06</span><div><p class="q">Should <code>PosPrinter</code> be reused?</p><p class="a">Yes, unchanged and unrenamed. The name is imperfect; the migration cost across fourteen tenant databases is not worth a better identifier.</p></div></div>
+  <div class="row"><span class="n">07</span><div><p class="q">Should <code>resolvePrinterForContext()</code> be generalized?</p><p class="a">Its <em>usage</em>, yes — it is already role- and scope-aware and is not POS-specific. Its logic needs one narrowing fix (§15 step 3), not a rewrite.</p></div></div>
+  <div class="row"><span class="n">08</span><div><p class="q">Should POS → Devices remain the configuration centre?</p><p class="a">Yes for now. It is the only screen able to enumerate local Windows queues through the agent. Relocating it is Phase 3.</p></div></div>
+  <div class="row"><span class="n">09</span><div><p class="q">Should there be an ERP-wide printer management layer?</p><p class="a">Eventually — Phase 3, gated on a second non-POS consumer. As a relocated UI and a neutrally-named frontend module over the same API, never as a second data model.</p></div></div>
+  <div class="row"><span class="n">10</span><div><p class="q">What is the minimum change now?</p><p class="a">Five edits across two frontend files (§19). Zero backend changes, zero schema changes.</p></div></div>
+  <div class="row"><span class="n">11</span><div><p class="q">What should BillBull evolve toward?</p><p class="a">A branch-owned, role-typed, transport-typed printer registry with optional terminal narrowing and an optional client-side workstation preference — surfaced through an ERP-wide device screen. Which is the current model, better placed.</p></div></div>
+  <div class="row"><span class="n">12</span><div><p class="q">What should not change now?</p><p class="a">The <code>pos_printers</code> schema and name. The terminal/counter model. Hardware Profiles. Receipt and kitchen flows. The print-job spine. The agent. The <code>ZEBRA_BROWSER_PRINT</code> enum constant. The POS Devices UI layout.</p></div></div>
+</div>
+</section>
+
+<!-- FINAL -->
+<div class="final">
+<h2><span class="num">→</span> Architecture decision</h2>
+
+<p><strong>Branch-scoped printer registry with an optional terminal override.</strong> One <code>PosPrinter</code> table. Role (<code>device_type</code>) says what a printer is for; scope (<code>branch_id</code> + nullable <code>terminal_id</code>) says who may claim it; connection type says how bytes reach it. Inventory resolves with <code>terminalId = null</code> and lands on the branch default. POS resolves with its registered terminal and lands on the till's printer. No new entity, no new table, no rename.</p>
+
+<h3>Why this fits BillBull</h3>
+<ul>
+  <li><code>branch_id</code> is <code>NOT NULL</code> and <code>terminal_id</code> is nullable — the schema already declares branch the owner and terminal the narrowing.</li>
+  <li><code>PosPrinterService.sameDefaultScope()</code> already validates defaults separately for <code>"branch"</code> and <code>"terminal"</code> scope, and names both in its error text.</li>
+  <li><code>resolvePrinterForContext()</code> already computes a <code>branchScope</code> flag and ranks branch-scoped printers as the fallback tier.</li>
+  <li>POSConsole already offers “assign to this terminal” as an explicit checkbox and renders <code>· Branch default</code> when it is off.</li>
+  <li><code>KITCHEN_PRINTER</code> is deliberately excluded from per-scope default uniqueness — evidence that non-terminal printer scoping was designed in, not an afterthought.</li>
+  <li>The one alternative that would improve on it — workstation ownership — has no foundation to build on: the print agent's <code>/health</code> returns <code>{ ok, service, version }</code> and nothing else, and <code>PosTerminal.device_fingerprint</code> is a browser-profile identity gated behind POS registration.</li>
+</ul>
+
+<h3>Implement now</h3>
+<ul>
+  <li>Source the branch from <code>BranchContext.activeBranchId</code>; block on “All Branches”.</li>
+  <li>Drop the <code>terminalId</code> read; resolve with role + branch only.</li>
+  <li>Fix the transport call shape and add the <code>NETWORK_IP</code> fork.</li>
+  <li>Rewrite the error message to name the branch and the fix.</li>
+  <li>Narrow the resolver so non-matching terminal-scoped printers cannot be selected.</li>
+  <li>Register one branch-scoped default <code>LABEL_PRINTER</code> per branch — configuration, not code.</li>
+</ul>
+
+<h3>Do not implement now</h3>
+<ul>
+  <li>No workstation table, entity, or agent identity.</li>
+  <li>No rename of <code>PosPrinter</code> / <code>pos_printers</code> / <code>/api/pos/printers</code>.</li>
+  <li>No Flyway migration and no schema change of any kind.</li>
+  <li>No removal of the <code>ZEBRA_BROWSER_PRINT</code> enum constant (picker only).</li>
+  <li>No new Settings → Printers screen.</li>
+  <li>No multi-role printers, no printer groups, no Labelary, no label-template platform.</li>
+  <li>No change to receipt, kitchen, Hardware Profile, or print-job behaviour.</li>
+</ul>
+
+<div class="status">
+  <span class="label">Final status</span>
+  <span class="val">PROCEED WITH IMMEDIATE FIX</span>
+  <div class="alts">
+    <s>REVISE CURRENT PLAN BEFORE IMPLEMENTATION</s> ·
+    <s>REQUIRES ERP-LEVEL PRINTER ARCHITECTURE CHANGE</s>
+  </div>
+</div>
+
+<p style="margin-top:22px;color:var(--ink-soft);font-size:0.95rem;">The migration away from Zebra Browser Print was architecturally sound and is not the source of the failure. The scope model is already correct. The bug is a branch id read from the wrong context object, compounded by a mis-shaped helper call. Fix those, narrow the resolver, register one printer per branch — and revisit an ERP-wide printer layer when a second non-POS consumer actually needs it.</p>
+</div>
+
+</div>
+</body>
+</html>

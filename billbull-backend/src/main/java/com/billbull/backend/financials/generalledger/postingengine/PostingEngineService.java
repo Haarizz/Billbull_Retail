@@ -1935,6 +1935,59 @@ public class PostingEngineService {
                 return post(entry);
         }
 
+        /**
+         * Posts the opening balance of a SINGLE ledger account, as entered on the
+         * Chart-of-Accounts create form (Financials → Ledgers → Quick Add → Account).
+         *
+         * Why this exists separately from {@link #postOpeningBalances}: that method posts
+         * one combined journal per year under the reference "OB-{year}" and short-circuits
+         * on the duplicate check, so it can only ever fire once per fiscal year. An account
+         * created afterwards would silently get no journal at all — its balance stayed on
+         * the legacy {@code Account.balanceAmount} field while every GL-derived view (COA
+         * tree, Trial Balance, Balance Sheet) read zero.
+         *
+         * The contra side is plugged into Retained Earnings, matching
+         * {@link #postOpeningBalances}. Idempotent per account via the "OB-ACC-{code}"
+         * reference. Returns null when there is nothing to post (no amount, unknown or
+         * group account, or the account IS the plug account and so cannot balance itself).
+         */
+        public JournalEntry postAccountOpeningBalance(String accountCode, BigDecimal amount,
+                        String balanceType, LocalDate asOfDate,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (accountCode == null || accountCode.isBlank()) return null;
+                if (amount == null || amount.abs().compareTo(new BigDecimal("0.005")) < 0) return null;
+
+                Account acc = accountRepository.findByCode(accountCode.trim());
+                if (acc == null || Boolean.TRUE.equals(acc.getIsGroup())) return null;
+
+                String code = acc.getCode();
+                // Plugging an account against itself would post a zero-net, meaningless entry.
+                if (ACC_RETAINED_EARNINGS.equals(code)) return null;
+
+                LocalDate date = asOfDate != null ? asOfDate : LocalDate.now();
+                String ref = "OB-ACC-" + code;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                boolean credit = balanceType != null && "Cr".equalsIgnoreCase(balanceType.trim());
+                BigDecimal magnitude = amount.abs();
+                String name = acc.getName() != null ? acc.getName() : code;
+
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Opening balance - " + code + " " + name, TX_MANUAL_JOURNAL, branch);
+
+                addLine(entry, name, code, "Opening balance - " + code,
+                                credit ? BigDecimal.ZERO : magnitude,
+                                credit ? magnitude : BigDecimal.ZERO);
+
+                addLine(entry, "Retained Earnings", ACC_RETAINED_EARNINGS,
+                                "Plug - opening balance " + code,
+                                credit ? magnitude : BigDecimal.ZERO,
+                                credit ? BigDecimal.ZERO : magnitude);
+
+                return post(entry);
+        }
+
         // =========================================================
         // Reconciliation helpers
         // =========================================================

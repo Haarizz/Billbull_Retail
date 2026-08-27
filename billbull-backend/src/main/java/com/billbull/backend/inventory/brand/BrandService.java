@@ -64,9 +64,34 @@ public class BrandService {
                     : "Brand code already exists");
         }
 
+        boolean nameExists = scope != null
+                ? repository.existsActiveByNameInBranchScope(req.name, scope)
+                : repository.existsByNameAndActiveTrue(req.name);
+        if (nameExists) {
+            throw new RuntimeException(scope != null
+                    ? "Brand name already exists in this branch"
+                    : "Brand name already exists");
+        }
+
+        com.billbull.backend.settings.branch.Branch targetBranch = masterBranch.resolveBranchForCreate();
+
+        // Reusing the name/code of a soft-deleted brand: the deleted row still holds the DB unique
+        // index, so inserting a second row would fail with a raw duplicate-key error. Revive the
+        // deleted row with the submitted values instead — indistinguishable from a fresh create for
+        // the user, and safe because delete() refuses to run while any product still references it.
+        Brand revived = findSoftDeletedHolding(req.name, req.code, targetBranch);
+        if (revived != null) {
+            setFields(revived, req, logo);
+            revived.setActive(true);
+            if (req.auto != null && req.auto) {
+                revived.setBarcode(generateBarcode(req.prefix, req.prefixLength, req.suffixLength, req.ruleGlobalUnique));
+            }
+            return map(repository.save(revived));
+        }
+
         Brand brand = new Brand();
         setFields(brand, req, logo);
-        brand.setBranch(masterBranch.resolveBranchForCreate()); // Phase 6B stamp (null = global / toggle off)
+        brand.setBranch(targetBranch); // Phase 6B stamp (null = global / toggle off)
 
         // Generate barcode if auto-generate is enabled
         if (req.auto != null && req.auto) {
@@ -123,6 +148,35 @@ public class BrandService {
     // ---------------------------
     // HELPERS
     // ---------------------------
+
+    /**
+     * Finds the soft-deleted brand in the target branch tier whose name or code blocks this create.
+     * Returns null when nothing is in the way. When the name and the code are held by two DIFFERENT
+     * deleted brands only one can be revived, so this reports the conflict rather than letting the
+     * insert fail against the unique index.
+     */
+    private Brand findSoftDeletedHolding(String name, String code, com.billbull.backend.settings.branch.Branch targetBranch) {
+        Long targetBranchId = com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(targetBranch);
+        Brand byName = firstInTier(repository.findByActiveFalseAndNameIgnoreCase(name), targetBranchId);
+        Brand byCode = firstInTier(repository.findByActiveFalseAndCodeIgnoreCase(code), targetBranchId);
+
+        if (byName != null && byCode != null && !byName.getId().equals(byCode.getId())) {
+            throw new IllegalStateException("Brand code '" + code + "' still belongs to the deleted brand '"
+                    + byCode.getName() + "'. Use a different code for '" + name + "'.");
+        }
+        return byName != null ? byName : byCode;
+    }
+
+    /** Keeps only rows owned by the same branch tier as the row being created (null = global). */
+    private Brand firstInTier(List<Brand> candidates, Long targetBranchId) {
+        return candidates.stream()
+                .filter(b -> java.util.Objects.equals(
+                        com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(b.getBranch()),
+                        targetBranchId))
+                .findFirst()
+                .orElse(null);
+    }
+
     private void setFields(Brand brand, BrandRequest req, MultipartFile logo) {
 
         brand.setName(req.name);

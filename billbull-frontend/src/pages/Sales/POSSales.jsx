@@ -52,6 +52,7 @@ import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer'
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
+import { CASH_NOTE_KEYS, CASH_COIN_KEYS, DENOM_KEYS, DENOM_LABELS, emptyDenominations } from '../../utils/cashDenominations';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -696,12 +697,8 @@ export default function POSSales() {
 
   // Session opening/closing states
   const [openingCash, setOpeningCash] = useState('');
-  const [denominations, setDenominations] = useState({
-    '1000': 0, '500': 0, '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0, '0.50': 0, '0.25': 0
-  });
-  const [closingDenominations, setClosingDenominations] = useState({
-    '1000': 0, '500': 0, '200': 0, '100': 0, '50': 0, '20': 0, '10': 0, '5': 0, '1': 0, '0.50': 0, '0.25': 0
-  });
+  const [denominations, setDenominations] = useState(emptyDenominations);
+  const [closingDenominations, setClosingDenominations] = useState(emptyDenominations);
   const [cardSettlementAmount, setCardSettlementAmount] = useState('');
 
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
@@ -1477,13 +1474,13 @@ export default function POSSales() {
         customerName: customer?.name || 'Walk-in Customer',
         customerPhone: customer?.phone || '',
         customerEmail: customer?.email || '',
+        // Customer code (Fix 2 — Template 2 Customer Details) + credit TRN.
+        customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
+        customerTrn: customer?.trn || '',
         // Customer's address on file (mapPosCustomer.address = default shipping,
         // falling back to billing) — printed in the CUSTOMER block by both
         // templates, separate from the sale's DELIVERY ADDRESS section.
         customerAddress: customer?.address || '',
-        // Customer code (Fix 2 — Template 2 Customer Details) + credit TRN.
-        customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
-        customerTrn: customer?.trn || '',
         saleType: currentInvoice.saleType || '',
         shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
@@ -4125,11 +4122,11 @@ export default function POSSales() {
             : null;
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
-            customerTrn: customer?.trn,
-            customerAddress: customer?.address,
             customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
+            customerTrn: customer?.trn,
+            customerAddress: customer?.address,
             creditPreviousBalance: creditPrevBalAuto,
             creditInvoiceCredit: creditInvoiceCreditAuto,
             creditAmountPaid: creditAmountPaidAuto,
@@ -4733,15 +4730,15 @@ export default function POSSales() {
     // prints the same rows from it. Null when reprinting a historical invoice that has
     // no recorded allocations, where the cashGiven fallback still applies.
     paymentBlock = null,
+    customerNameOverride = null,
+    customerPhone = null,
+    customerEmail = null,
     // TRN + address of the selected customer. Neither is persisted on
     // SalesInvoice (it stores only customerCode/customerName), so callers pass
     // them from the live customer object; when they don't, they're resolved
     // below from the loaded customer list by code — see resolvedCustomer*.
     customerTrn = null,
     customerAddress = null,
-    customerNameOverride = null,
-    customerPhone = null,
-    customerEmail = null,
     creditPreviousBalance = null,
     creditInvoiceCredit = null,
     creditAmountPaid = null,
@@ -4763,6 +4760,9 @@ export default function POSSales() {
     // saved customerName came back blank. When the caller passes the live selected
     // name, override it onto a shallow copy so BOTH the ESC/POS and HTML builders
     // (which read invoice.customerName) print the real customer, not "Walk-in".
+    const full = (customerNameOverride && customerNameOverride.trim())
+      ? { ...fullArg, customerName: customerNameOverride.trim() }
+      : fullArg;
     // Customer contact block (Name / Mobile / Email / TRN / Address): only the
     // code + name round-trip on the invoice, so everything else is read off the
     // loaded customer record. Callers that hold the live `customer` object pass
@@ -4778,9 +4778,6 @@ export default function POSSales() {
     const resolvedCustomerEmail = customerEmail || custRecForPrint?.email || full.customerEmail || null;
     const resolvedCustomerTrn = customerTrn || custRecForPrint?.trn || full.customerTrn || null;
     const resolvedCustomerAddress = customerAddress || custRecForPrint?.address || full.customerAddress || null;
-    const full = (customerNameOverride && customerNameOverride.trim())
-      ? { ...fullArg, customerName: customerNameOverride.trim() }
-      : fullArg;
     // Tax-registered sales keep today's Tax Invoice template untouched; a
     // no-tax sale (e.g. a zero-rated/exempt walk-in) prints the POS Receipt
     // tab's own header/footer/TRN/VAT-summary config instead. Computed here
@@ -4989,7 +4986,7 @@ export default function POSSales() {
     tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
     tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
     tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
-    tplReceiptColDiscount, tplReceiptShowNotes,
+    tplReceiptColDiscount, tplReceiptShowNotes, customerOptions,
     t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
     t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
     t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails,
@@ -5292,11 +5289,11 @@ export default function POSSales() {
                 // Print the actual selected customer's name (client item 3) — the same
                 // `customer` object the checkout preview rendered. Walk-in stays null so
                 // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
-                customerTrn: customer?.trn,
-                customerAddress: customer?.address,
                 customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
                 customerPhone: customer?.phone,
                 customerEmail: customer?.email,
+                customerTrn: customer?.trn,
+                customerAddress: customer?.address,
                 creditPreviousBalance: creditPrevBalAuto,
                 creditInvoiceCredit: creditInvoiceCreditAuto,
                 creditAmountPaid: creditAmountPaidAuto,
@@ -5410,7 +5407,6 @@ export default function POSSales() {
       return;
     }
     const movementType = cashDropType === 'in' ? 'DROP_IN' : 'DROP_OUT';
-    openCashDrawer(cashDropType === 'in' ? 'CASH_DROP' : 'CASH_OUT');
     try {
       if (currentSession?.id && typeof currentSession.id === 'number') {
         await addPosCashMovement(currentSession.id, {
@@ -5420,6 +5416,9 @@ export default function POSSales() {
           categoryId: cashDropCategoryId || undefined,
         });
       }
+      // Drawer opens only once the movement is accepted — a refused cash out (e.g. more
+      // than the drawer holds) must not pop the drawer.
+      openCashDrawer(cashDropType === 'in' ? 'CASH_DROP' : 'CASH_OUT');
       setCashDropFeedback({ type: 'success', message: cashDropType === 'in' ? 'Cash drop recorded.' : 'Cash out recorded.' });
     } catch (err) {
       console.warn('Cash movement API error', err);
@@ -5430,7 +5429,14 @@ export default function POSSales() {
         showClosureRequiredBlock(err?.response?.data?.message || err?.response?.data);
         return;
       }
-      setCashDropFeedback({ type: 'error', message: 'Failed to record cash movement.' });
+      // Surface the server's reason (insufficient cash in drawer, category required, …)
+      // and keep the dialog open with the typed amount so it can be corrected.
+      const apiMessage = typeof err?.response?.data === 'string'
+        ? err.response.data
+        : err?.response?.data?.message;
+      setCashDropFeedback({ type: 'error', message: apiMessage || 'Failed to record cash movement.' });
+      setTimeout(() => setCashDropFeedback(null), 5000);
+      return;
     }
     setCashDropAmount('');
     setCashDropDescription('');
@@ -5499,14 +5505,14 @@ export default function POSSales() {
             isReprint: true,
             customerPhone: custRec?.phone,
             customerEmail: custRec?.email,
+            customerTrn: custRec?.trn,
+            customerAddress: custRec?.address,
             // Suppress the CREDIT ACCOUNT block on a reprint of a historical invoice.
             // The block is a point-in-time snapshot of the ledger AS OF the original
             // sale, and those figures are not persisted on the invoice. Re-querying
             // posCreditBalance returns the customer's CURRENT outstanding (which may
             // reflect many later transactions), so using it as "Previous Balance" —
             // then letting the renderer fabricate Updated = prev + invoiceTotal —
-            customerTrn: custRec?.trn,
-            customerAddress: custRec?.address,
             // prints numbers that never existed. A "COPY / REPRINT" with an invented
             // balance is worse than a reprint that simply omits it.
             showCreditBalanceOverride: false,
@@ -6997,8 +7003,8 @@ export default function POSSales() {
     const otherSalesV = fmt(xSummary.otherSales ?? 0);
     const totalPaidV = fmt(xSummary.totalPaid ?? totalSalesV);
     const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
+    const denomKeys = DENOM_KEYS;
+    const denomLabels = DENOM_LABELS;
     // Consolidated Cash Position — additive, informational-only (see buildXReportViewModel).
     const cashPosition = xSummary.cashPosition || {};
     const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
@@ -7953,7 +7959,7 @@ export default function POSSales() {
                     <div className={`absolute top-2.5 left-[50%] w-full h-0.5 ${isCompleted ? 'bg-emerald-500' : 'bg-gray-200'} z-0`}></div>
                   )}
                   {/* Step Item */}
-                  <div className="flex flex-col items-center relative z-10">
+                  <div className="flex flex-col items-center relative z-[1]">
                     <div className={`h-5 w-5 rounded-full flex items-center justify-center border-2 mb-2 bg-white transition-colors ${
                       isCompleted ? 'border-emerald-500 bg-emerald-500 text-white' : 
                       isActive ? 'border-[#327F74] bg-white text-[#327F74] shadow-sm' : 
@@ -7978,7 +7984,7 @@ export default function POSSales() {
     return (
       <div className="bg-[#F7F7FA] min-h-full p-4 lg:p-6">
         {/* Sticky Header */}
-        <div className="sticky top-0 z-10 bg-[#F7F7FA] pb-3 border-b border-[#327F74]/10 mb-4">
+        <div className="sticky top-0 z-30 bg-[#F7F7FA] pt-1 pb-3 border-b border-[#327F74]/10 mb-4">
           <div className="flex flex-wrap items-start lg:items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-gray-400 mb-0.5">
@@ -8506,8 +8512,8 @@ export default function POSSales() {
 
   // X-Report View (Session Close Report)
   const renderXReport = () => {
-    const denomKeys = ['1000', '500', '200', '100', '50', '20', '10', '5', '1', '0.50', '0.25'];
-    const denomLabels = { '1000': 'AED 1000', '500': 'AED 500', '200': 'AED 200', '100': 'AED 100', '50': 'AED 50', '20': 'AED 20', '10': 'AED 10', '5': 'AED 5', '1': 'AED 1 Coin', '0.50': 'AED 0.50 Coin', '0.25': 'AED 0.25 Coin' };
+    const denomKeys = DENOM_KEYS;
+    const denomLabels = DENOM_LABELS;
     const reportDenominations = getReportClosingDenominations();
     const actualCash = calculateDenominationTotal(reportDenominations);
     // Once closed, reportDenominations comes from the immutable backend snapshot and
@@ -10309,7 +10315,7 @@ export default function POSSales() {
                   <div className="h-px flex-1 bg-slate-200"></div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
+                  {CASH_NOTE_KEYS.map((note) => (
                     <div key={note} className="flex items-center space-x-3">
                       <DenominationLabel value={note} />
                       <Input
@@ -10341,7 +10347,7 @@ export default function POSSales() {
                   <div className="h-px flex-1 bg-amber-200"></div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {['1', '0.50', '0.25'].map((coin) => (
+                  {CASH_COIN_KEYS.map((coin) => (
                     <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                       <DenominationLabel value={coin} />
                       <Input
@@ -10578,7 +10584,7 @@ export default function POSSales() {
                       <div className="h-px flex-1 bg-slate-200"></div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {['1000', '500', '200', '100', '50', '20', '10', '5'].map((note) => (
+                      {CASH_NOTE_KEYS.map((note) => (
                         <div key={note} className="flex items-center space-x-3">
                           <DenominationLabel value={note} />
                           <Input type="number" min="0"
@@ -10602,7 +10608,7 @@ export default function POSSales() {
                       <div className="h-px flex-1 bg-[#F5C742]/40"></div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {['1', '0.50', '0.25'].map((coin) => (
+                      {CASH_COIN_KEYS.map((coin) => (
                         <div key={coin} className="flex items-center space-x-3 bg-[#F5C742]/10 p-2 rounded-lg">
                           <DenominationLabel value={coin} />
                           <Input type="number" min="0"
@@ -11812,14 +11818,14 @@ export default function POSSales() {
                     changeAmount: lastPaidInvoice?.changeAmount,
                     customerPhone: lastPaidInvoice?.customer?.phone,
                     customerEmail: lastPaidInvoice?.customer?.email,
+                    customerTrn: lastPaidInvoice?.customer?.trn,
+                    customerAddress: lastPaidInvoice?.customer?.address,
                     creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null,
                     creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null,
                     creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null,
                     creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                     cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
                   });
-                    customerTrn: lastPaidInvoice?.customer?.trn,
-                    customerAddress: lastPaidInvoice?.customer?.address,
                   await printThermalReceiptWithConfiguredPrinter({
                     full,
                     text,
@@ -15131,14 +15137,14 @@ export default function POSSales() {
                   cashGiven: selBalance,
                   customerPhone: custRec?.phone,
                   customerEmail: custRec?.email,
+                  customerTrn: custRec?.trn,
+                  customerAddress: custRec?.address,
                   // Force the CREDIT ACCOUNT block on for the settlement receipt.
                   showCreditBalanceOverride: creditPreviousBalanceSettle != null,
                   creditPreviousBalance: creditPreviousBalanceSettle,
                   // A settlement is a PAYMENT against a balance that already carries
                   // this invoice (it was added to the ledger at Out-for-Delivery). So
                   // Invoice Credit here is 0 — nothing new is being charged — and the
-                  customerTrn: custRec?.trn,
-                  customerAddress: custRec?.address,
                   // block reads Previous − Amount Paid = Updated. Passing invoiceTotal
                   // as Invoice Credit would double-count the invoice and make the
                   // printed arithmetic (Previous + Credit − Paid) fail to equal Updated.

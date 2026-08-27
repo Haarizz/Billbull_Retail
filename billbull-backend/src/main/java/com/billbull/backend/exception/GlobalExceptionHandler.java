@@ -106,6 +106,26 @@ public class GlobalExceptionHandler {
                 .body(body);
     }
 
+    /**
+     * Constraint violations that reach the DB → 409 Conflict with a readable message instead of the
+     * raw Hibernate/Postgres text. Duplicate keys are the common case: master data is soft-deleted
+     * (`active = false`) while the unique indexes still cover the deleted rows, so reusing a deleted
+     * name/code surfaces here. Services should catch their own duplicates first — this is the net.
+     */
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> handleDataIntegrity(
+            org.springframework.dao.DataIntegrityViolationException ex) {
+        log.warn("DataIntegrityViolationException requestId={}: {}", requestId(), ex.getMostSpecificCause().getMessage());
+        String cause = ex.getMostSpecificCause().getMessage();
+        boolean duplicate = cause != null && cause.toLowerCase().contains("duplicate key");
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
+                .body(errorBody(duplicate
+                        ? "This record conflicts with an existing one — the name or code is already in use, "
+                                + "possibly by a previously deleted record."
+                        : "The request could not be saved because it violates a data constraint."));
+    }
+
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Map<String, String>> handleRuntime(RuntimeException ex) {
         log.error("RuntimeException caught requestId={}: {}", requestId(), ex.getMessage(), ex);

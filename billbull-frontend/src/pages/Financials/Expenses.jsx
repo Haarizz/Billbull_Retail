@@ -89,6 +89,10 @@ export default function Expenses() {
     const [form, setForm]               = useState(emptyForm());
     const [expandedIds, setExpandedIds] = useState(new Set());
     const [activeMenuId, setActiveMenuId] = useState(null);
+    const [isSaving, setIsSaving]       = useState(false);
+    // Rapid double-clicks fire before React re-renders with the disabled state,
+    // so the actual guard has to be a ref that flips synchronously.
+    const savingRef = useRef(false);
     const [isAccountCreateOpen, setIsAccountCreateOpen] = useState(false);
     const [accountCreateTargetLine, setAccountCreateTargetLine] = useState(null);
 
@@ -305,10 +309,16 @@ export default function Expenses() {
     };
 
     const handleSave = async (targetStatus) => {
+        if (savingRef.current) return;
         if (!form.vendor) { toast.error('Vendor / Payee is required'); return; }
         if (!form.date)   { toast.error('Date is required'); return; }
         const validLines = form.lines.filter(l => l.glAccountId || parseFloat(l.amount));
         if (!validLines.length) { toast.error('Add at least one expense line'); return; }
+
+        // Claim the save before the first await — validation above is synchronous,
+        // so nothing can slip through between the check and the claim.
+        savingRef.current = true;
+        setIsSaving(true);
 
         const status = targetStatus || form.status;
 
@@ -406,6 +416,9 @@ export default function Expenses() {
                 || e?.message
                 || 'Failed to save expense';
             toast.error(String(msg));
+        } finally {
+            savingRef.current = false;
+            setIsSaving(false);
         }
     };
 
@@ -542,14 +555,14 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                        <button onClick={() => setViewMode('list')} className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded">
+                        <button onClick={() => setViewMode('list')} disabled={isSaving} className="px-3 py-1.5 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded disabled:opacity-50 disabled:cursor-not-allowed">
                             <X size={13} className="inline mr-1" />Cancel
                         </button>
-                        <button onClick={() => handleSave('Draft')} className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50">
+                        <button onClick={() => handleSave('Draft')} disabled={isSaving} className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
                             Save as Draft
                         </button>
-                        <button onClick={() => handleSave('Paid')} className="px-4 py-1.5 text-xs font-bold text-white bg-[#F5C742] rounded hover:bg-[#e6b830]">
-                            Submit &amp; Mark Paid
+                        <button onClick={() => handleSave('Paid')} disabled={isSaving} className="px-4 py-1.5 text-xs font-bold text-white bg-[#F5C742] rounded hover:bg-[#e6b830] disabled:opacity-50 disabled:cursor-not-allowed">
+                            {isSaving ? 'Saving…' : <>Submit &amp; Mark Paid</>}
                         </button>
                     </div>
                 </div>
@@ -655,14 +668,14 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
 
                     {/* Bottom action row */}
                     <div className="flex justify-end gap-3">
-                        <button onClick={() => setViewMode('list')} className="px-4 py-2 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded">
+                        <button onClick={() => setViewMode('list')} disabled={isSaving} className="px-4 py-2 text-xs text-slate-500 hover:text-slate-800 border border-slate-200 rounded disabled:opacity-50 disabled:cursor-not-allowed">
                             <X size={13} className="inline mr-1" />Cancel
                         </button>
-                        <button onClick={() => handleSave('Draft')} className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50">
+                        <button onClick={() => handleSave('Draft')} disabled={isSaving} className="px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed">
                             Save as Draft
                         </button>
-                        <button onClick={() => handleSave('Paid')} className="px-5 py-2 text-xs font-bold text-white bg-[#F5C742] rounded hover:bg-[#e6b830]">
-                            Submit &amp; Mark Paid
+                        <button onClick={() => handleSave('Paid')} disabled={isSaving} className="px-5 py-2 text-xs font-bold text-white bg-[#F5C742] rounded hover:bg-[#e6b830] disabled:opacity-50 disabled:cursor-not-allowed">
+                            {isSaving ? 'Saving…' : <>Submit &amp; Mark Paid</>}
                         </button>
                     </div>
                 </div>

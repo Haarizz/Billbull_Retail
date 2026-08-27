@@ -56,6 +56,31 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
     List<Object[]> countByStatusScoped(@Param("allBranches") boolean allBranches,
             @Param("branchIds") Collection<Long> branchIds);
 
+    /**
+     * Dashboard "Open LPOs": every LPO still in the purchase pipeline — anything not
+     * yet COMPLETED or CANCELLED, DRAFT included, so a freshly created order shows up
+     * immediately. Branch-scoped like the other dashboard aggregates ({@code branchId}
+     * null = all branches); LPOs with no branch are always included.
+     */
+    @Query("SELECT COUNT(l) FROM Lpo l WHERE l.status NOT IN :closedStatuses "
+            + "AND (:branchId IS NULL OR l.branchId IS NULL OR l.branchId = :branchId)")
+    long countOpen(@Param("closedStatuses") Collection<LpoStatus> closedStatuses,
+            @Param("branchId") Long branchId);
+
+    /**
+     * Committed value of open LPOs in the period — the ordered-but-not-yet-received
+     * side of purchase value. Receipts are counted separately from GRNs, so statuses
+     * that already have goods against them (PARTIALLY_RECEIVED/COMPLETED) are excluded
+     * by the caller to avoid double counting.
+     */
+    @Query("SELECT COALESCE(SUM(l.grandTotal), 0) FROM Lpo l WHERE l.status IN :statuses "
+            + "AND l.lpoDate BETWEEN :from AND :to "
+            + "AND (:branchId IS NULL OR l.branchId IS NULL OR l.branchId = :branchId)")
+    java.math.BigDecimal sumGrandTotalByStatusBetween(@Param("statuses") Collection<LpoStatus> statuses,
+            @Param("from") java.time.LocalDate from,
+            @Param("to") java.time.LocalDate to,
+            @Param("branchId") Long branchId);
+
     @Query("SELECT DISTINCT l FROM Lpo l LEFT JOIN FETCH l.items WHERE l.lpoDate >= :dateFrom AND l.lpoDate <= :dateTo ORDER BY l.lpoDate DESC")
     List<Lpo> findForReportsBounded(@Param("dateFrom") java.time.LocalDate dateFrom, @Param("dateTo") java.time.LocalDate dateTo);
 

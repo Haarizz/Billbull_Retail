@@ -11,6 +11,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -3286,5 +3287,63 @@ class PosSessionServiceTest {
                 ArgumentCaptor.forClass(com.billbull.backend.pos.reports.PosXReportSnapshot.class);
         verify(xReportSnapshotRepository).save(snap.capture());
         assertEquals(session.getXReportGeneratedAt(), snap.getValue().getGeneratedAt());
+    }
+
+    // ---------------------------------------------------------------------
+    // Cash out can never exceed the cash the drawer actually holds.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void cashOutIsRefusedWhenItExceedsTheCashInTheDrawer() {
+        authenticateCashier();
+        PosSession session = sessionOnBusinessDay(0);
+        session.setSessionDate(session.getTradingDate());
+        session.setOpeningCash(BigDecimal.ZERO);
+        when(repo.findById(67L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(67L)).thenReturn(List.of());
+
+        ResponseStatusException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> service.addCashMovement(67L, "DROP_OUT", bd("5000"), "payout"));
+
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        org.junit.jupiter.api.Assertions.assertTrue(
+                ex.getReason() != null && ex.getReason().contains("exceeds the cash available"),
+                () -> "unexpected reason: " + ex.getReason());
+        // Refused, not half-applied: nothing persisted, nothing posted to the GL.
+        assertEquals(0, session.getCashMovements().size());
+        verify(repo, never()).save(any(PosSession.class));
+        verify(postingEngine, never()).createJournalFromCashMovement(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void cashOutIsAllowedUpToTheCashInTheDrawer() {
+        authenticateCashier();
+        PosSession session = sessionOnBusinessDay(0);
+        session.setSessionDate(session.getTradingDate());
+        session.setOpeningCash(bd("500"));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("100")));
+        when(repo.findById(67L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(67L)).thenReturn(List.of());
+
+        // Drawer holds 500 opening + 100 drop-in = 600; taking exactly 600 out is allowed.
+        PosCashMovement movement = service.addCashMovement(67L, "DROP_OUT", bd("600"), "payout");
+
+        assertEquals(PosCashMovementType.DROP_OUT, movement.getMovementType());
+        assertMoney("600", movement.getAmount());
+    }
+
+    @Test
+    void cashMovementRejectsANonPositiveAmount() {
+        authenticateCashier();
+        PosSession session = sessionOnBusinessDay(0);
+        session.setSessionDate(session.getTradingDate());
+        when(repo.findById(67L)).thenReturn(Optional.of(session));
+
+        ResponseStatusException ex = org.junit.jupiter.api.Assertions.assertThrows(
+                ResponseStatusException.class,
+                () -> service.addCashMovement(67L, "DROP_IN", BigDecimal.ZERO, "top-up"));
+
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatusCode());
     }
 }

@@ -1,9 +1,12 @@
 package com.billbull.backend.dashboard;
 
 import com.billbull.backend.security.ModulePermissionService;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/dashboard")
@@ -23,9 +26,11 @@ public class DashboardController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<DashboardSummaryResponse> getSummary(
             @RequestParam(defaultValue = "All Time") String timeRange,
-            @RequestParam(required = false) Long branchId) {
+            @RequestParam(required = false) Long branchId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate) {
         modulePermissionService.requireCanView(MODULE);
-        return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId));
+        return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId, fromDate, toDate));
     }
 
     /** Force-clears the server-side cache and returns fresh data immediately. */
@@ -33,9 +38,11 @@ public class DashboardController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<DashboardSummaryResponse> refresh(
             @RequestParam(defaultValue = "All Time") String timeRange,
-            @RequestParam(required = false) Long branchId) {
+            @RequestParam(required = false) Long branchId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fromDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate toDate) {
         modulePermissionService.requireCanView(MODULE);
         dashboardService.invalidateCache();
-        return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId));
+        return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId, fromDate, toDate));
     }
 }

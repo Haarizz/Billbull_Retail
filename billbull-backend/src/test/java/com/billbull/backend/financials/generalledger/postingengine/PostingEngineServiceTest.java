@@ -2,6 +2,7 @@ package com.billbull.backend.financials.generalledger.postingengine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -146,6 +147,72 @@ class PostingEngineServiceTest {
         assertEquals(2, result.getLines().size());
         assertEquals(0, sum(result, true).compareTo(sum(result, false)));
         verify(journalEntryService).postEntry(1L, "System");
+    }
+
+    @Test
+    void accountOpeningBalancePostsBalancedJournalAgainstRetainedEarnings() {
+        Account equity = new Account();
+        equity.setCode("3200");
+        equity.setName("Partner Capital");
+        equity.setStatus("active");
+        equity.setIsGroup(false);
+        when(accountRepository.findByCode("3200")).thenReturn(equity);
+        org.mockito.Mockito.lenient().when(accountRepository.findByCode(
+                PostingEngineService.ACC_RETAINED_EARNINGS)).thenReturn(activeAccount());
+        when(voucherSequenceService.nextVoucherNumber(eq("JV"), anyString(), any()))
+                .thenReturn("JV-HO-2026-000001");
+        when(journalEntryRepository.save(any(JournalEntry.class))).thenAnswer(inv -> {
+            JournalEntry e = inv.getArgument(0);
+            e.setId(7L);
+            return e;
+        });
+
+        JournalEntry result = service.postAccountOpeningBalance(
+                "3200", new BigDecimal("200.00"), "Cr", LocalDate.of(2026, 8, 25), null);
+
+        assertNotNull(result);
+        assertEquals("OB-ACC-3200", result.getReference());
+        assertEquals(2, result.getLines().size());
+        assertEquals("3200", result.getLines().get(0).getAccountCode());
+        assertEquals(0, new BigDecimal("200.00").compareTo(result.getLines().get(0).getCredit()));
+        assertEquals(PostingEngineService.ACC_RETAINED_EARNINGS, result.getLines().get(1).getAccountCode());
+        assertEquals(0, new BigDecimal("200.00").compareTo(result.getLines().get(1).getDebit()));
+        assertEquals(0, sum(result, true).compareTo(sum(result, false)));
+        verify(journalEntryService).postEntry(7L, "System");
+    }
+
+    @Test
+    void accountOpeningBalanceIsIdempotentPerAccount() {
+        JournalEntry alreadyPosted = new JournalEntry();
+        alreadyPosted.setReference("OB-ACC-3200");
+        when(journalEntryRepository.findByReference("OB-ACC-3200"))
+                .thenReturn(java.util.Optional.of(alreadyPosted));
+        Account equity = new Account();
+        equity.setCode("3200");
+        equity.setName("Partner Capital");
+        equity.setStatus("active");
+        when(accountRepository.findByCode("3200")).thenReturn(equity);
+
+        JournalEntry result = service.postAccountOpeningBalance(
+                "3200", new BigDecimal("200.00"), "Cr", LocalDate.of(2026, 8, 25), null);
+
+        assertEquals(alreadyPosted, result);
+        verify(journalEntryRepository, org.mockito.Mockito.never()).save(any(JournalEntry.class));
+    }
+
+    @Test
+    void accountOpeningBalanceSkipsGroupAndZeroAmounts() {
+        Account group = new Account();
+        group.setCode("3100");
+        group.setName("Equity");
+        group.setStatus("active");
+        group.setIsGroup(true);
+        org.mockito.Mockito.lenient().when(accountRepository.findByCode("3000")).thenReturn(group);
+
+        assertNull(service.postAccountOpeningBalance("3000", new BigDecimal("200.00"), "Cr", null, null));
+        assertNull(service.postAccountOpeningBalance("6001", BigDecimal.ZERO, "Dr", null, null));
+        assertNull(service.postAccountOpeningBalance("6001", null, "Dr", null, null));
+        verify(journalEntryRepository, org.mockito.Mockito.never()).save(any(JournalEntry.class));
     }
 
     // ---- fixtures -------------------------------------------------------

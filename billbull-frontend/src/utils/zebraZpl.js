@@ -1,29 +1,4 @@
-// Zebra ZPL generator + Browser Print HTTP client.
-//
-// Requires the Zebra Browser Print desktop app to be installed and running on
-// the workstation that's physically connected to the Zebra printer. It exposes
-// a local HTTPS API at https://localhost:9101 with /available and /write
-// endpoints. Each client must install it once:
-//   https://www.zebra.com/us/en/support-downloads/printer-software/printer-setup-utilities.html
-//
-// First-time use: open https://localhost:9101/available in the same browser
-// once to accept the local certificate, then BillBull can call it.
-
-// Browser Print listens on either http://localhost:9100 (legacy) or
-// https://localhost:9101 (current). Different installs / Windows versions
-// pick different ones, so we probe both — but only HTTPS bases when the
-// host page itself is HTTPS, otherwise the HTTP fallback triggers Chrome's
-// mixed-content warning ("Not secure" with a valid cert).
-const isHttpsPage = typeof window !== 'undefined' && window.location.protocol === 'https:';
-const BROWSER_PRINT_BASES = isHttpsPage
-    ? ['https://localhost:9101', 'https://127.0.0.1:9101']
-    : [
-        'https://localhost:9101',
-        'http://localhost:9100',
-        'http://127.0.0.1:9100',
-        'https://127.0.0.1:9101'
-    ];
-let resolvedBase = null;
+// Zebra ZPL generator.
 const DPI = 8; // ZD220t is 203 DPI ≈ 8 dots/mm
 const mmToDots = (mmValue) => Math.round(mmValue * DPI);
 
@@ -280,62 +255,6 @@ const buildLabelZpl = (data) => {
 
 export const buildZplBatch = (labels) => labels.map(buildLabelZpl).join('\n');
 
-const probeBase = async (base) => {
-    try {
-        const resp = await fetch(`${base}/available`, { method: 'GET', mode: 'cors' });
-        if (resp.ok) return true;
-    } catch (err) {
-        // Likely CORS-blocked, cert untrusted, or service offline. Move on.
-    }
-    return false;
-};
 
-const resolveBase = async () => {
-    if (resolvedBase) return resolvedBase;
-    for (const base of BROWSER_PRINT_BASES) {
-        // eslint-disable-next-line no-await-in-loop
-        if (await probeBase(base)) {
-            resolvedBase = base;
-            return base;
-        }
-    }
-    return null;
-};
-
-export const isBrowserPrintReachable = async () => !!(await resolveBase());
-
-export const listZebraPrinters = async () => {
-    const base = await resolveBase();
-    if (!base) throw new Error('Browser Print not reachable. Check that it is installed, running, and that this site is in its Accepted Hosts list.');
-    const resp = await fetch(`${base}/available`);
-    if (!resp.ok) throw new Error(`Browser Print returned HTTP ${resp.status}`);
-    const data = await resp.json();
-    const devices = data?.printer || data?.devices || [];
-    return Array.isArray(devices) ? devices : [];
-};
-
-export const sendZplToDevice = async (device, zpl) => {
-    const base = await resolveBase();
-    if (!base) throw new Error('Browser Print not reachable');
-    const resp = await fetch(`${base}/write`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ device, data: zpl })
-    });
-    if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        throw new Error(`Browser Print write failed: ${resp.status} ${text}`);
-    }
-    return true;
-};
-
-export const printZplBatch = async (labels, preferredDevice = null) => {
-    const printers = await listZebraPrinters();
-    if (!printers.length) throw new Error('No Zebra printer detected by Browser Print');
-    const zpl = buildZplBatch(labels);
-    const device = preferredDevice || printers[0];
-    await sendZplToDevice(device, zpl);
-    return device;
-};
 
 export { buildLabelZpl, resolveLabelLayout };

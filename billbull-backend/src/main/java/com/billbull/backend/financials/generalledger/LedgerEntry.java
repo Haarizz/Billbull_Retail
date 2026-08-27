@@ -46,6 +46,17 @@ public class LedgerEntry {
     @Column(name = "reconciliation_date")
     private LocalDate reconciliationDate;
 
+    /**
+     * Idempotency key supplied by the client for manually recorded transactions — one UUID per
+     * open form, resent unchanged on every retry of that submit. A second POST bearing a key that
+     * is already stored is a replay of the first click, not a new transaction; see
+     * {@link LedgerService#recordTransaction}. Null for every server-side writer (posting engine,
+     * opening balances, backfills), which is why the unique index in
+     * V85__ledger_entry_client_request_id.sql is partial.
+     */
+    @Column(name = "client_request_id", length = 64, unique = true)
+    private String clientRequestId;
+
     public LedgerEntry() {
     }
 
@@ -179,5 +190,13 @@ public class LedgerEntry {
 
     public void setReconciliationDate(LocalDate reconciliationDate) {
         this.reconciliationDate = reconciliationDate;
+    }
+
+    public String getClientRequestId() {
+        return clientRequestId;
+    }
+
+    public void setClientRequestId(String clientRequestId) {
+        this.clientRequestId = clientRequestId;
     }
 }

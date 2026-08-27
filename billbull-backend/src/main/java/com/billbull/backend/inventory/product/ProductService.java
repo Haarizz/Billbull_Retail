@@ -221,6 +221,16 @@ public class ProductService {
     // 2. HELPER: RESOLVE RELATIONSHIPS (Fixes Null ID Error)
     // ==================================================
     private void resolveRelationships(Product product) {
+        resolveRelationships(product, null);
+    }
+
+    /**
+     * @param existingSubDepartmentId the sub-department already assigned to the product being
+     *        updated (null on create). An inactive sub-department is rejected for any new or
+     *        changed assignment, but an existing product that already sits under one that was
+     *        later deactivated can still be edited without being forced to re-file it.
+     */
+    private void resolveRelationships(Product product, Long existingSubDepartmentId) {
         // Resolve Brand
         if (product.getBrand() != null && product.getBrand().getId() != null) {
             Brand brand = brandRepo.findById(product.getBrand().getId())
@@ -244,6 +254,11 @@ public class ProductService {
         if (product.getSubDepartment() != null && product.getSubDepartment().getId() != null) {
             SubDepartment subDept = subDepartmentRepo.findById(product.getSubDepartment().getId())
                     .orElse(null);
+            if (subDept != null && !subDept.isActive()
+                    && !subDept.getId().equals(existingSubDepartmentId)) {
+                throw new IllegalArgumentException(
+                        "Sub-Department '" + subDept.getName() + "' is inactive and cannot be assigned to a product.");
+            }
             product.setSubDepartment(subDept);
         } else {
             product.setSubDepartment(null);
@@ -498,7 +513,8 @@ public class ProductService {
         updated.setBranch(existing.getBranch());
 
         // 1. Resolve relationships again
-        resolveRelationships(updated);
+        resolveRelationships(updated,
+                existing.getSubDepartment() != null ? existing.getSubDepartment().getId() : null);
         validateMasterReferences(updated);
 
         // 2. Save Product
