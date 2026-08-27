@@ -32,6 +32,7 @@ import com.billbull.backend.pos.settings.PosSettingsService;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.sales.invoice.InvoiceCustomerContactService;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
 import com.billbull.backend.sales.invoice.SalesInvoiceStatus;
 import com.billbull.backend.security.RolePermissionService;
@@ -91,6 +92,11 @@ class PosCheckoutBusinessDateTest {
 
     @Spy private PosPaymentAllocationResolver allocationResolver = new PosPaymentAllocationResolver();
     @Spy private BusinessDayClock businessDayClock = new BusinessDayClock(BUSINESS_ZONE);
+
+    // Receipt-only collaborator: attaches the customer's contact details to the
+    // invoice for the printed CUSTOMER block. Mocked to a no-op here — these tests
+    // cover authorization and audit, not receipt content.
+    @Mock private InvoiceCustomerContactService invoiceCustomerContactService;
 
     @InjectMocks private PosCheckoutController controller;
 

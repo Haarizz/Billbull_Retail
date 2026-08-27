@@ -17,13 +17,16 @@ import java.util.Map;
 public class SalesInvoiceController {
 
     private final SalesInvoiceService service;
+    private final InvoiceCustomerContactService customerContactService;
     private final ModulePermissionService modulePermissionService;
     private final DocumentEmailSender emailSender;
 
     public SalesInvoiceController(SalesInvoiceService service,
+                                  InvoiceCustomerContactService customerContactService,
                                   ModulePermissionService modulePermissionService,
                                   DocumentEmailSender emailSender) {
         this.service = service;
+        this.customerContactService = customerContactService;
         this.modulePermissionService = modulePermissionService;
         this.emailSender = emailSender;
     }
@@ -94,7 +97,12 @@ public class SalesInvoiceController {
     @PreAuthorize("isAuthenticated()")
     public SalesInvoice getById(@PathVariable Long id) {
         modulePermissionService.requireCanView("sales.invoice");
-        return service.getById(id);
+        // Enriched with the customer's contact details so the POS "Last Receipt"
+        // reprint — which loads the invoice through here — prints the same CUSTOMER
+        // block (TRN / address included) as the original sale.
+        SalesInvoice invoice = service.getById(id);
+        customerContactService.attach(invoice);
+        return invoice;
     }
 
     /** Activity timeline for the Transaction Preview's Invoice History modal. */

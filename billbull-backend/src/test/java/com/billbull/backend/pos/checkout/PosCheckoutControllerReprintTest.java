@@ -2,6 +2,7 @@ package com.billbull.backend.pos.checkout;
 
 import com.billbull.backend.pos.audit.PosAuditService;
 import com.billbull.backend.sales.invoice.SalesInvoice;
+import com.billbull.backend.sales.invoice.InvoiceCustomerContactService;
 import com.billbull.backend.sales.invoice.SalesInvoiceService;
 import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -39,6 +40,11 @@ class PosCheckoutControllerReprintTest {
     @Mock private ModulePermissionService modulePermissionService;
     @Mock private PosAuditService auditService;
     @Mock private BranchRepository branchRepository;
+
+    // Receipt-only collaborator: attaches the customer's contact details to the
+    // invoice for the printed CUSTOMER block. Mocked to a no-op here — these tests
+    // cover authorization and audit, not receipt content.
+    @Mock private InvoiceCustomerContactService invoiceCustomerContactService;
 
     @InjectMocks private PosCheckoutController controller;
 
