@@ -203,6 +203,24 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
     @Transient
     private String requestedFulfillmentType = "Picking";
 
+    /* Customer contact details for the printed receipt's CUSTOMER block. The invoice
+     * itself persists only customerCode/customerName, so these are filled in on the
+     * receipt responses by looking the customer up by code (see
+     * InvoiceCustomerContactService). Without them a reprint could only show these rows when
+     * the till's locally-cached customer list happened to be loaded AND to contain
+     * that customer — so a reprint from a fresh page load silently dropped the TRN. */
+    @Transient
+    private String customerPhone;
+
+    @Transient
+    private String customerEmail;
+
+    @Transient
+    private String customerTrn;
+
+    @Transient
+    private String customerAddress;
+
     @OneToMany(mappedBy = "salesInvoice", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference
     private List<SalesInvoiceItem> items;
@@ -290,6 +308,18 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
     public void setCustomerName(String customerName) {
         this.customerName = customerName;
     }
+
+    public String getCustomerPhone() { return customerPhone; }
+    public void setCustomerPhone(String customerPhone) { this.customerPhone = customerPhone; }
+
+    public String getCustomerEmail() { return customerEmail; }
+    public void setCustomerEmail(String customerEmail) { this.customerEmail = customerEmail; }
+
+    public String getCustomerTrn() { return customerTrn; }
+    public void setCustomerTrn(String customerTrn) { this.customerTrn = customerTrn; }
+
+    public String getCustomerAddress() { return customerAddress; }
+    public void setCustomerAddress(String customerAddress) { this.customerAddress = customerAddress; }
 
     public String getLinkedSalesOrder() {
         return linkedSalesOrder;

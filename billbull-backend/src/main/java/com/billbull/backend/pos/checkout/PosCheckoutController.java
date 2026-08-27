@@ -66,6 +66,7 @@ public class PosCheckoutController {
     private final com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate;
     private final SalesInvoiceRepository invoiceRepository;
     private final CustomerRepository customerRepository;
+    private final com.billbull.backend.sales.invoice.InvoiceCustomerContactService invoiceCustomerContactService;
     private final PosAuditService auditService;
     private final BranchRepository branchRepository;
     private final SerialMasterRepository serialMasterRepository;
@@ -109,7 +110,9 @@ public class PosCheckoutController {
                                   com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate,
                                   com.billbull.backend.security.ModulePermissionService modulePermissionService,
                                   com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService,
-                                  com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
+                                  com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
+                                  com.billbull.backend.sales.invoice.InvoiceCustomerContactService invoiceCustomerContactService) {
+        this.invoiceCustomerContactService = invoiceCustomerContactService;
         this.ownershipAccessService = ownershipAccessService;
         this.creditVoucherService = creditVoucherService;
         this.modulePermissionService = modulePermissionService;
@@ -178,7 +181,9 @@ public class PosCheckoutController {
         if (request.getCheckoutKey() != null && !request.getCheckoutKey().isBlank()) {
             var existing = invoiceRepository.findByPosCheckoutKey(request.getCheckoutKey().trim());
             if (existing.isPresent()) {
-                return ResponseEntity.ok(invoiceService.getById(existing.get().getId()));
+                SalesInvoice retried = invoiceService.getById(existing.get().getId());
+                invoiceCustomerContactService.attach(retried);
+                return ResponseEntity.ok(retried);
             }
         }
 
@@ -408,7 +413,9 @@ public class PosCheckoutController {
                             it.getItemCode(), it.getItemName(), it.getVoidReason()));
         }
 
-        return ResponseEntity.ok(invoiceService.getById(saved.getId()));
+        SalesInvoice completed = invoiceService.getById(saved.getId());
+        invoiceCustomerContactService.attach(completed);
+        return ResponseEntity.ok(completed);
     }
 
     /**
@@ -542,6 +549,7 @@ public class PosCheckoutController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getReceiptData(@PathVariable Long id) {
         SalesInvoice invoice = invoiceService.getById(id);
+        invoiceCustomerContactService.attach(invoice);
         if (invoice.getItems() != null) invoice.getItems().size(); // init LAZY
 
         // Resolve seller name + TRN from branch
@@ -592,6 +600,7 @@ public class PosCheckoutController {
         // branch, 404 only when the invoice genuinely does not exist).
         modulePermissionService.requireCanView(RECEIPT_REPRINT_PERMISSION);
         SalesInvoice invoice = invoiceService.getByIdForReceiptReprint(id);
+        invoiceCustomerContactService.attach(invoice);
         if (invoice.getItems() != null) invoice.getItems().size();
 
         String sellerName = invoice.getBranchName();
@@ -645,7 +654,9 @@ public class PosCheckoutController {
     @GetMapping("/deliveries")
     @PreAuthorize("isAuthenticated()")
     public List<SalesInvoice> getPendingDeliveries(@RequestParam(required = false) Long branchId) {
-        return invoiceRepository.findPendingDeliveryOrders(branchId);
+        List<SalesInvoice> deliveries = invoiceRepository.findPendingDeliveryOrders(branchId);
+        invoiceCustomerContactService.attach(deliveries);
+        return deliveries;
     }
 
     /** Settle (collect payment for) a pending delivery order. */
@@ -670,7 +681,7 @@ public class PosCheckoutController {
         double invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal().doubleValue() : 0.0;
         double alreadyPaid = invoice.getAmountPaid() != null ? invoice.getAmountPaid().doubleValue() : 0.0;
         double balanceDue  = Math.max(0, invoiceTotal - alreadyPaid);
-        if (balanceDue <= 0.001) return ResponseEntity.ok(isAuthorized && !isOwner ? invoiceService.getByIdBypassingOwnership(id) : invoiceService.getById(id));
+        if (balanceDue <= 0.001) return ResponseEntity.ok(settlementResponseInvoice(id, isAuthorized, isOwner));
 
         // Delivery settlement runs through the same allocation engine as checkout: same
         // over-allocation guard, same cash capping, same summary label. There is one
@@ -707,7 +718,16 @@ public class PosCheckoutController {
                 req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(),
                 id, invoice.getInvoiceNumber());
         terminalActivityService.recordActivity(req.getTerminalId(), "CHECKOUT");
-        return ResponseEntity.ok(isAuthorized && !isOwner ? invoiceService.getByIdBypassingOwnership(id) : invoiceService.getById(id));
+        return ResponseEntity.ok(settlementResponseInvoice(id, isAuthorized, isOwner));
+    }
+
+    /** Reloads the settled invoice and attaches the customer contact details for the receipt. */
+    private SalesInvoice settlementResponseInvoice(Long id, boolean isAuthorized, boolean isOwner) {
+        SalesInvoice invoice = isAuthorized && !isOwner
+                ? invoiceService.getByIdBypassingOwnership(id)
+                : invoiceService.getById(id);
+        invoiceCustomerContactService.attach(invoice);
+        return invoice;
     }
 
     /**
