@@ -93,9 +93,10 @@ public class Customer {
 
     private String warehouse;
 
-    @Column(length = 1000)
-    private String billingAddress;
-
+    // Single address of record for a customer: the default entry of the
+    // Shipping Address tab, denormalised here by CustomerService so list
+    // responses carry it without loading savedAddresses. (The former separate
+    // billingAddress field was removed — it duplicated this one.)
     @Column(length = 1000)
     private String defaultShippingAddress;
 
@@ -266,8 +267,6 @@ public class Customer {
     public String getWarehouse() { return warehouse; }
     public void setWarehouse(String warehouse) { this.warehouse = warehouse; }
 
-    public String getBillingAddress() { return billingAddress; }
-    public void setBillingAddress(String billingAddress) { this.billingAddress = billingAddress; }
 
     public String getDefaultShippingAddress() { return defaultShippingAddress; }
     public void setDefaultShippingAddress(String defaultShippingAddress) { this.defaultShippingAddress = defaultShippingAddress; }

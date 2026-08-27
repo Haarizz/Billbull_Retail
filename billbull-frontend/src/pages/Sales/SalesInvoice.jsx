@@ -895,7 +895,7 @@ const SalesInvoice = () => {
             const _defaultAddr = (matched.savedAddresses || []).find(a => a.isDefault);
             const _resolvedAddr = _defaultAddr
                 ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-                : (matched.defaultShippingAddress || matched.shippingAddress || matched.billingAddress || matched.address || '');
+                : (matched.defaultShippingAddress || matched.shippingAddress || matched.address || '');
             setShippingAddress(_resolvedAddr);
         }
 
@@ -990,7 +990,7 @@ const SalesInvoice = () => {
             const _defaultAddr = (matched.savedAddresses || []).find(a => a.isDefault);
             const _resolvedAddr = _defaultAddr
                 ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-                : (matched.defaultShippingAddress || matched.shippingAddress || matched.billingAddress || matched.address || '');
+                : (matched.defaultShippingAddress || matched.shippingAddress || matched.address || '');
             setShippingAddress(_resolvedAddr);
         }
 
@@ -1341,7 +1341,7 @@ const SalesInvoice = () => {
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
             ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-            : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+            : (cust.defaultShippingAddress || cust.shippingAddress || cust.address || '');
         setShippingAddress(_resolvedAddr);
         setIsCustomerOpen(false);
         setIsCustomerSearchOpen(false);
@@ -2810,7 +2810,7 @@ const SalesInvoice = () => {
             vatMode,
             customer: {
                 name: selectedCustomer?.name || '',
-                address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '',
                 shippingAddress: shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
                 phone: fullCustomer?.mobile || fullCustomer?.phone || '',
                 email: fullCustomer?.email || '',
@@ -2963,7 +2963,7 @@ const SalesInvoice = () => {
                     customer: {
                         name: dataToPrint.customerName || '',
                         code: dataToPrint.customerCode || fullCustomer?.code || '',
-                        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                        address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '',
                         shippingAddress: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
                         phone: fullCustomer?.mobile || fullCustomer?.phone || '',
                         email: fullCustomer?.email || '',

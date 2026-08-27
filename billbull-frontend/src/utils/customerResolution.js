@@ -49,7 +49,6 @@ export function resolveDefaultShippingAddress(customer) {
     return (
         customer.defaultShippingAddress ||
         customer.shippingAddress ||
-        customer.billingAddress ||
         customer.address ||
         ''
     );

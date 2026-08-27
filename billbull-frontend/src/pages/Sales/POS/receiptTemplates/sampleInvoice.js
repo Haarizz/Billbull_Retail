@@ -51,6 +51,9 @@ export function buildSampleInvoice({ isReturn = false, noTax = false } = {}) {
     // No-tax total = net + service charge only (no VAT): 89.00 + 8.90 = 97.90.
     invoiceTotal: isReturn ? -1449.0 : untaxed ? 97.9 : 102.8,
     customerName: 'Sarah Johnson',
+    customerCode: 'CUST-00847',
+    customerTrn: '100987654300003',
+    customerAddress: 'Villa 22, Street 7, Al Faseel, Fujairah',
     paymentMode: isReturn ? 'CASH' : 'CASH',
     loyaltyPointsEarned: isReturn ? 0 : 10,
     loyaltyPointsUsed: 0,
@@ -86,6 +89,8 @@ export function buildSampleOpts({ outlet, cfg, currency = 'AED' } = {}) {
     showFooterText: cfg.showFooterText,
     customerPhone: '+971 50 123 4567',
     customerEmail: 'sarah@email.com',
+    customerTrn: '100987654300003',
+    customerAddress: 'Villa 22, Street 7, Al Faseel, Fujairah',
     cashGiven: 150.0,
     changeAmount: 47.2,
     currency,

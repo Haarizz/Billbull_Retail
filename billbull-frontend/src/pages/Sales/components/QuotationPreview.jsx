@@ -198,7 +198,6 @@ export default function QuotationPreview({
     const isExpired = String(quotation?.status || '').toUpperCase() === 'EXPIRED';
 
     const notes = quotation?.notesToCustomer || quotation?.customerNotes || '';
-    const billingAddress = customer?.billingAddress || customer?.address || '';
     const shippingAddress = quotation?.shippingAddress || (customer ? resolveDefaultShippingAddress(customer) : '');
 
     // ── Section 1: Transaction header ──
@@ -436,7 +435,6 @@ export default function QuotationPreview({
                     <InfoRow label="Phone" value={customer?.phone || customer?.mobile || quotation.customerMobile} />
                     <InfoRow label="Email" value={customer?.email || quotation.customerEmail} />
                     <InfoRow label="VAT / TRN" value={customer?.trn} copyable copyLabel="TRN" />
-                    <InfoRow label="Billing" value={billingAddress} />
                     <InfoRow label="Shipping" value={shippingAddress} />
                 </div>
             </RailCard>

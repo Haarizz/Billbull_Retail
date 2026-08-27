@@ -140,7 +140,7 @@ const resolveCustomerAddress = (customer = {}) => {
     if (formatted) return formatted;
   }
 
-  return customer.defaultShippingAddress || customer.shippingAddress || customer.billingAddress || customer.address || '';
+  return customer.defaultShippingAddress || customer.shippingAddress || customer.address || '';
 };
 
 const getInquiryStatusBadgeClass = (status) => {

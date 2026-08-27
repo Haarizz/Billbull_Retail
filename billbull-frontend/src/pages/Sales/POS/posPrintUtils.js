@@ -284,6 +284,11 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   shippingCharge = null,
   cashierName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
+  // Customer TRN + the customer's address on file. Neither is persisted on the
+  // invoice, so both are passed from the resolved customer record (falling back
+  // to invoice.customerTrn/customerAddress for the checkout preview's mock
+  // invoice). Printed only when present — a customer without them is unchanged.
+  customerTrn = null, customerAddress = null,
   creditPreviousBalance = null, creditInvoiceCredit = null,
   creditAmountPaid = null, creditUpdatedBalance = null,
   // Delivery address (ported from Template 2) — printed as its own section when a
@@ -513,6 +518,13 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     // within the paper width instead of overflowing off the right edge.
     const custCode = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
     if (custCode) html += `<div class="row"><span class="lbl">Customer Code:</span><span class="val">${esc(custCode)}</span></div>`;
+    // TRN + address, printed only when the customer record carries them.
+    const custTrn = customerTrn || invoice.customerTrn || '';
+    if (custTrn) html += `<div class="row"><span class="lbl">TRN:</span><span class="val">${esc(custTrn)}</span></div>`;
+    const custAddr = oneLineAddress(customerAddress || invoice.customerAddress || '');
+    if (custAddr) {
+      html += `<div class="row"><span class="lbl">Address:</span><span class="val">${esc(custAddr)}</span></div>`;
+    }
     html += D;
   }
 
@@ -723,6 +735,8 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   currency = 'AED',
   customerPhone = null,
   customerEmail = null,
+  customerTrn = null,
+  customerAddress = null,
   showCustomerDetails = true,
   // See buildThermalReceiptHtml: false ⇒ no tax content (Taxable Amount / VAT
   // rows / TRN) is emitted. Defaults true to preserve historical output.
@@ -771,6 +785,24 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     lines.push(`Customer: ${invoice.customerName || 'Walk-in Customer'}`);
     if (customerPhone) lines.push(`Mobile: ${customerPhone}`);
     if (customerEmail) lines.push(`Email: ${customerEmail}`);
+    const custCodeText = invoice.customerCode && invoice.customerCode !== 'WALK-IN' ? invoice.customerCode : '';
+    if (custCodeText) lines.push(`Customer Code: ${custCodeText}`);
+    const custTrnText = customerTrn || invoice.customerTrn || '';
+    if (custTrnText) lines.push(`TRN: ${custTrnText}`);
+    // Address wraps across as many lines as the paper width needs — the text
+    // fallback has no CSS wrapping, so a long address would otherwise be cut.
+    const custAddrText = String(customerAddress || invoice.customerAddress || '')
+      .split(/[\n,]+/).map(v => v.trim()).filter(Boolean).join(', ');
+    if (custAddrText) {
+      let rest = `Address: ${custAddrText}`;
+      while (rest.length > width) {
+        let cut = rest.lastIndexOf(' ', width);
+        if (cut <= 0) cut = width;
+        lines.push(rest.slice(0, cut));
+        rest = `  ${rest.slice(cut).trim()}`;
+      }
+      if (rest.trim()) lines.push(rest);
+    }
     lines.push(hr);
   }
 
@@ -1527,6 +1559,9 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     html += srow('Name:', 'Sarah Johnson');
     html += srow('Mobile:', '+971 50 123 4567');
     html += srow('Email:', 'sarah@email.com');
+    html += srow('Customer Code:', 'CUST-00847');
+    html += srow('TRN:', '100987654300003');
+    html += srow('Address:', 'Villa 22, Street 7, Al Faseel, Fujairah');
     html += D;
   }
   if (showLoyaltyPoints) {
@@ -1582,7 +1617,7 @@ export const buildPosPrintData = (full, footerNote = '', customersList = [], tit
     customer: {
       name: full.customerName || 'Walk-in Customer',
       code: full.customerCode || custRec?.code || '',
-      address: full.customerAddress || custRec?.address || custRec?.billingAddress || '',
+      address: full.customerAddress || custRec?.address || custRec?.defaultShippingAddress || '',
       phone: full.customerPhone || custRec?.phone || custRec?.mobile || '',
       email: full.customerEmail || custRec?.email || '',
       trn: full.customerTrn || custRec?.trn || '',

@@ -2003,7 +2003,7 @@ const Quotations = () => {
         const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
             ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-            : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+            : (cust.defaultShippingAddress || cust.shippingAddress || cust.address || '');
         setShippingAddress(_resolvedAddr);
         setIsCustomerSearchOpen(false);
     };
@@ -2336,7 +2336,7 @@ const Quotations = () => {
                 customer: {
                     name: _cleanCustomerName(qtn),
                     code: qtn.customerCode || '',
-                    address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+                    address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '',
                     shippingAddress: qtn.shippingAddress || '',
                     phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '',
                     email: qtn.customerEmail || fullCustomer?.email || '',
@@ -2411,7 +2411,7 @@ const Quotations = () => {
             const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount, {}, qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const _cleanName = fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE', customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.billingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE', customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
             // Use the PRINT HTML (real @page / page-break CSS) and let the
             // backend render it with headless Chromium — same engine as the
             // print preview, so the PDF paginates and aligns identically.
@@ -2592,7 +2592,7 @@ const Quotations = () => {
         customer: {
             name: selectedCustomerData?.name || activeCustomerData?.name || (selectedCustomerData?.code && customer?.endsWith(` - ${selectedCustomerData.code}`) ? customer.slice(0, -(` - ${selectedCustomerData.code}`).length) : customer),
             code: selectedCustomerData?.code || activeCustomerData?.code || '',
-            address: selectedCustomerData?.address || selectedCustomerData?.billingAddress || '',
+            address: selectedCustomerData?.address || selectedCustomerData?.defaultShippingAddress || '',
             shippingAddress: shippingAddress || '',
             phone: selectedCustomerData?.mobile || selectedCustomerData?.phone || '',
             email: selectedCustomerData?.email || '',

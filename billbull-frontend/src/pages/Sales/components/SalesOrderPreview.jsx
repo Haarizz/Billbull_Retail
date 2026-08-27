@@ -207,7 +207,6 @@ export default function SalesOrderPreview({
     ].filter(Boolean) : [];
 
     const notes = order?.customerNotes || order?.notes || '';
-    const billingAddress = customer?.billingAddress || customer?.address || '';
     const shippingAddress = order?.shippingAddress || (customer ? resolveDefaultShippingAddress(customer) : '');
 
     // ── Section 1: Transaction header ──
@@ -412,7 +411,6 @@ export default function SalesOrderPreview({
                     <InfoRow label="Phone" value={customer?.phone || customer?.mobile} />
                     <InfoRow label="Email" value={customer?.email} />
                     <InfoRow label="VAT / TRN" value={customer?.trn} copyable copyLabel="TRN" />
-                    <InfoRow label="Billing" value={billingAddress} />
                     <InfoRow label="Shipping" value={shippingAddress} />
                 </div>
             </RailCard>

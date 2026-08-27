@@ -1477,6 +1477,10 @@ export default function POSSales() {
         customerName: customer?.name || 'Walk-in Customer',
         customerPhone: customer?.phone || '',
         customerEmail: customer?.email || '',
+        // Customer's address on file (mapPosCustomer.address = default shipping,
+        // falling back to billing) — printed in the CUSTOMER block by both
+        // templates, separate from the sale's DELIVERY ADDRESS section.
+        customerAddress: customer?.address || '',
         // Customer code (Fix 2 — Template 2 Customer Details) + credit TRN.
         customerCode: (customer && customer.id !== 'walk-in') ? (customer.code || customer.id || '') : '',
         customerTrn: customer?.trn || '',
@@ -4121,6 +4125,8 @@ export default function POSSales() {
             : null;
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full: savedInvoice,
+            customerTrn: customer?.trn,
+            customerAddress: customer?.address,
             customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
             customerPhone: customer?.phone,
             customerEmail: customer?.email,
@@ -4727,6 +4733,12 @@ export default function POSSales() {
     // prints the same rows from it. Null when reprinting a historical invoice that has
     // no recorded allocations, where the cashGiven fallback still applies.
     paymentBlock = null,
+    // TRN + address of the selected customer. Neither is persisted on
+    // SalesInvoice (it stores only customerCode/customerName), so callers pass
+    // them from the live customer object; when they don't, they're resolved
+    // below from the loaded customer list by code — see resolvedCustomer*.
+    customerTrn = null,
+    customerAddress = null,
     customerNameOverride = null,
     customerPhone = null,
     customerEmail = null,
@@ -4751,6 +4763,21 @@ export default function POSSales() {
     // saved customerName came back blank. When the caller passes the live selected
     // name, override it onto a shallow copy so BOTH the ESC/POS and HTML builders
     // (which read invoice.customerName) print the real customer, not "Walk-in".
+    // Customer contact block (Name / Mobile / Email / TRN / Address): only the
+    // code + name round-trip on the invoice, so everything else is read off the
+    // loaded customer record. Callers that hold the live `customer` object pass
+    // it explicitly; reprints (and any site that doesn't) fall back to this
+    // lookup by code so a reprint prints the same block the original sale did.
+    // `address` is mapPosCustomer's default *shipping* address (its own
+    // preference chain already falls back to billing) — the customer's address
+    // on file, distinct from the sale's own DELIVERY ADDRESS section.
+    const custRecForPrint = full.customerCode
+      ? customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode)
+      : null;
+    const resolvedCustomerPhone = customerPhone || custRecForPrint?.phone || full.customerPhone || null;
+    const resolvedCustomerEmail = customerEmail || custRecForPrint?.email || full.customerEmail || null;
+    const resolvedCustomerTrn = customerTrn || custRecForPrint?.trn || full.customerTrn || null;
+    const resolvedCustomerAddress = customerAddress || custRecForPrint?.address || full.customerAddress || null;
     const full = (customerNameOverride && customerNameOverride.trim())
       ? { ...fullArg, customerName: customerNameOverride.trim() }
       : fullArg;
@@ -4862,8 +4889,10 @@ export default function POSSales() {
       depositApplied,
       balanceDue,
       shippingCharge,
-      customerPhone,
-      customerEmail,
+      customerPhone: resolvedCustomerPhone,
+      customerEmail: resolvedCustomerEmail,
+      customerTrn: resolvedCustomerTrn,
+      customerAddress: resolvedCustomerAddress,
       showCreditBalance: resolvedShowCreditBalance,
       creditPreviousBalance,
       creditInvoiceCredit,
@@ -4940,8 +4969,10 @@ export default function POSSales() {
       depositApplied,
       balanceDue,
       shippingCharge,
-      customerPhone,
-      customerEmail,
+      customerPhone: resolvedCustomerPhone,
+      customerEmail: resolvedCustomerEmail,
+      customerTrn: resolvedCustomerTrn,
+      customerAddress: resolvedCustomerAddress,
       showCustomerDetails: activeShowCustomerDetails,
       // Match the HTML/ESC-POS path: no tax content on a no-tax sale.
       hasTax,
@@ -5261,6 +5292,8 @@ export default function POSSales() {
                 // Print the actual selected customer's name (client item 3) — the same
                 // `customer` object the checkout preview rendered. Walk-in stays null so
                 // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
+                customerTrn: customer?.trn,
+                customerAddress: customer?.address,
                 customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
                 customerPhone: customer?.phone,
                 customerEmail: customer?.email,
@@ -5472,6 +5505,8 @@ export default function POSSales() {
             // posCreditBalance returns the customer's CURRENT outstanding (which may
             // reflect many later transactions), so using it as "Previous Balance" —
             // then letting the renderer fabricate Updated = prev + invoiceTotal —
+            customerTrn: custRec?.trn,
+            customerAddress: custRec?.address,
             // prints numbers that never existed. A "COPY / REPRINT" with an invented
             // balance is worse than a reprint that simply omits it.
             showCreditBalanceOverride: false,
@@ -9369,7 +9404,7 @@ export default function POSSales() {
         city: quickCustomerForm.city,
         country: quickCustomerForm.country,
         notes: quickCustomerForm.notes,
-        billingAddress: quickCustomerForm.deliveryAddress,
+        defaultShippingAddress: quickCustomerForm.deliveryAddress,
         creditStatus: quickCustomerForm.isCreditCustomer ? 'ALLOWED' : 'NONE',
         creditLimitAmount: quickCustomerForm.creditLimit ? parseFloat(quickCustomerForm.creditLimit) : 0,
         balance: quickCustomerForm.openingBalance ? parseFloat(quickCustomerForm.openingBalance) : 0
@@ -9385,8 +9420,8 @@ export default function POSSales() {
       setSelectedCustomer(newCustId);
       if (showDeliveryModal) {
         setDeliveryCustomerId(String(newCust.id));
-        if (newCust.billingAddress || newCust.address) {
-          setDeliveryAddress(newCust.billingAddress || newCust.address);
+        if (newCust.defaultShippingAddress || newCust.address) {
+          setDeliveryAddress(newCust.defaultShippingAddress || newCust.address);
         }
       }
       setShowQuickCustomerModal(false);
@@ -10940,7 +10975,7 @@ export default function POSSales() {
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
                           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-                            full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
+                            full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                           });
                           await printThermalReceiptWithConfiguredPrinter({
                             full, text, escPosBase64, title: `Receipt ${full.invoiceNumber || ''}`.trim(),
@@ -11783,6 +11818,8 @@ export default function POSSales() {
                     creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
                     cashierNameOverride: full.createdBy ? formatUserDisplayName(full.createdBy.includes('@') ? full.createdBy.split('@')[0] : full.createdBy) : cashierDisplayName,
                   });
+                    customerTrn: lastPaidInvoice?.customer?.trn,
+                    customerAddress: lastPaidInvoice?.customer?.address,
                   await printThermalReceiptWithConfiguredPrinter({
                     full,
                     text,
@@ -14765,7 +14802,7 @@ export default function POSSales() {
                             onClick={() => {
                               setDeliveryCustomerId(String(c.id));
                               setDeliveryValidationErrors(prev => ({ ...prev, customer: '' }));
-                              if (c.address || c.billingAddress) setDeliveryAddress(prev => prev?.trim() ? prev : (c.address || c.billingAddress));
+                              if (c.address || c.defaultShippingAddress) setDeliveryAddress(prev => prev?.trim() ? prev : (c.address || c.defaultShippingAddress));
                             }}
                             className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-left transition-colors">
                             <div className="w-8 h-8 rounded-full bg-[#327F74]/10 text-[#327F74] flex items-center justify-center font-bold text-xs">
@@ -15100,6 +15137,8 @@ export default function POSSales() {
                   // A settlement is a PAYMENT against a balance that already carries
                   // this invoice (it was added to the ledger at Out-for-Delivery). So
                   // Invoice Credit here is 0 — nothing new is being charged — and the
+                  customerTrn: custRec?.trn,
+                  customerAddress: custRec?.address,
                   // block reads Previous − Amount Paid = Updated. Passing invoiceTotal
                   // as Invoice Credit would double-count the invoice and make the
                   // printed arithmetic (Previous + Credit − Paid) fail to equal Updated.

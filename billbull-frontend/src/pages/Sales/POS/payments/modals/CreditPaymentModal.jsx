@@ -225,7 +225,7 @@ function QuickCreateTab({ onCreated }) {
         mobile: form.mobile.trim(),
         email: form.email.trim() || null,
         trn: form.trn.trim() || null,
-        billingAddress: form.address.trim() || null,
+        defaultShippingAddress: form.address.trim() || null,
       });
       onCreated({
         id: String(saved.id),

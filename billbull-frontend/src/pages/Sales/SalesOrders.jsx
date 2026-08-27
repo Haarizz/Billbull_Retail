@@ -1081,7 +1081,7 @@ const SalesOrders = () => {
       customer: {
         name: selectedCustomer?.name || '',
         code: selectedCustomer?.code || fullCustomer?.code || '',
-        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+        address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '',
         shippingAddress: shippingAddress || '',
         phone: fullCustomer?.mobile || fullCustomer?.phone || '',
         email: fullCustomer?.email || '',
@@ -1367,7 +1367,7 @@ const SalesOrders = () => {
     const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
     const _resolvedAddr = _defaultAddr
       ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-      : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+      : (cust.defaultShippingAddress || cust.shippingAddress || cust.address || '');
     setShippingAddress(_resolvedAddr);
     setIsCustomerSearchOpen(false);
   };

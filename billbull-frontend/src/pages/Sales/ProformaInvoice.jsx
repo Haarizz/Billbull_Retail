@@ -545,7 +545,7 @@ const ProformaInvoice = () => {
       customer: {
         name: selectedCustomer?.name || '',
         code: selectedCustomer?.code || fullCustomer?.code || '',
-        address: fullCustomer?.address || fullCustomer?.billingAddress || '',
+        address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '',
         shippingAddress: shippingAddress || '',
         phone: fullCustomer?.mobile || fullCustomer?.phone || '',
         email: fullCustomer?.email || '',
@@ -1265,7 +1265,7 @@ const ProformaInvoice = () => {
         const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.address || '');
         setShippingAddress(_resolvedAddr);
       }
       const srcItems = full.items || full.lineItems || [];
@@ -1280,7 +1280,7 @@ const ProformaInvoice = () => {
         const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.address || '');
         setShippingAddress(_resolvedAddr);
       }
     }
@@ -1298,7 +1298,7 @@ const ProformaInvoice = () => {
         const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.address || '');
         // Prefer SO's shipping address if it has one, otherwise fall back to customer master
         setShippingAddress(full.shippingAddress || _resolvedAddr);
       }
@@ -1314,7 +1314,7 @@ const ProformaInvoice = () => {
         const _defaultAddr = (matchedCust.savedAddresses || []).find(a => a.isDefault);
         const _resolvedAddr = _defaultAddr
           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.billingAddress || matchedCust.address || '');
+          : (matchedCust.defaultShippingAddress || matchedCust.shippingAddress || matchedCust.address || '');
         setShippingAddress(_resolvedAddr);
       }
     }
@@ -1952,7 +1952,7 @@ const ProformaInvoice = () => {
                       const _defaultAddr = (cust.savedAddresses || []).find(a => a.isDefault);
                       const _resolvedAddr = _defaultAddr
                           ? [_defaultAddr.address1, _defaultAddr.address2, _defaultAddr.city, _defaultAddr.country].filter(Boolean).join(', ')
-                          : (cust.defaultShippingAddress || cust.shippingAddress || cust.billingAddress || cust.address || '');
+                          : (cust.defaultShippingAddress || cust.shippingAddress || cust.address || '');
                       setShippingAddress(_resolvedAddr);
                     }}
                     customers={customersList}

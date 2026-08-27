@@ -2290,7 +2290,7 @@ const POSConsole = React.memo((props) => {
                             ['Show Arabic (Bilingual) Text', t2cfg.showArabic, t2cfg.setShowArabic],
                           ])}
                           {fieldToggleSection('CUSTOMER DETAILS', [
-                            ['Show Customer Details', t2cfg.showCustomerDetails, t2cfg.setShowCustomerDetails],
+                            ['Show Customer Details (Name, Mobile, Email, TRN, Address)', t2cfg.showCustomerDetails, t2cfg.setShowCustomerDetails],
                           ])}
                           {fieldToggleSection('ACCOUNT', [
                             ['Show Account Balance', t2cfg.showAccountBalance, t2cfg.setShowAccountBalance],
