@@ -103,4 +103,55 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
             + "AND p.linkedInvoice IN :invoiceNumbers "
             + "GROUP BY p.paymentMode")
     List<Object[]> sumRefundByModeForInvoices(@Param("invoiceNumbers") java.util.Collection<String> invoiceNumbers);
+
+    // ── POS X/Z-Report tender aggregation, by COLLECTION session ────────────────
+    // Payment.posSessionId is the session that was actually open when the tender was
+    // collected (see Payment.posSessionId javadoc) — independent of whichever session the
+    // underlying SalesInvoice was originally created in. This is the authoritative source
+    // for every POS cash-reconciliation figure (X-Report, session close, Z-Report/Day-Close);
+    // the invoice-number-joined queries above stay in use only for invoice/payment-history
+    // screens (SalesReportDataService, InvoicePaymentSummaryService), which answer a
+    // different question ("what did this invoice collect?") than these do ("what did this
+    // POS session collect?").
+
+    /**
+     * Actual RECEIVED tender collected through a set of POS sessions, grouped by raw payment
+     * mode. Mirrors {@link #sumTenderByModeForInvoices} but keyed on the collecting session
+     * rather than the originating invoice, so a payment collected in session B for an invoice
+     * created in session A attributes correctly to B.
+     */
+    @Query("SELECT COALESCE(p.paymentMode, 'Cash'), COALESCE(SUM(p.amount), 0), COUNT(p) "
+            + "FROM Payment p "
+            + "WHERE p.paymentType = com.billbull.backend.sales.payment.PaymentType.RECEIVED "
+            + "AND p.status NOT IN (com.billbull.backend.sales.payment.PaymentStatus.CANCELLED, "
+            + "com.billbull.backend.sales.payment.PaymentStatus.FAILED) "
+            + "AND p.posSessionId IN :sessionIds "
+            + "GROUP BY p.paymentMode")
+    List<Object[]> sumTenderByModeForSessions(@Param("sessionIds") java.util.Collection<Long> sessionIds);
+
+    /**
+     * Full RECEIVED tender rows collected through a set of POS sessions, latest first.
+     * Session-scoped counterpart of {@link #findTenderForInvoices}.
+     */
+    @Query("SELECT p FROM Payment p "
+            + "WHERE p.paymentType = com.billbull.backend.sales.payment.PaymentType.RECEIVED "
+            + "AND p.status NOT IN (com.billbull.backend.sales.payment.PaymentStatus.CANCELLED, "
+            + "com.billbull.backend.sales.payment.PaymentStatus.FAILED) "
+            + "AND p.posSessionId IN :sessionIds "
+            + "ORDER BY p.id DESC")
+    List<Payment> findTenderForSessions(@Param("sessionIds") java.util.Collection<Long> sessionIds);
+
+    /**
+     * Actual refunded tender (paymentType = MADE) collected through a set of POS sessions,
+     * grouped by raw payment mode. Session-scoped counterpart of
+     * {@link #sumRefundByModeForInvoices}.
+     */
+    @Query("SELECT COALESCE(p.paymentMode, 'Cash'), COALESCE(SUM(p.amount), 0), COUNT(p) "
+            + "FROM Payment p "
+            + "WHERE p.paymentType = com.billbull.backend.sales.payment.PaymentType.MADE "
+            + "AND p.status NOT IN (com.billbull.backend.sales.payment.PaymentStatus.CANCELLED, "
+            + "com.billbull.backend.sales.payment.PaymentStatus.FAILED) "
+            + "AND p.posSessionId IN :sessionIds "
+            + "GROUP BY p.paymentMode")
+    List<Object[]> sumRefundByModeForSessions(@Param("sessionIds") java.util.Collection<Long> sessionIds);
 }

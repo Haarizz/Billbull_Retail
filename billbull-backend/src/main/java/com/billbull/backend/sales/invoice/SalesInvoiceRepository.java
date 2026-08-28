@@ -29,6 +29,17 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT s FROM SalesInvoice s WHERE s.invoiceNumber = :invoiceNumber")
         Optional<SalesInvoice> findByInvoiceNumberForUpdate(@Param("invoiceNumber") String invoiceNumber);
 
+        /**
+         * Pessimistic-write lock by id, same rationale as {@link #findByInvoiceNumberForUpdate}
+         * but for callers that only have the surrogate key — used by delivery settlement
+         * ({@code PosCheckoutController.settleDelivery}) to serialise two concurrent settlement
+         * requests against the same delivery order: without this, both could read the same
+         * "balance due" before either commits and both record a payment for it.
+         */
+        @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+        @Query("SELECT s FROM SalesInvoice s WHERE s.id = :id")
+        Optional<SalesInvoice> findByIdForUpdate(@Param("id") Long id);
+
         Optional<SalesInvoice> findByPosCheckoutKey(String posCheckoutKey);
 
         /**

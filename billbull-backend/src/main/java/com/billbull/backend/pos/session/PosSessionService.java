@@ -255,9 +255,8 @@ public class PosSessionService {
      *  formula used by closeSession()/getXReport(), evaluated mid-shift. Used to refuse a
      *  cash out larger than the drawer holds. */
     private BigDecimal availableCashInDrawer(PosSession session) {
-        List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(session.getId());
         List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(session.getId());
-        TenderTotals tender = aggregateTender(invoices, advances);
+        TenderTotals tender = aggregateTender(advances, List.of(session.getId()));
         BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
         BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
         return computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
@@ -821,9 +820,11 @@ public class PosSessionService {
 
         // Expected cash uses the same actual-tender-collected formula as getXReport(), so the
         // Close Session modal and the X-Report page never diverge (both compute it here).
-        List<SalesInvoice> invoices = invoiceRepo.findByPosSessionIdWithItems(sessionId);
+        // Keyed on Payment.posSessionId (the COLLECTION session), not on this session's own
+        // invoice list — a delivery order created here but not yet paid contributes nothing,
+        // which is correct: no cash has actually entered this drawer for it yet.
         List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(sessionId);
-        TenderTotals tender = aggregateTender(invoices, advances);
+        TenderTotals tender = aggregateTender(advances, List.of(sessionId));
         BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
         BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
         BigDecimal expectedCash = computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
@@ -1621,10 +1622,14 @@ public class PosSessionService {
         BigDecimal cashDropIn = sumCashMovements(cashMovements, PosCashMovementType.DROP_IN);
         BigDecimal cashDropOut = sumCashMovements(cashMovements, PosCashMovementType.DROP_OUT);
 
-        // Actual tender collected (not invoice value) for this single session.
-        TenderTotals tender = aggregateTender(invoices, advances);
+        // Actual tender collected (not invoice value) for this single session — keyed on
+        // Payment.posSessionId (the COLLECTION session), so a delivery order created in an
+        // older session but settled here shows up as this session's cash the moment it's
+        // collected, while `invoices` above (this session's own SALE-session-scoped list)
+        // continues to drive gross sales / item stats via buildSalesSummary below.
+        TenderTotals tender = aggregateTender(advances, List.of(sessionId));
         // Actual tender refunded (paymentType = MADE) for this session, bucketed the same way.
-        TenderTotals refunds = aggregateRefunds(invoices);
+        TenderTotals refunds = aggregateRefunds(List.of(sessionId));
 
         Map<String, Object> summary = buildSalesSummary(invoices, tender);
         summary.put("invoiceCount", session.getInvoiceCount() != null ? session.getInvoiceCount() : invoices.size());
@@ -1937,10 +1942,15 @@ public class PosSessionService {
                     com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
         }
 
-        TenderTotals tender = aggregateTender(invoices, advances);
-        // Actual tender refunded (paymentType = MADE) across the day's invoices — same
+        // Keyed on Payment.posSessionId, NOT on the invoice-derived `sessionIds` filter above:
+        // a payment collected through one of today's `sessionIds` is included here even when
+        // the invoice it settles was created in an older session/business date that falls
+        // outside this range entirely (a delivery order settled today, rung up weeks ago).
+        // `invoices` continues to drive gross sales / item stats via buildSalesSummary below.
+        TenderTotals tender = aggregateTender(advances, sessionIds);
+        // Actual tender refunded (paymentType = MADE) across the day's sessions — same
         // source and shape as the X-Report's "Returns" KPI, so the two reports agree.
-        TenderTotals refunds = aggregateRefunds(invoices);
+        TenderTotals refunds = aggregateRefunds(sessionIds);
 
         int invoiceCount = sessions.stream()
                 .mapToInt(s -> s.getInvoiceCount() != null ? s.getInvoiceCount() : 0).sum();
@@ -2480,8 +2490,14 @@ public class PosSessionService {
 
     private List<Map<String, Object>> buildCashierWiseSummary(List<SalesInvoice> invoices, List<ReceiptVoucher> advances, List<PosSession> sessions) {
         Map<Long, String> cashierBySessionId = new java.util.HashMap<>();
+        // Inverse of cashierBySessionId: every session a given cashier opened today, so tender
+        // (keyed on Payment.posSessionId) can be aggregated per cashier the same way invoices
+        // (keyed on SalesInvoice.posSessionId, via cashierBySessionId above) already are.
+        Map<String, List<Long>> sessionIdsByCashier = new java.util.LinkedHashMap<>();
         for (PosSession s : sessions) {
-            cashierBySessionId.put(s.getId(), s.getOpenedBy() != null ? s.getOpenedBy() : "—");
+            String cashier = s.getOpenedBy() != null ? s.getOpenedBy() : "—";
+            cashierBySessionId.put(s.getId(), cashier);
+            sessionIdsByCashier.computeIfAbsent(cashier, k -> new java.util.ArrayList<>()).add(s.getId());
         }
         Map<String, List<SalesInvoice>> byCashier = new java.util.LinkedHashMap<>();
         for (SalesInvoice inv : invoices) {
@@ -2506,7 +2522,8 @@ public class PosSessionService {
         for (String cashier : allCashiers) {
             List<SalesInvoice> cashierInvoices = byCashier.getOrDefault(cashier, new java.util.ArrayList<>());
             List<ReceiptVoucher> cashierAdvances = advByCashier.getOrDefault(cashier, new java.util.ArrayList<>());
-            TenderTotals t = aggregateTender(cashierInvoices, cashierAdvances);
+            List<Long> cashierSessionIds = sessionIdsByCashier.getOrDefault(cashier, List.of());
+            TenderTotals t = aggregateTender(cashierAdvances, cashierSessionIds);
             BigDecimal netSales = cashierInvoices.stream()
                     .map(i -> nz(i.getInvoiceTotal())).reduce(BigDecimal.ZERO, BigDecimal::add);
             Map<String, Object> row = new java.util.LinkedHashMap<>();
@@ -2638,19 +2655,19 @@ public class PosSessionService {
         return TenderBucket.cardNetwork(rawMode);
     }
 
-    /** Aggregates actual RECEIVED tender for the given invoices from sales_payments.
-     *  This is the authoritative "Total Paid" — per-leg payment rows, not invoice value.
+    /** Aggregates actual RECEIVED tender COLLECTED THROUGH the given POS session(s), from
+     *  sales_payments. This is the authoritative "Total Paid" — per-leg payment rows, not
+     *  invoice value, and keyed on {@code Payment.posSessionId} (the session that was open
+     *  when the tender was actually collected), NOT on the session the underlying invoice
+     *  was created in. This is what lets a delivery order created in one session but paid in
+     *  a later one attribute its cash to the session that actually collected it.
      *  Also includes Customer Advances received during the session. */
-    private TenderTotals aggregateTender(List<SalesInvoice> invoices, List<ReceiptVoucher> advances) {
+    private TenderTotals aggregateTender(List<ReceiptVoucher> advances, List<Long> sessionIds) {
         TenderTotals t = new TenderTotals();
-        List<String> numbers = invoices.stream()
-                .map(SalesInvoice::getInvoiceNumber)
-                .filter(n -> n != null && !n.isBlank())
-                .toList();
-        
-        if (!numbers.isEmpty()) {
 
-        for (Object[] row : paymentRepository.sumTenderByModeForInvoices(numbers)) {
+        if (sessionIds != null && !sessionIds.isEmpty()) {
+
+        for (Object[] row : paymentRepository.sumTenderByModeForSessions(sessionIds)) {
             String rawMode = (String) row[0];
             BigDecimal amount = row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO;
             long count = row[2] != null ? ((Number) row[2]).longValue() : 0L;
@@ -2667,7 +2684,7 @@ public class PosSessionService {
             }
             else if ("credit".equals(bucket)) t.credit = t.credit.add(amount);
         }
-        for (Payment p : paymentRepository.findTenderForInvoices(numbers)) {
+        for (Payment p : paymentRepository.findTenderForSessions(sessionIds)) {
             Map<String, Object> line = new java.util.LinkedHashMap<>();
             line.put("paymentNumber", p.getPaymentNumber());
             line.put("invoiceNumber", p.getLinkedInvoice());
@@ -2680,7 +2697,7 @@ public class PosSessionService {
             t.lines.add(line);
         }
         }
-        
+
         if (advances != null) {
             for (ReceiptVoucher p : advances) {
                 if (!ReceiptPurpose.ADVANCE_RECEIVED.equals(p.getPurpose())) continue;
@@ -2716,18 +2733,15 @@ public class PosSessionService {
         return t;
     }
 
-    /** Aggregates actual refunded tender (paymentType = MADE) for the given invoices —
-     *  mirrors {@link #aggregateTender}, used to attribute "Card Refunds" to real
-     *  refund-leg payment rows instead of the unrelated item-void counter. */
-    private TenderTotals aggregateRefunds(List<SalesInvoice> invoices) {
+    /** Aggregates actual refunded tender (paymentType = MADE) COLLECTED THROUGH the given
+     *  POS session(s) — mirrors {@link #aggregateTender}, used to attribute "Card Refunds"
+     *  to real refund-leg payment rows instead of the unrelated item-void counter. Keyed on
+     *  {@code Payment.posSessionId}, same rationale as {@link #aggregateTender}. */
+    private TenderTotals aggregateRefunds(List<Long> sessionIds) {
         TenderTotals t = new TenderTotals();
-        List<String> numbers = invoices.stream()
-                .map(SalesInvoice::getInvoiceNumber)
-                .filter(n -> n != null && !n.isBlank())
-                .toList();
-        if (numbers.isEmpty()) return t;
+        if (sessionIds == null || sessionIds.isEmpty()) return t;
 
-        for (Object[] row : paymentRepository.sumRefundByModeForInvoices(numbers)) {
+        for (Object[] row : paymentRepository.sumRefundByModeForSessions(sessionIds)) {
             String rawMode = (String) row[0];
             BigDecimal amount = row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO;
             long count = row[2] != null ? ((Number) row[2]).longValue() : 0L;

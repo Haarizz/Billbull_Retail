@@ -1322,13 +1322,28 @@ public class SalesInvoiceService {
     public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
             String splitGroupId, String combinedPaymentMode) {
+        return recordPayment(id, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate,
+                splitGroupId, combinedPaymentMode, null);
+    }
+
+    /**
+     * @param posSessionId the POS session that was actually open when this tender was
+     *      collected (the COLLECTION session — see {@link Payment#getPosSessionId()}),
+     *      or {@code null} for a payment with no POS session context at all (e.g. a
+     *      back-office invoice collection). Never derived from {@code invoice.getPosSessionId()}
+     *      — that field is the SALE session and must stay independent of who collected the cash.
+     */
+    @Transactional
+    public SalesInvoice recordPayment(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
+            String splitGroupId, String combinedPaymentMode, Long posSessionId) {
         SalesInvoice invoice = getById(id);
 
         if (paymentAmount == null || paymentAmount <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createSalesPaymentForInvoice(invoice, BigDecimal.valueOf(paymentAmount), paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId);
+        createSalesPaymentForInvoice(invoice, BigDecimal.valueOf(paymentAmount), paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId, posSessionId);
 
         // syncLinkedInvoice (called inside ReceiptVoucherService.createReceipt) already
         // updated amountPaid/balance/status from the full ReceiptVoucher sum — which
@@ -1358,13 +1373,25 @@ public class SalesInvoiceService {
     public SalesInvoice recordPaymentForAuthorizedDeliverySettlement(Long id, Double paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
             String splitGroupId, String combinedPaymentMode) {
+        return recordPaymentForAuthorizedDeliverySettlement(id, paymentAmount, paymentMode, paymentReference,
+                paymentDate, bankAccount, chequeDate, splitGroupId, combinedPaymentMode, null);
+    }
+
+    /**
+     * @param posSessionId the COLLECTION session — see {@link #recordPayment(Long, Double,
+     *      String, String, LocalDate, String, LocalDate, String, String, Long)}.
+     */
+    @Transactional
+    public SalesInvoice recordPaymentForAuthorizedDeliverySettlement(Long id, Double paymentAmount, String paymentMode,
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
+            String splitGroupId, String combinedPaymentMode, Long posSessionId) {
         SalesInvoice invoice = getByIdBypassingOwnership(id);
 
         if (paymentAmount == null || paymentAmount <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero.");
         }
 
-        createSalesPaymentForInvoice(invoice, BigDecimal.valueOf(paymentAmount), paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId);
+        createSalesPaymentForInvoice(invoice, BigDecimal.valueOf(paymentAmount), paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, splitGroupId, posSessionId);
 
         if (paymentMode != null && !paymentMode.isBlank()) {
             SalesInvoice toUpdate = invoiceRepo.findById(id).orElseThrow();
@@ -1380,11 +1407,19 @@ public class SalesInvoiceService {
 
     private void createSalesPaymentForInvoice(SalesInvoice invoice, BigDecimal paymentAmount, String paymentMode,
             String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate) {
-        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, null);
+        createSalesPaymentForInvoice(invoice, paymentAmount, paymentMode, paymentReference, paymentDate, bankAccount, chequeDate, null, null);
     }
 
+    /**
+     * @param posSessionId the COLLECTION session to stamp on the created {@link Payment}, or
+     *      {@code null}. Deliberately never falls back to {@code invoice.getPosSessionId()}
+     *      (the SALE session) when {@code null} — a payment collected with no known POS
+     *      drawer/session must not be silently credited to the invoice's original session,
+     *      which may be a different, already-closed session's cash reconciliation.
+     */
     private void createSalesPaymentForInvoice(SalesInvoice invoice, BigDecimal paymentAmount, String paymentMode,
-            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate, String splitGroupId) {
+            String paymentReference, LocalDate paymentDate, String bankAccount, LocalDate chequeDate,
+            String splitGroupId, Long posSessionId) {
         Payment p = new Payment();
         p.setPaymentType(PaymentType.RECEIVED);
         p.setCustomerCode(invoice.getCustomerCode());
@@ -1399,6 +1434,7 @@ public class SalesInvoiceService {
         p.setChequeDate(chequeDate);
         p.setPaymentDate(paymentDate != null ? paymentDate : LocalDate.now());
         p.setSplitGroupId(splitGroupId);
+        p.setPosSessionId(posSessionId);
 
         // Auto-determine status based on amount vs balance (though PaymentService typically doesn't strictly check for Sales Invoices)
         BigDecimal compareBalance = invoice.getBalance() != null ? invoice.getBalance() : nz(invoice.getInvoiceTotal());

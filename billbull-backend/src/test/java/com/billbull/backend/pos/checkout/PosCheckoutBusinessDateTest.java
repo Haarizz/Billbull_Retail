@@ -167,7 +167,7 @@ class PosCheckoutBusinessDateTest {
     private LocalDate capturedPaymentDate() {
         ArgumentCaptor<LocalDate> captor = ArgumentCaptor.forClass(LocalDate.class);
         verify(invoiceService).recordPayment(anyLong(), anyDouble(), any(), any(),
-                captor.capture(), any(), any(), any(), any());
+                captor.capture(), any(), any(), any(), any(), any());
         return captor.getValue();
     }
 

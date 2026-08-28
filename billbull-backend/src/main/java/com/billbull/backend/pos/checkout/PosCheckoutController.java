@@ -88,7 +88,9 @@ public class PosCheckoutController {
      *  time, QR fallback). POS *business dates* do NOT come from here — see
      *  {@link #posBusinessDate(Long)}. */
     private final com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock;
-    private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+    /** Owns the entire delivery-settlement critical section as one atomic transaction —
+     *  see {@link PosDeliverySettlementService} for why this couldn't stay inline here. */
+    private final PosDeliverySettlementService deliverySettlementService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -110,10 +112,10 @@ public class PosCheckoutController {
                                   com.billbull.backend.pos.session.PosSessionClosureWorkflowGate closureWorkflowGate,
                                   com.billbull.backend.security.ModulePermissionService modulePermissionService,
                                   com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService,
-                                  com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
+                                  PosDeliverySettlementService deliverySettlementService,
                                   com.billbull.backend.sales.invoice.InvoiceCustomerContactService invoiceCustomerContactService) {
         this.invoiceCustomerContactService = invoiceCustomerContactService;
-        this.ownershipAccessService = ownershipAccessService;
+        this.deliverySettlementService = deliverySettlementService;
         this.creditVoucherService = creditVoucherService;
         this.modulePermissionService = modulePermissionService;
         this.closureWorkflowGate = closureWorkflowGate;
@@ -319,9 +321,16 @@ public class PosCheckoutController {
                 }
 
                 if (allocation.isReceipt()) {
+                    // The COLLECTION session for every leg of this checkout is the session
+                    // that's actually open right now — request.getSessionId(). For an ordinary
+                    // checkout this equals the invoice's own posSessionId (set just above in
+                    // buildInvoice), so this is a no-op vs. prior behavior; it only starts to
+                    // matter once a payment is recorded in a *different* session than the sale
+                    // (delivery settlement — see settleDelivery).
                     invoiceService.recordPayment(saved.getId(), allocation.getAmount(),
                             allocation.getModeLabel(), allocation.getReference(), saved.getInvoiceDate(),
-                            allocation.getBankAccountName(), null, splitGroupId, combinedMode);
+                            allocation.getBankAccountName(), null, splitGroupId, combinedMode,
+                            request.getSessionId());
                 }
                 // CREDIT allocations intentionally record nothing: the amount stays outstanding
                 // on the customer's A/R ledger, which the invoice balance already represents.
@@ -659,119 +668,23 @@ public class PosCheckoutController {
         return deliveries;
     }
 
-    /** Settle (collect payment for) a pending delivery order. */
+    /**
+     * Settle (collect payment for) a pending delivery order.
+     *
+     * <p>Thin delegation on purpose: the entire lock-validate-write critical section
+     * lives in {@link PosDeliverySettlementService#settle}, as ONE atomic transaction —
+     * see that class's javadoc for why it was pulled out of this (non-transactional)
+     * controller. Only the business-date fallback is resolved here, because it depends
+     * solely on the session (not on the locked invoice), so there is no race to protect
+     * against by computing it before the lock is taken.
+     */
     @PostMapping("/deliveries/{id}/settle")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SalesInvoice> settleDelivery(@PathVariable Long id,
             @RequestBody DeliverySettleRequest req) {
-        SalesInvoice invoice = invoiceRepository.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found"));
-
-        boolean isOwner = ownershipAccessService.canAccessRecord(invoice.getCreatedByUserId(), java.util.List.of());
-        boolean isAuthorized = isOwner;
-        if (!isOwner) {
-            if (verifySupervisorCredentials(req.getSupervisorOverrideEmail(), req.getSupervisorOverridePassword(), req.getSupervisorOverridePin(), req.getTerminalId())) {
-                isAuthorized = true;
-                auditService.logDeliverySettlementAuthorized(req.getSessionId(), req.getTerminalId(), req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(), invoice.getId(), invoice.getInvoiceNumber());
-            } else {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "SUPERVISOR_AUTHORIZATION_REQUIRED");
-            }
-        }
-
-        double invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal().doubleValue() : 0.0;
-        double alreadyPaid = invoice.getAmountPaid() != null ? invoice.getAmountPaid().doubleValue() : 0.0;
-        double balanceDue  = Math.max(0, invoiceTotal - alreadyPaid);
-        if (balanceDue <= 0.001) return ResponseEntity.ok(settlementResponseInvoice(id, isAuthorized, isOwner));
-
-        // Delivery settlement runs through the same allocation engine as checkout: same
-        // over-allocation guard, same cash capping, same summary label. There is one
-        // settlement architecture, not one per screen.
-        PosPaymentPlan plan = resolveDeliverySettlementPlan(req, balanceDue);
-        double paymentAmount = plan.getSettledAmount();
-        if (paymentAmount <= 0.001)
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment amount must be greater than zero");
-
-        // Every leg carries the same combined label, or the last recordPayment call would
-        // overwrite the invoice's displayed mode with just its own leg.
-        String combinedMode = plan.getCombinedPaymentMode();
-        String splitGroupId = plan.getLegCount() > 1 ? java.util.UUID.randomUUID().toString() : null;
-        for (ResolvedPaymentAllocation allocation : plan.getAllocations()) {
-            if (allocation.getAmount() <= 0.001) continue;
-            if (!allocation.isReceipt()) continue; // credit stays on the customer's ledger
-            
-            if (isAuthorized && !isOwner) {
-                invoiceService.recordPaymentForAuthorizedDeliverySettlement(id, allocation.getAmount(), allocation.getModeLabel(),
-                        allocation.getReference(),
-                        invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : posBusinessDate(req.getSessionId()),
-                        allocation.getBankAccountName(),
-                        null, splitGroupId, combinedMode);
-            } else {
-                invoiceService.recordPayment(id, allocation.getAmount(), allocation.getModeLabel(),
-                        allocation.getReference(),
-                        invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : posBusinessDate(req.getSessionId()),
-                        allocation.getBankAccountName(),
-                        null, splitGroupId, combinedMode);
-            }
-        }
-
-        auditService.logCheckoutCompleted(req.getSessionId(), req.getTerminalId(),
-                req.getBranchId() != null ? req.getBranchId() : invoice.getBranchId(),
-                id, invoice.getInvoiceNumber());
-        terminalActivityService.recordActivity(req.getTerminalId(), "CHECKOUT");
-        return ResponseEntity.ok(settlementResponseInvoice(id, isAuthorized, isOwner));
-    }
-
-    /** Reloads the settled invoice and attaches the customer contact details for the receipt. */
-    private SalesInvoice settlementResponseInvoice(Long id, boolean isAuthorized, boolean isOwner) {
-        SalesInvoice invoice = isAuthorized && !isOwner
-                ? invoiceService.getByIdBypassingOwnership(id)
-                : invoiceService.getById(id);
-        invoiceCustomerContactService.attach(invoice);
-        return invoice;
-    }
-
-    /**
-     * Resolves a delivery settlement into the same {@link PosPaymentPlan} a checkout produces.
-     * Prefers the progressive {@code paymentAllocations} list; falls back to the legacy
-     * cash/card scalars for a terminal whose browser tab has not been reloaded since deploy
-     * (dropping that path would make those tills settle a delivery with no payment recorded).
-     */
-    private PosPaymentPlan resolveDeliverySettlementPlan(DeliverySettleRequest req, double balanceDue) {
-        if (req.getPaymentAllocations() != null && !req.getPaymentAllocations().isEmpty()) {
-            return allocationResolver.resolveAllocations(
-                    req.getPaymentAllocations(), balanceDue, req.getPaymentMode(), "Cash");
-        }
-        // Legacy scalars, expressed as allocations so the settlement loop stays single-path.
-        java.util.List<PosPaymentAllocation> legacy = new java.util.ArrayList<>();
-        double cashAmt = req.getCashAmount() != null ? req.getCashAmount() : 0.0;
-        double cardAmt = req.getCardAmount() != null ? req.getCardAmount() : 0.0;
-        if (cashAmt <= 0.001 && cardAmt <= 0.001) {
-            double tendered = req.getAmountTendered() != null ? req.getAmountTendered() : balanceDue;
-            legacy.add(legacyAllocation(
-                    req.getPaymentMode() != null && !req.getPaymentMode().isBlank() ? req.getPaymentMode() : "Cash",
-                    Math.min(tendered, balanceDue), req.getCardReference()));
-        } else {
-            if (cardAmt > 0.001) {
-                legacy.add(legacyAllocation(
-                        req.getCardType() != null && !req.getCardType().isBlank() ? req.getCardType() : "Card",
-                        cardAmt, req.getCardReference()));
-            }
-            if (cashAmt > 0.001) legacy.add(legacyAllocation("Cash", cashAmt, null));
-        }
-        return allocationResolver.resolveAllocations(legacy, balanceDue, null, "Cash");
-    }
-
-    /** Builds one allocation from a legacy mode label, inferring its type from the label. */
-    private PosPaymentAllocation legacyAllocation(String modeLabel, double amount, String reference) {
-        PosPaymentAllocation a = new PosPaymentAllocation();
-        PosPaymentAllocationType parsed = PosPaymentAllocationType.parse(modeLabel);
-        // An unrecognised label is a card network name ("Visa", "Mastercard"), which is the
-        // only mode the legacy delivery-settle UI could send besides Cash.
-        a.setType((parsed != null ? parsed : PosPaymentAllocationType.CARD).name());
-        a.setSubtype(parsed == null || parsed == PosPaymentAllocationType.CARD ? modeLabel : null);
-        a.setAmount(amount);
-        a.setReference(reference);
-        return a;
+        LocalDate fallbackBusinessDate = posBusinessDate(req.getSessionId());
+        SalesInvoice result = deliverySettlementService.settle(id, req, fallbackBusinessDate);
+        return ResponseEntity.ok(result);
     }
 
     public static class DeliverySettleRequest {
