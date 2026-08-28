@@ -2,6 +2,7 @@ package com.billbull.backend.sales.payment;
 
 import com.billbull.backend.settings.branch.Branch;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
@@ -72,6 +73,24 @@ public class Payment  implements com.billbull.backend.common.ownership.OwnedEnti
     private LocalDate createdDate;
 
     private String splitGroupId; // shared UUID for all entries in the same split payment
+
+    /** The POS session that was actually open when this tender was collected — the
+     *  COLLECTION session, independent of {@code SalesInvoice.posSessionId} (the SALE
+     *  session). Equal to the invoice's session for a normal same-session checkout; the later
+     *  settling session for a delivery order paid after its original session closed; null for
+     *  a payment recorded with no POS session at all (e.g. back-office invoice collection).
+     *  Never derived/backfilled from the invoice at read time — stamped once, at creation.
+     *
+     *  <p>{@code READ_ONLY}: this field is deliberately not settable through the generic
+     *  {@code POST /api/sales/payments} JSON deserialization path (or any other raw-JSON
+     *  request body) — it still appears in responses, but a client-supplied value in a
+     *  request body is silently dropped. The only legitimate way to set it is the
+     *  server-side {@code SalesInvoiceService.recordPayment(..., Long posSessionId)}
+     *  family, which threads a session the server itself has already validated (open,
+     *  same branch) — never a value taken at face value from client JSON. */
+    @Column(name = "pos_session_id")
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
+    private Long posSessionId;
 
     /* ===== GETTERS & SETTERS ===== */
 
@@ -236,6 +255,14 @@ public class Payment  implements com.billbull.backend.common.ownership.OwnedEnti
 
     public void setSplitGroupId(String splitGroupId) {
         this.splitGroupId = splitGroupId;
+    }
+
+    public Long getPosSessionId() {
+        return posSessionId;
+    }
+
+    public void setPosSessionId(Long posSessionId) {
+        this.posSessionId = posSessionId;
     }
 
     @Override

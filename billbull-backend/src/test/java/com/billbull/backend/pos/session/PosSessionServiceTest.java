@@ -154,9 +154,12 @@ class PosSessionServiceTest {
         lenient().when(transferLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
         // Default: no linked User row â€” resolveDisplayName() falls back to the raw username.
         lenient().when(userRepository.findByUsername(any())).thenReturn(java.util.Optional.empty());
-        // Default: no tender / audit rows unless a test stubs them.
-        lenient().when(paymentRepository.sumTenderByModeForInvoices(any())).thenReturn(List.of());
-        lenient().when(paymentRepository.findTenderForInvoices(any())).thenReturn(List.of());
+        // Default: no tender / audit rows unless a test stubs them. aggregateTender/
+        // aggregateRefunds are keyed on Payment.posSessionId (the COLLECTION session) —
+        // see the cross-session delivery settlement tests below for cases that override these.
+        lenient().when(paymentRepository.sumTenderByModeForSessions(any())).thenReturn(List.of());
+        lenient().when(paymentRepository.findTenderForSessions(any())).thenReturn(List.of());
+        lenient().when(paymentRepository.sumRefundByModeForSessions(any())).thenReturn(List.of());
         lenient().when(auditLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
         lenient().when(terminalRepository.findByTerminalId(any())).thenReturn(java.util.Optional.empty());
         lenient().when(returnRepository.findByReturnDateAndBranchWithItems(any(), any())).thenReturn(List.of());
@@ -697,7 +700,6 @@ class PosSessionServiceTest {
         session.setSessionDate(LocalDate.of(2020, 1, 1));
         session.setTradingDate(LocalDate.of(2020, 1, 1));
         when(repo.findById(1L)).thenReturn(Optional.of(session));
-        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
 
         LocalDate before = session.getTradingDate();
         service.closeSession(1L, bd("0"), "eod");
@@ -1284,7 +1286,6 @@ class PosSessionServiceTest {
         authorizeSessionClose(null);
         PosSession session = openSession();
         when(repo.findById(1L)).thenReturn(Optional.of(session));
-        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
         PosSessionTerminalHistory openSegment = new PosSessionTerminalHistory();
         when(sessionTerminalHistoryRepository.findFirstBySessionIdAndEndedAtIsNullOrderByStartedAtDesc(1L))
                 .thenReturn(Optional.of(openSegment));
@@ -1354,9 +1355,9 @@ class PosSessionServiceTest {
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("20")));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
         // closeSession() now derives expected cash from actual cash tender collected
-        // (same formula as getXReport()), not the session.totalCashSales counter.
-        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(250.0, 0.0)));
-        when(paymentRepository.sumTenderByModeForInvoices(any()))
+        // (same formula as getXReport()), keyed on Payment.posSessionId rather than
+        // this session's own invoice list.
+        when(paymentRepository.sumTenderByModeForSessions(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("250"), 1L }));
 
         // expected = opening(100) + cashTender(250) + (dropIn 50 - dropOut 20) = 380
@@ -1387,7 +1388,7 @@ class PosSessionServiceTest {
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("20")));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
         when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(250.0, 0.0)));
-        when(paymentRepository.sumTenderByModeForInvoices(any()))
+        when(paymentRepository.sumTenderByModeForSessions(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("250"), 1L }));
 
         Map<String, Object> report = service.getXReport(1L);
@@ -1600,7 +1601,7 @@ class PosSessionServiceTest {
         when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(500.0, 25.0)));
         // Expected cash now derives from ACTUAL cash tender collected, not the session
         // counter â€” stub 300 of cash tender for this session's invoice.
-        when(paymentRepository.sumTenderByModeForInvoices(any()))
+        when(paymentRepository.sumTenderByModeForSessions(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("300"), 1L }));
 
         Map<String, Object> result = service.getXReport(1L);
@@ -1633,7 +1634,79 @@ class PosSessionServiceTest {
     }
 
     // ---------------------------------------------------------------------
-    // getXReport() â€” the session's OWN Business Date, never the current one
+    // Cross-session delivery settlement: Payment.posSessionId (the COLLECTION session)
+    // drives cash, independent of SalesInvoice.posSessionId (the SALE session).
+    // Regression coverage for "delivery created in session A, closed, settled as cash
+    // in a later session B" reconciliation bugs.
+    // ---------------------------------------------------------------------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportIncludesCashCollectedThroughThisSessionEvenWithNoInvoicesOfItsOwn() {
+        // This session (100) rang up nothing itself - the delivery order being settled
+        // here was created under a different, already-closed session (99).
+        PosSession session = openSession();
+        session.setId(100L);
+        session.setOpeningCash(bd("100"));
+        when(repo.findById(100L)).thenReturn(java.util.Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(100L)).thenReturn(List.of());
+        // The 195 settlement Payment carries posSessionId=100 (this session) even
+        // though its invoice's own posSessionId is 99 - exactly what settleDelivery
+        // now stamps. Keyed on the Payment's own session, not this session's (empty)
+        // invoice list.
+        when(paymentRepository.sumTenderByModeForSessions(eq(List.of(100L))))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("195"), 1L }));
+
+        Map<String, Object> result = service.getXReport(100L);
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+
+        // expectedCash = opening(100) + cashTender(195) = 295 - visible here even
+        // though this session created zero sales of its own.
+        assertMoney("295", (BigDecimal) summary.get("expectedCash"));
+        assertMoney("195", (BigDecimal) summary.get("cashSales"));
+    }
+
+    @Test
+    void closeSessionIncludesCashCollectedThroughThisSessionEvenWithNoInvoicesOfItsOwn() {
+        authenticateCashier();
+        authorizeSessionClose(null);
+        PosSession session = openSession();
+        session.setId(100L);
+        session.setOpeningCash(bd("100"));
+        when(repo.findById(100L)).thenReturn(java.util.Optional.of(session));
+        when(paymentRepository.sumTenderByModeForSessions(eq(List.of(100L))))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("195"), 1L }));
+
+        PosSession closed = service.closeSession(100L, bd("295"), "ok");
+
+        assertMoney("295", closed.getExpectedCash());
+        assertMoney("0", closed.getCashDifference());
+    }
+
+    @Test
+    void closeSessionIsUnaffectedByCashLaterCollectedThroughADifferentSettlingSession() {
+        // Session 99 (the ORIGINAL sale session) closes with its delivery order still
+        // unpaid - no cash exists for it yet, so its own frozen numbers must reflect
+        // exactly that. This pins that a later settlement elsewhere can never
+        // retroactively change session 99's already-frozen expectedCash/cashDifference.
+        authenticateCashier();
+        authorizeSessionClose(null);
+        PosSession session = openSession();
+        session.setId(99L);
+        session.setOpeningCash(bd("100"));
+        when(repo.findById(99L)).thenReturn(java.util.Optional.of(session));
+        // No Payment carries posSessionId=99 for this invoice - it hasn't been settled
+        // yet at the moment session 99 closes.
+        when(paymentRepository.sumTenderByModeForSessions(eq(List.of(99L)))).thenReturn(List.of());
+
+        PosSession closed = service.closeSession(99L, bd("100"), "ok");
+
+        assertMoney("100", closed.getExpectedCash());
+        assertMoney("0", closed.getCashDifference());
+    }
+
+    // ---------------------------------------------------------------------
+    // getXReport() - the session's OWN Business Date, never the current one
     // ---------------------------------------------------------------------
 
     @Test
@@ -1752,7 +1825,7 @@ class PosSessionServiceTest {
         when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
                 .thenReturn(List.of(invoiceWithTax(200.0, 10.0), invoiceWithTax(100.0, 5.0)));
         // totalSales now sums invoice rows (net of voids); cashSales is actual tender.
-        when(paymentRepository.sumTenderByModeForInvoices(any()))
+        when(paymentRepository.sumTenderByModeForSessions(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 2L }));
 
         Map<String, Object> result = service.getZReport(7L, LocalDate.now());
@@ -1951,7 +2024,7 @@ class PosSessionServiceTest {
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("10")));
         when(repo.findById(1L)).thenReturn(Optional.of(session));
         when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(300.0, 0.0)));
-        when(paymentRepository.sumTenderByModeForInvoices(any()))
+        when(paymentRepository.sumTenderByModeForSessions(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("300"), 1L }));
 
         PosCashMovement dropIn = cashMovement(PosCashMovementType.DROP_IN, bd("40"));
@@ -1993,7 +2066,7 @@ class PosSessionServiceTest {
                 .thenReturn(List.of(s1));
         when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
-        when(paymentRepository.sumTenderByModeForInvoices(any()))
+        when(paymentRepository.sumTenderByModeForSessions(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
         PosCashMovement inMovement = new PosCashMovement();
         inMovement.setMovementType(PosCashMovementType.DROP_IN);
@@ -2057,7 +2130,7 @@ class PosSessionServiceTest {
         when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s1));
         when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(eq(branchId), any()))
                 .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
-        when(paymentRepository.sumTenderByModeForInvoices(any()))
+        when(paymentRepository.sumTenderByModeForSessions(any()))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
         PosCashMovement inMovementDayClose = new PosCashMovement();
         inMovementDayClose.setMovementType(PosCashMovementType.DROP_IN);
@@ -2082,8 +2155,107 @@ class PosSessionServiceTest {
         assertEquals(true, report.get("isDayClosed"));
     }
 
+    /**
+     * The full cross-session delivery settlement scenario at the Day Close level: a
+     * delivery order created (and still tagged) under session 99 is paid in cash under
+     * session 100, after 99 has already closed. Day Close's two independently-derived
+     * expected-cash figures — {@code expectedCashComputed} (live) and
+     * {@code expectedCashSessions} (sum of each session's already-frozen number) — must
+     * agree, because session 100's own close already correctly folded the 195 into its
+     * frozen expectedCash (per closeSessionIncludesCashCollectedThroughThisSessionEvenWithNoInvoicesOfItsOwn
+     * above), and session 99's frozen number never needed to change. Mirrors the real
+     * INV-2026-0891 / PAY-2026-0881 case that originally surfaced this bug.
+     */
+    @Test
+    void closeDayReconcilesTheCrossSessionCashDeliverySettlementScenario() {
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+
+        // Session 99 — the ORIGINAL sale session. Its delivery order was still unpaid
+        // when it closed, so its frozen expectedCash correctly reflects zero cash for it.
+        PosSession session99 = sessionAt(99L, branchId, date, "cashierA", PosSessionStatus.CLOSED,
+                date.atStartOfDay().plusHours(8));
+        session99.setOpeningCash(bd("100"));
+        session99.setInvoiceCount(1);
+        session99.setExpectedCash(bd("100"));
+
+        // Session 100 — the SETTLING session, opened later. Its own close already
+        // correctly included the 195 cash collected for session 99's delivery order.
+        PosSession session100 = sessionAt(100L, branchId, date, "cashierB", PosSessionStatus.CLOSED,
+                date.atStartOfDay().plusHours(9));
+        session100.setOpeningCash(bd("100"));
+        session100.setInvoiceCount(0);
+        session100.setExpectedCash(bd("295"));
+
+        when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
+        when(branchRepository.findById(branchId)).thenReturn(Optional.of(branch(branchId)));
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date))
+                .thenReturn(List.of(session100, session99));
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(eq(branchId), any()))
+                .thenReturn(List.of(invoiceWithNumber("INV-2026-0891", 195.0, 0.0)));
+        // Only session 100's collected cash is live-visible — the payment's own
+        // posSessionId is 100, regardless of which session the invoice belongs to.
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("195"), 1L }));
+        when(dayCloseRepository.save(any(com.billbull.backend.pos.dayclose.PosDayClose.class))).thenAnswer(inv -> {
+            com.billbull.backend.pos.dayclose.PosDayClose d = inv.getArgument(0);
+            d.setId(100L);
+            return d;
+        });
+
+        // expectedCashComputed = openingCash(100+100=200) + cashSales(195, live) = 395
+        // expectedCashSessions = frozen(100) + frozen(295) = 395 — they agree, so this
+        // must NOT throw ReconciliationException("CASH", ...).
+        Map<String, Object> report = service.closeDay(branchId, date);
+
+        assertEquals(true, report.get("isDayClosed"));
+        // Session 99's frozen number is provably untouched by this Day Close.
+        assertMoney("100", session99.getExpectedCash());
+        // Session 100's frozen number likewise untouched — Day Close never rewrites it.
+        assertMoney("295", session100.getExpectedCash());
+    }
+
+    /**
+     * Literal reproduction of the multi-delivery scenario:
+     * Delivery 1 -> created Session A -> settled Session C
+     * Delivery 2 -> created Session A -> settled Session C
+     * Delivery 3 -> created Session B -> settled Session C
+     * Delivery 4 -> created Session B -> still unpaid (never settled)
+     *
+     * Proves reconciliation is payment/session driven rather than invoice-list driven:
+     * Session C created zero sales of its own (its own invoice list is empty), yet its
+     * cash total must equal exactly the three payments actually collected through it —
+     * Delivery 4's unpaid balance must not appear anywhere in C's cash.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void sessionCTenderReflectsExactlyThePaymentsCollectedThroughItAcrossMultipleOldSessions() {
+        PosSession sessionC = openSession();
+        sessionC.setId(300L);
+        sessionC.setOpeningCash(bd("0"));
+        when(repo.findById(300L)).thenReturn(java.util.Optional.of(sessionC));
+        // Session C rang up no sales of its own — every invoice it might otherwise be
+        // scoped to (via SalesInvoice.posSessionId) belongs to session A or B, not C.
+        when(invoiceRepo.findByPosSessionIdWithItems(300L)).thenReturn(List.of());
+        // Deliveries 1+2 (from session A, 100 + 150) and delivery 3 (from session B, 200)
+        // were all settled in cash through session C; delivery 4 (from session B) is still
+        // unpaid and therefore contributes nothing here.
+        when(paymentRepository.sumTenderByModeForSessions(eq(List.of(300L))))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("450"), 3L }));
+
+        Map<String, Object> result = service.getXReport(300L);
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+
+        assertMoney("450", (BigDecimal) summary.get("cashSales"));
+        assertMoney("450", (BigDecimal) summary.get("expectedCash"));
+        // No sale of Session C's own invoice list is a delivery — invoiceCount must
+        // reflect zero own sales, confirming sales statistics were not pulled along
+        // with the cash.
+        assertEquals(0, ((List<SalesInvoice>) result.get("invoices")).size());
+    }
+
     // ---------------------------------------------------------------------
-    // POS Reports module â€” X-Report snapshot persistence, Z-Report numbering
+    // POS Reports module - X-Report snapshot persistence, Z-Report numbering
     // ---------------------------------------------------------------------
 
     @Test
@@ -3300,7 +3472,6 @@ class PosSessionServiceTest {
         session.setSessionDate(session.getTradingDate());
         session.setOpeningCash(BigDecimal.ZERO);
         when(repo.findById(67L)).thenReturn(Optional.of(session));
-        when(invoiceRepo.findByPosSessionIdWithItems(67L)).thenReturn(List.of());
 
         ResponseStatusException ex = org.junit.jupiter.api.Assertions.assertThrows(
                 ResponseStatusException.class,
@@ -3324,7 +3495,6 @@ class PosSessionServiceTest {
         session.setOpeningCash(bd("500"));
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("100")));
         when(repo.findById(67L)).thenReturn(Optional.of(session));
-        when(invoiceRepo.findByPosSessionIdWithItems(67L)).thenReturn(List.of());
 
         // Drawer holds 500 opening + 100 drop-in = 600; taking exactly 600 out is allowed.
         PosCashMovement movement = service.addCashMovement(67L, "DROP_OUT", bd("600"), "payout");

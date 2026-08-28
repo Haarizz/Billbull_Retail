@@ -37,7 +37,9 @@ import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.pos.audit.PosAuditService;
+import com.billbull.backend.pos.session.PosSession;
 import com.billbull.backend.pos.session.PosSessionService;
+import com.billbull.backend.pos.session.PosSessionStatus;
 import com.billbull.backend.pos.settings.PosSettings;
 import com.billbull.backend.pos.settings.PosSettingsService;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
@@ -101,6 +103,10 @@ class PosCheckoutControllerTest {
     // cover authorization and audit, not receipt content.
     @Mock private InvoiceCustomerContactService invoiceCustomerContactService;
 
+    /** Needed for the delivery-settlement tests below (settleDelivery's owner check);
+     *  unused by checkout() so every existing test above leaves it unstubbed/lenient. */
+    @Mock private com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+
     @InjectMocks private PosCheckoutController controller;
 
     private AutoCloseable mocks;
@@ -110,6 +116,17 @@ class PosCheckoutControllerTest {
         mocks = MockitoAnnotations.openMocks(this);
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(BigDecimal.ZERO);
+        // PosDeliverySettlementService is a real collaborator built from these SAME mocks —
+        // @InjectMocks can't auto-construct a nested bean for the controller's constructor,
+        // so it's wired here and injected post-construction. See that class's javadoc for
+        // why the whole settleDelivery() critical section had to move out of this
+        // (non-transactional) controller into one atomic transactional method.
+        PosDeliverySettlementService deliverySettlementService = new PosDeliverySettlementService(
+                invoiceRepository, invoiceService, ownershipAccessService, posSettingsService, auditService,
+                sessionService, businessDayContinuationGate, closureWorkflowGate, allocationResolver,
+                terminalActivityService, invoiceCustomerContactService);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller, "deliverySettlementService",
+                deliverySettlementService);
     }
 
     @Test
@@ -144,7 +161,7 @@ class PosCheckoutControllerTest {
         verify(invoiceService).updateStatus(42L, SalesInvoiceStatus.PAID);
         // Payment of the full 3080 must be recorded against the invoice.
         verify(invoiceService).recordPayment(eq(42L), eq(3080.0), eq("Cash"),
-                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), any());
+                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), any(), any());
         // QR is archived through the safe single-column update path...
         verify(invoiceService).archiveReceiptQr(eq(42L), anyString());
         // ...and the controller NEVER re-saves the stale invoice entity (the bug).
@@ -175,7 +192,7 @@ class PosCheckoutControllerTest {
         verify(invoiceService, never()).save(any());
         verify(invoiceService, never()).updateStatus(anyLong(), any());
         verify(invoiceService, never()).recordPayment(anyLong(), anyDouble(), anyString(),
-                any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any());
     }
 
     private SalesInvoice draftInvoice(long id, String number, String total) {
@@ -217,11 +234,11 @@ class PosCheckoutControllerTest {
         ArgumentCaptor<String> splitGroupCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> combinedModeCaptor = ArgumentCaptor.forClass(String.class);
         verify(invoiceService).recordPayment(eq(50L), eq(300.0), eq("Visa"), eq("REF-1"),
-                any(LocalDate.class), isNull(), isNull(), splitGroupCaptor.capture(), combinedModeCaptor.capture());
+                any(LocalDate.class), isNull(), isNull(), splitGroupCaptor.capture(), combinedModeCaptor.capture(), any());
         verify(invoiceService).recordPayment(eq(50L), eq(450.0), eq("Mastercard"), eq("REF-2"),
-                any(LocalDate.class), isNull(), isNull(), anyString(), anyString());
+                any(LocalDate.class), isNull(), isNull(), anyString(), anyString(), any());
         verify(invoiceService).recordPayment(eq(50L), eq(250.0), eq("Amex"), eq("REF-3"),
-                any(LocalDate.class), isNull(), isNull(), anyString(), anyString());
+                any(LocalDate.class), isNull(), isNull(), anyString(), anyString(), any());
 
         // All three legs must share one splitGroupId and one combined-mode label.
         assertNotNull(splitGroupCaptor.getValue());
@@ -244,11 +261,11 @@ class PosCheckoutControllerTest {
         controller.checkout(req);
 
         verify(invoiceService).recordPayment(eq(51L), eq(400.0), eq("Cash"),
-                isNull(), any(LocalDate.class), isNull(), isNull(), anyString(), eq("Cash + Visa + Mastercard"));
+                isNull(), any(LocalDate.class), isNull(), isNull(), anyString(), eq("Cash + Visa + Mastercard"), any());
         verify(invoiceService).recordPayment(eq(51L), eq(350.0), eq("Visa"),
-                isNull(), any(LocalDate.class), isNull(), isNull(), anyString(), eq("Cash + Visa + Mastercard"));
+                isNull(), any(LocalDate.class), isNull(), isNull(), anyString(), eq("Cash + Visa + Mastercard"), any());
         verify(invoiceService).recordPayment(eq(51L), eq(250.0), eq("Mastercard"),
-                isNull(), any(LocalDate.class), isNull(), isNull(), anyString(), eq("Cash + Visa + Mastercard"));
+                isNull(), any(LocalDate.class), isNull(), isNull(), anyString(), eq("Cash + Visa + Mastercard"), any());
     }
 
     @Test
@@ -265,7 +282,7 @@ class PosCheckoutControllerTest {
 
         // Unchanged legacy behavior: a single-leg checkout passes a null splitGroupId.
         verify(invoiceService).recordPayment(eq(52L), eq(3080.0), eq("Cash"),
-                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), any());
+                isNull(), any(LocalDate.class), isNull(), isNull(), isNull(), any(), any());
     }
 
     @Test
@@ -283,7 +300,7 @@ class PosCheckoutControllerTest {
         controller.checkout(req);
 
         verify(invoiceService).recordPayment(eq(53L), eq(500.0), eq("Visa"), eq("LEGACY-REF"),
-                any(LocalDate.class), isNull(), isNull(), isNull(), any());
+                any(LocalDate.class), isNull(), isNull(), isNull(), any(), any());
     }
 
     @Test
@@ -344,7 +361,7 @@ class PosCheckoutControllerTest {
         assertThrows(ResponseStatusException.class, () -> controller.checkout(req));
         verify(invoiceService, never()).updateStatus(anyLong(), any());
         verify(invoiceService, never()).recordPayment(anyLong(), anyDouble(), anyString(),
-                any(), any(), any(), any(), any(), any());
+                any(), any(), any(), any(), any(), any(), any());
         verify(invoiceService).delete(54L);
     }
 
@@ -362,7 +379,7 @@ class PosCheckoutControllerTest {
         controller.checkout(req);
 
         verify(invoiceService, times(2)).recordPayment(eq(55L), anyDouble(), anyString(),
-                any(), any(LocalDate.class), isNull(), isNull(), anyString(), anyString());
+                any(), any(LocalDate.class), isNull(), isNull(), anyString(), anyString(), any());
     }
 
     // ── §2.4 price-override gate ────────────────────────────────────────────
@@ -711,5 +728,170 @@ class PosCheckoutControllerTest {
 
         // Same session, same terminal, moments later — no credentials, no sale.
         assertEquals(423, controller.checkout(simpleCashRequest()).getStatusCode().value());
+    }
+
+    // ---------------------------------------------------------------------
+    // settleDelivery() -- cross-session delivery settlement: the collection session
+    // (Payment.posSessionId, the session actually open when cash is collected) is now
+    // threaded through independently of the invoice's own, immutable creation session
+    // (SalesInvoice.posSessionId).
+    // ---------------------------------------------------------------------
+
+    private SalesInvoice deliveryInvoice(Long id, String invoiceNumber, double total, double amountPaid) {
+        SalesInvoice inv = new SalesInvoice();
+        inv.setId(id);
+        inv.setInvoiceNumber(invoiceNumber);
+        inv.setInvoiceTotal(new BigDecimal(total));
+        inv.setAmountPaid(new BigDecimal(amountPaid));
+        inv.setInvoiceDate(LocalDate.now());
+        inv.setBranchId(1L);
+        // The invoice's own creation session -- Session 99 -- must never move.
+        inv.setPosSessionId(99L);
+        return inv;
+    }
+
+    private PosSession openPosSession(Long id) {
+        PosSession s = new PosSession();
+        s.setId(id);
+        s.setStatus(PosSessionStatus.OPEN);
+        s.setBranchId(1L);
+        return s;
+    }
+
+    private PosCheckoutController.DeliverySettleRequest deliverySettleRequest(Long sessionId) {
+        PosCheckoutController.DeliverySettleRequest req = new PosCheckoutController.DeliverySettleRequest();
+        req.setSessionId(sessionId);
+        req.setTerminalId("T1");
+        req.setBranchId(1L);
+        return req;
+    }
+
+    @Test
+    void settleDeliveryAttributesPaymentToTheSettlingSessionNotTheInvoicesOriginalSession() {
+        // Mirrors the real INV-2026-0891 / PAY-2026-0881 case: invoice created (and still
+        // tagged) under session 99, driver collects cash today under session 100 -- the
+        // session that is actually open right now.
+        SalesInvoice invoice = deliveryInvoice(891L, "INV-2026-0891", 195.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(891L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        when(sessionService.getById(100L)).thenReturn(openPosSession(100L));
+
+        controller.settleDelivery(891L, deliverySettleRequest(100L));
+
+        // The COLLECTION session travels as the Payment's own, new trailing argument --
+        // never derived from invoice.getPosSessionId() (which stays 99).
+        verify(invoiceService).recordPayment(eq(891L), eq(195.0), eq("Cash"), any(),
+                any(LocalDate.class), any(), isNull(), isNull(), any(), eq(100L));
+        assertEquals(Long.valueOf(99L), invoice.getPosSessionId(),
+                "settling in a later session must never move the sale's own creation session");
+    }
+
+    @Test
+    void settleDeliveryAllowsNullSessionForBackOfficeSettlementWithoutFallingBackToInvoiceSession() {
+        SalesInvoice invoice = deliveryInvoice(892L, "INV-2026-0892", 195.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(892L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+
+        controller.settleDelivery(892L, deliverySettleRequest(null));
+
+        // No POS session at all -- the collection session stays null. It must NOT
+        // silently become invoice.getPosSessionId() (99).
+        verify(invoiceService).recordPayment(eq(892L), eq(195.0), eq("Cash"), any(),
+                any(LocalDate.class), any(), isNull(), isNull(), any(), isNull());
+        verify(sessionService, never()).getById(any());
+    }
+
+    @Test
+    void settleDeliveryRejectsAClosedSettlingSession() {
+        SalesInvoice invoice = deliveryInvoice(893L, "INV-2026-0893", 195.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(893L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        PosSession closedSession = openPosSession(101L);
+        closedSession.setStatus(PosSessionStatus.CLOSED);
+        when(sessionService.getById(101L)).thenReturn(closedSession);
+
+        assertThrows(ResponseStatusException.class,
+                () -> controller.settleDelivery(893L, deliverySettleRequest(101L)));
+
+        // A stale/closed session reference must never reach payment creation -- the
+        // "lost cash" bug this fix closes, reintroduced via a different trigger.
+        verify(invoiceService, never()).recordPayment(anyLong(), anyDouble(), anyString(),
+                any(), any(), any(), any(), any(), any(), any());
+        verify(invoiceService, never()).recordPaymentForAuthorizedDeliverySettlement(
+                anyLong(), anyDouble(), anyString(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void settleDeliveryRejectsASettlingSessionFromADifferentBranch() {
+        // Delivery invoice belongs to branch 1 (deliveryInvoice()'s default); the settling
+        // session belongs to branch 2 — a cross-branch delivery/session mismatch must never
+        // let branch 2's cash reconciliation silently absorb branch 1's collection.
+        SalesInvoice invoice = deliveryInvoice(897L, "INV-2026-0897", 195.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(897L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        PosSession otherBranchSession = openPosSession(102L);
+        otherBranchSession.setBranchId(2L);
+        when(sessionService.getById(102L)).thenReturn(otherBranchSession);
+
+        assertThrows(ResponseStatusException.class,
+                () -> controller.settleDelivery(897L, deliverySettleRequest(102L)));
+
+        verify(invoiceService, never()).recordPayment(anyLong(), anyDouble(), anyString(),
+                any(), any(), any(), any(), any(), any(), any());
+        verify(invoiceService, never()).recordPaymentForAuthorizedDeliverySettlement(
+                anyLong(), anyDouble(), anyString(), any(), any(), any(), any(), any(), any(), any());
+        // The invoice's own branch must be untouched by a rejected settlement attempt.
+        assertEquals(Long.valueOf(1L), invoice.getBranchId());
+    }
+
+    @Test
+    void settleDeliveryLocksTheInvoiceRowPessimistically() {
+        SalesInvoice invoice = deliveryInvoice(894L, "INV-2026-0894", 195.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(894L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        when(sessionService.getById(100L)).thenReturn(openPosSession(100L));
+
+        controller.settleDelivery(894L, deliverySettleRequest(100L));
+
+        // Concurrency guard: two simultaneous settlement requests for the same delivery
+        // must serialize on this row lock, never load it via the plain, unlocked finder.
+        verify(invoiceRepository).findByIdForUpdate(894L);
+        verify(invoiceRepository, never()).findById(894L);
+    }
+
+    @Test
+    void settleDeliverySkipsRecordingWhenTheBalanceIsAlreadyZero() {
+        // Sequential retry after the first settlement already committed: amountPaid now
+        // equals invoiceTotal, so the existing balanceDue<=0.001 guard is the natural
+        // idempotency protection -- a second, identical request records nothing further.
+        SalesInvoice invoice = deliveryInvoice(895L, "INV-2026-0895", 195.0, 195.0);
+        when(invoiceRepository.findByIdForUpdate(895L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+
+        controller.settleDelivery(895L, deliverySettleRequest(null));
+
+        verify(invoiceService, never()).recordPayment(anyLong(), anyDouble(), anyString(),
+                any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void settleDeliveryNonCashModeStillCarriesTheSettlingSession() {
+        SalesInvoice invoice = deliveryInvoice(896L, "INV-2026-0896", 195.0, 0.0);
+        when(invoiceRepository.findByIdForUpdate(896L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        when(sessionService.getById(100L)).thenReturn(openPosSession(100L));
+
+        PosCheckoutController.DeliverySettleRequest req = deliverySettleRequest(100L);
+        req.setCardAmount(195.0);
+        req.setCardType("Visa");
+        req.setCardReference("CARD-REF-1");
+
+        controller.settleDelivery(896L, req);
+
+        // Every tender leg of one settlement shares the same collection session,
+        // regardless of tender type -- only the CASH bucket feeds expected-cash math,
+        // but the session attribution itself is uniform.
+        verify(invoiceService).recordPayment(eq(896L), eq(195.0), eq("Visa"), eq("CARD-REF-1"),
+                any(LocalDate.class), any(), isNull(), isNull(), any(), eq(100L));
     }
 }
