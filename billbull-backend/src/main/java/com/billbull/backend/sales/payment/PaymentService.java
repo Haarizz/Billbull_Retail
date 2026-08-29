@@ -261,6 +261,21 @@ public class PaymentService {
         Payment payment = getPaymentById(id);
         if (payment.getReceiptVoucherRecordId() != null) {
             receiptVoucherService.deleteReceipt(payment.getReceiptVoucherRecordId());
+        } else if (payment.getPaymentType() == PaymentType.RECEIVED && payment.getLinkedInvoice() != null) {
+            // 2026-08-29 incident: a Payment whose receiptVoucherRecordId is unset can still
+            // have a real, GL-posted Receipt Voucher linked to the same invoice. Deleting the
+            // Payment in that state silently orphans the voucher — GL stays correct, but the
+            // POS tender ledger (sales_payments) loses all record of the sale, which only
+            // surfaces later as an "unexplained" Day Close variance instead of failing loudly
+            // here, at the point where it's still easy to diagnose. Refuse instead of guessing.
+            SalesInvoice invoice = salesInvoiceRepository.findByInvoiceNumber(payment.getLinkedInvoice()).orElse(null);
+            if (invoice != null && receiptVoucherService.hasCompletedReceiptForInvoice(invoice.getId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Cannot delete this payment: invoice " + payment.getLinkedInvoice()
+                                + " has a completed Receipt Voucher not linked to this payment record. "
+                                + "Deleting it would leave a GL-posted receipt with no matching POS tender "
+                                + "row. Void or correct the Receipt Voucher directly instead.");
+            }
         }
         paymentRepository.delete(payment);
     }
