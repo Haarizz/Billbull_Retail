@@ -562,6 +562,20 @@ public class ReceiptVoucherService {
     }
 
     /**
+     * Whether a completed Receipt Voucher already exists against a sales invoice — used by
+     * {@code PaymentService.deletePayment} to refuse deleting a Payment whose
+     * {@code receiptVoucherRecordId} wasn't set, rather than silently orphaning a GL-posted
+     * voucher (2026-08-29 incident: exactly this shape left a batch of invoices' tender
+     * missing from Day Close while their GL entries stayed correct throughout).
+     */
+    @Transactional(readOnly = true)
+    public boolean hasCompletedReceiptForInvoice(Long salesInvoiceId) {
+        if (salesInvoiceId == null) return false;
+        return repository.findBySalesInvoiceId(salesInvoiceId).stream()
+                .anyMatch(rv -> isCompletedStatus(rv.getStatus()));
+    }
+
+    /**
      * Resolves the customer code from the linked sales invoice or opening invoice
      * and stores it on the receipt. Safe to call when the code is already set
      * (it will not overwrite a non-blank value).

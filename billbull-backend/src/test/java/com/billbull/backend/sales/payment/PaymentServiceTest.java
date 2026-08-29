@@ -2,7 +2,9 @@ package com.billbull.backend.sales.payment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,7 +18,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.billbull.backend.financials.receiptvoucher.ReceiptPurpose;
 import com.billbull.backend.financials.receiptvoucher.ReceiptVoucher;
@@ -24,6 +28,7 @@ import com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
 import com.billbull.backend.sales.customerledger.OpeningInvoice;
 import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
+import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.settings.SalesDocumentType;
@@ -266,6 +271,97 @@ class PaymentServiceTest {
 
         assertMoney(0.0,  byNumber(result, "PAY-0002").getInvoiceBalance()); // terminal 0
         assertMoney(10.0, byNumber(result, "PAY-0001").getInvoiceBalance()); // 0 + newest amount 10
+    }
+
+    // ---------------------------------------------------------------------
+    // deletePayment() — 2026-08-29 incident hardening. A Payment whose
+    // receiptVoucherRecordId is unset can still have a real, GL-posted Receipt
+    // Voucher linked to the same invoice; deleting it in that state used to
+    // silently orphan the voucher. These pin the new guard's three branches.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void deletePaymentUsesReceiptVoucherRecordIdWhenPresent() {
+        Payment payment = new Payment();
+        payment.setId(1L);
+        payment.setPaymentType(PaymentType.RECEIVED);
+        payment.setReceiptVoucherRecordId(55L);
+
+        when(paymentRepository.findById(1L)).thenReturn(Optional.of(payment));
+
+        paymentService.deletePayment(1L);
+
+        verify(receiptVoucherService).deleteReceipt(55L);
+        verify(receiptVoucherService, never()).hasCompletedReceiptForInvoice(any());
+        verify(paymentRepository).delete(payment);
+    }
+
+    @Test
+    void deletePaymentProceedsWhenNoCompletedReceiptExistsForInvoice() {
+        Payment payment = new Payment();
+        payment.setId(2L);
+        payment.setPaymentType(PaymentType.RECEIVED);
+        payment.setLinkedInvoice("INV-700");
+        payment.setReceiptVoucherRecordId(null);
+
+        SalesInvoice invoice = new SalesInvoice();
+        invoice.setId(70L);
+        invoice.setInvoiceNumber("INV-700");
+
+        when(paymentRepository.findById(2L)).thenReturn(Optional.of(payment));
+        when(paymentRepository.findByLinkedInvoice("INV-700")).thenReturn(List.of(payment));
+        when(salesInvoiceRepository.findByInvoiceNumber("INV-700")).thenReturn(Optional.of(invoice));
+        when(receiptVoucherService.hasCompletedReceiptForInvoice(70L)).thenReturn(false);
+
+        paymentService.deletePayment(2L);
+
+        verify(paymentRepository).delete(payment);
+        verify(receiptVoucherService, never()).deleteReceipt(any());
+    }
+
+    @Test
+    void deletePaymentBlockedWhenOrphanedCompletedReceiptExists() {
+        Payment payment = new Payment();
+        payment.setId(3L);
+        payment.setPaymentType(PaymentType.RECEIVED);
+        payment.setLinkedInvoice("INV-701");
+        payment.setReceiptVoucherRecordId(null);
+
+        SalesInvoice invoice = new SalesInvoice();
+        invoice.setId(71L);
+        invoice.setInvoiceNumber("INV-701");
+
+        when(paymentRepository.findById(3L)).thenReturn(Optional.of(payment));
+        when(paymentRepository.findByLinkedInvoice("INV-701")).thenReturn(List.of(payment));
+        when(salesInvoiceRepository.findByInvoiceNumber("INV-701")).thenReturn(Optional.of(invoice));
+        when(receiptVoucherService.hasCompletedReceiptForInvoice(71L)).thenReturn(true);
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> paymentService.deletePayment(3L));
+        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
+
+        verify(paymentRepository, never()).delete(any());
+    }
+
+    @Test
+    void deletePaymentSkipsGuardForMadeTypePayments() {
+        // A vendor/refund-leg payment (paymentType = MADE) is never paired with an
+        // AGAINST_INVOICE receipt voucher the way a RECEIVED payment is — the guard
+        // must not apply to it, even with no receiptVoucherRecordId and a linked invoice.
+        Payment payment = new Payment();
+        payment.setId(4L);
+        payment.setPaymentType(PaymentType.MADE);
+        payment.setLinkedInvoice("INV-702");
+        payment.setReceiptVoucherRecordId(null);
+
+        when(paymentRepository.findById(4L)).thenReturn(Optional.of(payment));
+        when(paymentRepository.findByLinkedInvoice("INV-702")).thenReturn(List.of(payment));
+        when(salesInvoiceRepository.findByInvoiceNumber("INV-702")).thenReturn(Optional.empty());
+
+        paymentService.deletePayment(4L);
+
+        verify(paymentRepository).delete(payment);
+        verify(receiptVoucherService, never()).hasCompletedReceiptForInvoice(any());
     }
 
     // ----- helpers -----
