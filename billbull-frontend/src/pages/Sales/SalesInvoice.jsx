@@ -3070,11 +3070,24 @@ const SalesInvoice = () => {
                 // empty tax-invoice grid. Overlay templates are fixed-position PDFs
                 // and aren't column-driven, so they're left untouched.
                 const taxAwareTemplate = applyTaxAwareDisplayOptions(defaultTemplate, invoiceHasTax);
-                const html = isOverlayInvoiceTemplate(defaultTemplate)
+                let html = isOverlayInvoiceTemplate(defaultTemplate)
                     ? generateOverlayInvoiceHtml(defaultTemplate, printData, { companyProfile: branchProfile })
                     : forPdf
                     ? await generatePdfHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo })
                     : await generatePrintHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo });
+                // TEMP DEBUG — remove after diagnosing the missing company TRN issue.
+                if (typeof html === 'string') {
+                    const matchedBranch = (availableBranches || []).find(b => Number(b?.id) === Number(invoiceBranchId));
+                    const debugBanner = `<div style="background:#fee2e2;color:#7f1d1d;border:2px solid red;padding:8px;font:12px monospace;white-space:pre-wrap;">DEBUG (remove me)
+invoiceBranchId=${JSON.stringify(invoiceBranchId)}
+matchedBranch.id=${JSON.stringify(matchedBranch?.id)} matchedBranch.name=${JSON.stringify(matchedBranch?.name)} matchedBranch.trnNumber=${JSON.stringify(matchedBranch?.trnNumber)}
+company.trn=${JSON.stringify(company?.trn)}
+branchProfile.trn=${JSON.stringify(branchProfile?.trn)}
+availableBranches.length=${(availableBranches || []).length}
+template.category=${JSON.stringify(defaultTemplate?.category)} isDesignerLayout=${JSON.stringify(!!(defaultTemplate?.salesDesignerSettings || defaultTemplate?.purchaseDesignerSettings || defaultTemplate?.displayOptions))}
+</div>`;
+                    html = html.replace('<body>', `<body>${debugBanner}`);
+                }
                 return html;
             }
         }
