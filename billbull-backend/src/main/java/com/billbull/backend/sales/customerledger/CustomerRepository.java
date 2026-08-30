@@ -11,6 +11,16 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
     boolean existsByCode(String code);
     java.util.Optional<Customer> findByCode(String code);
 
+    /**
+     * Exact (case-insensitive) name lookup — used as a last-resort fallback when an
+     * invoice's customerCode is blank but its customerName isn't, so the printed
+     * receipt's CUSTOMER block can still resolve TRN/phone/email/address instead of
+     * silently omitting them (see InvoiceCustomerContactService). Returns every exact
+     * match; the caller only uses the result when exactly one customer shares that
+     * name, to avoid attaching the wrong customer's details when names collide.
+     */
+    List<Customer> findByNameIgnoreCase(String name);
+
     @org.springframework.data.jpa.repository.Query("SELECT c FROM Customer c WHERE " +
         "LOWER(c.name) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
         "LOWER(c.code) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
