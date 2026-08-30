@@ -43,11 +43,12 @@ export const buildDocumentHeaderProfile = ({ company = {}, branches = [], branch
         address: branchAddress || company.address,
         phone: branch.phone || company.phone,
         email: branch.email || company.email,
-        // No company fallback: a branch's TRN reflects that branch's own tax
-        // registration. A branch can be deliberately non-taxable (blank TRN)
-        // under a company that is otherwise VAT-registered, and must not
-        // inherit the company's TRN onto its receipts/invoices.
-        trn: branch.trnNumber || '',
+        // Branch TRN wins when set (a branch can be deliberately non-taxable
+        // under a company that is otherwise VAT-registered). Falls back to the
+        // company's own TRN when the branch has none configured, so a Tax
+        // Invoice never silently prints with no TRN just because the per-branch
+        // field was never filled in.
+        trn: branch.trnNumber || company.trn || '',
         fax: branch.fax || company.fax,
         logoUrl: branch.logoUrl || company.logoUrl,
         stampUrl: branch.stampUrl || company.stampUrl,

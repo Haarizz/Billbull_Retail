@@ -66,7 +66,12 @@ public class SalesInvoiceController {
     @PreAuthorize("isAuthenticated()")
     public List<SalesInvoice> getAll() {
         modulePermissionService.requireCanView("sales.invoice");
-        return service.getAll();
+        List<SalesInvoice> invoices = service.getAll();
+        // Same server-side TRN/phone/email/address resolution as getById/getPage —
+        // several pages (Sales Return, Delivery Note, Customer Ledger, Payment) load
+        // invoices through this endpoint and can feed them straight into a print.
+        customerContactService.attach(invoices);
+        return invoices;
     }
 
     @GetMapping("/stats")
@@ -90,7 +95,15 @@ public class SalesInvoiceController {
                         fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
                         toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
                 : service.getAll();
-        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        com.billbull.backend.util.PageResponse<SalesInvoice> pageResponse =
+                com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        // Enrich only the returned page's rows (not the full unpaginated list) with the
+        // customer's TRN/phone/email/address, the same server-side resolution getById
+        // already applies — so printing an older invoice straight from this list no
+        // longer depends on that customer happening to be in the till's locally-cached
+        // customer list (see InvoiceCustomerContactService).
+        customerContactService.attach(pageResponse.getContent());
+        return pageResponse;
     }
 
     @GetMapping("/{id}")

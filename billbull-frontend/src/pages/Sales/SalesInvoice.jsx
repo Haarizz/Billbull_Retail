@@ -2963,11 +2963,17 @@ const SalesInvoice = () => {
                     customer: {
                         name: dataToPrint.customerName || '',
                         code: dataToPrint.customerCode || fullCustomer?.code || '',
-                        address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '',
+                        address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || dataToPrint.customerAddress || '',
                         shippingAddress: dataToPrint.shippingAddress || shippingAddress || fullCustomer?.shippingAddress || fullCustomer?.defaultShippingAddress || '',
-                        phone: fullCustomer?.mobile || fullCustomer?.phone || '',
-                        email: fullCustomer?.email || '',
-                        trn: fullCustomer?.trn
+                        phone: fullCustomer?.mobile || fullCustomer?.phone || dataToPrint.customerPhone || '',
+                        email: fullCustomer?.email || dataToPrint.customerEmail || '',
+                        // fullCustomer requires the customer to be present in the page's
+                        // locally-loaded customersList; when that lookup misses (list not
+                        // yet loaded, paginated, etc.) fall back to dataToPrint.customerTrn
+                        // — the server-resolved TRN the backend already attaches to every
+                        // invoice response (see InvoiceCustomerContactService) — instead of
+                        // silently printing no TRN.
+                        trn: fullCustomer?.trn || dataToPrint.customerTrn || ''
                     },
                     items: (dataToPrint.items || []).map(i => {
                         const isVoided = Boolean(i.voided ?? i.isVoided ?? false);
