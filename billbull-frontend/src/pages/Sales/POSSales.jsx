@@ -4771,9 +4771,17 @@ export default function POSSales() {
     // `address` is mapPosCustomer's default *shipping* address (its own
     // preference chain already falls back to billing) — the customer's address
     // on file, distinct from the sale's own DELIVERY ADDRESS section.
+    // Falls back to an exact name match when customerCode is blank (seen on some
+    // older/edge-case invoices) — only when exactly one loaded customer shares that
+    // name, so an ambiguous name never attaches the wrong customer's contact block.
     const custRecForPrint = full.customerCode
       ? customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode)
-      : null;
+      : (() => {
+          const name = (full.customerName || '').trim().toLowerCase();
+          if (!name || name === 'walk-in customer') return null;
+          const matches = customerOptions.filter(c => (c.name || '').trim().toLowerCase() === name);
+          return matches.length === 1 ? matches[0] : null;
+        })();
     const resolvedCustomerPhone = customerPhone || custRecForPrint?.phone || full.customerPhone || null;
     const resolvedCustomerEmail = customerEmail || custRecForPrint?.email || full.customerEmail || null;
     const resolvedCustomerTrn = customerTrn || custRecForPrint?.trn || full.customerTrn || null;

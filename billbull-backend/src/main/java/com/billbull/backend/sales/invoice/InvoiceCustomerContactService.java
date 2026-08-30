@@ -38,23 +38,60 @@ public class InvoiceCustomerContactService {
     public SalesInvoice attach(SalesInvoice invoice) {
         if (invoice == null) return null;
         String code = normalisedCode(invoice);
-        if (code == null) return invoice;
-        customerRepository.findByCode(code).ifPresent(c -> apply(invoice, c));
+        Customer customer = code != null ? customerRepository.findByCode(code).orElse(null) : null;
+        if (customer == null) customer = resolveByNameFallback(invoice);
+        if (customer != null) apply(invoice, customer);
         return invoice;
     }
 
-    /** Batch variant: one lookup per distinct customer code, not one per invoice. */
+    /** Batch variant: one lookup per distinct customer code (or, for blank-code
+     *  invoices, per distinct customer name), not one per invoice. */
     public List<SalesInvoice> attach(List<SalesInvoice> invoices) {
         if (invoices == null || invoices.isEmpty()) return invoices;
         Map<String, Customer> byCode = new HashMap<>();
+        Map<String, Customer> byName = new HashMap<>();
         for (SalesInvoice invoice : invoices) {
             String code = normalisedCode(invoice);
-            if (code == null) continue;
-            Customer customer = byCode.computeIfAbsent(code,
-                    key -> customerRepository.findByCode(key).orElse(null));
+            Customer customer = null;
+            if (code != null) {
+                customer = byCode.computeIfAbsent(code, key -> customerRepository.findByCode(key).orElse(null));
+            }
+            if (customer == null) customer = resolveByNameFallback(invoice, byName);
             if (customer != null) apply(invoice, customer);
         }
         return invoices;
+    }
+
+    /**
+     * Last-resort lookup by customerName for an invoice whose customerCode came back
+     * blank (seen on some older/edge-case invoices) — without it, that invoice's
+     * CUSTOMER block silently drops TRN/phone/email/address even though the customer
+     * is otherwise correctly identified by name. Only used when exactly one customer
+     * shares that exact (case-insensitive) name, so an ambiguous name never attaches
+     * the wrong customer's details.
+     */
+    private Customer resolveByNameFallback(SalesInvoice invoice) {
+        return resolveByNameFallback(invoice, null);
+    }
+
+    private Customer resolveByNameFallback(SalesInvoice invoice, Map<String, Customer> cache) {
+        String name = invoice.getCustomerName();
+        if (name == null || name.isBlank() || "Walk-in Customer".equalsIgnoreCase(name.trim())) return null;
+        String key = name.trim().toLowerCase();
+        if (cache == null) return lookupByExactName(key);
+        // computeIfAbsent can't store a null "no match" result, so a name that misses
+        // (or is ambiguous) is simply re-queried if it recurs — acceptable since misses
+        // are the rare case, not the common one.
+        Customer cached = cache.get(key);
+        if (cached != null) return cached;
+        Customer resolved = lookupByExactName(key);
+        if (resolved != null) cache.put(key, resolved);
+        return resolved;
+    }
+
+    private Customer lookupByExactName(String lowerCaseName) {
+        List<Customer> matches = customerRepository.findByNameIgnoreCase(lowerCaseName);
+        return matches.size() == 1 ? matches.get(0) : null;
     }
 
     private void apply(SalesInvoice invoice, Customer customer) {
