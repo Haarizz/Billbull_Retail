@@ -229,7 +229,7 @@ const PayInvoices = ({ vendors, initialVendor }) => {
 
   // Load bank accounts on mount
   useEffect(() => {
-    getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+    getBankAccounts({ excludeCash: true }).then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
   }, []);
 
   // Load History

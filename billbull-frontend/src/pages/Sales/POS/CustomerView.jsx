@@ -61,9 +61,11 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
   const [statementCust, setStatementCust] = React.useState(null);
   const [bankAccountOptions, setBankAccountOptions] = React.useState([]);
 
+  // Bank-only: this picker is shown for the non-Cash receipt methods (card / cheque /
+  // online), so Cash in Hand / Petty Cash are never valid destinations here.
   React.useEffect(() => {
     let cancelled = false;
-    getBankAccounts()
+    getBankAccounts({ excludeCash: true })
       .then(data => { if (!cancelled) setBankAccountOptions(Array.isArray(data) ? data : []); })
       .catch(() => { if (!cancelled) setBankAccountOptions([]); });
     return () => { cancelled = true; };

@@ -55,10 +55,16 @@ public class GeneralLedgerController {
         return ledgerService.getAllAccounts();
     }
 
+    /**
+     * Cash-and-bank settlement accounts. {@code excludeCash=true} drops Cash in Hand /
+     * Petty Cash for callers that need a genuine bank account (e.g. the POS
+     * Online / Bank Transfer receiving account).
+     */
     @GetMapping("/accounts/bank-accounts")
     @PreAuthorize("isAuthenticated()")
-    public List<Account> getBankAccounts() {
-        return ledgerService.getBankAccounts();
+    public List<Account> getBankAccounts(
+            @RequestParam(name = "excludeCash", defaultValue = "false") boolean excludeCash) {
+        return ledgerService.getBankAccounts(excludeCash);
     }
 
     @GetMapping("/accounts/tree")

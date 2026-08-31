@@ -154,7 +154,7 @@ const Payment = () => {
         fetchCustomers();
         fetchInvoices();
         fetchStats();
-        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
+        getBankAccounts({ excludeCash: true }).then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => {});
         getSalesSettings().then(setSalesSettings).catch(() => {});
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);

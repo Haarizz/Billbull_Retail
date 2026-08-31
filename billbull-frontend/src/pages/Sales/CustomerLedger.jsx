@@ -1535,7 +1535,7 @@ const ReceiveMoneyView = () => {
         } finally {
             setIsLoading(false);
         }
-        getBankAccounts().then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => { });
+        getBankAccounts({ excludeCash: true }).then(data => setBankAccounts(Array.isArray(data) ? data : [])).catch(() => { });
     };
 
     // Filtered Data

@@ -475,7 +475,9 @@ const PaymentVoucher = () => {
             const vendorRes = await getVendors();
             setVendors(Array.isArray(vendorRes) ? vendorRes : (vendorRes.data || []));
 
-            const bankRes = await getBankAccounts();
+            // Bank-only: the picker this feeds is rendered only for the non-Cash payment
+            // methods, so Cash in Hand / Petty Cash are never valid there.
+            const bankRes = await getBankAccounts({ excludeCash: true });
             setBankAccounts(Array.isArray(bankRes) ? bankRes : []);
         } catch (error) {
             console.error("Error loading reference data:", error);

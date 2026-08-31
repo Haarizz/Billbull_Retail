@@ -109,8 +109,22 @@ public class LedgerService {
     }
 
     public List<Account> getBankAccounts() {
+        return getBankAccounts(false);
+    }
+
+    /**
+     * Cash-and-bank settlement accounts, optionally restricted to real bank accounts.
+     *
+     * <p>The default list intentionally includes Cash in Hand / Petty Cash — it backs the
+     * generic "which account did the money move through?" pickers (expense payments, vendor
+     * payment vouchers, customer receipts), where settling in cash is valid. Callers that
+     * require an actual bank account — an online/bank transfer's receiving account — pass
+     * {@code excludeCash = true}; see {@link AccountSelectionRules#isCashAccount}.
+     */
+    public List<Account> getBankAccounts(boolean excludeCash) {
         return getAllAccounts().stream()
                 .filter(AccountSelectionRules::isBankAccount)
+                .filter(account -> !excludeCash || !AccountSelectionRules.isCashAccount(account))
                 .sorted((left, right) -> safeCode(left).compareToIgnoreCase(safeCode(right)))
                 .toList();
     }

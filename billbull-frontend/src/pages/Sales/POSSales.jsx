@@ -1870,14 +1870,15 @@ export default function POSSales() {
   useEffect(() => { currentInvoiceRef.current = currentInvoice; }, [currentInvoice]);
 
   // Lazily load configured bank accounts the first time the cashier opens checkout —
-  // the Online allocation modal needs them to offer a receiving account. Same
-  // list/endpoint Bank Reconciliation already uses.
+  // the Online allocation modal needs them to offer a receiving account. excludeCash drops
+  // Cash in Hand / Petty Cash: money arriving by bank transfer must not land on a cash
+  // account, or the session's drawer count expects notes that were never taken.
   useEffect(() => {
     if (!showPaymentDialog) return;
     if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;
     let cancelled = false;
     setCheckoutOnlineBankAccountsLoading(true);
-    getBankAccounts()
+    getBankAccounts({ excludeCash: true })
       .then(data => { if (!cancelled) setCheckoutOnlineBankAccounts(Array.isArray(data) ? data : []); })
       .catch(err => { console.warn('Failed to load bank accounts', err); if (!cancelled) setCheckoutOnlineBankAccounts([]); })
       .finally(() => { if (!cancelled) setCheckoutOnlineBankAccountsLoading(false); });
