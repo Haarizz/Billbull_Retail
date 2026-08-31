@@ -157,6 +157,7 @@ export function PaymentModalFrame({
   onCancel,
   children,
   footer,
+  steps = null,
   hint = 'Type to enter the amount · Enter to confirm · Esc to cancel',
   dialogRef = null,
   onKeyDown = null,
@@ -188,6 +189,7 @@ export function PaymentModalFrame({
             <p className="text-sm font-black uppercase tracking-wide">{title}</p>
             {subtitle && <p className="truncate text-xs opacity-90">{subtitle}</p>}
           </div>
+          {steps && <StepIndicator current={steps.current} total={steps.total} />}
           <button type="button" onClick={onCancel} aria-label="Close"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/20 hover:bg-white/30">
             <X className="h-4 w-4" />
@@ -203,6 +205,31 @@ export function PaymentModalFrame({
           <p className="px-4 pb-3 text-center text-[10px] text-gray-400">{hint}</p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Where the cashier is in a multi-step dialog. Sits in the header rather than above the body
+ * so it stays visible while the body scrolls — a cashier who scrolls past it can still tell
+ * whether picking a customer is behind them or ahead of them.
+ */
+function StepIndicator({ current, total }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      {Array.from({ length: total }, (_, i) => i + 1).map((step) => (
+        <React.Fragment key={step}>
+          {step > 1 && <span className="h-px w-3 bg-white/40" />}
+          <span
+            aria-current={step === current ? 'step' : undefined}
+            className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black ${
+              step === current ? 'bg-white text-[#1E293B]' : 'bg-white/25 text-white/80'
+            }`}
+          >
+            {step}
+          </span>
+        </React.Fragment>
+      ))}
     </div>
   );
 }

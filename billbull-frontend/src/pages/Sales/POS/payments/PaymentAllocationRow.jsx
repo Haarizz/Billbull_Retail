@@ -40,6 +40,9 @@ function PaymentAllocationRow({ line, error, onEdit, onRemove }) {
 
       <button type="button" onClick={() => onEdit(line)} className="min-w-0 flex-1 text-left">
         <span className="block truncate text-sm font-bold" style={{ color: style.accent }}>
+          {/* Money taken inside the credit dialog is an ordinary tender, but saying where it
+              was keyed is what lets a cashier read a two-line credit sale as one decision. */}
+          {line.metadata?.creditAdvance ? 'Advance · ' : ''}
           {style.label}{line.paymentSubtype ? ` · ${line.paymentSubtype}` : ''}
         </span>
         {detail && <span className="block truncate text-[10px] text-gray-400">{detail}</span>}
