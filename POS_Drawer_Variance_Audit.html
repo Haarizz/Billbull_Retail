@@ -1,0 +1,1056 @@
+<title>Drawer Variance Trace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root{
+  --paper:#F1F4F5;
+  --card:#FFFFFF;
+  --sunk:#E7ECEE;
+  --ink:#12181D;
+  --ink-2:#3B4A54;
+  --ink-3:#65757F;
+  --rule:#CFD8DC;
+  --rule-soft:#E1E8EA;
+  --navy:#1C3D5A;
+  --brass:#9A6D18;
+  --brass-soft:#F3E6C9;
+  --crit:#A5271C;
+  --crit-bg:#F7E2DF;
+  --high:#A85C10;
+  --high-bg:#F9E9D6;
+  --med:#6F6221;
+  --med-bg:#F2EDD5;
+  --low:#3F6070;
+  --low-bg:#E2EBEF;
+  --ok:#2B6046;
+  --ok-bg:#DEEDE4;
+  --shadow:0 1px 2px rgba(18,24,29,.06),0 8px 24px -16px rgba(18,24,29,.28);
+  --verdict-bg:#1C3D5A;
+  --verdict-ink:#EDF2F4;
+  --verdict-code:rgba(255,255,255,.14);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#101619;
+    --card:#171F24;
+    --sunk:#1D272D;
+    --ink:#E6EDF0;
+    --ink-2:#B2C0C8;
+    --ink-3:#82949E;
+    --rule:#2C3940;
+    --rule-soft:#232E34;
+    --navy:#8FB8D8;
+    --brass:#D6A748;
+    --brass-soft:#3A2E13;
+    --crit:#F09184;
+    --crit-bg:#3A1A15;
+    --high:#E8AC6A;
+    --high-bg:#33220F;
+    --med:#D3C579;
+    --med-bg:#2B2712;
+    --low:#9CBDCC;
+    --low-bg:#1B2A31;
+    --ok:#83C6A2;
+    --ok-bg:#152A20;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.9);
+    --verdict-bg:#171F24;
+    --verdict-ink:#E6EDF0;
+    --verdict-code:#1D272D;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#101619; --card:#171F24; --sunk:#1D272D;
+  --ink:#E6EDF0; --ink-2:#B2C0C8; --ink-3:#82949E;
+  --rule:#2C3940; --rule-soft:#232E34;
+  --navy:#8FB8D8; --brass:#D6A748; --brass-soft:#3A2E13;
+  --crit:#F09184; --crit-bg:#3A1A15;
+  --high:#E8AC6A; --high-bg:#33220F;
+  --med:#D3C579; --med-bg:#2B2712;
+  --low:#9CBDCC; --low-bg:#1B2A31;
+  --ok:#83C6A2; --ok-bg:#152A20;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 28px -18px rgba(0,0,0,.9);
+  --verdict-bg:#171F24; --verdict-ink:#E6EDF0; --verdict-code:#1D272D;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"Public Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  font-size:16px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px 96px}
+.col{max-width:72ch}
+
+/* ── masthead ── */
+.mast{padding:56px 0 28px;border-bottom:3px solid var(--navy)}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;
+  font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--brass);font-weight:600;margin:0 0 14px;
+}
+h1{
+  font-family:"Zilla Slab",Georgia,serif;font-weight:700;
+  font-size:clamp(34px,5.4vw,56px);line-height:1.04;letter-spacing:-.02em;
+  margin:0 0 16px;text-wrap:balance;color:var(--ink);
+}
+.standfirst{font-size:19px;line-height:1.55;color:var(--ink-2);margin:0;max-width:64ch}
+.meta{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:2px;background:var(--rule-soft);border:1px solid var(--rule-soft);
+  margin-top:32px;
+}
+.meta div{background:var(--card);padding:11px 14px}
+.meta dt{
+  font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--ink-3);margin:0 0 3px;
+}
+.meta dd{margin:0;font-size:13.5px;font-weight:600;color:var(--ink)}
+
+/* ── contents ── */
+.toc{margin:40px 0 8px;padding:22px 0;border-bottom:1px solid var(--rule)}
+.toc h2{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin:0 0 16px;font-weight:600}
+.toc ol{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:2px 28px;counter-reset:t}
+.toc li{counter-increment:t;font-size:14px;border-bottom:1px dotted var(--rule-soft);padding:5px 0}
+.toc a{color:var(--ink-2);text-decoration:none;display:flex;gap:10px}
+.toc a:hover{color:var(--brass)}
+.toc a::before{content:counter(t,decimal-leading-zero);font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-3);padding-top:3px;flex:none}
+
+/* ── sections ── */
+section{padding-top:52px;scroll-margin-top:16px}
+h2.sec{
+  font-family:"Zilla Slab",Georgia,serif;font-weight:600;
+  font-size:clamp(24px,3.2vw,32px);line-height:1.15;letter-spacing:-.015em;
+  margin:0 0 20px;text-wrap:balance;
+  padding-bottom:10px;border-bottom:1px solid var(--rule);
+}
+h2.sec .n{
+  font-family:"IBM Plex Mono",monospace;font-size:.52em;color:var(--brass);
+  font-weight:600;margin-right:.7em;letter-spacing:.04em;vertical-align:.16em;
+}
+h3{font-family:"Zilla Slab",Georgia,serif;font-weight:600;font-size:20px;line-height:1.25;margin:34px 0 12px;color:var(--ink);text-wrap:balance}
+h4{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin:26px 0 10px;font-family:"Public Sans",sans-serif}
+p{margin:0 0 15px;max-width:72ch}
+ul,ol.body{margin:0 0 16px;padding-left:22px;max-width:72ch}
+li{margin-bottom:7px}
+a{color:var(--navy)}
+strong{font-weight:700}
+code{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.86em;
+  background:var(--sunk);padding:.1em .38em;border-radius:2px;color:var(--ink);
+  overflow-wrap:break-word;
+}
+hr{border:0;border-top:1px solid var(--rule-soft);margin:32px 0}
+
+/* ── evidence blocks ── */
+pre{
+  font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.62;
+  background:var(--card);border:1px solid var(--rule);
+  border-left:3px solid var(--navy);
+  padding:15px 18px;margin:0 0 20px;overflow-x:auto;color:var(--ink);
+}
+pre b{color:var(--brass);font-weight:600}
+.src{
+  font-family:"IBM Plex Mono",monospace;font-size:11.5px;color:var(--ink-3);
+  margin:-14px 0 20px;padding-left:3px;
+}
+figure{margin:0 0 24px}
+figcaption{
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-3);margin-bottom:7px;font-weight:600;
+}
+
+/* ── tables ── */
+.scroll{overflow-x:auto;margin:0 0 26px;border:1px solid var(--rule);background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:560px}
+th,td{text-align:left;padding:9px 13px;border-bottom:1px solid var(--rule-soft);vertical-align:top}
+thead th{
+  background:var(--sunk);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-2);font-weight:700;white-space:nowrap;border-bottom:1px solid var(--rule);
+  position:sticky;top:0;
+}
+tbody tr:last-child td{border-bottom:0}
+td.num{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.id{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--ink-3);white-space:nowrap}
+
+/* ── chips ── */
+.chip{
+  display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:10px;
+  letter-spacing:.09em;text-transform:uppercase;font-weight:600;
+  padding:2px 7px;border-radius:2px;white-space:nowrap;
+}
+.c-crit{background:var(--crit-bg);color:var(--crit)}
+.c-high{background:var(--high-bg);color:var(--high)}
+.c-med{background:var(--med-bg);color:var(--med)}
+.c-low{background:var(--low-bg);color:var(--low)}
+.c-ok{background:var(--ok-bg);color:var(--ok)}
+.c-fact{background:var(--low-bg);color:var(--low)}
+.c-inf{background:var(--med-bg);color:var(--med)}
+.c-rec{background:var(--brass-soft);color:var(--brass)}
+
+/* ── finding cards ── */
+.find{
+  background:var(--card);border:1px solid var(--rule);border-left-width:4px;
+  padding:18px 20px;margin:0 0 18px;box-shadow:var(--shadow);
+}
+.find.sev-crit{border-left-color:var(--crit)}
+.find.sev-high{border-left-color:var(--high)}
+.find.sev-med{border-left-color:var(--med)}
+.find.sev-low{border-left-color:var(--low)}
+.find .hd{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-bottom:9px}
+.find .hd h3{margin:0;font-size:18px;flex:1 1 240px}
+.find dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px}
+.find dt{font-weight:700;color:var(--ink-3);font-size:11px;letter-spacing:.07em;text-transform:uppercase;padding-top:5px;white-space:nowrap}
+.find dd{margin:0}
+.find dd p:last-child{margin-bottom:0}
+.find dd ul{margin-bottom:0}
+
+/* ── callout ── */
+.note{
+  background:var(--card);border:1px solid var(--rule);border-top:3px solid var(--brass);
+  padding:18px 20px;margin:0 0 24px;
+}
+.note p:last-child{margin-bottom:0}
+.note .lbl{
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--brass);font-weight:600;margin:0 0 8px;
+}
+
+/* ── verdict ── */
+.verdict{background:var(--verdict-bg);color:var(--verdict-ink);padding:36px 34px;margin-top:20px;box-shadow:var(--shadow);border-top:4px solid var(--brass)}
+.verdict h3{color:inherit;margin-top:0}
+.verdict p{color:inherit}
+.verdict strong{color:inherit}
+.verdict code{background:var(--verdict-code);color:inherit}
+
+:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+@media (max-width:640px){
+  .wrap{padding:0 16px 64px}
+  .find dl{grid-template-columns:1fr;gap:2px}
+  .find dt{padding-top:9px}
+}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">BillBull Retail · POS Cash Reconciliation · Code Audit</p>
+  <h1>Drawer Variance Trace</h1>
+  <p class="standfirst">A code-first trace of denomination counting from the Close Session dialog through session closure, the GL, and the Z-Report — and what happens to the variance along the way.</p>
+  <dl class="meta">
+    <div><dt>Branch</dt><dd>feature/posclient</dd></div>
+    <div><dt>Head</dt><dd>8b455427</dd></div>
+    <div><dt>Date</dt><dd>2026-08-31</dd></div>
+    <div><dt>Method</dt><dd>Static read, no execution</dd></div>
+    <div><dt>Code changed</dt><dd>None</dd></div>
+    <div><dt>Confirmed issues</dt><dd>11</dd></div>
+  </dl>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s1">Executive Summary</a></li>
+    <li><a href="#s2">X-Report Variance Flow</a></li>
+    <li><a href="#s3">Formula &amp; Source of Truth</a></li>
+    <li><a href="#s4">Session Closing Flow</a></li>
+    <li><a href="#s5">How Variance Is Persisted</a></li>
+    <li><a href="#s6">How Z-Report Handles Variance</a></li>
+    <li><a href="#s7">X vs Z Reconciliation</a></li>
+    <li><a href="#s8">Financial / Accounting Impact</a></li>
+    <li><a href="#s9">Confirmed Issues</a></li>
+    <li><a href="#s10">Potential Risks</a></li>
+    <li><a href="#s11">Data Integrity Risks</a></li>
+    <li><a href="#s12">Audit Trail Gaps</a></li>
+    <li><a href="#s13">Concurrency / Transactions</a></li>
+    <li><a href="#s14">Recommended Improvements</a></li>
+    <li><a href="#s15">Priority Matrix</a></li>
+    <li><a href="#s16">Test Matrix</a></li>
+    <li><a href="#s17">Files, Functions, Models</a></li>
+    <li><a href="#s18">Final Verdict</a></li>
+  </ol>
+</nav>
+
+<!-- ════════════ 1 ════════════ -->
+<section id="s1">
+  <h2 class="sec"><span class="n">01</span>Executive Summary</h2>
+
+  <p><span class="chip c-fact">Fact</span> The denomination count is a <strong>frontend-only artifact</strong>. The browser multiplies each denomination by its quantity in JavaScript floats, sends the resulting scalar to the server as <code>closingCash</code>, and the server never checks that scalar against the denomination map it is sent alongside. Everything downstream — variance, GL, reports — is built on a number the client asserted.</p>
+
+  <p><span class="chip c-fact">Fact</span> Cash variance exists in exactly three places after a close: <code>pos_sessions.cash_difference</code>, a hand-built JSON string in <code>pos_sessions.z_report_json</code>, and a free-text audit sentence. It reaches <strong>no ledger account</strong>. There is no Cash Over/Short account anywhere in the codebase — a grep across all of <code>financials/</code> returns nothing.</p>
+
+  <p><span class="chip c-fact">Fact</span> The session-close journal entry posts <code>Dr Bank / Cr Cash in Hand</code> for the <em>counted</em> amount, not the expected amount. The variance is therefore silently absorbed as a permanent, unexplained residual balance in Cash in Hand — a debit stub on a shortage, a credit (negative asset) on an overage. Nothing ever clears it.</p>
+
+  <p><span class="chip c-fact">Fact</span> The Z-Report does not carry the X-Report's variance forward. The persisted <code>pos_day_closes</code> row has an <code>expected_cash</code> column and <strong>no counted-cash or variance column at all</strong>. On screen, the Z-Report renders Cash Variance as a literal em-dash, and the Day Close checklist hardcodes <code>{ label: 'Cash Variance Within Limits', passed: true }</code>.</p>
+
+  <p><span class="chip c-fact">Fact</span> Where the Z-Report <em>does</em> compute a variance — the print/PDF view-model — it uses a different Expected Cash formula than the X-Report, omitting cash drops. Any day with a drawer drop prints two different variance figures for the same money.</p>
+
+  <p><span class="chip c-inf">Inference</span> The pieces that <em>are</em> right suggest this was built correctly for sales and then never finished for cash: the Day Close row is DB-trigger-immutable, the session range resolution is genuinely single-source, and the correction system is a clean non-destructive overlay. The gap is specifically the cash-count leg.</p>
+
+  <div class="note">
+    <p class="lbl">The one-line answer</p>
+    <p>Denomination variance does not flow into the Z-Report. It is computed in the browser, stored once on the session row, excluded from the day-close snapshot's structured fields, rendered as <code>—</code> on screen, recomputed with a different formula in print, and absorbed into the Cash in Hand GL balance where nobody will ever look for it.</p>
+  </div>
+</section>
+
+<!-- ════════════ 2 ════════════ -->
+<section id="s2">
+  <h2 class="sec"><span class="n">02</span>Actual X-Report Denomination Variance Flow</h2>
+
+  <p>Traced end to end, the lifecycle is shorter than the UI implies — most of it never leaves the browser.</p>
+
+  <figure>
+    <figcaption>Lifecycle, as implemented</figcaption>
+<pre>Cashier types quantities
+  └─ React state <b>closingDenominations</b>       POSSales.jsx:701   (frontend only)
+       │
+       ├─ Actual Cash  = <b>calculateDenominationTotal()</b>   POSSales.jsx:2693 (JS float)
+       ├─ Expected Cash = server <b>summary.expectedCash</b>    read-only from GET /x-report
+       └─ Variance      = actual − expected                    POSSales.jsx:10653 (frontend only)
+       │
+       ▼  POST /api/pos/sessions/{id}/close
+   body.closingCash          ← the JS float, <b>unverified</b> against the map
+   body.closingDenominations ← the map, stored verbatim as text
+       │
+       ▼  PosSessionService.closeSession()                     :787–930
+   expectedCash   = recomputed server-side                     :824
+   cashDifference = closingCash − expectedCash                 :859
+   z_report_json  = hand-built string incl. cashVariance       :1291
+       │
+       ├─▶ GL: <b>Dr Bank / Cr Cash</b> for closingCash          PostingEngineService:3030
+       │       (variance never posted anywhere)
+       └─▶ Audit: "POS session closed. Cash variance: X"       PosAuditService:91
+       │
+       ▼  Day Close  →  PosDayClose row
+   expected_cash  = Σ session.expectedCash                     :2194
+   <b>counted cash: no column.  variance: no column.</b>
+   z_report_json  = full report blob (contains sessions[] entities)
+       │
+       ▼  Z-Report render
+   on screen : Cash Variance = <b>"—"</b> (hardcoded)             POSSales.jsx:7608
+   in print  : recomputed with a <b>different</b> formula         posReportViewModel.js:359,386</pre>
+  </figure>
+
+  <h3>Source of truth per value</h3>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Value</th><th>Where computed</th><th>Side</th><th>Persisted?</th><th>Can go stale?</th></tr></thead>
+    <tbody>
+      <tr><td>Denomination ladder</td><td class="id">utils/cashDenominations.js:13,21</td><td>Frontend</td><td>No — hardcoded AED</td><td>n/a</td></tr>
+      <tr><td>Denomination quantities</td><td class="id">POSSales.jsx:10600,10624</td><td>Frontend</td><td>Yes — <code>closing_denominations_json</code> TEXT</td><td>Yes — overlay corrections diverge from it</td></tr>
+      <tr><td>Actual counted cash</td><td class="id">POSSales.jsx:2693</td><td><strong>Frontend only</strong></td><td>Yes — as <code>closing_cash</code></td><td>Yes — never re-derived from the map</td></tr>
+      <tr><td>Expected cash</td><td class="id">PosSessionService:249 <code>computeExpectedCash</code></td><td>Backend (mirrored in FE fallback)</td><td>Yes — <code>expected_cash</code></td><td>Yes — frozen at close, later corrections ignored</td></tr>
+      <tr><td>Cash variance</td><td class="id">PosSessionService:859</td><td>Both (independently)</td><td>Yes — <code>cash_difference</code></td><td>Yes</td></tr>
+      <tr><td>Opening float</td><td class="id">pos_sessions.opening_cash</td><td>Backend</td><td>Yes</td><td>No</td></tr>
+      <tr><td>Cash sales (tender)</td><td class="id">PaymentRepository:123 <code>sumTenderByModeForSessions</code></td><td>Backend</td><td>No — always live</td><td>No</td></tr>
+      <tr><td>Cash refunds</td><td class="id">PaymentRepository:149 <code>sumRefundByModeForSessions</code></td><td>Backend</td><td>No</td><td>—</td></tr>
+      <tr><td>Cash drops in/out</td><td class="id">PosSessionService:231 <code>sumCashMovements</code></td><td>Backend</td><td>No — live, ACTIVE only</td><td>No</td></tr>
+      <tr><td>Non-cash tenders</td><td class="id">PosSessionService:2665 <code>aggregateTender</code></td><td>Backend</td><td>Partly — session counters</td><td>Yes (counters are legacy)</td></tr>
+      <tr><td>Session totals</td><td class="id">recordInvoiceOnSession :1467</td><td>Backend</td><td>Yes — running counters</td><td>Yes — reports prefer live tender</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <p class="lbl">Critical omission in the ladder</p>
+    <p>Cash refunds are computed (<code>aggregateRefunds</code>) and <em>displayed</em>, but they are not in <code>computeExpectedCash</code>. Money physically leaves the drawer on a cash refund and Expected Cash never drops. <code>buildCashPosition</code> is explicit that the team knows: <code>result.put("cashRefundsSupported", false)</code> — "SalesReturn carries no payment-mode field."</p>
+  </div>
+</section>
+
+<!-- ════════════ 3 ════════════ -->
+<section id="s3">
+  <h2 class="sec"><span class="n">03</span>The Actual Formula and Sign Convention</h2>
+
+  <h4>Expected Cash — the authoritative definition</h4>
+<pre>private static BigDecimal computeExpectedCash(PosSession session, BigDecimal tenderCash,
+                                              BigDecimal cashDropIn, BigDecimal cashDropOut) {
+    return nz(session.getOpeningCash()).add(tenderCash).add(cashDropIn).subtract(cashDropOut);
+}</pre>
+  <p class="src">PosSessionService.java:249–253 — shared by <code>closeSession()</code>, <code>getXReport()</code> and <code>availableCashInDrawer()</code>.</p>
+
+  <p>So: <code>openingFloat + cashTenderReceived + dropIn − dropOut</code>. Where <code>tenderCash</code> is <code>PaymentType.RECEIVED</code>, cash-bucket, keyed on <code>Payment.posSessionId</code>, excluding only <code>CANCELLED</code>/<code>FAILED</code> — <strong><code>PENDING</code> cash payments are counted as if collected</strong>. Cash refunds, cash-mode sales returns, and cash paid out through the returns module are all absent.</p>
+
+  <h4>Cash Variance — the authoritative definition</h4>
+<pre>BigDecimal actualClosing = closingCash != null ? closingCash : BigDecimal.ZERO;
+...
+session.setCashDifference(<b>actualClosing.subtract(expectedCash)</b>);   // signed, persisted
+
+BigDecimal variance = actualClosing.subtract(expectedCash)<b>.abs()</b>;  // unsigned, gate only</pre>
+  <p class="src">PosSessionService.java:825, 859 — note two <em>different</em> variables named "variance" in one method.</p>
+
+  <p><strong>Convention: <code>Actual Counted − Expected</code>.</strong> Positive = overage/excess, negative = shortage. The frontend agrees (<code>POSSales.jsx:8558</code>, <code>posReportViewModel.js:113</code>). The supervisor-threshold gate uses the absolute value, so overage and shortage are treated identically for approval purposes.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Case</th><th>Implemented behavior</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Positive variance (overage)</td><td>Stored positive. UI label "Excess", amber. No accounting effect.</td><td class="id">POSSales.jsx:8560</td></tr>
+      <tr><td>Negative variance (shortage)</td><td>Stored negative. UI "Short", red. No accounting effect.</td><td class="id">POSSales.jsx:8560</td></tr>
+      <tr><td>Zero variance</td><td>"Balanced" at <code>&lt;0.01</code> tolerance.</td><td class="id">POSSales.jsx:8559</td></tr>
+      <tr><td>Missing denomination count</td><td><strong>Close proceeds.</strong> <code>closingCash = 0</code>, variance = −expected. UI shows "Pending Count" and still closes.</td><td class="id">canCloseSession, POSSales.jsx:8538</td></tr>
+      <tr><td>Partial count</td><td>No validation. Whatever was typed is the truth.</td><td class="id">—</td></tr>
+      <tr><td>All quantities zero</td><td>Indistinguishable from "not counted". Both give <code>closingCash = 0</code>.</td><td class="id">POSSales.jsx:2693</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>What variance is treated as</h4>
+  <p><span class="chip c-fact">Fact</span> Report-only value and operational metadata. It is <strong>not</strong> an accounting adjustment, not a settlement value, not a ledger movement, and not — in practice — an approval item: <code>PosSettings.cashVarianceThreshold</code> defaults to <code>BigDecimal.ZERO</code> and the gate is written <code>if (threshold.signum() &gt; 0 &amp;&amp; ...)</code>, so on a default install <strong>every variance closes unapproved</strong>.</p>
+</section>
+
+<!-- ════════════ 4 ════════════ -->
+<section id="s4">
+  <h2 class="sec"><span class="n">04</span>Session Closing Semantics</h2>
+
+  <p><code>POST /api/pos/sessions/{id}/close</code> → <code>PosSessionController:146</code> → <code>PosSessionService.closeSession(...)</code> (12-arg overload, <code>:787</code>). Everything below happens inside one <code>@Transactional</code> method.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Step</th><th>What actually happens</th><th>In tx?</th></tr></thead>
+    <tbody>
+      <tr><td>Status guard</td><td>Rejects <code>CLOSED</code>; requires <code>OPEN</code>/<code>SUSPENDED</code>. Read-then-act, <strong>no row lock, no <code>@Version</code></strong>.</td><td>Yes</td></tr>
+      <tr><td>Authorization</td><td>Optional single-use <code>closureAuthToken</code> redeemed via <code>PosClosureAuthorizationRegistry</code>; else the logged-in user.</td><td>Yes</td></tr>
+      <tr><td>Denomination validation</td><td><strong>None.</strong> <code>closingCash</code> and <code>closingDenominations</code> are accepted independently.</td><td>—</td></tr>
+      <tr><td>Variance gate</td><td>Blocks only if <code>threshold &gt; 0</code> and <code>|variance| &gt; threshold</code>, and only if the client did not send <code>supervisorApproved: true</code>.</td><td>Yes</td></tr>
+      <tr><td>Card settlement</td><td>Server recomputes <code>cardDifference</code> and overrides the client's <code>cardSettlementVerified</code> — <em>this leg is done correctly</em>. Cash has no equivalent.</td><td>Yes</td></tr>
+      <tr><td>Persistence</td><td>status, closedAt/By, closingCash, expectedCash, cashDifference, denominations JSON, card fields, notes, zReportJson.</td><td>Yes</td></tr>
+      <tr><td>Terminal unlock</td><td><code>terminalRepository.clearOpenSession</code>, <code>endOpenHostingSegment</code>.</td><td>Yes</td></tr>
+      <tr><td>GL posting</td><td><code>createJournalFromSessionClose</code> inside <code>try { } catch (Exception e) { }</code> — <strong>empty catch, no logging</strong>.</td><td>Yes, but swallowed</td></tr>
+      <tr><td>Audit log</td><td><code>@Async</code> + <code>REQUIRES_NEW</code> — commits on a separate thread and separate transaction.</td><td><strong>No</strong></td></tr>
+      <tr><td>Report generation</td><td>Not performed here. X-Report is a separate GET; Z-Report is Day Close.</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Atomicity assessment</h4>
+  <ul>
+    <li><span class="chip c-ok">Safe</span> Session closes but denominations not saved — <em>cannot happen</em>; same row, same transaction.</li>
+    <li><span class="chip c-ok">Safe</span> Denominations saved but closure fails — <em>cannot happen</em>; both roll back together.</li>
+    <li><span class="chip c-crit">Broken</span> GL fails after closure — <em>expected behavior by design</em>. The empty catch means the cash-pickup JE is silently skipped and never retried. There is no dead-letter, no flag, no log line.</li>
+    <li><span class="chip c-high">Broken</span> Audit orphan — <code>@Async</code> audit can commit while the close transaction rolls back, producing a SESSION_CLOSED audit row for a session that is still open.</li>
+    <li><span class="chip c-med">Exposed</span> Duplicate close — no idempotency key. The second request 400s only if the first already committed; concurrently, both pass the status check.</li>
+    <li><span class="chip c-med">Exposed</span> Re-submit — the "Close Session &amp; Print Report" button carries no <code>disabled</code> attribute and no in-flight guard (<code>POSSales.jsx:10812</code>).</li>
+  </ul>
+</section>
+
+<!-- ════════════ 5 ════════════ -->
+<section id="s5">
+  <h2 class="sec"><span class="n">05</span>How Variance Is Persisted</h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Store</th><th>Field</th><th>Contains variance?</th><th>Mutable?</th></tr></thead>
+    <tbody>
+      <tr><td><code>pos_sessions</code></td><td class="id">cash_difference NUMERIC(15,2)</td><td><span class="chip c-ok">Yes</span> signed</td><td>No API can change it post-close</td></tr>
+      <tr><td><code>pos_sessions</code></td><td class="id">closing_cash, expected_cash</td><td>Inputs</td><td>Frozen</td></tr>
+      <tr><td><code>pos_sessions</code></td><td class="id">closing_denominations_json TEXT</td><td>Breakdown</td><td>Frozen; superseded by overlay</td></tr>
+      <tr><td><code>pos_sessions</code></td><td class="id">z_report_json TEXT</td><td><span class="chip c-ok">Yes</span> <code>cashVariance</code> key</td><td>Written once</td></tr>
+      <tr><td><code>pos_x_report_snapshots</code></td><td class="id">report_json TEXT</td><td><span class="chip c-crit">No</span></td><td>Immutable</td></tr>
+      <tr><td><code>pos_day_closes</code></td><td class="id">expected_cash NUMERIC(19,4)</td><td><span class="chip c-crit">No counted-cash or variance column exists</span></td><td>DB trigger blocks UPDATE/DELETE</td></tr>
+      <tr><td><code>pos_day_closes</code></td><td class="id">z_report_json TEXT</td><td>Indirectly — inside <code>sessions[]</code></td><td>Immutable</td></tr>
+      <tr><td><code>pos_audit_logs</code></td><td class="id">details VARCHAR</td><td>Free text only</td><td>Append-only</td></tr>
+      <tr><td>General Ledger</td><td class="id">journal_lines</td><td><span class="chip c-crit">Never</span></td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>The X-Report snapshot is generated before the count exists</h4>
+<pre>public Map&lt;String, Object&gt; generateXReport(Long sessionId) {
+    PosSession session = getById(sessionId);
+    if (session.getStatus() == PosSessionStatus.<b>OPEN</b> && session.getXReportGeneratedAt() == null) {
+        ...
+        Map&lt;String, Object&gt; report = getXReport(sessionId);
+        persistXReportSnapshot(session, report, reportNumber, ...);   // frozen here</pre>
+  <p class="src">PosSessionService.java:1556–1575</p>
+
+  <p><span class="chip c-fact">Fact</span> The snapshot is taken while the session is <strong>OPEN</strong>. At that moment <code>closing_cash</code>, <code>cash_difference</code> and <code>closing_denominations_json</code> are all <code>null</code>. <code>getXReport()</code> puts <code>expectedCash</code> in the summary but never puts an <code>actualCash</code> or <code>cashVariance</code> anywhere — check <code>PosSessionService:1603–1701</code>: the keys do not exist.</p>
+
+  <p><span class="chip c-inf">Inference</span> Consequently, replaying an archived X-Report through <code>PosReportsService.getXDetail()</code> — which the class javadoc promises is "exactly what was persisted" — feeds the view-model a report with no denominations. <code>resolveDenominations()</code> falls back to <code>opts.liveDenominations || {}</code> (<code>posReportViewModel.js:79</code>), so the historical X-Report renders <strong>Actual Cash 0.00, Variance = −Expected, status "Pending Count"</strong> for a session that was counted and balanced perfectly.</p>
+</section>
+
+<!-- ════════════ 6 ════════════ -->
+<section id="s6">
+  <h2 class="sec"><span class="n">06</span>How the Z-Report Handles Variance</h2>
+
+  <p>Answering the ten specific questions directly.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:2.5em">—</th><th>Question</th><th>Answer</th></tr></thead>
+    <tbody>
+      <tr><td class="id">A</td><td>Copied directly from X-Report?</td><td><strong>No.</strong> There is no data path from <code>pos_x_report_snapshots</code> to <code>PosDayClose</code>. The Z-Report never reads an X-Report.</td></tr>
+      <tr><td class="id">B</td><td>Recalculated during Z-Report generation?</td><td><strong>Not in the backend.</strong> <code>generateDynamicZReport</code> (<code>:1899</code>) produces no variance key. Only the frontend print view-model recalculates one.</td></tr>
+      <tr><td class="id">C</td><td>Re-derived from underlying data?</td><td>Partly — Expected Cash is re-derived from tender/drops; counted cash is only ever the persisted per-session <code>closingCash</code>.</td></tr>
+      <tr><td class="id">D</td><td>Stored as a dedicated field?</td><td><strong>No.</strong> <code>pos_day_closes</code> has <code>expected_cash</code> and nothing else on the cash-count side. No <code>cashVariance</code>, <code>actualCash</code>, <code>closingCash</code>, <code>overShort</code>.</td></tr>
+      <tr><td class="id">E</td><td>Persisted X value or reconstruction?</td><td>Reconstruction, from <code>sessions[]</code> entity JSON embedded in the snapshot blob.</td></tr>
+      <tr><td class="id">F</td><td>Can X and Z disagree for one session?</td><td><span class="chip c-crit">Yes</span> — routinely. See §07.</td></tr>
+      <tr><td class="id">G</td><td>Denominations changed after close — which wins?</td><td>Depends on the reader. The overlay wins for <code>sessionInfo.closingDenominationsJson</code>; the original wins for <code>closingCash</code>, <code>cashDifference</code> and the day-close snapshot. Both are shown in the same report.</td></tr>
+      <tr><td class="id">H</td><td>Does Z contain the breakdown?</td><td>Only in the print view-model, summed client-side across <code>sessionInfo[]</code>. The on-screen Z-Report has no denomination table.</td></tr>
+      <tr><td class="id">I</td><td>Included in financial totals?</td><td><strong>No.</strong> Not in gross/net sales, tender totals, tax, or <code>PosDayClose</code>'s sales columns.</td></tr>
+      <tr><td class="id">J</td><td>Does closing create an accounting transaction for it?</td><td><strong>No</strong> — and the JE that <em>is</em> created uses counted cash, which buries the variance. See §08.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>The exact code path, close → Z-Report</h4>
+<pre>closeSession()                         PosSessionService:787
+  └─ session.cashDifference = actual − expected          :859
+  └─ session.zReportJson = buildZReportSnapshot(...)     :862 → :1291
+        ⋯ no consumer. Nothing in the codebase ever reads <b>getZReportJson()</b> ⋯
+
+closeDay()                             PosSessionService:2037
+  ├─ generateDynamicZReport(range)                       :2106 → :1899
+  │     summary.cashPosition = buildCashPosition(...)    :2000  ← no variance key
+  │     result["sessions"]   = List&lt;PosSession&gt;          :2007  ← entity JSON, has cashDifference
+  │     result["sessionInfo"]= buildSessionInfo(s)       :2016  ← <b>omits expectedCash + cashDifference</b>
+  ├─ CASH reconciliation check                           :2158
+  │     expectedCashComputed  = opening + cashSales + dropIn − dropOut
+  │     expectedCashSessions  = Σ session.expectedCash
+  │     if |difference| &gt; 0.05 → throw                   ← compares expected vs expected.
+  │                                                        <b>Counted cash is never checked.</b>
+  ├─ dayClose.setExpectedCash(expectedCashSessions)      :2194
+  └─ dayClose.zReportJson = serialize(report)            :2205</pre>
+
+  <div class="note">
+    <p class="lbl">The reconciliation check checks the wrong thing</p>
+    <p><code>closeDay</code>'s "CASH reconciliation" (<code>:2158–2175</code>) compares the day's aggregate Expected Cash against the sum of each session's stored Expected Cash. Both sides come from the same formula over the same rows, so it is very nearly a tautology — it detects only drift in stored session state, never a physical cash discrepancy. A branch could close a day 50,000 short and this gate passes.</p>
+  </div>
+</section>
+
+<!-- ════════════ 7 ════════════ -->
+<section id="s7">
+  <h2 class="sec"><span class="n">07</span>X-Report vs Z-Report Reconciliation</h2>
+
+  <p>The two reports use structurally different Expected Cash formulas.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Report / surface</th><th>Expected Cash formula</th><th>Actual Cash source</th><th>Location</th></tr></thead>
+    <tbody>
+      <tr><td>X-Report screen &amp; print</td><td class="num">opening + cash + dropIn − dropOut</td><td>Live denomination inputs</td><td class="id">posReportViewModel.js:110–113</td></tr>
+      <tr><td>Close Session modal</td><td class="num">opening + cash + dropIn − dropOut</td><td>Live denomination inputs</td><td class="id">POSSales.jsx:10646</td></tr>
+      <tr><td>Backend session record</td><td class="num">opening + cash + dropIn − dropOut</td><td>Client-supplied <code>closingCash</code></td><td class="id">PosSessionService:249</td></tr>
+      <tr><td><strong>Z-Report print/PDF</strong></td><td class="num" style="color:var(--crit)">opening + cash <strong>only</strong></td><td>Σ <code>session.closingCash</code></td><td class="id">posReportViewModel.js:359, 385–386</td></tr>
+      <tr><td><strong>Z-Report screen</strong></td><td class="num" style="color:var(--crit)">opening + cash <strong>only</strong></td><td class="num" style="color:var(--crit)">not rendered — <code>—</code></td><td class="id">POSSales.jsx:7306, 7608</td></tr>
+      <tr><td>Z-Report §0 Session Information</td><td>Per-row <code>row.expectedCash</code> (drop-inclusive)</td><td>Per-row <code>row.closingCash</code></td><td class="id">posReportViewModel.js:438–439</td></tr>
+      <tr><td>Z-Report §1 Denomination Count</td><td>—</td><td>Σ overlay-corrected denominations</td><td class="id">posReportViewModel.js:392–400</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p><span class="chip c-fact">Fact</span> A single printed Z-Report therefore contains <strong>three mutually inconsistent cash pictures</strong>: §0 lists per-session expected cash <em>including</em> drops; §4 "Cash Drawer Summary" prints an aggregate expected cash <em>excluding</em> drops; §1 totals denominations from the overlay-corrected map while the headline Actual Cash sums the uncorrected <code>closingCash</code>.</p>
+
+  <h4>The intended equation, derived from code</h4>
+<pre>Expected  = openingFloat + cashTenderRECEIVED + dropIn − dropOut
+            <b>(cash refunds, cash-mode returns and cash-outs via returns are absent)</b>
+Actual    = Σ(denomValue × qty)   — computed in the browser, asserted to the server
+Variance  = Actual − Expected     — signed; + = overage, − = shortage
+
+Z-Report headline (print) = Actual − (openingFloat + cashTender)
+                            <b>≠ Σ per-session variance whenever any drop exists</b></pre>
+
+  <p>The delta between the X and Z variance for the same day is exactly <code>−(dropIn − dropOut)</code>. On a day where a cashier drops 5,000 to the safe, the Z-Report print reports a 5,000 overage that does not exist.</p>
+</section>
+
+<!-- ════════════ 8 ════════════ -->
+<section id="s8">
+  <h2 class="sec"><span class="n">08</span>Financial and Accounting Impact</h2>
+
+<pre>public JournalEntry createJournalFromSessionClose(Long sessionId, BigDecimal <b>closingCash</b>,
+                                                  LocalDate date, Branch branch) {
+    if (sessionId == null || closingCash == null || closingCash.signum() &lt;= 0) return null;
+    ...
+    addLine(entry, "Bank Account", ACC_BANK, "Daily cash pickup", <b>closingCash</b>, ZERO);
+    addLine(entry, "Cash in Hand", ACC_CASH, "Daily cash pickup", ZERO, <b>closingCash</b>);
+    return post(entry);
+}</pre>
+  <p class="src">PostingEngineService.java:3030–3053 — the only GL posting triggered by session close.</p>
+
+  <h4>Worked example — shortage</h4>
+  <p>Expected 10,000 · Counted 9,800 · Variance −200.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Layer</th><th>Where the −200 appears</th></tr></thead>
+    <tbody>
+      <tr><td>X-Report screen</td><td>Yes — "Cash Variance 200.00", badge <em>Short</em>. Live-computed, not stored.</td></tr>
+      <tr><td>X-Report archive</td><td><span class="chip c-crit">No</span> — snapshot predates the count.</td></tr>
+      <tr><td>Closed session row</td><td>Yes — <code>cash_difference = -200.00</code>.</td></tr>
+      <tr><td>Z-Report screen</td><td><span class="chip c-crit">No</span> — rendered <code>—</code>.</td></tr>
+      <tr><td>Z-Report print</td><td>Partly — as <code>Actual − (opening + cash)</code>, correct only if no drops occurred.</td></tr>
+      <tr><td><code>pos_day_closes</code> columns</td><td><span class="chip c-crit">No column exists.</span></td></tr>
+      <tr><td>Cash ledger / GL</td><td><span class="chip c-crit">Absorbed.</span> Sale JEs debited Cash 10,000; close credits Cash 9,800. <strong>Cash in Hand keeps a 200 debit residual forever.</strong> No expense recognized.</td></tr>
+      <tr><td>Audit trail</td><td>One sentence: <code>"POS session closed. Cash variance: -200.00"</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Worked example — overage</h4>
+  <p>Expected 10,000 · Counted 10,200 · Variance +200. The close credits Cash 10,200 against 10,000 of debits, driving <strong>Cash in Hand 200 negative</strong> — a credit balance on an asset account. Repeated overages compound into a nonsensical balance sheet line. No income is recognized.</p>
+
+  <h4>Two compounding GL asymmetries</h4>
+  <ul>
+    <li><span class="chip c-crit">Critical</span> <strong>Opening float is never debited to Cash at session open.</strong> A grep of <code>openSession()</code> (<code>:297–540</code>) finds no <code>postingEngine</code> call. But the close credits the <em>whole</em> counted amount out of Cash — which includes the float. Every session therefore over-credits Cash in Hand by the float, independently of any variance.</li>
+    <li><span class="chip c-high">High</span> <code>closingCash.signum() &lt;= 0</code> returns <code>null</code> silently — a session closed with no denomination count posts no JE at all, so its cash sales stay debited in Cash in Hand with no offsetting pickup.</li>
+  </ul>
+
+  <p><span class="chip c-inf">Inference</span> Combining these: the Cash in Hand account balance in this system is not reconcilable to physical cash by construction. Its drift per session is <code>(cashSales − countedCash)</code>, i.e. <code>−(float + variance − drops)</code>, accumulated indefinitely with no clearing entry.</p>
+</section>
+
+<!-- ════════════ 9 ════════════ -->
+<section id="s9">
+  <h2 class="sec"><span class="n">09</span>Confirmed Issues</h2>
+  <p>Each below is proven by the cited implementation, not inferred.</p>
+
+  <div class="find sev-crit">
+    <div class="hd"><h3>C-1 · Variance never reaches the ledger; it corrupts Cash in Hand</h3><span class="chip c-crit">Critical</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PostingEngineService.java:3030–3053</code>; called from <code>PosSessionService.java:911–917</code></dd>
+      <dt>Evidence</dt><dd>The JE posts <code>Dr Bank / Cr Cash</code> for <code>closingCash</code> (counted), not <code>expectedCash</code>. A repo-wide search for <code>Cash Over</code>, <code>OverShort</code>, <code>over_short</code> returns zero hits — no Over/Short account exists in the chart of accounts or <code>AccountSelectionRules</code>.</dd>
+      <dt>Why wrong</dt><dd>Double-entry requires the difference between expected and counted cash to be recognized somewhere. Here it is netted into the credit side, leaving an unexplained residual in an asset account and no P&amp;L recognition of till losses.</dd>
+      <dt>Repro</dt><dd>Open session float 0. One cash sale of 10,000. Close with denominations totalling 9,800. Query <code>journal_lines</code> for <code>ref = 'SESSION_CLOSE-{id}'</code> → Bank Dr 9,800 / Cash Cr 9,800. Trial-balance Cash in Hand is 200 higher than the drawer.</dd>
+      <dt>Impact</dt><dd>Cash in Hand permanently unreconcilable. Till shrinkage invisible to finance. Audit-blocking for any statutory review.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-crit">
+    <div class="hd"><h3>C-2 · <code>closingCash</code> is client-asserted and never validated against the denominations</h3><span class="chip c-crit">Critical</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PosSessionController.java:151–155</code>; <code>PosSessionService.java:825</code></dd>
+      <dt>Evidence</dt><dd><code>closingCash</code> and <code>closingDenominations</code> are read from the request body as independent values. <code>closeSession</code> never sums the map. The only server-side derivation of a total from denominations anywhere in the codebase is <code>PosSessionDenominationCorrectionService.total()</code> — used exclusively for corrections.</dd>
+      <dt>Why wrong</dt><dd>The physical count and the declared cash total are the same fact. Accepting them separately means the audit record can contradict itself, and a crafted request can declare any closing balance while showing a plausible breakdown.</dd>
+      <dt>Repro</dt><dd><code>POST /api/pos/sessions/{id}/close</code> with <code>{"closingCash": 10000, "closingDenominations": {"1000": 0, "500": 0}}</code>. Session closes with <code>closing_cash = 10000</code>, <code>closing_denominations_json = '{"1000":0,"500":0}'</code>, variance clean, GL posts 10,000.</dd>
+      <dt>Impact</dt><dd>Cash-count fraud with no detectable trace; the breakdown that would expose it is stored but never compared.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-crit">
+    <div class="hd"><h3>C-3 · <code>pos_day_closes</code> has no counted-cash or variance column</h3><span class="chip c-crit">Critical</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PosDayClose.java:54–95</code>; <code>V53__pos_reports_module.sql:15–40</code></dd>
+      <dt>Evidence</dt><dd>Money columns are <code>gross_sales</code>, <code>net_sales</code>, <code>total_discount</code>, <code>total_vat</code>, <code>cash_sales</code>, <code>card_sales</code>, <code>credit_sales</code>, <code>other_sales</code>, <code>expected_cash</code>. Nothing for counted cash or variance. <code>closeDay</code> writes only <code>setExpectedCash(expectedCashSessions)</code> (<code>:2194</code>).</dd>
+      <dt>Why wrong</dt><dd>The Z-Report is the statutory end-of-day record. Its structured form cannot answer "did the day balance?" — that requires parsing a TEXT blob and re-implementing the arithmetic.</dd>
+      <dt>Repro</dt><dd><code>SELECT expected_cash FROM pos_day_closes WHERE close_date = …</code> — there is no sibling column to compare it to.</dd>
+      <dt>Impact</dt><dd>No queryable day-level cash-integrity metric; back-office reporting on shrinkage is impossible without blob parsing.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-high">
+    <div class="hd"><h3>C-4 · Z-Report Expected Cash omits cash drops</h3><span class="chip c-high">High</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>posReportViewModel.js:359</code> (print), <code>POSSales.jsx:7306</code> (screen)</dd>
+      <dt>Evidence</dt><dd><code>const expectedCash = openingCash + cashSalesV;</code> — while the X-Report at <code>:110</code> uses <code>xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut)</code> and the backend uses the drop-inclusive formula.</dd>
+      <dt>Why wrong</dt><dd>Two reports over the same money produce different Expected Cash. The comment at <code>POSSales.jsx:10640</code> shows this exact bug was already fixed once in the Close Session modal and never propagated to the Z-Report.</dd>
+      <dt>Repro</dt><dd>Session: float 1,000, cash sales 9,000, DROP_OUT 5,000, counted 5,000. X-Report variance 0. Z-Report print: expected 10,000, actual 5,000, "Short 5,000".</dd>
+      <dt>Impact</dt><dd>False shortages on every day with a safe drop — the normal operating pattern for a busy till.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-high">
+    <div class="hd"><h3>C-5 · Cash refunds never reduce Expected Cash</h3><span class="chip c-high">High</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PosSessionService.java:249</code>; <code>PaymentRepository.java:123</code> vs <code>:149</code></dd>
+      <dt>Evidence</dt><dd><code>tenderCash</code> comes from <code>sumTenderByModeForSessions</code>, which filters <code>paymentType = RECEIVED</code>. <code>aggregateRefunds</code> (<code>MADE</code>) is computed and reported as <code>totalRefunds</code> but is never passed to <code>computeExpectedCash</code>. <code>buildCashPosition</code> makes the gap explicit: <code>result.put("cashRefundsSupported", false)</code> (<code>:2438</code>).</dd>
+      <dt>Why wrong</dt><dd>A cash refund removes notes from the drawer. Expected Cash must fall by the same amount or the count can never balance.</dd>
+      <dt>Repro</dt><dd>Cash sale 500, then cash refund 200 in the same session. Drawer holds 300. Expected Cash reports 500. Permanent −200 variance.</dd>
+      <dt>Impact</dt><dd>Systematic false shortages proportional to refund volume; cashiers learn to ignore the variance figure entirely.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-high">
+    <div class="hd"><h3>C-6 · Archived X-Reports contain no count and replay as unbalanced</h3><span class="chip c-high">High</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PosSessionService.java:1556–1600</code>; <code>PosReportsService.java:62</code>; <code>posReportViewModel.js:66–79</code></dd>
+      <dt>Evidence</dt><dd>The snapshot is written only when <code>status == OPEN</code>, at which point all closing fields are null. <code>getXReport()</code> emits no <code>actualCash</code>/<code>cashVariance</code> key. The viewer falls back to <code>opts.liveDenominations || {}</code> — empty in the back-office context.</dd>
+      <dt>Why wrong</dt><dd>The class javadoc states the snapshot is "the exact payload the cashier saw at generation time". For the denomination block, it never was — the cashier saw live inputs the snapshot cannot contain.</dd>
+      <dt>Repro</dt><dd>Generate X-Report mid-shift, close balanced, then open Enterprise Console → POS Reports → that X-Report. Denomination table all zeros, "Actual Cash 0.00", variance = −expected.</dd>
+      <dt>Impact</dt><dd>The archived shift report — the artifact an auditor would request — is materially wrong for every session.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-high">
+    <div class="hd"><h3>C-7 · Day Close "Cash Variance Within Limits" is hardcoded to pass</h3><span class="chip c-high">High</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>POSSales.jsx:7686</code></dd>
+      <dt>Evidence</dt><dd><code>{ label: 'Cash Variance Within Limits', passed: true, info: 'Pending financial audit' }</code> — a literal, with no reference to any session's variance. Paired with <code>POSSales.jsx:7608</code>, where the Z-Report CASH panel renders the variance as the string <code>"—"</code>.</dd>
+      <dt>Why wrong</dt><dd>A validation checklist that always passes trains operators to trust it. The backend's <code>closeDay</code> cash check (<code>:2158</code>) does not compensate — it compares expected against expected.</dd>
+      <dt>Repro</dt><dd>Close any session 10,000 short, then open Day Close. Checklist shows a green tick on Cash Variance.</dd>
+      <dt>Impact</dt><dd>Material cash loss passes day-end control unflagged at every layer.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-high">
+    <div class="hd"><h3>C-8 · <code>supervisorApproved</code> is an unauthenticated client boolean</h3><span class="chip c-high">High</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PosSessionController.java:154</code>; <code>PosSessionService.java:828–841</code></dd>
+      <dt>Evidence</dt><dd><code>boolean supervisorApproved = Boolean.TRUE.equals(body.get("supervisorApproved"))</code> — the sole input to the threshold bypass. No PIN, no token, no role check, no audit of who approved. The frontend never sends it (grep: only <code>posApi.js:163,170</code> pass it through), so the UI has no way to satisfy the gate either.</dd>
+      <dt>Why wrong</dt><dd>Two failures at once: the control is bypassable by any authenticated caller with a JSON field, and it is un-satisfiable through the product, so a genuinely over-threshold session becomes un-closable via the UI.</dd>
+      <dt>Repro</dt><dd>Set <code>cashVarianceThreshold = 100</code>. Close 500 short from the UI → 422, no path forward. Same request via curl with <code>"supervisorApproved": true</code> → closes silently.</dd>
+      <dt>Impact</dt><dd>Approval control is decorative; the "Submit for Approval" button (<code>:9224</code>) opens the same close dialog and no approval workflow exists.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-med">
+    <div class="hd"><h3>C-9 · Applied denomination corrections desynchronize the report</h3><span class="chip c-med">Medium</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PosSessionService.java:2605–2621</code> (<code>effectiveClosingDenominationsJson</code>); <code>PosSessionDenominationCorrectionService.java:24–35</code></dd>
+      <dt>Evidence</dt><dd>The service javadoc states it "Never touches <code>PosSession</code>, <code>PosXReportSnapshot</code>, or <code>PosDayClose</code>". <code>buildSessionInfo</code> applies the overlay to <code>closingDenominationsJson</code> but reads <code>nz(s.getClosingCash())</code> raw on the very next line (<code>:2588</code>).</dd>
+      <dt>Why wrong</dt><dd>Within one <code>sessionInfo</code> object, the breakdown is corrected and the total is not. The Z-Report print then sums corrected denominations for §1 and uncorrected <code>closingCash</code> for the headline.</dd>
+      <dt>Repro</dt><dd>Close with 5,000 counted. Request+approve+apply a correction to 4,800. Reload the Z-Report: §1 totals 4,800, Actual Cash reads 5,000.</dd>
+      <dt>Impact</dt><dd>Correction workflow produces a self-contradicting report; the corrected figure never reaches <code>cash_difference</code> or the GL.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-med">
+    <div class="hd"><h3>C-10 · Session-close GL failure is swallowed silently</h3><span class="chip c-med">Medium</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>PosSessionService.java:918–920</code></dd>
+      <dt>Evidence</dt><dd><code>} catch (Exception e) {<br>&nbsp;&nbsp;// Non-blocking — GL failure must not prevent the session from closing.<br>}</code> — empty body, no logger, no flag, no retry queue.</dd>
+      <dt>Why wrong</dt><dd>Not blocking the close is a defensible product decision; discarding the error is not. There is no way to discover that a day's cash pickups were never posted.</dd>
+      <dt>Repro</dt><dd>Lock the accounting period for the session's trading date, then close a session. Session closes CLOSED; no JE; no trace anywhere.</dd>
+      <dt>Impact</dt><dd>Silent GL gaps that surface only at period close, with no list of affected sessions.</dd>
+    </dl>
+  </div>
+
+  <div class="find sev-med">
+    <div class="hd"><h3>C-11 · Nothing requires a denomination count before closing</h3><span class="chip c-med">Medium</span></div>
+    <dl>
+      <dt>Location</dt><dd><code>POSSales.jsx:8538</code>, <code>:10812</code>; <code>PosSessionService.java:825</code></dd>
+      <dt>Evidence</dt><dd><code>canCloseSession = xReportSessionStatus === 'OPEN' || 'ACTIVE'</code> — status only. The "Close Session &amp; Print Report" button has no <code>disabled</code> prop. Server-side, <code>closingCash != null ? closingCash : BigDecimal.ZERO</code> treats absent as zero. The X-Report's own System Control Notes (<code>:9202–9204</code>) claim "Cashier cannot close session without entering denomination count" and "If cash variance exists, remarks are mandatory" — neither is enforced anywhere.</dd>
+      <dt>Why wrong</dt><dd>Zero-count closes are indistinguishable from genuine empty drawers, produce a variance equal to the whole float plus takings, and (per C-1) post no JE at all.</dd>
+      <dt>Repro</dt><dd>Open Close Session, touch nothing, click Close Session &amp; Print Report. Session closes with <code>closing_cash = 0</code>.</dd>
+      <dt>Impact</dt><dd>Documented controls absent in the implementation; the variance dataset is polluted with uncounted closes that look like catastrophic shortages.</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ════════════ 10 ════════════ -->
+<section id="s10">
+  <h2 class="sec"><span class="n">10</span>Potential Risks</h2>
+  <p>Conditions required, not yet proven to fire in production.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Risk</th><th>Sev</th><th>Condition required</th><th>What to verify</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Float arithmetic in the count</strong><br><code>calculateDenominationTotal</code> sums <code>parseFloat(note) * count</code> in IEEE-754 doubles (<code>POSSales.jsx:2693</code>, <code>posReportViewModel.js:39</code>).</td>
+        <td><span class="chip c-med">Med</span></td>
+        <td>Counts involving 0.05 / 0.10 / 0.25 in quantity. e.g. 3 × 0.10 → 0.30000000000000004.</td>
+        <td>The tail reaches the server, becomes a <code>BigDecimal</code>, and <code>cashDifference</code> is computed <em>before</em> the <code>NUMERIC(15,2)</code> round-trip, so <code>z_report_json</code> can carry a non-zero variance where the DB stores 0.00. Check a session closed with coin quantities.</td>
+      </tr>
+      <tr>
+        <td><strong>PENDING cash payments inflate Expected Cash</strong></td>
+        <td><span class="chip c-med">Med</span></td>
+        <td>A <code>Payment</code> row in <code>PENDING</code> with a cash mode and this <code>posSessionId</code>. The query excludes only <code>CANCELLED</code>/<code>FAILED</code> (<code>PaymentRepository:126</code>).</td>
+        <td>Whether the POS checkout path can ever leave a cash payment PENDING. If yes, false shortages follow.</td>
+      </tr>
+      <tr>
+        <td><strong>Duplicate X-Report snapshots</strong></td>
+        <td><span class="chip c-low">Low</span></td>
+        <td>Two concurrent <code>generateXReport</code> calls both observe <code>xReportGeneratedAt == null</code>. <code>pos_x_report_snapshots</code> has a unique index on <code>report_number</code> only, not <code>session_id</code>.</td>
+        <td>Whether the sequence service serializes enough to make this unreachable.</td>
+      </tr>
+      <tr>
+        <td><strong>Report rendering is not versioned</strong></td>
+        <td><span class="chip c-med">Med</span></td>
+        <td>The <code>pos_day_closes</code> row is DB-immutable, but every displayed figure is recomputed by <code>posReportViewModel.js</code> at view time.</td>
+        <td>Changing the frontend formula retroactively changes what a historical Z-Report prints. <code>report_version</code> is set to the literal <code>"1.0"</code> and never consulted.</td>
+      </tr>
+      <tr>
+        <td><strong><code>z_report_json</code> on the session is write-only</strong></td>
+        <td><span class="chip c-low">Low</span></td>
+        <td>Built by hand at <code>:1291</code> via string concatenation with a <code>safe()</code> escaper that handles quotes but not backslashes or control characters.</td>
+        <td>No code reads <code>getZReportJson()</code>. A remark containing <code>\</code> would produce invalid JSON that nothing currently parses — a latent trap for any future consumer.</td>
+      </tr>
+      <tr>
+        <td><strong>Legacy session counters vs live tender</strong></td>
+        <td><span class="chip c-low">Low</span></td>
+        <td><code>totalCashSales</code> is maintained by <code>recordInvoiceOnSession</code> but reports use <code>aggregateTender</code>. <code>totalMixedSales</code> is already <code>@Deprecated</code> and dead.</td>
+        <td>Any consumer still reading the counters would disagree with the reports.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ════════════ 11 ════════════ -->
+<section id="s11">
+  <h2 class="sec"><span class="n">11</span>Data Integrity and Session Isolation</h2>
+
+  <p><span class="chip c-ok">Sound</span> <strong>Session attribution is explicit and correct.</strong> Every cash-side aggregate keys on an authoritative column rather than resolving through invoices:</p>
+  <ul>
+    <li>Tender and refunds → <code>Payment.posSessionId</code> (the <em>collecting</em> session), documented at <code>PosSessionService:820–823</code>. A delivery order rung up weeks ago and settled today lands in today's drawer, which is right.</li>
+    <li>Cash movements → <code>PosCashMovement.posSession</code> FK.</li>
+    <li>Advances → <code>ReceiptVoucher.posSessionId</code>.</li>
+    <li>Denominations → columns on <code>pos_sessions</code> itself.</li>
+    <li>Day membership → <code>pos_sessions.day_close_id</code>, stamped at <code>closeDay:2210–2214</code>.</li>
+  </ul>
+  <p>No indirect session resolution through invoice → terminal → cashier exists on this path. Cross-session leakage of denomination data is not reachable.</p>
+
+  <p><span class="chip c-ok">Sound</span> <strong>Reopening is impossible.</strong> <code>CLOSED</code> is terminal — <code>closeSession</code> rejects it (<code>:791</code>), no reopen endpoint exists, and <code>PosDayCloseLockTriggerInstaller</code> installs a <code>BEFORE UPDATE OR DELETE</code> trigger that rejects any mutation of a <code>pos_day_closes</code> row.</p>
+
+  <p><span class="chip c-high">Weak</span> <strong>One real isolation defect:</strong> the X-Report filters Sales Returns to the session's own invoices (<code>buildSessionReturnsSummary</code>, <code>:1668</code>, with an explicit comment about cross-session leakage) — but returns still carry no <code>posSessionId</code> and no payment mode, which is the root cause of C-5. The isolation was patched at the reporting layer without fixing the missing linkage.</p>
+
+  <h4>Editability / immutability summary</h4>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Artifact</th><th>After save</th><th>After close</th><th>After day close</th></tr></thead>
+    <tbody>
+      <tr><td>Denomination counts</td><td>Free (React state)</td><td>Frozen on the row; overlay-correctable via a request→approve→apply workflow</td><td>Overlay still applies to live views, not to the snapshot</td></tr>
+      <tr><td><code>closing_cash</code> / <code>cash_difference</code></td><td>—</td><td><span class="chip c-ok">Immutable</span></td><td><span class="chip c-ok">Immutable</span></td></tr>
+      <tr><td>X-Report snapshot</td><td>—</td><td><span class="chip c-ok">Immutable</span> (but incomplete — C-6)</td><td>Immutable</td></tr>
+      <tr><td>Z-Report snapshot</td><td>—</td><td>—</td><td><span class="chip c-ok">DB-trigger immutable</span></td></tr>
+      <tr><td>Z-Report <em>rendering</em></td><td>—</td><td>—</td><td><span class="chip c-med">Recomputed at view time from the blob</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p><span class="chip c-inf">Inference</span> The system stores snapshots but presents dynamic recalculations. Storage is audit-safe; presentation is not.</p>
+</section>
+
+<!-- ════════════ 12 ════════════ -->
+<section id="s12">
+  <h2 class="sec"><span class="n">12</span>Audit Trail Gaps</h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Auditable fact</th><th>Recorded?</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>Who closed the session</td><td><span class="chip c-ok">Yes</span></td><td><code>closed_by</code> + <code>closed_by_display_name</code></td></tr>
+      <tr><td>When</td><td><span class="chip c-ok">Yes</span></td><td><code>closed_at</code>, single clock read (<code>:851</code>)</td></tr>
+      <tr><td>Expected cash at closure</td><td><span class="chip c-ok">Yes</span></td><td><code>expected_cash</code></td></tr>
+      <tr><td>Actual counted cash</td><td><span class="chip c-ok">Yes</span></td><td><code>closing_cash</code> (unverified — C-2)</td></tr>
+      <tr><td>Variance</td><td><span class="chip c-ok">Yes</span></td><td><code>cash_difference</code></td></tr>
+      <tr><td>Denomination quantities</td><td><span class="chip c-ok">Yes</span></td><td><code>closing_denominations_json</code> — final state only</td></tr>
+      <tr><td><strong>Who entered the counts</strong></td><td><span class="chip c-crit">No</span></td><td>Only <code>closing_cashier_name</code>, a free-text field the client sends</td></tr>
+      <tr><td><strong>When counts were entered</strong></td><td><span class="chip c-crit">No</span></td><td>React state until submit; no timestamp</td></tr>
+      <tr><td><strong>Whether counts were changed mid-entry</strong></td><td><span class="chip c-crit">No</span></td><td>No draft persistence, no keystroke/revision trail</td></tr>
+      <tr><td>Variance reason</td><td><span class="chip c-med">Optional</span></td><td><code>notes</code> — mandatory in the UI copy, unenforced anywhere</td></tr>
+      <tr><td>Approval / rejection of variance</td><td><span class="chip c-crit">No</span></td><td>Only the boolean of C-8; no approver identity, no timestamp</td></tr>
+      <tr><td>Reopening / reclosure</td><td><span class="chip c-ok">N/A</span></td><td>Not possible</td></tr>
+      <tr><td>Denomination correction lifecycle</td><td><span class="chip c-ok">Yes</span></td><td><code>CorrectionRequest</code> + <code>FinancialAuditService</code> — requested/approved/applied with actors and reason. The best-audited part of this flow.</td></tr>
+      <tr><td>Audit write reliability</td><td><span class="chip c-med">Weak</span></td><td><code>@Async</code> + <code>REQUIRES_NEW</code> (<code>PosAuditService:89–96</code>) — outside the close transaction, so it can orphan or silently drop</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <p class="lbl">Can an auditor reconstruct why a variance occurred?</p>
+    <p><strong>No.</strong> They can see that a session ended 200 short and read a free-text note if the cashier chose to write one. They cannot see who counted, when, whether a figure was revised, whether the declared total matched the breakdown (nothing ever compared them), or where the 200 went — because it went nowhere: it was absorbed into Cash in Hand with no journal line bearing the session id.</p>
+  </div>
+</section>
+
+<!-- ════════════ 13 ════════════ -->
+<section id="s13">
+  <h2 class="sec"><span class="n">13</span>Concurrency and Transaction Risks</h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Scenario</th><th>Protection present</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Two tabs closing the same session</td><td>Status check at <code>:791</code> only. <code>BaseEntity</code> has no <code>@Version</code>; no <code>SELECT … FOR UPDATE</code>; no unique constraint on closure.</td><td><span class="chip c-med">Exposed</span> — both reads see OPEN, both proceed, last write wins. Two audit rows; GL is saved by <code>findDuplicate(ref)</code> idempotency.</td></tr>
+      <tr><td>Retry after timeout</td><td>None. No idempotency key on the close endpoint.</td><td><span class="chip c-med">Exposed</span> — a retry after a committed-but-unacknowledged close returns 400 "already closed" and the UI shows it as a failure.</td></tr>
+      <tr><td>Rapid double-click</td><td>No <code>disabled</code> on the submit button, no in-flight ref.</td><td><span class="chip c-med">Exposed</span></td></tr>
+      <tr><td>Two concurrent Day Closes</td><td><code>uk_pos_day_close_branch_date UNIQUE (branch_id, close_date)</code> (<code>V53:39</code>).</td><td><span class="chip c-ok">Safe</span> — data-correct; second caller gets a raw constraint violation rather than the intended 409.</td></tr>
+      <tr><td>Mutating a closed day</td><td><code>BEFORE UPDATE OR DELETE</code> trigger from <code>PosDayCloseLockTriggerInstaller</code>.</td><td><span class="chip c-ok">Safe</span></td></tr>
+      <tr><td>Report generation during close</td><td><code>getZReport</code> and <code>getXReport</code> are <code>@Transactional(readOnly = true)</code>; <code>closeDay</code> blocks on any OPEN/SUSPENDED session for the date.</td><td><span class="chip c-ok">Safe enough</span></td></tr>
+      <tr><td>Concurrent denomination correction + Day Close</td><td>Correction requires CLOSED session; Day Close requires all sessions CLOSED. No mutual exclusion between them.</td><td><span class="chip c-low">Exposed</span> — a correction applied mid-<code>closeDay</code> can be reflected in <code>sessionInfo</code> but not in the sales aggregates of the same snapshot.</td></tr>
+      <tr><td>Audit vs close atomicity</td><td><code>@Async</code>, <code>REQUIRES_NEW</code>.</td><td><span class="chip c-med">Exposed</span> — audit row can outlive a rolled-back close.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ════════════ 14 ════════════ -->
+<section id="s14">
+  <h2 class="sec"><span class="n">14</span>Recommended Improvements</h2>
+  <p><span class="chip c-rec">Recommendation</span> Ordered by priority. None of these were applied — no code was modified during this audit.</p>
+
+  <h3>P0 — Financial and reconciliation correctness</h3>
+  <ol class="body">
+    <li><strong>Derive <code>closingCash</code> server-side from the denomination map.</strong> Accept <code>closingDenominations</code> as the only cash-count input; compute the total with <code>BigDecimal</code> in <code>closeSession</code> exactly as <code>PosSessionDenominationCorrectionService.total()</code> already does. Treat a client-sent <code>closingCash</code> as advisory and reject on mismatch, or drop the field. Fixes C-2 and the float-arithmetic risk in one change.</li>
+    <li><strong>Post the variance to a Cash Over/Short account.</strong> Change <code>createJournalFromSessionClose</code> to take expected and counted separately: <code>Dr Bank (counted) / Dr-or-Cr Cash Over&nbsp;/&nbsp;Short (variance) / Cr Cash in Hand (expected)</code>. Add the account to <code>SystemAccountSeeder</code> and <code>AccountSelectionRules</code>. Fixes C-1.</li>
+    <li><strong>Post the opening float at session open.</strong> <code>Dr Cash in Hand / Cr Bank</code> for <code>openingCash</code>, mirroring the close. Without it the Over/Short line in (2) will absorb the float.</li>
+    <li><strong>Subtract cash refunds from Expected Cash.</strong> Add <code>cashRefunds</code> to <code>computeExpectedCash</code>, sourced from <code>aggregateRefunds(...).byBucket.get("cash")</code>. Requires giving <code>SalesReturn</code> a payment mode and a <code>posSessionId</code> — the same missing linkage <code>buildCashPosition</code> already flags. Fixes C-5.</li>
+    <li><strong>Unify the Z-Report Expected Cash formula.</strong> Make the backend emit <code>summary.expectedCash</code> and <code>summary.actualCash</code> for the day and have <code>posReportViewModel.js</code> read them instead of recomputing. Delete <code>expectedCash = openingCash + cashSalesV</code>. Fixes C-4 and removes the frontend formula entirely.</li>
+  </ol>
+
+  <h3>P1 — Audit integrity</h3>
+  <ol class="body" start="6">
+    <li><strong>Add structured columns to <code>pos_day_closes</code>:</strong> <code>counted_cash</code>, <code>cash_variance</code>, <code>variance_session_count</code>, <code>reconciliation_status</code>. New Flyway migration, additive and <code>to_regclass</code>-guarded per repo convention. Fixes C-3.</li>
+    <li><strong>Move the X-Report snapshot to close time,</strong> or add a second snapshot type taken at close that includes the denomination block and variance. Fixes C-6.</li>
+    <li><strong>Make the Day Close cash check meaningful:</strong> compare <code>Σ closingCash</code> against <code>Σ expectedCash</code> and surface the result, replacing the current expected-vs-expected tautology at <code>:2158</code>. Wire the real number into the checklist item and delete the hardcoded <code>passed: true</code>. Fixes C-7.</li>
+    <li><strong>Replace the <code>supervisorApproved</code> boolean with a real grant,</strong> following the <code>PosClosureAuthorizationRegistry</code> pattern already in this file: a single-use token issued by a supervisor-credential endpoint, recording approver identity and reason. Fixes C-8.</li>
+    <li><strong>Capture count provenance:</strong> persist who entered the denominations and when, and record a <code>DENOMINATION_ENTERED</code> audit action alongside <code>SESSION_CLOSED</code> carrying the full breakdown, not a summary sentence.</li>
+    <li><strong>Log the GL failure.</strong> At minimum a logger call plus a <code>gl_posting_failed</code> flag on the session; ideally a retry queue. Fixes C-10.</li>
+  </ol>
+
+  <h3>P2 — Consistency and maintainability</h3>
+  <ol class="body" start="12">
+    <li><strong>Apply corrections consistently or not at all.</strong> Either overlay <code>closingCash</code>/<code>cashDifference</code> alongside <code>closingDenominationsJson</code> in <code>buildSessionInfo</code>, or stop overlaying the denominations there. Fixes C-9.</li>
+    <li><strong>Make the close endpoint idempotent</strong> with a client-supplied request id; return the existing closed session instead of 400 on replay.</li>
+    <li><strong>Add <code>@Version</code> to <code>PosSession</code></strong> (or a <code>SELECT … FOR UPDATE</code> in <code>closeSession</code>) so concurrent closes fail loudly.</li>
+    <li><strong>Replace the hand-built <code>buildZReportSnapshot</code> string</strong> with <code>objectMapper.writeValueAsString</code>, or delete it — nothing reads it.</li>
+    <li><strong>Add reconciliation invariant tests</strong> asserting <code>Σ(denomValue × qty) == closingCash</code> and <code>closingCash − expectedCash == cashDifference</code> on every closed session.</li>
+  </ol>
+
+  <h3>P3 — UX and reporting</h3>
+  <ol class="body" start="17">
+    <li>Disable "Close Session &amp; Print Report" until a count is entered and, when variance ≠ 0, until remarks are supplied — matching the System Control Notes the screen already displays. Add an in-flight disabled state.</li>
+    <li>Distinguish "not counted" from "counted zero" with an explicit confirmation.</li>
+    <li>Render the variance on the Z-Report instead of <code>—</code>, with an over/short label and per-session drill-down.</li>
+    <li>Make the denomination ladder currency-aware — <code>cashDenominations.js</code> is hardcoded AED while <code>POSCurrency.js</code> supports switching, and the screenshots show a non-AED symbol against an AED ladder.</li>
+  </ol>
+</section>
+
+<!-- ════════════ 15 ════════════ -->
+<section id="s15">
+  <h2 class="sec"><span class="n">15</span>Priority Matrix</h2>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>ID</th><th>Issue</th><th>Severity</th><th>Likelihood</th><th>Component</th><th>Business impact</th></tr></thead>
+    <tbody>
+      <tr><td class="id">C-1</td><td>Variance absorbed into Cash in Hand; no Over/Short account</td><td><span class="chip c-crit">Critical</span></td><td class="num">Certain — every close</td><td>PostingEngineService</td><td>GL cash unreconcilable; shrinkage invisible</td></tr>
+      <tr><td class="id">C-2</td><td><code>closingCash</code> unvalidated against denominations</td><td><span class="chip c-crit">Critical</span></td><td class="num">Low abuse / certain exposure</td><td>PosSessionController</td><td>Undetectable cash fraud</td></tr>
+      <tr><td class="id">C-3</td><td>No counted-cash / variance column on <code>pos_day_closes</code></td><td><span class="chip c-crit">Critical</span></td><td class="num">Certain</td><td>PosDayClose · V53</td><td>Day-end record cannot answer "did it balance?"</td></tr>
+      <tr><td class="id">C-8</td><td>Approval bypass via client boolean</td><td><span class="chip c-high">High</span></td><td class="num">Medium</td><td>PosSessionController</td><td>Variance control is decorative</td></tr>
+      <tr><td class="id">C-4</td><td>Z-Report expected cash omits drops</td><td><span class="chip c-high">High</span></td><td class="num">High — any day with a drop</td><td>posReportViewModel.js</td><td>False shortages on printed statutory report</td></tr>
+      <tr><td class="id">C-5</td><td>Cash refunds not deducted from expected</td><td><span class="chip c-high">High</span></td><td class="num">High — any refund day</td><td>computeExpectedCash</td><td>Systematic false shortages</td></tr>
+      <tr><td class="id">C-6</td><td>Archived X-Report has no count</td><td><span class="chip c-high">High</span></td><td class="num">Certain</td><td>generateXReport</td><td>Historical shift reports materially wrong</td></tr>
+      <tr><td class="id">C-7</td><td>Day Close variance check hardcoded to pass</td><td><span class="chip c-high">High</span></td><td class="num">Certain</td><td>POSSales.jsx</td><td>Loss passes day-end control</td></tr>
+      <tr><td class="id">C-11</td><td>No denomination-entry requirement</td><td><span class="chip c-med">Medium</span></td><td class="num">Medium</td><td>POSSales.jsx</td><td>Polluted variance data; missing JEs</td></tr>
+      <tr><td class="id">C-9</td><td>Correction overlay desync</td><td><span class="chip c-med">Medium</span></td><td class="num">Low — needs a correction</td><td>buildSessionInfo</td><td>Self-contradicting report</td></tr>
+      <tr><td class="id">C-10</td><td>GL failure swallowed</td><td><span class="chip c-med">Medium</span></td><td class="num">Low</td><td>closeSession</td><td>Silent GL gaps</td></tr>
+      <tr><td class="id">R-1</td><td>Float arithmetic in the count</td><td><span class="chip c-med">Medium</span></td><td class="num">Medium</td><td>calculateDenominationTotal</td><td>Sub-cent variance noise</td></tr>
+      <tr><td class="id">R-4</td><td>Report rendering unversioned</td><td><span class="chip c-med">Medium</span></td><td class="num">Low</td><td>posReportViewModel.js</td><td>Historical reports change with deploys</td></tr>
+      <tr><td class="id">R-2</td><td>PENDING cash counted as collected</td><td><span class="chip c-med">Medium</span></td><td class="num">Unknown</td><td>PaymentRepository:123</td><td>Overstated expected cash</td></tr>
+      <tr><td class="id">R-3</td><td>Duplicate X snapshots</td><td><span class="chip c-low">Low</span></td><td class="num">Low</td><td>generateXReport</td><td>Two report numbers, one session</td></tr>
+      <tr><td class="id">R-5</td><td><code>z_report_json</code> escaping</td><td><span class="chip c-low">Low</span></td><td class="num">Low</td><td>buildZReportSnapshot</td><td>Latent — no reader today</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ════════════ 16 ════════════ -->
+<section id="s16">
+  <h2 class="sec"><span class="n">16</span>Test Matrix</h2>
+  <p>"Actual behavior" is derived from the implementation, not from execution — no tests were run.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th style="width:2.5em">#</th><th>Setup</th><th>Expected</th><th>Actual per implementation</th><th>Risk if wrong</th></tr></thead>
+    <tbody>
+      <tr><td class="id">1</td><td>Float 500, cash sales 1,000, count = 1,500</td><td>Variance 0; balanced</td><td><span class="chip c-ok">Correct</span>. GL: Bank Dr 1,500 / Cash Cr 1,500 against only 1,000 of Cash debits → 500 residual (C-1 + float asymmetry)</td><td>GL cash drift equal to the float, every session</td></tr>
+      <tr><td class="id">2</td><td>Expected 10,000, count 9,800</td><td>−200, flagged, posted to Over/Short</td><td>−200 stored on session; not in Z columns; not in GL; checklist still green</td><td>Shrinkage invisible</td></tr>
+      <tr><td class="id">3</td><td>Expected 10,000, count 10,200</td><td>+200, flagged</td><td>+200 stored; Cash in Hand driven 200 credit-negative</td><td>Negative asset balance</td></tr>
+      <tr><td class="id">4</td><td>Close with no denominations touched</td><td>Blocked</td><td><span class="chip c-crit">Closes.</span> <code>closingCash = 0</code>, variance = −expected, <strong>no JE at all</strong> (<code>signum() &lt;= 0</code>)</td><td>Uncounted closes look like total loss; cash sales stranded in GL</td></tr>
+      <tr><td class="id">5</td><td>Only the 500s entered, other rows left blank</td><td>Warning or blocked</td><td>Accepted silently as the full count</td><td>Undercount indistinguishable from shortage</td></tr>
+      <tr><td class="id">6</td><td>All quantities explicitly 0</td><td>Distinguished from "not counted"</td><td>Identical to #4</td><td>Cannot audit intent</td></tr>
+      <tr><td class="id">7</td><td>Float 1,000, no sales, count 1,000</td><td>Variance 0</td><td>Correct. JE credits Cash 1,000 that was never debited</td><td>Float sweep with no matching debit</td></tr>
+      <tr><td class="id">8</td><td>Cash sales only, no float</td><td>Variance 0</td><td>Correct end to end — the only clean case</td><td>—</td></tr>
+      <tr><td class="id">9</td><td>Cash sales 500, cash refund 200, count 300</td><td>Variance 0</td><td><span class="chip c-crit">−200</span> — refunds absent from expected (C-5)</td><td>Permanent false shortage</td></tr>
+      <tr><td class="id">10</td><td>Cash sales 9,000, DROP_OUT 5,000, count 4,000</td><td>Variance 0 on both reports</td><td>X-Report 0 <span class="chip c-crit">·</span> Z-Report print −5,000 (C-4)</td><td>Two reports, two answers</td></tr>
+      <tr><td class="id">11</td><td>DROP_IN 2,000 mid-shift</td><td>Expected rises 2,000</td><td>Correct in X and session; missing in Z print</td><td>As #10, inverted sign</td></tr>
+      <tr><td class="id">12</td><td>Cash + card + online in one session</td><td>Only cash affects expected</td><td><span class="chip c-ok">Correct</span> — <code>tenderBucket</code> splits properly</td><td>—</td></tr>
+      <tr><td class="id">13</td><td>Credit sale 20 + cash sales 481</td><td>Expected includes 481 only</td><td><span class="chip c-ok">Correct</span> — credit derives from invoice balance, not tender</td><td>—</td></tr>
+      <tr><td class="id">14</td><td>Prior-session invoice settled in cash today</td><td>Counts toward today's drawer</td><td><span class="chip c-ok">Correct</span> — keyed on <code>Payment.posSessionId</code></td><td>—</td></tr>
+      <tr><td class="id">15</td><td>Attempt to reopen a closed session</td><td>Blocked or fully audited</td><td>No reopen path exists; <code>CLOSED</code> is terminal</td><td>—</td></tr>
+      <tr><td class="id">16</td><td>Same close request sent twice, sequentially</td><td>Idempotent success</td><td>400 "Session is already closed" — surfaced to the cashier as a failure</td><td>Operator confusion; possible re-entry of counts</td></tr>
+      <tr><td class="id">17</td><td>Two concurrent close requests</td><td>One wins, one 409</td><td>Both pass the status check; last write wins; two audit rows; GL deduped by ref</td><td>Ambiguous closing record</td></tr>
+      <tr><td class="id">18</td><td>Apply a denomination correction post-close</td><td>All views agree</td><td>Breakdown corrected, <code>closingCash</code>/<code>cashDifference</code>/GL unchanged (C-9)</td><td>Self-contradicting report</td></tr>
+      <tr><td class="id">19</td><td>DB error during close</td><td>Full rollback</td><td>Session rolls back; <span class="chip c-med">async audit row may persist</span></td><td>Audit says closed, session open</td></tr>
+      <tr><td class="id">20</td><td>Day Close fails after sessions are closed</td><td>Retryable</td><td>Correct — <code>closeDay</code> is atomic and retryable; sessions stay closed</td><td>—</td></tr>
+      <tr><td class="id">21</td><td>Count = 3 × 0.10 + 1 × 0.05</td><td>0.35 exactly</td><td>JS gives 0.35000000000000003; sent as-is; <code>cash_difference</code> computed pre-round then stored to <code>NUMERIC(15,2)</code></td><td>Sub-cent noise in the JSON snapshot</td></tr>
+      <tr><td class="id">22</td><td>Count 999,999,999.99</td><td>Accepted</td><td><code>NUMERIC(15,2)</code> holds it; JS doubles are exact to 2dp well past this</td><td>—</td></tr>
+      <tr><td class="id">23</td><td>Negative variance with threshold = 0 (default)</td><td>Approval required</td><td><span class="chip c-crit">Closes unapproved</span> — gate needs <code>threshold &gt; 0</code></td><td>Default install has no variance control</td></tr>
+      <tr><td class="id">24</td><td>Positive variance, threshold 100, over by 500</td><td>Approval path offered</td><td>422; UI offers no way to approve (C-8)</td><td>Session un-closable; blocks Day Close</td></tr>
+      <tr><td class="id">25</td><td>Zero variance</td><td>Clean close</td><td>Correct</td><td>—</td></tr>
+      <tr><td class="id">26</td><td>Over-threshold variance approved</td><td>Approver recorded</td><td>Only possible via a raw API call; approver identity never stored</td><td>Unattributable approval</td></tr>
+      <tr><td class="id">27</td><td>Close after supervisor approval</td><td>Approval linked to the close</td><td>No linkage exists — the boolean is not persisted</td><td>No approval audit trail</td></tr>
+      <tr><td class="id">28</td><td>Re-open a Z-Report after day close</td><td>Byte-identical replay</td><td>Snapshot is immutable, but figures are recomputed by current frontend code at view time</td><td>Historical report changes with a deploy</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ════════════ 17 ════════════ -->
+<section id="s17">
+  <h2 class="sec"><span class="n">17</span>Exact Files, Functions and Models</h2>
+
+  <h4>Backend</h4>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>File</th><th>Members of interest</th></tr></thead>
+    <tbody>
+      <tr><td class="id">pos/session/PosSessionService.java</td><td><code>computeExpectedCash</code> :249 · <code>sumCashMovements</code> :231,239 · <code>closeSession</code> :787 · <code>buildZReportSnapshot</code> :1291 · <code>generateXReport</code> :1556 · <code>persistXReportSnapshot</code> :1577 · <code>getXReport</code> :1603 · <code>getZReport</code> :1876 · <code>generateDynamicZReport</code> :1899 · <code>closeDay</code> :2037 · <code>buildCashPosition</code> :2388 · <code>buildSessionInfo</code> :2548 · <code>effectiveClosingDenominationsJson</code> :2605 · <code>aggregateTender</code> :2665 · <code>aggregateRefunds</code> :2736</td></tr>
+      <tr><td class="id">pos/session/PosSession.java</td><td><code>openingCash</code>, <code>closingCash</code>, <code>expectedCash</code>, <code>cashDifference</code>, <code>closingDenominationsJson</code>, <code>zReportJson</code>, <code>cardClosingCash</code>, <code>cardDifference</code>, <code>closingRemarks</code>, <code>dayCloseId</code></td></tr>
+      <tr><td class="id">pos/session/PosSessionController.java</td><td><code>POST /{id}/close</code> :146 · <code>POST /close-day</code> :317 · <code>GET /day-close/summary</code> :284</td></tr>
+      <tr><td class="id">pos/dayclose/PosDayClose.java</td><td><code>expectedCash</code> :78 — no counted-cash or variance field</td></tr>
+      <tr><td class="id">pos/reports/PosXReportSnapshot.java</td><td><code>reportJson</code> — frozen pre-close</td></tr>
+      <tr><td class="id">pos/reports/PosReportsService.java</td><td><code>getXDetail</code>, <code>getZDetail</code> — replay only</td></tr>
+      <tr><td class="id">pos/session/PosCashMovement.java</td><td><code>movementType</code> (DROP_IN / DROP_OUT), <code>status</code> (ACTIVE gates every total)</td></tr>
+      <tr><td class="id">sales/payment/PaymentRepository.java</td><td><code>sumTenderByModeForSessions</code> :123 · <code>sumRefundByModeForSessions</code> :149</td></tr>
+      <tr><td class="id">financials/…/PostingEngineService.java</td><td><code>createJournalFromSessionClose</code> :3030 — the only cash-close GL path</td></tr>
+      <tr><td class="id">pos/admin/PosSessionDenominationCorrectionService.java</td><td><code>total()</code> :86 — the only server-side denomination summation · <code>request</code>/<code>approve</code>/<code>apply</code></td></tr>
+      <tr><td class="id">pos/audit/PosAuditService.java</td><td><code>logSessionClosed</code> :91 — async, free-text</td></tr>
+      <tr><td class="id">pos/settings/PosSettings.java</td><td><code>cashVarianceThreshold</code> :146 — defaults to ZERO</td></tr>
+      <tr><td class="id">config/PosDayCloseLockTriggerInstaller.java</td><td><code>BEFORE UPDATE OR DELETE</code> immutability trigger</td></tr>
+      <tr><td class="id">db/migration/V53__pos_reports_module.sql</td><td><code>pos_day_closes</code> DDL :15 · <code>uk_pos_day_close_branch_date</code> :39 · <code>pos_x_report_snapshots</code> :42</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Frontend</h4>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>File</th><th>Members of interest</th></tr></thead>
+    <tbody>
+      <tr><td class="id">pages/Sales/POSSales.jsx</td><td><code>closingDenominations</code> :701 · <code>calculateDenominationTotal</code> :2693 · <code>getReportClosingDenominations</code> :2699 · <code>handleCloseSession</code> :2883 · X-Report variance :8527–8561 · <code>canCloseSession</code> :8538 · denomination inputs :10600,10624 · modal variance :10646–10653 · submit button :10812 · Z-Report <code>zExpectedCash</code> :7306 · Z variance <code>"—"</code> :7608 · checklist <code>passed: true</code> :7686</td></tr>
+      <tr><td class="id">utils/posReportViewModel.js</td><td><code>calculateDenominationTotal</code> :39 · <code>resolveDenominations</code> :66 · X expected/actual/variance :110–113 · Z expected :359 · Z actual/variance :385–386 · Z denomination totals :392–400</td></tr>
+      <tr><td class="id">utils/cashDenominations.js</td><td><code>CASH_NOTE_KEYS</code> :13 · <code>CASH_COIN_KEYS</code> :21 · <code>emptyDenominations</code> :33 — hardcoded AED</td></tr>
+      <tr><td class="id">api/posApi.js</td><td><code>closePosSession</code> :162</td></tr>
+      <tr><td class="id">api/posSessionDenominationCorrectionApi.js</td><td>Correction workflow client</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ════════════ 18 ════════════ -->
+<section id="s18">
+  <h2 class="sec"><span class="n">18</span>Final Verdict</h2>
+
+  <h3>The source-of-truth hierarchy, as actually implemented</h3>
+<pre>Payment rows (posSessionId)  ─┐
+PosCashMovement (ACTIVE)     ─┼─▶ <b>computeExpectedCash()</b> ──▶ pos_sessions.expected_cash
+pos_sessions.opening_cash    ─┘         (backend, authoritative, recomputed at close)
+
+Browser denomination inputs ──▶ JS float total ──▶ <b>client-asserted closingCash</b>
+                                                      │
+                                                      ├─▶ pos_sessions.closing_cash
+                                                      ├─▶ pos_sessions.cash_difference   (= closing − expected)
+                                                      └─▶ GL: Cr Cash in Hand            (variance buried here)
+
+pos_sessions.closing_denominations_json ──▶ display only, never summed server-side
+      └─ overlay: PosSessionDenominationCorrection ──▶ display only, diverges from closing_cash
+
+pos_day_closes ──▶ expected_cash only  +  z_report_json blob
+      └─▶ Z-Report render: <b>frontend recomputes everything, with a different formula</b></pre>
+
+  <p>The chain has two authoritative links and one broken one. Expected Cash is genuinely single-source and correct within its own definition. The persisted session record is immutable and well-attributed. But <strong>counted cash is asserted by the client and never verified</strong>, and from that point on the variance is carried by convention rather than by structure — no ledger account, no day-close column, no report field, no approval record.</p>
+
+  <div class="verdict">
+    <h3>How does denomination variance from the X-Report actually flow into the Z-Report?</h3>
+    <p><strong>It doesn't.</strong> The X-Report's variance is computed in the browser and never persisted as part of any X-Report. At close, the session row records a variance that no Z-Report code path reads. <code>pos_day_closes</code> has no field for it. The on-screen Z-Report prints <code>—</code>. The printed Z-Report recomputes a variance from scratch using a formula that omits cash drops, so it disagrees with the X-Report on any day with a safe drop.</p>
+    <p><strong>What happens to it financially?</strong> Nothing recognizes it. The session-close journal entry credits Cash in Hand by the counted amount rather than the expected amount, so a shortage leaves a permanent debit residual in Cash in Hand and an overage drives that asset account negative. No expense, no income, no Over/Short account — the account does not exist in this codebase. Combined with the opening float never being debited at session open, the GL Cash balance drifts by <code>(cashSales − countedCash)</code> every single session, whether or not there was a variance.</p>
+    <p><strong>What happens to it operationally?</strong> It is shown to the cashier live, stored on the session, written into a free-text audit sentence, and then dropped. The supervisor threshold that would gate it defaults to zero — disabled. The approval flag that would override it is an unauthenticated JSON boolean the UI never sends. The Day Close checklist item that would surface it is hardcoded to pass.</p>
+    <p><strong>What should change to make closing audit-safe?</strong> Five things, in order. Compute the counted total server-side from the denomination map and reject any client-supplied total that disagrees. Introduce a Cash Over/Short account and post the variance to it, with the float posted at session open so the entry balances. Deduct cash refunds from Expected Cash. Add <code>counted_cash</code> and <code>cash_variance</code> columns to <code>pos_day_closes</code> and have the frontend read backend-computed figures instead of recomputing them. Replace the <code>supervisorApproved</code> boolean with a credential-backed grant that records the approver. Until at least the first two land, the cash-reconciliation figures this system produces should be treated as advisory, not as accounting.</p>
+  </div>
+</section>
+
+</div>
