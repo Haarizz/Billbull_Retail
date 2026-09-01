@@ -52,6 +52,8 @@ class PosLayawayServiceTest {
 
     private PosLayawayService service;
 
+    @Mock private PosLayawayCashMovementService cashMovementService;
+
     @BeforeEach
     void setUp() {
         com.billbull.backend.sales.settings.SalesSettingsService settingsMock = org.mockito.Mockito.mock(com.billbull.backend.sales.settings.SalesSettingsService.class);
@@ -77,6 +79,8 @@ class PosLayawayServiceTest {
                 sessionRepository,
                 resolutionMock,
                 settingsMock);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                service, "cashMovementService", cashMovementService);
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(java.math.BigDecimal.ZERO);
         // save() returns the same entity with ids assigned, so the reserve loop can run.

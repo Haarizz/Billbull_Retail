@@ -76,8 +76,14 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import com.billbull.backend.exception.VarianceApprovalRequiredException;
+import com.billbull.backend.pos.session.denomination.PosDenominationCount;
+
 @Service
 public class PosSessionService {
+
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(PosSessionService.class);
 
     private final PosSessionRepository repo;
     private final SalesInvoiceRepository invoiceRepo;
@@ -115,6 +121,22 @@ public class PosSessionService {
     private final PosSessionTransferPolicy sessionTransferPolicy;
     private final jakarta.persistence.EntityManager entityManager;
     private final com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
+
+    /** The single authority for Expected Cash. This class no longer computes it. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private PosCashReconciliationService cashReconciliationService;
+
+    /** The single authority for Counted Cash. This class no longer accepts one from a client. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.pos.session.denomination.PosDenominationCountService denominationCountService;
+
+    /** Decides whether a discrepancy needs authorization; owns the threshold semantics. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private PosVariancePolicy variancePolicy;
+
+    /** Single-use variance grants, bound to the exact reconciliation they authorize. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private PosVarianceApprovalRegistry varianceApprovalRegistry;
 
     @org.springframework.beans.factory.annotation.Autowired
     private com.billbull.backend.pos.auth.PosSessionAuthorizationService posSessionAuthorizationService;
@@ -209,6 +231,12 @@ public class PosSessionService {
         this.closureWorkflowGate = closureWorkflowGate;
     }
 
+    /** Keeps a failure message inside its column without losing the useful head of it. */
+    private static String truncate(String value, int max) {
+        if (value == null) return null;
+        return value.length() <= max ? value : value.substring(0, max);
+    }
+
     private String currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null ? auth.getName() : "system";
@@ -244,22 +272,11 @@ public class PosSessionService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    /** Single source of truth for "Expected Cash in Drawer", shared by closeSession()
-     *  and getXReport() so the Close Session modal and the X-Report page never diverge. */
-    private static BigDecimal computeExpectedCash(PosSession session, BigDecimal tenderCash,
-                                                    BigDecimal cashDropIn, BigDecimal cashDropOut) {
-        return nz(session.getOpeningCash()).add(tenderCash).add(cashDropIn).subtract(cashDropOut);
-    }
-
-    /** Cash physically in the drawer right now for an open session: the same Expected Cash
-     *  formula used by closeSession()/getXReport(), evaluated mid-shift. Used to refuse a
+    /** Cash physically in the drawer right now for an open session — the same authoritative
+     *  Expected Cash the X-Report and Close Session read, evaluated mid-shift. Used to refuse a
      *  cash out larger than the drawer holds. */
     private BigDecimal availableCashInDrawer(PosSession session) {
-        List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(session.getId());
-        TenderTotals tender = aggregateTender(advances, List.of(session.getId()));
-        BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
-        BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
-        return computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
+        return cashReconciliationService.reconcile(session).expectedCash();
     }
 
     /** SUM(amount) grouped by movementType (DROP_IN / DROP_OUT) across a set of sessions.
@@ -269,9 +286,9 @@ public class PosSessionService {
         Map<String, BigDecimal> totals = new java.util.HashMap<>();
         if (sessionIds == null || sessionIds.isEmpty()) return totals;
         
-        List<PosCashMovement> movements = cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds);
+        List<PosCashMovement> movements = cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds)
+                .stream().map(PosCashMovement::detachedCopy).toList();
         if (!movements.isEmpty()) {
-            movements.forEach(entityManager::detach);
             movements = effectiveCorrectionViewService.resolveOverlays(
                     com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, movements, PosCashMovement::getId);
         }
@@ -517,6 +534,32 @@ public class PosSessionService {
         // Hosting history: this terminal becomes the session's host from open onward.
         terminalHostingService.ensureHostingSegment(saved, terminal);
 
+        // The opening float entering the drawer: Dr Cash in Hand / Cr Petty Cash. Without this
+        // the float was physically in the till but never in the ledger, so every session left a
+        // negative Cash-in-Hand residual exactly equal to its float and the close swept out
+        // money the books said had never arrived.
+        if (nz(saved.getOpeningCash()).signum() > 0) {
+            try {
+                Branch openBranch = saved.getBranchId() != null
+                        ? branchRepository.findById(saved.getBranchId()).orElse(null) : null;
+                postingEngine.createJournalFromSessionOpen(
+                        saved.getId(), nz(saved.getOpeningCash()),
+                        saved.getTradingDate() != null ? saved.getTradingDate() : saved.getSessionDate(),
+                        openBranch);
+            } catch (Exception e) {
+                // Recorded, never swallowed. The session opens either way -- refusing to open a
+                // till because the ledger is unavailable would stop the shop -- but the failure
+                // is visible rather than silently leaving the float unbooked.
+                log.error("[PosSession] Session {} opened but its opening-float journal FAILED to "
+                                + "post (float={}). Cash in Hand will under-report until this is "
+                                + "reposted.", saved.getId(), saved.getOpeningCash(), e);
+                auditService.logSessionEvent(saved.getId(), saved.getTerminalId(), saved.getBranchId(),
+                        "GL_POSTING_FAILED",
+                        "operation=SESSION_OPEN float=" + saved.getOpeningCash()
+                                + " error=" + truncate(e.getMessage(), 300));
+            }
+        }
+
         auditService.logSessionOpened(saved.getId(), saved.getTerminalId(), saved.getBranchId());
         terminalActivityService.recordActivity(saved.getTerminalId(), "SESSION_OPEN");
         return saved;
@@ -753,30 +796,21 @@ public class PosSessionService {
     }
 
     @Transactional
-    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
-                                   boolean supervisorApproved) {
-        return closeSession(sessionId, closingCash, notes, supervisorApproved, null);
-    }
-
-    @Transactional
-    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
-                                   boolean supervisorApproved, String closingDenominationsJson) {
-        return closeSession(sessionId, closingCash, notes, supervisorApproved, closingDenominationsJson,
-                null, null, null, null, null, null);
-    }
-
-    @Transactional
-    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
-                                   boolean supervisorApproved, String closingDenominationsJson,
-                                   String cardBatchNo, Boolean cardSettlementVerified, BigDecimal cardClosingCash,
-                                   String closingCashierName, String closingSupervisorName,
-                                   String closingRemarks) {
-        return closeSession(sessionId, closingCash, notes, supervisorApproved, closingDenominationsJson,
-                cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName,
-                closingRemarks, null);
+    public PosSession closeSession(Long sessionId, Map<String, Object> closingDenominations,
+                                   String currencyCode, String notes) {
+        return closeSession(sessionId, closingDenominations, currencyCode, notes,
+                null, null, null, null, null, null, null);
     }
 
     /**
+     * Closes a session against a physically counted drawer.
+     *
+     * @param closingDenominations the counted quantities per denomination, or {@code null} when
+     *        no count was taken. This is the ONLY input to Counted Cash: the total is computed
+     *        server-side by {@link com.billbull.backend.pos.session.denomination.PosDenominationCountService}
+     *        so a client can no longer assert what the drawer held. A client-supplied
+     *        {@code closingCash} is dropped at the controller and never reaches this method.
+     * @param currencyCode optional declared currency, validated against the drawer's own.
      * @param closureAuthToken optional single-use grant from POST /sessions/{id}/authorize-closure.
      *        Day Close lets any authenticated user initiate a normal close of another cashier's
      *        session; the owner's credentials typed into the Session Owner Verification modal are
@@ -784,12 +818,36 @@ public class PosSessionService {
      *        user is still recorded as the operator who performed the close.
      */
     @Transactional
-    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes,
-                                   boolean supervisorApproved, String closingDenominationsJson,
+    public PosSession closeSession(Long sessionId, Map<String, Object> closingDenominations,
+                                   String currencyCode, String notes,
                                    String cardBatchNo, Boolean cardSettlementVerified, BigDecimal cardClosingCash,
                                    String closingCashierName, String closingSupervisorName,
                                    String closingRemarks, String closureAuthToken) {
-        PosSession session = getById(sessionId);
+        return closeSession(sessionId, closingDenominations, currencyCode, notes,
+                cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName,
+                closingSupervisorName, closingRemarks, closureAuthToken, null);
+    }
+
+    /**
+     * @param varianceApprovalToken single-use grant from POST /sessions/{id}/authorize-variance,
+     *        proving a supervisor authorized this exact expected/counted pair. Required only when
+     *        the discrepancy exceeds the branch threshold.
+     */
+    @Transactional
+    public PosSession closeSession(Long sessionId, Map<String, Object> closingDenominations,
+                                   String currencyCode, String notes,
+                                   String cardBatchNo, Boolean cardSettlementVerified, BigDecimal cardClosingCash,
+                                   String closingCashierName, String closingSupervisorName,
+                                   String closingRemarks, String closureAuthToken,
+                                   String varianceApprovalToken) {
+        // Locked for the whole close: the status check, the single-use grant, the snapshot
+        // freeze, the journal and the audit completion all happen inside it. Two simultaneous
+        // closes therefore serialise, and the loser sees a CLOSED session and gets the
+        // deterministic "already closed" refusal below rather than interleaving through the
+        // finalization.
+        PosSession session = repo.findByIdForUpdate(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "POS session not found: " + sessionId));
         if (session.getStatus() == PosSessionStatus.CLOSED) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Session is already closed.");
         }
@@ -818,31 +876,58 @@ public class PosSessionService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, authResult.message());
         }
 
-        // Expected cash uses the same actual-tender-collected formula as getXReport(), so the
-        // Close Session modal and the X-Report page never diverge (both compute it here).
-        // Keyed on Payment.posSessionId (the COLLECTION session), not on this session's own
-        // invoice list — a delivery order created here but not yet paid contributes nothing,
-        // which is correct: no cash has actually entered this drawer for it yet.
-        List<ReceiptVoucher> advances = receiptVoucherRepository.findByPosSessionId(sessionId);
-        TenderTotals tender = aggregateTender(advances, List.of(sessionId));
-        BigDecimal cashDropIn = sumCashMovements(session, PosCashMovementType.DROP_IN);
-        BigDecimal cashDropOut = sumCashMovements(session, PosCashMovementType.DROP_OUT);
-        BigDecimal expectedCash = computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut);
-        BigDecimal actualClosing = closingCash != null ? closingCash : BigDecimal.ZERO;
-        BigDecimal variance = actualClosing.subtract(expectedCash).abs();
+        // Expected cash comes from the reconciliation service, exactly as the X-Report gets it,
+        // so the Close Session modal and the X-Report page cannot diverge — including after a
+        // correction, which this path used to ignore while the X-Report applied it.
+        BigDecimal expectedCash = cashReconciliationService.reconcile(session).expectedCash();
 
-        // Supervisor variance gate: block close if variance exceeds configured threshold
-        if (!supervisorApproved) {
-            PosSettings settings = session.getBranchId() != null
-                    ? posSettingsRepository.findByBranchId(session.getBranchId()).orElse(null)
-                    : null;
-            BigDecimal threshold = settings != null && settings.getCashVarianceThreshold() != null
-                    ? settings.getCashVarianceThreshold() : BigDecimal.ZERO;
-            if (threshold.signum() > 0 && variance.compareTo(threshold) > 0) {
-                throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
-                        "Cash variance " + variance + " exceeds allowed threshold " + threshold
-                                + ". Supervisor approval required.");
+        // Counted Cash, derived from the submitted quantities and nothing else. Validation
+        // happens here, before anything is written, so an invalid count fails the close rather
+        // than half-persisting one.
+        //
+        // A null count is not a zero count: closing without submitting denominations leaves the
+        // drawer UNCOUNTED, and the session records no counted cash and no variance. Treating
+        // the absence of a count as "counted zero" would report the whole drawer as a shortage.
+        PosDenominationCount count = denominationCountService.count(closingDenominations, currencyCode);
+        BigDecimal countedCash = count != null ? count.countedCash() : null;
+        BigDecimal variance = countedCash != null
+                ? countedCash.subtract(expectedCash).abs() : BigDecimal.ZERO;
+
+        // ── Variance authorization ───────────────────────────────────────────────────────
+        //
+        // The client-supplied `supervisorApproved` boolean is deliberately ignored. It used to
+        // be the sole input to this gate: no credentials, no approver identity, no record of
+        // what was approved — so any caller could close an arbitrarily large shortage by
+        // sending one JSON field, while the UI, which never sent it, could not close a
+        // legitimately over-threshold session at all.
+        //
+        // Authorization now comes from a server-issued grant, minted only after a supervisor's
+        // credentials were verified, and bound to this session AND these exact figures. A
+        // recount after approval no longer matches the grant, so an approval obtained for a
+        // small discrepancy cannot be spent on a large one.
+        BigDecimal signedDifference = countedCash != null ? countedCash.subtract(expectedCash) : null;
+        String varianceApprovalStatus = "NOT_REQUIRED";
+        PosVarianceApprovalRegistry.Approval approval = null;
+
+        if (variancePolicy.requiresApproval(session.getBranchId(), signedDifference)) {
+            approval = varianceApprovalRegistry
+                    .consume(sessionId, expectedCash, countedCash, varianceApprovalToken)
+                    .orElse(null);
+            if (approval == null) {
+                auditService.logSessionEvent(sessionId, session.getTerminalId(), session.getBranchId(),
+                        "VARIANCE_APPROVAL_REQUIRED",
+                        "expected=" + expectedCash + " counted=" + countedCash
+                                + " variance=" + signedDifference
+                                + " threshold=" + variancePolicy.thresholdFor(session.getBranchId()));
+                throw new VarianceApprovalRequiredException(sessionId, expectedCash, countedCash,
+                        signedDifference, variancePolicy.thresholdFor(session.getBranchId()),
+                        "Cash variance of " + signedDifference.abs() + " exceeds the allowed threshold of "
+                                + variancePolicy.thresholdFor(session.getBranchId())
+                                + ". A supervisor must authorize this exact count before the session can "
+                                + "be closed. If the drawer was recounted, the authorization must be "
+                                + "obtained again for the new figure.");
             }
+            varianceApprovalStatus = "APPROVED";
         }
 
         // One reading of the Business Day clock for the whole close operation. It must be
@@ -857,12 +942,22 @@ public class PosSessionService {
             session.setDurationSeconds(Math.max(0, ChronoUnit.SECONDS.between(session.getOpenedAt(), closeTime)));
         }
         session.setStatus(PosSessionStatus.CLOSED);
-        session.setClosingCash(actualClosing);
         session.setExpectedCash(expectedCash);
-        session.setCashDifference(actualClosing.subtract(expectedCash));
         session.setNotes(notes);
-        if (closingDenominationsJson != null && !closingDenominationsJson.isBlank()) {
-            session.setClosingDenominationsJson(closingDenominationsJson);
+        // The closing snapshot is written as one coherent set: the denominations, the total
+        // derived from exactly those denominations, and the variance derived from exactly that
+        // total. There is no path by which they can disagree, because none of them is supplied.
+        if (count != null) {
+            session.setClosingDenominationsJson(denominationCountService.toJson(count));
+            session.setClosingCash(count.countedCash());
+            session.setCashDifference(count.countedCash().subtract(expectedCash));
+            session.setCountedAt(closeTime);
+            session.setCountedCurrencyCode(count.currencyCode());
+        } else {
+            // Uncounted: no total, no variance. Distinct from a counted-empty drawer, which
+            // records 0.00 and a real countedAt.
+            session.setClosingCash(null);
+            session.setCashDifference(null);
         }
         if (cardBatchNo != null) session.setCardBatchNo(cardBatchNo);
         if (cardClosingCash != null) {
@@ -874,6 +969,14 @@ public class PosSessionService {
             session.setCardSettlementVerified(cardVariance.abs().compareTo(new BigDecimal("0.01")) <= 0);
         } else if (cardSettlementVerified != null) {
             session.setCardSettlementVerified(cardSettlementVerified);
+        }
+        session.setVarianceApprovalStatus(varianceApprovalStatus);
+        if (approval != null) {
+            // Identity from the verified grant, never from a client-supplied name.
+            session.setVarianceApprovedBy(approval.approverUsername());
+            session.setVarianceApprovedByUserId(approval.approverUserId());
+            session.setVarianceApprovedAt(closeTime);
+            session.setVarianceApprovalReason(approval.reason());
         }
         if (closingCashierName != null) session.setClosingCashierName(closingCashierName);
         if (closingSupervisorName != null) session.setClosingSupervisorName(closingSupervisorName);
@@ -889,9 +992,12 @@ public class PosSessionService {
         }
         session.setXReportPrinted(true);
 
-        // Capture immutable Z-Report snapshot at close time
-        String varianceStr = actualClosing.subtract(expectedCash).toPlainString();
-        session.setZReportJson(buildZReportSnapshot(session, expectedCash, actualClosing, closeTime));
+        // Capture immutable Z-Report snapshot at close time. An uncounted close has no
+        // variance to record, so it reports as such rather than as a zero difference.
+        BigDecimal countedForSnapshot = countedCash != null ? countedCash : BigDecimal.ZERO;
+        String varianceStr = countedCash != null
+                ? countedCash.subtract(expectedCash).toPlainString() : "NOT_COUNTED";
+        session.setZReportJson(buildZReportSnapshot(session, expectedCash, countedForSnapshot, closeTime));
 
         PosSession closed = repo.save(session);
 
@@ -903,7 +1009,7 @@ public class PosSessionService {
         // Hosting history: the session is no longer hosted anywhere once closed.
         terminalHostingService.endOpenHostingSegment(closed.getId());
 
-        // §3.7 Session-close GL: transfer closing cash count to bank (daily pickup)
+        // §3.7 Session-close GL: settle the counted cash and name any discrepancy.
         try {
             Branch branch = closed.getBranchId() != null
                     ? branchRepository.findById(closed.getBranchId()).orElse(null) : null;
@@ -917,10 +1023,67 @@ public class PosSessionService {
             // only for sessions opened before Phase 3A, hence the fallback.
             LocalDate glDate = closed.getTradingDate() != null
                     ? closed.getTradingDate() : businessDayWindowService.clock().now().toLocalDate();
-            postingEngine.createJournalFromSessionClose(
-                    closed.getId(), actualClosing, glDate, branch);
+            // Dr Bank (counted) [+ Dr Cash Short] / Cr Cash in Hand (EXPECTED) [+ Cr Cash Over].
+            // Crediting Cash by the EXPECTED position rather than the counted one is what makes
+            // a discrepancy visible: the old entry used counted on both sides, so it balanced
+            // whatever the drawer held and the shortage disappeared into Cash in Hand.
+            var journal = countedCash != null
+                    ? postingEngine.createJournalFromSessionClose(
+                            closed.getId(), countedCash, expectedCash, glDate, branch)
+                    : null;
+
+            if (countedCash == null) {
+                // Nothing was counted, so there is nothing to settle and no variance to
+                // recognise. Explicitly not a failure.
+                closed.setGlPostingStatus("NOT_REQUIRED");
+            } else {
+                closed.setGlPostingStatus("POSTED");
+                closed.setGlPostingReference("SCL-" + closed.getId());
+                closed.setGlPostedAt(closeTime);
+                closed.setGlPostingError(null);
+                if (signedDifference != null && variancePolicy.isVariance(signedDifference)) {
+                    auditService.logSessionEvent(closed.getId(), closed.getTerminalId(), closed.getBranchId(),
+                            signedDifference.signum() < 0 ? "CASH_SHORT_POSTED" : "CASH_OVER_POSTED",
+                            "expected=" + expectedCash + " counted=" + countedCash
+                                    + " variance=" + signedDifference
+                                    + " journalRef=SCL-" + closed.getId());
+                }
+            }
+            repo.save(closed);
         } catch (Exception e) {
-            // Non-blocking — GL failure must not prevent the session from closing.
+            // A failed posting must never look like a successful one. The close itself stands --
+            // the cash has physically moved and the count is recorded -- but the accounting is
+            // explicitly marked FAILED with the reason kept, so it is visible, queryable and
+            // retryable instead of silently absent. The previous empty catch let a session
+            // report itself fully reconciled while no journal existed at all.
+            log.error("[PosSession] Session {} closed but its close journal FAILED to post. "
+                            + "expected={} counted={} variance={}. The session is closed; its "
+                            + "accounting is not.",
+                    closed.getId(), expectedCash, countedCash, signedDifference, e);
+            closed.setGlPostingStatus("FAILED");
+            closed.setGlPostingReference("SCL-" + closed.getId());
+            closed.setGlPostingError(truncate(e.getMessage(), 1000));
+            repo.save(closed);
+            auditService.logSessionEvent(closed.getId(), closed.getTerminalId(), closed.getBranchId(),
+                    "GL_POSTING_FAILED",
+                    "expected=" + expectedCash + " counted=" + countedCash
+                            + " variance=" + signedDifference + " error=" + truncate(e.getMessage(), 300));
+        }
+
+        if (signedDifference != null && variancePolicy.isVariance(signedDifference)) {
+            auditService.logSessionEvent(closed.getId(), closed.getTerminalId(), closed.getBranchId(),
+                    "VARIANCE_DETECTED",
+                    "expected=" + expectedCash + " counted=" + countedCash
+                            + " variance=" + signedDifference
+                            + " direction=" + (signedDifference.signum() < 0 ? "SHORT" : "OVER")
+                            + " approval=" + varianceApprovalStatus);
+        }
+        if (approval != null) {
+            auditService.logSessionEvent(closed.getId(), closed.getTerminalId(), closed.getBranchId(),
+                    "VARIANCE_APPROVED",
+                    "approver=" + approval.approverUsername() + " userId=" + approval.approverUserId()
+                            + " expected=" + expectedCash + " counted=" + countedCash
+                            + " variance=" + signedDifference + " reason=" + approval.reason());
         }
 
         // Async audit: session closed with variance info
@@ -931,10 +1094,75 @@ public class PosSessionService {
         return closed;
     }
 
-    /** Backward-compatible overload used by controller when supervisorApproved is not supplied. */
+
+
+    /**
+     * Verifies that a supervisor may authorize this session's variance, and mints the grant.
+     *
+     * <p>The figures are derived here, never accepted: expected cash from the reconciliation
+     * authority, counted cash from the submitted denominations via the count service. A client
+     * cannot obtain a grant for numbers it made up, and cannot obtain one at all unless the
+     * discrepancy genuinely exceeds the branch threshold.
+     */
     @Transactional
-    public PosSession closeSession(Long sessionId, BigDecimal closingCash, String notes) {
-        return closeSession(sessionId, closingCash, notes, false);
+    public Map<String, Object> authorizeVariance(Long sessionId, Map<String, Object> closingDenominations,
+                                                  String currencyCode,
+                                                  com.billbull.backend.user.User approver,
+                                                  String reason) {
+        PosSession session = getById(sessionId);
+        if (session.getStatus() == PosSessionStatus.CLOSED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Session is already closed; its variance cannot be authorized retroactively.");
+        }
+
+        // The approver must be entitled to close this session. Reusing the existing closure
+        // authorization keeps one answer to "who may act on this drawer" rather than inventing a
+        // second, weaker one for variances.
+        com.billbull.backend.pos.auth.AuthorizationResult auth =
+                posSessionAuthorizationService.authorizeSessionClose(session, approver);
+        if (!auth.authorized()) {
+            return Map.of("authorized", false, "code", "NOT_AUTHORIZED", "message", auth.message());
+        }
+
+        BigDecimal expectedCash = cashReconciliationService.reconcile(session).expectedCash();
+        PosDenominationCount count = denominationCountService.count(closingDenominations, currencyCode);
+        if (count == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A variance can only be authorized against a physical count. Submit the counted "
+                            + "denominations with the authorization request.");
+        }
+        BigDecimal countedCash = count.countedCash();
+        BigDecimal signedDifference = countedCash.subtract(expectedCash);
+
+        if (!variancePolicy.requiresApproval(session.getBranchId(), signedDifference)) {
+            // Nothing to authorize. Minting a grant anyway would create a token that could be
+            // held and spent later against a different count.
+            return Map.of("authorized", true, "approvalRequired", false,
+                    "expectedCash", expectedCash, "countedCash", countedCash,
+                    "cashDifference", signedDifference,
+                    "message", "This variance is within the allowed threshold; no authorization is needed.");
+        }
+
+        String token = varianceApprovalRegistry.issue(sessionId, expectedCash, countedCash,
+                approver.getId(), approver.getUsername(), reason);
+
+        auditService.logSessionEvent(sessionId, session.getTerminalId(), session.getBranchId(),
+                "VARIANCE_APPROVED",
+                "approver=" + approver.getUsername() + " userId=" + approver.getId()
+                        + " expected=" + expectedCash + " counted=" + countedCash
+                        + " variance=" + signedDifference + " reason=" + reason);
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("authorized", true);
+        result.put("approvalRequired", true);
+        result.put("varianceApprovalToken", token);
+        result.put("expectedCash", expectedCash);
+        result.put("countedCash", countedCash);
+        result.put("cashDifference", signedDifference);
+        result.put("varianceAmount", signedDifference.abs());
+        result.put("varianceDirection", signedDifference.signum() < 0 ? "SHORT" : "OVER");
+        result.put("approver", approver.getUsername());
+        return result;
     }
 
     // -------------------------------------------------------------------------
@@ -1337,6 +1565,36 @@ public class PosSessionService {
     @Transactional
     public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount,
                                             String description, String reference, Long categoryId) {
+        return addCashMovement(sessionId, movementType, amount, description, reference, categoryId, true);
+    }
+
+    /**
+     * @param postGlJournal whether this movement should post its own journal.
+     *
+     *      <p>Almost always {@code true}: a drawer movement is normally the only record of the
+     *      money moving, so it owns the posting. Pass {@code false} only when the owning
+     *      business operation has <em>already</em> posted a complete journal that includes the
+     *      Cash leg — otherwise the same amount is posted twice.
+     *
+     *      <p>Advance refunds and layaway deposits/refunds are exactly that case. Their
+     *      journals ({@code createJournalFromAdvanceRefund},
+     *      {@code createJournalFromLayawayDeposit}, {@code reverseLayawayDepositJournal})
+     *      already debit or credit Cash in Hand against Customer Advance, so those flows need
+     *      the drawer row for reconciliation but must not re-post the accounting. Their GL
+     *      behaviour is therefore unchanged by gaining a cash movement.
+     *
+     *      <p>Contrast Sales Return cash refunds, which pass {@code true}: the return's own
+     *      journal posts Dr Revenue + Dr VAT / Cr Accounts Receivable with no cash leg at all,
+     *      so the movement's Dr AR / Cr Cash is what completes it.
+     *
+     *      <p>{@code postedAccountCode}/{@code postedAccountName} are still resolved and stored
+     *      either way, so the record of which account the movement belongs to — and any later
+     *      void reversal — stays consistent across both modes.
+     */
+    @Transactional
+    public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount,
+                                            String description, String reference, Long categoryId,
+                                            boolean postGlJournal) {
         PosSession session = getById(sessionId);
         if (session.getStatus() != PosSessionStatus.OPEN) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot add cash movement to a closed session.");
@@ -1423,15 +1681,17 @@ public class PosSessionService {
         Branch branch = session.getBranchId() != null
                 ? branchRepository.findById(session.getBranchId()).orElse(null)
                 : null;
-        postingEngine.createJournalFromCashMovement(
-                movement.getId(),
-                movementType,
-                amount,
-                description,
-                session.getSessionDate(),
-                branch,
-                accountCode,
-                accountName);
+        if (postGlJournal) {
+            postingEngine.createJournalFromCashMovement(
+                    movement.getId(),
+                    movementType,
+                    amount,
+                    description,
+                    session.getSessionDate(),
+                    branch,
+                    accountCode,
+                    accountName);
+        }
 
         terminalActivityService.recordActivity(session.getTerminalId(), movementType);
         auditService.logCashMovement(sessionId, session.getTerminalId(), session.getBranchId(), movementType, amount.toPlainString());
@@ -1612,9 +1872,9 @@ public class PosSessionService {
                     com.billbull.backend.pos.admin.CorrectionTargetType.RECEIPT_VOUCHER, advances, ReceiptVoucher::getId);
         }
 
-        List<PosCashMovement> cashMovements = new java.util.ArrayList<>(session.getCashMovements());
+        List<PosCashMovement> cashMovements = session.getCashMovements().stream()
+                .map(PosCashMovement::detachedCopy).toList();
         if (!cashMovements.isEmpty()) {
-            cashMovements.forEach(entityManager::detach);
             cashMovements = effectiveCorrectionViewService.resolveOverlays(
                     com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, cashMovements, PosCashMovement::getId);
         }
@@ -1637,8 +1897,16 @@ public class PosSessionService {
         summary.put("openingCash", nz(session.getOpeningCash()));
         summary.put("cashDropIn", cashDropIn);
         summary.put("cashDropOut", cashDropOut);
-        // Same formula as closeSession() — single source of truth for Expected Cash.
-        summary.put("expectedCash", computeExpectedCash(session, tender.cash, cashDropIn, cashDropOut));
+        // The authoritative reconciliation — the same call closeSession() makes, so the two can
+        // never disagree. cashDropIn/cashDropOut above remain the report's own display rows.
+        PosCashReconciliationResult reconciliation = cashReconciliationService.reconcile(session);
+        summary.put("expectedCash", reconciliation.expectedCash());
+        // Counted cash and variance are reported only when a count actually exists; an
+        // uncounted drawer has no variance, and publishing 0 would state a reconciliation that
+        // never happened.
+        summary.put("countedCash", reconciliation.countedCash());
+        summary.put("cashVariance", reconciliation.variance());
+        summary.put("reconciliationStatus", reconciliation.status());
 
         // Consolidated Cash Position — additive, informational only, never feeds the
         // Expected Cash figure above. Customer Receipts/Advances are back-office vouchers
@@ -1997,6 +2265,32 @@ public class PosSessionService {
         Map<String, BigDecimal> cashMovementTotals = sumCashMovementsByType(sessionIds);
         BigDecimal cashDropIn = cashMovementTotals.getOrDefault("DROP_IN", BigDecimal.ZERO);
         BigDecimal cashDropOut = cashMovementTotals.getOrDefault("DROP_OUT", BigDecimal.ZERO);
+
+        // Expected Cash for the day = the sum of the authoritative per-session figures frozen at
+        // each close. Deliberately NOT a second formula over the day's aggregates: these values
+        // came from the reconciliation service when each drawer was counted, and this is the
+        // same quantity Day Close already computes as `expectedCashSessions`.
+        //
+        // Published because the Z-Report previously emitted no expectedCash at all, which is
+        // precisely why the frontend invented `opening + cashSales` — a formula that silently
+        // dropped every cash movement, and with it every cash refund. Supplying the real value
+        // is what lets that duplicate be deleted rather than merely relocated.
+        // The day's drawer reconciliation, aggregated from the frozen per-session snapshots by
+        // the single authority. No re-derivation from the day's transactions: that would be a
+        // second cash model competing with the one each drawer was closed against.
+        PosDayCashReconciliation dayCash = cashReconciliationService.summarizeDay(sessions);
+        summary.put("expectedCash", dayCash.expectedCash());
+        summary.put("countedCash", dayCash.countedCash());
+        summary.put("cashVariance", dayCash.cashVariance());
+        summary.put("reconciliationStatus", dayCash.status());
+        summary.put("sessionsWithVariance", dayCash.sessionsWithVariance());
+        summary.put("uncountedSessionCount", dayCash.uncountedSessionCount());
+        summary.put("countedSessionCount", dayCash.countedSessionCount());
+        summary.put("fullyCounted", dayCash.isFullyCounted());
+        // The comparable halves for a partly counted day: a day variance is withheld when any
+        // drawer is uncounted, so this is the honest figure for the drawers actually verified.
+        summary.put("countedSessionsExpectedCash", dayCash.countedSessionsExpectedCash());
+        summary.put("countedSessionsVariance", dayCash.countedSessionsVariance());
         summary.put("cashPosition", buildCashPosition(branchId, date, sessionIds,
                 openingCash, tender.cash, cashDropIn, cashDropOut, true));
 
@@ -2154,12 +2448,25 @@ public class PosSessionService {
         Map<String, BigDecimal> cashMovementTotals = sumCashMovementsByType(sessionIds);
         BigDecimal cashPaidIn = cashMovementTotals.getOrDefault("DROP_IN", BigDecimal.ZERO);
         BigDecimal cashPaidOut = cashMovementTotals.getOrDefault("DROP_OUT", BigDecimal.ZERO);
+        // An integrity cross-check, and deliberately nothing more. It re-derives the day's
+        // expected cash from the day's aggregates so it can be compared against the frozen
+        // per-session values: a mismatch means data moved after a drawer was counted, which is
+        // worth refusing to close on. It is not a reported figure and no report reads it — the
+        // day's Expected Cash comes from the frozen snapshots via the reconciliation authority.
         BigDecimal expectedCashComputed = openingCash.add(cashSales).add(cashPaidIn).subtract(cashPaidOut);
 
-        // Let's compute actual expected cash from sessions directly
-        BigDecimal expectedCashSessions = sessionsInRange.stream().map(s -> nz(s.getExpectedCash())).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal cashVariance = expectedCashComputed.subtract(expectedCashSessions);
-        if (cashVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
+        // The day's REPORTED reconciliation: the authority's aggregation of the frozen
+        // per-session snapshots. This is what the day is closed against.
+        PosDayCashReconciliation dayCash = cashReconciliationService.summarizeDay(sessionsInRange);
+        BigDecimal expectedCashSessions = dayCash.expectedCash();
+
+        // The pre-existing derivation is kept ONLY as an integrity cross-check. It compares one
+        // derivation of EXPECTED against another and can detect data that moved after a drawer
+        // was counted — which is worth blocking on — but it can never detect that the money is
+        // not there, so it is no longer any report's source of Expected Cash.
+        BigDecimal integrityDrift = expectedCashComputed.subtract(expectedCashSessions);
+        if (integrityDrift.abs().compareTo(new BigDecimal("0.05")) > 0) {
+            BigDecimal cashVariance = integrityDrift;
             Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
             breakdown.put("openingCash", openingCash);
             breakdown.put("cashSales", cashSales);
@@ -2175,6 +2482,9 @@ public class PosSessionService {
         }
 
         report.put("isDayClosed", true);
+        // The physical reconciliation the day never had: counted against expected, both summed
+        // from what each drawer was actually closed with.
+        report.put("cashReconciliation", dayCash.toMap());
         
         // 6. Save Snapshot
         PosDayClose dayClose = new PosDayClose();
@@ -2199,6 +2509,14 @@ public class PosSessionService {
         dayClose.setCreditSales(creditSales);
         dayClose.setOtherSales(otherSales);
         dayClose.setExpectedCash(expectedCashSessions);
+        // Structured columns, not JSON: a reconciliation figure that can only be reached by
+        // parsing a report blob cannot be queried, indexed or trusted by anything downstream.
+        dayClose.setCountedCash(dayCash.countedCash());
+        dayClose.setCashVariance(dayCash.cashVariance());
+        dayClose.setVarianceStatus(dayCash.status().name());
+        dayClose.setSessionsWithVariance(dayCash.sessionsWithVariance());
+        dayClose.setUncountedSessionCount(dayCash.uncountedSessionCount());
+        dayClose.setStatus(com.billbull.backend.pos.dayclose.PosDayCloseStatus.GENERATED);
         dayClose.setTotalInvoices((Integer) summary.getOrDefault("invoiceCount", 0));
         dayClose.setTotalSessions((Integer) summary.getOrDefault("sessionCount", 0));
         dayClose.setStartSessionId(range.startSession != null ? range.startSession.getId() : null);
@@ -2309,7 +2627,7 @@ public class PosSessionService {
     // ── Consolidated Cash Position (additive — never feeds Expected Cash in Drawer) ───
     //
     // A second, purely informational cash summary alongside the existing till-count
-    // reconciliation (computeExpectedCash/PosSession.expectedCash), which must stay
+    // reconciliation (PosCashReconciliationService/PosSession.expectedCash), which must stay
     // untouched — see the architecture review. This section widens the picture to
     // include back-office cash movements that never sit in the physical drawer
     // (Customer Receipts, Customer Advances) and, where the data actually supports it,
@@ -2332,11 +2650,36 @@ public class PosSessionService {
      *  are general back-office accounting vouchers with no PosSession/terminal/cashier
      *  link today, so — per the architecture review — they are only ever branch+date
      *  scoped (Z-Report), never session-scoped (X-Report). */
-    private ReceiptsAndAdvances buildReceiptsAndAdvances(Long branchId, LocalDate date) {
+    private ReceiptsAndAdvances buildReceiptsAndAdvances(Long branchId, LocalDate date, List<Long> sessionIds) {
         ReceiptsAndAdvances result = new ReceiptsAndAdvances();
         if (branchId == null || date == null) return result;
         int slReceipt = 1;
         int slAdvance = 1;
+
+        // ── Anti-double-count guard ──────────────────────────────────────────────────────
+        // These rows are branch+date scoped, so they sweep up every cash receipt and advance
+        // for the day — including the ones collected THROUGH the reported POS sessions, which
+        // Cash Tender Collected (cashSales) already contains. Adding both to netCashPosition
+        // counts the same physical notes twice.
+        //
+        // This was dormant while no receipt/advance carried a posSessionId. Attributing POS
+        // credit receipts and POS advances to their collecting drawer is what makes it real,
+        // so the exclusion lands in the same change.
+        //
+        // Two shapes to exclude, because the two flows record the session differently:
+        //   • advances  — the voucher itself carries posSessionId (set by receiveAdvance)
+        //   • receipts  — the session lives on the Payment; its generated voucher is reached
+        //                 through Payment.receiptVoucherRecordId
+        java.util.Set<Long> tenderedVoucherIds = new java.util.HashSet<>();
+        if (sessionIds != null && !sessionIds.isEmpty()) {
+            for (Payment p : paymentRepository.findTenderForSessions(sessionIds)) {
+                if (p.getReceiptVoucherRecordId() != null) {
+                    tenderedVoucherIds.add(p.getReceiptVoucherRecordId());
+                }
+            }
+        }
+        java.util.Set<Long> reportedSessionIds = sessionIds == null
+                ? java.util.Set.of() : new java.util.HashSet<>(sessionIds);
 
         List<ReceiptVoucher> receipts = new java.util.ArrayList<>();
         receipts.addAll(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(branchId, date, ReceiptPurpose.CASH_SALE));
@@ -2349,6 +2692,8 @@ public class PosSessionService {
         
         for (ReceiptVoucher rv : receipts) {
             if (!isCashMode(rv.getPaymentMode())) continue;
+            // Already inside cashSales via its Payment row — see the anti-double-count note.
+            if (rv.getId() != null && tenderedVoucherIds.contains(rv.getId())) continue;
             BigDecimal amount = nz(rv.getAmount());
             result.receiptsTotal = result.receiptsTotal.add(amount);
             Map<String, Object> row = new java.util.LinkedHashMap<>();
@@ -2368,6 +2713,9 @@ public class PosSessionService {
         }
         for (ReceiptVoucher rv : advances) {
             if (!isCashMode(rv.getPaymentMode())) continue;
+            // Already inside cashSales via aggregateTender's advance leg.
+            if (rv.getPosSessionId() != null && reportedSessionIds.contains(rv.getPosSessionId())) continue;
+            if (rv.getId() != null && tenderedVoucherIds.contains(rv.getId())) continue;
             BigDecimal amount = nz(rv.getAmount());
             result.advancesTotal = result.advancesTotal.add(amount);
             Map<String, Object> row = new java.util.LinkedHashMap<>();
@@ -2393,9 +2741,9 @@ public class PosSessionService {
 
         List<PosCashMovement> movements = (sessionIds == null || sessionIds.isEmpty())
                 ? List.of()
-                : cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds);
+                : cashMovementRepository.findByPosSession_IdInOrderByPerformedAtAsc(sessionIds)
+                        .stream().map(PosCashMovement::detachedCopy).toList();
         if (!movements.isEmpty()) {
-            movements.forEach(entityManager::detach);
             movements = effectiveCorrectionViewService.resolveOverlays(
                     com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, movements, PosCashMovement::getId);
         }
@@ -2423,7 +2771,7 @@ public class PosSessionService {
         List<Map<String, Object>> receiptRows = List.of();
         List<Map<String, Object>> advanceRows = List.of();
         if (includeBackOfficeReceipts) {
-            ReceiptsAndAdvances ra = buildReceiptsAndAdvances(branchId, date);
+            ReceiptsAndAdvances ra = buildReceiptsAndAdvances(branchId, date, sessionIds);
             customerReceiptsTotal = ra.receiptsTotal;
             customerAdvancesTotal = ra.advancesTotal;
             receiptRows = ra.receiptRows;
@@ -2434,23 +2782,19 @@ public class PosSessionService {
         result.put("customerAdvanceRows", advanceRows);
         result.put("customerAdvancesTotal", customerAdvancesTotal);
 
-        // Cash Refunds — not implemented: SalesReturn carries no payment-mode field, so a
-        // cash-only refund total cannot be computed correctly today (see architecture
-        // review §5). Flagged explicitly rather than misreporting the blended total.
-        result.put("cashRefundsSupported", false);
-        result.put("cashRefundsTotal", BigDecimal.ZERO);
-
-        BigDecimal netCashPosition = nz(openingCash)
-                .add(cashSales)
-                .add(customerReceiptsTotal)
-                .add(customerAdvancesTotal)
-                .add(cashDropIn)
-                .subtract(cashDropOut);
+        // netCashPosition removed. It added back-office receipts and advances onto a drawer
+        // figure, producing a number that was neither drawer cash nor company cash and could be
+        // reconciled against nothing. Keeping it meant maintaining exclusion rules forever so it
+        // would not double-count every newly session-attributed cash source. The information it
+        // was built from survives above, separated rather than summed.
+        //
+        // POS drawer reconciliation lives in the reconciliation service; these rows are context,
+        // never inputs to Expected Cash, Counted Cash or variance.
+        result.put("scope", "BACK_OFFICE_NON_DRAWER");
         result.put("openingCash", nz(openingCash));
         result.put("cashSales", cashSales);
         result.put("cashDropIn", cashDropIn);
         result.put("cashDropOut", cashDropOut);
-        result.put("netCashPosition", netCashPosition);
         return result;
     }
 
@@ -2582,7 +2926,19 @@ public class PosSessionService {
         info.put("closedAt", s.getClosedAt() != null ? s.getClosedAt().atZone(java.time.ZoneId.systemDefault()) : null);
         info.put("durationSeconds", s.getDurationSeconds());
         info.put("openingCash", nz(s.getOpeningCash()));
-        info.put("closingCash", nz(s.getClosingCash()));
+
+        // The frozen reconciliation this drawer was actually closed against, correction
+        // overlays included. Reported as-is: closingCash was previously nz()-coalesced, which
+        // turned every never-counted session into one that had been counted and found empty --
+        // the exact NOT_COUNTED / COUNTED_ZERO conflation the count model exists to prevent.
+        // Nulls travel intact so a report can render "—" rather than a fabricated 0.00.
+        PosCashReconciliationResult frozen = cashReconciliationService.frozen(s);
+        info.put("closingCash", frozen.countedCash());
+        info.put("countedCash", frozen.countedCash());
+        info.put("expectedCash", frozen.expectedCash());
+        info.put("variance", frozen.variance());
+        info.put("reconciliationStatus", frozen.status());
+        info.put("countedAt", frozen.countedAt());
         info.put("closingDenominationsJson", effectiveClosingDenominationsJson(s));
         info.put("cardBatchNo", s.getCardBatchNo());
         info.put("cardSettlementVerified", Boolean.TRUE.equals(s.getCardSettlementVerified()));

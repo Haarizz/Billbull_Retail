@@ -66,8 +66,20 @@ export const getOpenInvoicesForCustomer = async (customerCode) => {
 // --------------------
 // CREATE OR UPDATE
 // --------------------
-export const saveSalesPayment = async (payload) => {
-    const res = await api.post(BASE_URL, payload);
+/**
+ * @param {object} payload  the Payment record
+ * @param {number|null} posSessionId  the POS drawer session that physically collected this
+ *   tender. Sent as a query parameter, not a body field: the backend keeps
+ *   Payment.posSessionId READ_ONLY to JSON so a body value is dropped, and validates this
+ *   parameter server-side before stamping it. Pass it whenever the money crosses a till
+ *   counter; omit it for back-office receipts, which take no part in POS cash reconciliation.
+ *   It is never inferred server-side — omitting it at a till means the cash is invisible to
+ *   that drawer's Expected Cash.
+ */
+export const saveSalesPayment = async (payload, posSessionId = null) => {
+    const res = await api.post(BASE_URL, payload, {
+        params: posSessionId ? { posSessionId } : undefined,
+    });
     return res.data;
 };
 

@@ -31,6 +31,8 @@ import {
   addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
   getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
+  getDenominationLadder,
+  authorizePosVariance,
   createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
   posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
@@ -52,7 +54,8 @@ import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer'
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
-import { CASH_NOTE_KEYS, CASH_COIN_KEYS, DENOM_KEYS, DENOM_LABELS, emptyDenominations } from '../../utils/cashDenominations';
+import { CASH_NOTE_KEYS, CASH_COIN_KEYS, DENOM_KEYS, DENOM_LABELS, emptyDenominations, setDenominationLadder } from '../../utils/cashDenominations';
+import { calculateDenominationTotal } from '../../utils/posReportViewModel';
 import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
@@ -420,6 +423,16 @@ export default function POSSales() {
   const activeCurrency = company?.currency || 'AED';
   // Sync the on-screen currency renderers (POSCurrency) with the company profile.
   useEffect(() => { setActiveCurrency(activeCurrency); }, [activeCurrency]);
+  // Render the count screens from the server's ladder. On failure the bundled AED list stands
+  // in for rendering only -- the backend validates every submitted count regardless, so a stale
+  // or failed fetch cannot widen what counts as money.
+  useEffect(() => {
+    let cancelled = false;
+    getDenominationLadder(activeCurrency)
+      .then((ladder) => { if (!cancelled) setDenominationLadder(ladder); })
+      .catch((err) => console.warn('Denomination ladder unavailable; using bundled AED fallback', err));
+    return () => { cancelled = true; };
+  }, [activeCurrency]);
   const [currentView, setCurrentView] = useState('dashboard');
   const [analyticsDateFrom, setAnalyticsDateFrom] = useState(() => {
     const d = new Date(); d.setDate(1);
@@ -674,6 +687,18 @@ export default function POSSales() {
   // logged-in user). Cleared once consumed.
   const closureAuthGrantRef = useRef(null);
   const [closeSessionError, setCloseSessionError] = useState('');
+  // The server's refusal, verbatim: expected / counted / variance / threshold. Every number the
+  // approval panel shows comes from here, so the figure a supervisor authorizes is exactly the
+  // one the close was evaluated against. The frontend computes none of it.
+  const [varianceApproval, setVarianceApproval] = useState(null);
+  const [varianceApprovalBusy, setVarianceApprovalBusy] = useState(false);
+  const [varianceApprovalError, setVarianceApprovalError] = useState('');
+  const [varianceSupervisorUser, setVarianceSupervisorUser] = useState('');
+  const [varianceSupervisorPassword, setVarianceSupervisorPassword] = useState('');
+  const [varianceApprovalReason, setVarianceApprovalReason] = useState('');
+  // Held in a ref, never in state or storage: the grant is single-use and short-lived, and a
+  // reload must re-derive the situation from the server rather than replay a stale token.
+  const varianceGrantRef = useRef(null);
   // Force Close context carried from the Supervisor Approval modal to the close call,
   // so the recorded reason survives the X-Report step in between.
   const forceCloseContextRef = useRef(null);
@@ -1165,11 +1190,28 @@ export default function POSSales() {
   const [tplJobCardFooter, setTplJobCardFooter] = useState('We are not responsible for data loss during repair.');
   const [tplJobCardPaper, setTplJobCardPaper] = useState('A4');
   const [tplOutletName, setTplOutletName] = useState('BillBull Trading LLC');
-  const [tplOutletTrn, setTplOutletTrn] = useState('100123456700003');
+  const [tplOutletTrn, setTplOutletTrn] = useState('');
   const [tplOutletAddress, setTplOutletAddress] = useState('Shop 12, Dubai Mall, Downtown Dubai');
   const [tplOutletPhone, setTplOutletPhone] = useState('+971 4 123 4567');
   const [tplLogoDataUrl, setTplLogoDataUrl] = useState(null);
   const [tplStampDataUrl, setTplStampDataUrl] = useState(null);
+
+  // Company TRN printed in EVERY POS receipt/A4 header. The POS Print Templates tab
+  // keeps its own free-text TRN field (tplOutletTrn) that ships with a sample value;
+  // merchants routinely clear it, and the POS was the one print surface that never
+  // fell back to the real company record — so every POS print (80mm + A4, sale,
+  // reprint, delivery order, delivery settlement) silently lost the company TRN.
+  // Mirror branchPrintProfile.buildDocumentHeaderProfile's rule instead: the active
+  // branch's TRN wins when set, the company profile's TRN fills the gap.
+  const effectiveOutletTrn = useMemo(() => {
+    const typed = (tplOutletTrn || '').trim();
+    if (typed) return typed;
+    const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
+    const branch = activeBranchIdRaw && activeBranchIdRaw !== 'ALL'
+      ? (branches || []).find(b => String(b?.id) === String(activeBranchIdRaw))
+      : null;
+    return (branch?.trnNumber || company?.trn || '').trim();
+  }, [tplOutletTrn, branches, company]);
   const [tplReceiptShowStamp, setTplReceiptShowStamp] = useState(false);
   const [tplInvoiceShowLogo, setTplInvoiceShowLogo] = useState(true);
   const [tplInvoiceShowCompanyDetails, setTplInvoiceShowCompanyDetails] = useState(true);
@@ -1588,7 +1630,7 @@ export default function POSSales() {
           paymentBlock: previewPaymentBlock,
         });
         const outlet = {
-          name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+          name: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
           logoDataUrl: tplLogoDataUrl,
           // Real QR in preview when QR is enabled and no stamp overrides it; stamp
           // image shown separately when uploaded (parity with Template 1 preview).
@@ -1609,7 +1651,7 @@ export default function POSSales() {
         shippingCharge: previewShipping > 0 ? previewShipping : null,
         depositApplied: previewDeposit > 0 ? previewDeposit : null,
         balanceDue: previewDeposit > 0 ? Math.max(0, previewGrand - previewDeposit) : null,
-        companyName: tplOutletName, trn: tplOutletTrn, documentTitle: previewHeader, footer: previewFooter,
+        companyName: tplOutletName, trn: effectiveOutletTrn, documentTitle: previewHeader, footer: previewFooter,
         showTrn: previewShowTrn, zatcaQrDataUrl: showQrInPreview ? checkoutPreviewQrDataUrl : null,
         logoDataUrl: tplLogoDataUrl, stampDataUrl: stampAvailable ? tplStampDataUrl : null,
         showLogo: previewShowLogo, showCompanyDetails: previewShowCompanyDetails,
@@ -1631,7 +1673,7 @@ export default function POSSales() {
     }
   }, [checkoutSettling, currentInvoice, selectedCustomerData, previewInvoiceNo, activeLayawayDeposit, shippingCharge,
     checkoutPayment, checkoutPaymentFields, currentTerminal, cashierDisplayName, activeCurrency,
-    tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
+    tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoiceFooter, tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
     tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn, tplInvoiceShowCustomerDetails,
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowGrandTotalBanner,
     tplInvoiceShowStamp, tplInvoiceShowQRCode, tplStampDataUrl, checkoutPreviewQrDataUrl, tplInvoiceColVatAmt,
@@ -1701,7 +1743,7 @@ export default function POSSales() {
         colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode,
         colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt,
       }, isTaxInvoiceDocument(currentInvoice));
-      const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: activeCurrency || 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+      const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: activeCurrency || 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
       return generateDocumentPrintHtml(template, draftData, options);
     } catch (e) {
       console.warn('A4 checkout preview failed:', e);
@@ -1713,7 +1755,7 @@ export default function POSSales() {
     tplInvoiceShowTerms, tplInvoiceShowNotes, tplInvoiceShowBankDetails, tplInvoiceShowQRCode, tplInvoiceShowStamp,
     tplInvoiceShowSignature, tplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode, tplInvoiceColItemImage,
     tplInvoiceColBarcode, tplInvoiceColBatchNo, tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt,
-    tplOutletName, tplOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, tplStampDataUrl]);
+    tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, tplStampDataUrl]);
   const checkoutA4BlobUrl = useA4BlobUrl(checkoutA4Html);
 
   // Heartbeat — keeps the terminal ACTIVE on the server
@@ -1815,7 +1857,7 @@ export default function POSSales() {
     } catch { setCheckoutPreviewQrDataUrl(null); }
     return () => { cancelled = true; };
   }, [tplInvoiceShowQRCode, tplInvoiceShowStamp, tplStampDataUrl, showPaymentDialog,
-    currentInvoice, previewInvoiceNo, selectedCustomer, tplInvoiceFooter, tplOutletName, tplOutletTrn]);
+    currentInvoice, previewInvoiceNo, selectedCustomer, tplInvoiceFooter, tplOutletName, effectiveOutletTrn]);
 
   // Safety net: whenever the checkout overlay is fully dismissed, drop the
   // settle-freeze so the next sale's preview tracks the live cart again. Covers
@@ -2690,11 +2732,10 @@ export default function POSSales() {
   const formatCurrency = (amount) => <CurrencyAmount amount={amount} />;
   const formatCurrencyStr = (amount) => `${activeCurrency} ${Number(amount || 0).toFixed(2)}`;
 
-  const calculateDenominationTotal = (denom) => {
-    return Object.entries(denom).reduce((total, [note, count]) => {
-      return total + (parseFloat(note) * count);
-    }, 0);
-  };
+  // Display-only subtotal, imported rather than redefined. Counted Cash is computed by the
+  // backend from the submitted quantities -- the browser no longer decides what a drawer
+  // is worth.
+
 
   const getReportClosingDenominations = useCallback(() => {
     const raw = xReportData?.sessionInfo?.closingDenominationsJson
@@ -2881,6 +2922,55 @@ export default function POSSales() {
     setDiscoverySupervisorPin('');
   };
 
+  /**
+   * Obtains a supervisor's authorization for the variance the server just refused on, then
+   * retries the close with the resulting grant.
+   *
+   * Sends the counted denominations so the server re-derives expected and counted itself — the
+   * grant is bound to figures it computed, not to any number this page supplied.
+   */
+  const handleAuthorizeVariance = async () => {
+    if (!varianceApproval) return;
+    const targetSession = sessionToClose || currentSession;
+    if (!targetSession?.id) return;
+    if (!varianceSupervisorUser || !varianceSupervisorPassword) {
+      setVarianceApprovalError('Enter the supervisor username and password.');
+      return;
+    }
+    if (!varianceApprovalReason.trim()) {
+      setVarianceApprovalError('A reason is required to authorize a cash variance.');
+      return;
+    }
+    setVarianceApprovalBusy(true);
+    setVarianceApprovalError('');
+    try {
+      const result = await authorizePosVariance(targetSession.id, {
+        usernameOrEmail: varianceSupervisorUser,
+        password: varianceSupervisorPassword,
+        reason: varianceApprovalReason.trim(),
+        closingDenominations,
+      });
+      if (!result?.authorized) {
+        // Not closed, and no cash fact touched. The panel stays open with the reason.
+        setVarianceApprovalError(result?.message || 'Authorization was refused.');
+        return;
+      }
+      varianceGrantRef.current = result.varianceApprovalToken
+        ? { sessionId: targetSession.id, token: result.varianceApprovalToken }
+        : null;
+      // Credentials are never retained beyond the request that used them.
+      setVarianceSupervisorUser('');
+      setVarianceSupervisorPassword('');
+      setVarianceApproval(null);
+      await handleCloseSession();
+    } catch (err) {
+      const msg = err?.response?.data?.message || err?.message;
+      setVarianceApprovalError(typeof msg === 'string' && msg ? msg : 'Authorization failed. Please try again.');
+    } finally {
+      setVarianceApprovalBusy(false);
+    }
+  };
+
   const handleCloseSession = async () => {
     const targetSession = sessionToClose || currentSession;
     if (targetSession) {
@@ -2897,7 +2987,6 @@ export default function POSSales() {
       setCloseSessionError('');
       try {
         if (targetSession.id && typeof targetSession.id === 'number') {
-          const closingTotal = calculateDenominationTotal(closingDenominations);
           const grant = closureAuthGrantRef.current;
           const forceCtx = forceCloseContextRef.current?.sessionId === targetSession.id
             ? forceCloseContextRef.current : null;
@@ -2906,7 +2995,8 @@ export default function POSSales() {
             ? [`Force Close: ${forceCtx.reason}`, xReportVarianceRemarks].filter(Boolean).join(' — ')
             : xReportVarianceRemarks;
           const closed = await closePosSession(targetSession.id, {
-            closingCash: closingTotal,
+            // Quantities only. The server validates them against the drawer's denomination
+            // ladder and derives Counted Cash; a total posted from here would be unverifiable.
             closingDenominations,
             notes,
             cardBatchNo: xReportCardBatchNo,
@@ -2917,6 +3007,10 @@ export default function POSSales() {
             closingRemarks: xReportClosingRemarks,
             // Proof that the session owner's credentials were verified for THIS session.
             closureAuthToken: grant?.sessionId === targetSession.id ? grant.token : undefined,
+            // Present only after a supervisor authorized this exact count. The server consumes
+            // it once; a second tab retrying the same close is refused again.
+            varianceApprovalToken: varianceGrantRef.current?.sessionId === targetSession.id
+              ? varianceGrantRef.current.token : undefined,
           });
           // The grant is single-use server-side; drop it either way.
           closureAuthGrantRef.current = null;
@@ -2937,12 +3031,28 @@ export default function POSSales() {
         // and marked it closed locally, so the close silently didn't stick and Day Close
         // kept asking to close it again — surface the reason and stay in the dialog.
         console.warn('Close session API error', err);
-        const msg = err?.response?.data?.message || err?.response?.data?.error || err?.message;
+        const data = err?.response?.data;
+        // A discrepancy over the branch threshold is an exception, not a failure: the server
+        // hands back the exact financial state it is refusing on, and the dialog switches to
+        // the approval panel instead of just showing red text the cashier cannot act on.
+        if (data?.code === 'VARIANCE_APPROVAL_REQUIRED') {
+          varianceGrantRef.current = null;
+          setVarianceApproval(data);
+          setVarianceApprovalError('');
+          setCloseSessionError('');
+          return;
+        }
+        const msg = data?.message || data?.error || err?.message;
         setCloseSessionError(typeof msg === 'string' && msg ? msg : 'Failed to close the session. Please try again.');
         return;
       }
       setShowCloseSessionDialog(false);
       setSessionToClose(null);
+      varianceGrantRef.current = null;
+      setVarianceApproval(null);
+      setVarianceSupervisorUser('');
+      setVarianceSupervisorPassword('');
+      setVarianceApprovalReason('');
       setSessionNowMs(Date.now());
       // Re-evaluate the Business Day immediately: this close may have been the last
       // session pending closure, and the overlay must not keep naming a session that
@@ -4112,7 +4222,7 @@ export default function POSSales() {
         if (tplInvoicePaper === 'A4') {
           const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(savedInvoice));
           const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
-          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+          const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
           printHtml(await generatePrintHtmlAsync(template, data, options));
         } else {
           const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
@@ -4342,7 +4452,7 @@ export default function POSSales() {
       onConfirm: async () => {
         setConfirmAction(prev => ({ ...prev, busy: true }));
         try {
-          await cancelLayaway(id);
+          await cancelLayaway(id, currentSession?.id ?? null);
           await loadHeldSales();
           syncPosData();
           setConfirmAction(null);
@@ -4458,7 +4568,7 @@ export default function POSSales() {
         try {
           const layawayHtmlOpts = {
             companyName: tplOutletName,
-            trn: tplOutletTrn,
+            trn: effectiveOutletTrn,
             header: tplReceiptHeader,
             footer: tplReceiptFooter,
             showTrn: tplReceiptShowTrn,
@@ -4485,7 +4595,7 @@ export default function POSSales() {
                   documentTitle: 'LAYAWAY RECEIPT',
                   companyName: tplOutletName,
                   header: tplReceiptHeader,
-                  trn: tplOutletTrn,
+                  trn: effectiveOutletTrn,
                   outletAddress: tplOutletAddress,
                   outletPhone: tplOutletPhone,
                   logoDataUrl: tplLogoDataUrl,
@@ -4573,7 +4683,7 @@ export default function POSSales() {
         setConfirmAction(prev => ({ ...prev, busy: true }));
         setLayawayBusyId(layawayId);
         try {
-          await cancelLayaway(layawayId);
+          await cancelLayaway(layawayId, currentSession?.id ?? null);
           if (selectedLayawayId === layawayId) setSelectedLayawayId(null);
           await loadLayaways();
           syncPosData();
@@ -4854,7 +4964,7 @@ export default function POSSales() {
     // the checkout A4/preview sites build their own via generatePrintHtmlAsync.)
     const escPosOpts = {
       companyName: tplOutletName,
-      trn: tplOutletTrn,
+      trn: effectiveOutletTrn,
       header: activeHeader,
       footer: activeFooter,
       showTrn: activeShowTrn,
@@ -4963,7 +5073,7 @@ export default function POSSales() {
     // compatibility fallback payload AND the print-job audit payload.
     const text = buildThermalReceiptText(tplInvoicePaper, full, {
       companyName: tplOutletName,
-      trn: tplOutletTrn,
+      trn: effectiveOutletTrn,
       documentTitle: activeHeader,
       footer: activeFooter,
       showTrn: activeShowTrn,
@@ -4991,7 +5101,7 @@ export default function POSSales() {
     tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails, tplInvoiceShowCustomerDetails,
     tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
     tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
-    tplOutletName, tplOutletPhone, tplOutletTrn, tplStampDataUrl, receiptTemplateId,
+    tplOutletName, tplOutletPhone, effectiveOutletTrn, tplStampDataUrl, receiptTemplateId,
     tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
     tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
     tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
@@ -5276,7 +5386,7 @@ export default function POSSales() {
             if (printPaper === 'A4') {
               const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(savedInvoice));
               const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
-              const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+              const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
               printHtml(await generatePrintHtmlAsync(template, data, options));
               openCashDrawer('RECEIPT_PRINT');
             } else {
@@ -5492,7 +5602,7 @@ export default function POSSales() {
         setReprintInvoices(prev => prev.map(i => i.id === inv.id
           ? { ...i, reprintCount: full.reprintCount, lastReprintedBy: full.lastReprintedBy, lastReprintedAt: full.lastReprintedAt }
           : i));
-        const companyOptions = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+        const companyOptions = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
           const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
           const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
@@ -6777,7 +6887,10 @@ export default function POSSales() {
         const statCashSales = xSummary.cashSales ?? 0;
         const statDropIn = xSummary.cashDropIn ?? 0;
         const statDropOut = xSummary.cashDropOut ?? 0;
-        const statExpectedCash = xSummary.expectedCash ?? (statOpeningCash + statCashSales + statDropIn - statDropOut);
+        // Authoritative Expected Cash, read as-is. There is deliberately no client-side
+        // fallback formula: a second implementation is how the X and Z reports drifted
+        // apart, and a fallback yields a plausible wrong number instead of an obvious gap.
+        const statExpectedCash = Number(xSummary.expectedCash ?? 0);
 
         const sessionStart = currentSession?.openedAt ? parseUTCDate(currentSession.openedAt) : null;
         const nowMs = sessionNowMs;
@@ -6858,7 +6971,7 @@ export default function POSSales() {
   const reportCompanyProfile = () => ({
     companyName: tplOutletName || 'BillBull ERP',
     branchName: currentTerminal?.branchName || company?.branchName || '',
-    trn: tplOutletTrn || '',
+    trn: effectiveOutletTrn,
     address: tplOutletAddress || '',
     phone: tplOutletPhone || '',
     currency: company?.currency || 'AED',
@@ -6895,7 +7008,8 @@ export default function POSSales() {
     const itemsSold = zSummary.totalItemsSold ?? 0;
     const invoiceCount = zSummary.invoiceCount ?? 0;
     const openingCash = fmt(zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0));
-    const expectedCash = fmt(openingCash + cashSalesV);
+    // Backend-authoritative: the sum of the per-session figures frozen at each close.
+    const expectedCash = fmt(zSummary.expectedCash ?? 0);
     // Consolidated Cash Position — additive, informational-only (see buildZReportViewModel).
     const cashPosition = zSummary.cashPosition || {};
     const cpOpeningCash = fmt(cashPosition.openingCash ?? openingCash);
@@ -6905,7 +7019,9 @@ export default function POSSales() {
     const cpDropIn = fmt(cashPosition.cashDropIn ?? 0);
     const cpDropOut = fmt(cashPosition.cashDropOut ?? 0);
     const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-    const cpNet = fmt(cashPosition.netCashPosition ?? (cpOpeningCash + cpCashSales + cpReceiptsTotal + cpAdvancesTotal + cpDropIn - cpDropOut));
+    // netCashPosition removed: it summed back-office cash onto a drawer figure, producing
+    // a number that reconciled against nothing. The underlying rows survive, scoped as
+    // non-drawer cash and totalled separately.
     const cpReceiptRows = Array.isArray(cashPosition.customerReceiptRows) ? cashPosition.customerReceiptRows : [];
     const cpAdvanceRows = Array.isArray(cashPosition.customerAdvanceRows) ? cashPosition.customerAdvanceRows : [];
     const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
@@ -6935,7 +7051,6 @@ export default function POSSales() {
       { Section: '', Description: 'Cash Drop In', Count: '', Amount: cpDropIn },
       { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
       { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cpDropOut },
-      { Section: '', Description: 'Net Cash Position', Count: '', Amount: cpNet },
       ...cpReceiptRows.map((r, i) => ({ Section: i === 0 ? 'Customer Receipts Detail' : '', Description: r.customerName || '—', Count: r.receivedBy || '—', Amount: fmt(r.receivedAmount ?? 0) })),
       ...cpAdvanceRows.map((r, i) => ({ Section: i === 0 ? 'Customer Advances Detail' : '', Description: r.customerName || '—', Count: r.paidBy || '—', Amount: fmt(r.paidAmount ?? 0) })),
       ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
@@ -7001,7 +7116,7 @@ export default function POSSales() {
     const cashDropIn = fmt(xSummary.cashDropIn ?? 0);
     const cashDropOut = fmt(xSummary.cashDropOut ?? 0);
     const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
-    const expectedCash = fmt(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
+    const expectedCash = fmt(xSummary.expectedCash ?? 0);
     const reportDenominations = getReportClosingDenominations();
     const actualCash = fmt(calculateDenominationTotal(reportDenominations));
     const variance = fmt(actualCash - expectedCash);
@@ -7018,7 +7133,7 @@ export default function POSSales() {
     const cashPosition = xSummary.cashPosition || {};
     const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
     const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-    const cpNet = fmt(cashPosition.netCashPosition ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
+    // netCashPosition removed — see the Z-Report note.
 
     return [
       ...denomKeys.map((k, i) => ({
@@ -7041,7 +7156,6 @@ export default function POSSales() {
       { Section: '', Description: 'Cash Drop In', Count: '', Amount: cashDropIn },
       { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
       { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cashDropOut },
-      { Section: '', Description: 'Net Cash Position', Count: '', Amount: cpNet },
       ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
       { Section: 'Payment Tender', Description: 'Cash', Count: xSummary.cashInvoiceCount ?? 0, Amount: cashSalesV },
       { Section: '', Description: 'Card', Count: xSummary.cardInvoiceCount ?? 0, Amount: cardSalesV },
@@ -7097,7 +7211,7 @@ export default function POSSales() {
       documentTitle: (meta.reportTitle || vm.reportTitle || 'POS REPORT').toUpperCase(),
       companyName: cp.companyName || tplOutletName,
       header: cp.branchName || '',
-      trn: cp.trn || tplOutletTrn,
+      trn: cp.trn || effectiveOutletTrn,
       outletAddress: cp.address || tplOutletAddress,
       outletPhone: cp.phone || tplOutletPhone,
       logoDataUrl: cp.logoUrl || tplLogoDataUrl,
@@ -7303,7 +7417,9 @@ export default function POSSales() {
     const zTotalItemsSold = zSummary.totalItemsSold ?? 0;
     const zSessions = zReportData?.sessions || [];
     const zOpeningCash = zSessions.reduce((sum, s) => sum + (s.openingCash ?? 0), 0);
-    const zExpectedCash = zOpeningCash + zCashSales;
+    // Backend-authoritative. The previous local sum omitted cash movements entirely, so it
+    // hid every cash refund, drop and payout from the day's expected drawer position.
+    const zExpectedCash = Number(zSummary.expectedCash ?? 0);
     const zSessionCount = zSummary.sessionCount ?? zSessions.length;
     // Consolidated Cash Position — additive, informational only (never feeds zExpectedCash above).
     const zCashPosition = zSummary.cashPosition || {};
@@ -7314,7 +7430,7 @@ export default function POSSales() {
     const zCpDropIn = Number(zCashPosition.cashDropIn ?? 0);
     const zCpDropOut = Number(zCashPosition.cashDropOut ?? 0);
     const zCpRefundsSupported = zCashPosition.cashRefundsSupported === true;
-    const zCpNet = Number(zCashPosition.netCashPosition ?? (zCpOpeningCash + zCpCashSales + zCpReceiptsTotal + zCpAdvancesTotal + zCpDropIn - zCpDropOut));
+    // netCashPosition removed — see above.
     const zCpReceiptRows = Array.isArray(zCashPosition.customerReceiptRows) ? zCashPosition.customerReceiptRows : [];
     const zCpAdvanceRows = Array.isArray(zCashPosition.customerAdvanceRows) ? zCashPosition.customerAdvanceRows : [];
     const zCpDropRows = Array.isArray(zCashPosition.cashDropRows) ? zCashPosition.cashDropRows : [];
@@ -7678,12 +7794,47 @@ export default function POSSales() {
     const isNoSessions = !daySummary || daySummary.totalSessions === 0;
     const isDayCloseBlocked = isXReportsMissing || isOpenSessions || isSuspendedBills || isNoSessions;
 
+    /**
+     * The cash-variance checklist row, derived from the backend reconciliation of the day's
+     * frozen session snapshots.
+     *
+     * A day is "within limits" only when every drawer was counted AND the resulting variance is
+     * within the branch threshold. An uncounted drawer fails rather than passing quietly:
+     * nothing was verified, so nothing can be said to be within limits.
+     */
+    const cashVarianceChecklistItem = () => {
+      const summary = zReportData?.summary || {};
+      const status = summary.reconciliationStatus;
+      const uncounted = Number(summary.uncountedSessionCount ?? 0);
+      const variance = summary.cashVariance;
+
+      if (uncounted > 0 || status === 'NOT_COUNTED' || variance === null || variance === undefined) {
+        return {
+          label: 'Cash Variance Within Limits',
+          passed: false,
+          info: uncounted > 0
+            ? `${uncounted} session${uncounted === 1 ? '' : 's'} not counted`
+            : 'No physical count recorded',
+        };
+      }
+      const threshold = Number(posSettings?.cashVarianceThreshold ?? 0);
+      const withinLimits = Math.abs(Number(variance)) <= threshold;
+      return {
+        label: 'Cash Variance Within Limits',
+        passed: withinLimits,
+        info: withinLimits ? undefined : `${status}: ${Number(variance).toFixed(2)}`,
+      };
+    };
+
     const renderValidationChecklist = () => {
       const checklist = [
         { label: 'All Sessions Closed', passed: !isOpenSessions },
         { label: 'X-Reports Generated', passed: !isXReportsMissing },
         { label: 'Draft Bills Cleared', passed: !isSuspendedBills },
-        { label: 'Cash Variance Within Limits', passed: true, info: 'Pending financial audit' },
+        // Derived from the authoritative reconciliation, not asserted. A checklist item
+        // that always passes trains operators to trust it, and this one covered the single
+        // control that matters most: whether the money is actually there.
+        cashVarianceChecklistItem(),
         { label: 'Business Date Ready', passed: !isDayCloseBlocked }
       ];
 
@@ -8161,7 +8312,7 @@ export default function POSSales() {
               ['Cash Refunds (Cash)', zCpRefundsSupported ? <CurrencyAmount key="z4arf" amount={zCashPosition.cashRefundsTotal ?? 0} /> : <span key="z4arfn" className="text-gray-400 italic">Not available — refund payment mode not tracked</span>],
               ['Cash Drop Out', zCpDropOut > 0 ? `(${formatCurrencyStr(zCpDropOut)})` : <CurrencyAmount key="z4ado" amount={0} />],
             ]}
-            footerRow={['Net Cash Position', <span key="z4an" className="font-bold text-[#327F74]"><CurrencyAmount amount={zCpNet} /></span>]}
+            footerRow={['Back-office cash is excluded from drawer reconciliation', '']}
           />
 
           {/* Section 4b: Customer Receipts detail */}
@@ -8425,7 +8576,7 @@ export default function POSSales() {
           {(() => {
             const zId = zReportData?.sessions?.[0]?.id;
             const reportNo = zId ? `ZR-${String(zId).padStart(9, '0')}` : `ZR-${zReportDate?.replace(/-/g, '')}-001`;
-            const totalExpectedCash = zOpeningCash + zCashSales;
+            const totalExpectedCash = Number(zSummary.expectedCash ?? 0);
             return (
               <div className="bg-[#1E293B] border border-[#327F74]/40 rounded-xl shadow-md p-6 mb-6">
                 <div className="flex items-center justify-between mb-5 border-b border-gray-700/50 pb-4">
@@ -8547,13 +8698,14 @@ export default function POSSales() {
     const cardSales = xSummary.cardSales ?? 0;
     const creditSales = xSummary.creditSales ?? 0;
     const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
-    const expectedCashVal = xSummary.expectedCash ?? (openingCashVal + cashSales + cashDropIn - cashDropOut);
+    const expectedCashVal = Number(xSummary.expectedCash ?? 0);
     // Consolidated Cash Position — additive, informational only (never feeds expectedCashVal above).
     // X-Report never includes Customer Receipts/Advances (back-office vouchers, no session linkage yet).
     const xCashPosition = xSummary.cashPosition || {};
     const xCpDropRows = Array.isArray(xCashPosition.cashDropRows) ? xCashPosition.cashDropRows : [];
     const xCpRefundsSupported = xCashPosition.cashRefundsSupported === true;
-    const xCpNet = xCashPosition.netCashPosition ?? (openingCashVal + cashSales + cashDropIn - cashDropOut);
+    // netCashPosition removed — back-office cash is reported beside drawer reconciliation,
+    // never summed into it.
 
     const cashVariance = actualCash - expectedCashVal;
     const isBalanced = actualCash === 0 || Math.abs(cashVariance) < 0.01;
@@ -8816,7 +8968,7 @@ export default function POSSales() {
                   ['Cash Refunds (Cash)', xCpRefundsSupported ? <CurrencyAmount key="xcprf" amount={xCashPosition.cashRefundsTotal ?? 0} /> : <span key="xcprfn" className="text-gray-400 italic">Not available — refund payment mode not tracked</span>],
                   ['Cash Drop Out', cashDropOut > 0 ? `(${formatCurrencyStr(cashDropOut)})` : <CurrencyAmount key="xcpdo" amount={0} />],
                 ]}
-                footerRow={['Net Cash Position', <span key="xcpn" className="font-bold text-[#327F74]"><CurrencyAmount amount={xCpNet} /></span>]}
+                footerRow={['Back-office cash is excluded from drawer reconciliation', '']}
                 highlightLast
               />
 
@@ -9300,7 +9452,7 @@ export default function POSSales() {
   const consoleProps = {
     currentTerminal, setCurrentTerminal, setTerminalsLoading, setTerminalList, setEditingTerminalId, setEditTerminalName, setEditCounterName, setTerminalSaving, editTerminalName, editCounterName, terminalList,
     setCurrentView, consoleTab, setConsoleTab, settingsSaving, setSettingsSaving, posSettings, setPosSettings, settingsSavedFlash, setSettingsSavedFlash,
-    tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone,
+    tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone, effectiveOutletTrn,
     tplLogoDataUrl, setTplLogoDataUrl, tplStampDataUrl, setTplStampDataUrl,
     tplReceiptHeader, setTplReceiptHeader, tplReceiptHeaderAr, setTplReceiptHeaderAr, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
     tplReceiptShowLogo, tplReceiptShowTrn, tplReceiptShowStamp, tplReceiptShowBarcode, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails,
@@ -10120,7 +10272,7 @@ export default function POSSales() {
       )}
       {currentView === 'z-report' && renderZReport()}
       {currentView === 'x-report' && renderXReport()}
-      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal}
+      {currentView === 'customer' && <CustomerView customerOptions={customerOptions} posCustomersLoading={posCustomersLoading} setCurrentView={setCurrentView} syncPosData={syncPosData} printerConfigs={printerConfigs} currentTerminal={currentTerminal} currentSession={currentSession}
         printTemplate={{
           // Same branding the Tax Invoice header uses, so the Customer Receipt /
           // Receive Advance / Statement prints render an identical logo + company
@@ -10128,7 +10280,7 @@ export default function POSSales() {
           // raster ditherer — unlike the company profile's logoUrl (a server path).
           logoDataUrl: tplLogoDataUrl,
           companyName: tplOutletName,
-          trn: tplOutletTrn,
+          trn: effectiveOutletTrn,
           address: tplOutletAddress,
           phone: tplOutletPhone,
           showLogo: tplInvoiceShowLogo,
@@ -10636,19 +10788,12 @@ export default function POSSales() {
 
                 <div className="space-y-2">
                   {(() => {
-                    // Same source as the X-Report page: prefer the backend's authoritative
-                    // expectedCash (live tender + cash drops), falling back to the identical
-                    // formula only while xReportData hasn't loaded yet — never the old
-                    // simplified opening+totalCashSales calc, which ignored cash drops and
-                    // caused the modal to disagree with the X-Report.
-                    const targetSession = sessionToClose || currentSession;
+                    // Same source as the X-Report page: the backend's authoritative
+                    // expectedCash. The local fallback that used to stand in while xReportData
+                    // loaded is gone — it was a second copy of the formula, and the modal is
+                    // exactly where a wrong Expected Cash does the most damage.
                     const xSummaryModal = xReportData?.summary || {};
-                    const sessionExpectedCash = xSummaryModal.expectedCash ?? (
-                      (Number(targetSession?.openingCash) || 0)
-                      + (Number(xSummaryModal.cashSales) || 0)
-                      + (Number(xSummaryModal.cashDropIn) || 0)
-                      - (Number(xSummaryModal.cashDropOut) || 0)
-                    );
+                    const sessionExpectedCash = Number(xSummaryModal.expectedCash ?? 0);
                     const actualCounted = calculateDenominationTotal(closingDenominations);
                     const variance = actualCounted - sessionExpectedCash;
                     return (
@@ -10802,12 +10947,100 @@ export default function POSSales() {
             </div>
           )}
 
+          {/* ─── Variance approval — an exception, not an error ───────────────────────────
+              Every figure below is read from the server's refusal. The page computes none of
+              them, so the amount a supervisor authorizes is exactly the amount the close was
+              evaluated against. */}
+          {varianceApproval && (
+            <div className="rounded-lg border-2 border-[#E63946] bg-red-50 p-3 space-y-3">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-[#E63946]" />
+                <div>
+                  <div className="text-sm font-bold text-[#E63946]">Supervisor Authorization Required</div>
+                  <div className="text-xs text-[#1E293B] mt-0.5">{varianceApproval.message}</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {[
+                  ['Expected Cash', varianceApproval.expectedCash],
+                  ['Counted Cash', varianceApproval.countedCash],
+                  [`Variance (${varianceApproval.varianceDirection || '—'})`, varianceApproval.varianceAmount],
+                  ['Allowed Threshold', varianceApproval.threshold],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between bg-white rounded px-2 py-1.5">
+                    <span className="text-gray-500">{label}</span>
+                    <span className="font-bold text-[#1E293B]">
+                      {value === null || value === undefined ? '—' : <CurrencyAmount amount={Number(value)} />}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  autoComplete="off"
+                  placeholder="Supervisor username or email"
+                  value={varianceSupervisorUser}
+                  onChange={(e) => setVarianceSupervisorUser(e.target.value)}
+                  className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                />
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Supervisor password"
+                  value={varianceSupervisorPassword}
+                  onChange={(e) => setVarianceSupervisorPassword(e.target.value)}
+                  className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                />
+                <textarea
+                  rows={2}
+                  placeholder="Reason for this variance (required)"
+                  value={varianceApprovalReason}
+                  onChange={(e) => setVarianceApprovalReason(e.target.value)}
+                  className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 focus:outline-none focus:border-[#F5C742]"
+                />
+              </div>
+
+              {varianceApprovalError && (
+                <div className="text-xs font-medium text-[#E63946]">{varianceApprovalError}</div>
+              )}
+
+              <div className="text-[11px] text-gray-500">
+                Authorization applies to this exact count. If the drawer is recounted, it must be
+                authorized again.
+              </div>
+            </div>
+          )}
+
           <DialogFooter className="flex-shrink-0 pt-3 border-t border-gray-100">
-            <Button variant="outline" onClick={() => { setShowCloseSessionDialog(false); setSessionToClose(null); setCloseSessionError(''); }}>Cancel</Button>
-            <Button onClick={handleCloseSession} className="bg-[#E63946] hover:bg-[#d32f3d] text-white">
-              <Lock className="h-4 w-4 mr-2" />
-              Close Session & Print Report
-            </Button>
+            <Button variant="outline" onClick={() => {
+              setShowCloseSessionDialog(false);
+              setSessionToClose(null);
+              setCloseSessionError('');
+              varianceGrantRef.current = null;
+              setVarianceApproval(null);
+              setVarianceApprovalError('');
+              setVarianceSupervisorUser('');
+              setVarianceSupervisorPassword('');
+              setVarianceApprovalReason('');
+            }}>Cancel</Button>
+            {varianceApproval ? (
+              <Button
+                onClick={handleAuthorizeVariance}
+                disabled={varianceApprovalBusy}
+                className="bg-[#E63946] hover:bg-[#d32f3d] text-white"
+              >
+                <Lock className="h-4 w-4 mr-2" />
+                {varianceApprovalBusy ? 'Authorizing…' : 'Authorize & Close Session'}
+              </Button>
+            ) : (
+              <Button onClick={handleCloseSession} className="bg-[#E63946] hover:bg-[#d32f3d] text-white">
+                <Lock className="h-4 w-4 mr-2" />
+                Close Session & Print Report
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -10986,7 +11219,7 @@ export default function POSSales() {
                         if (tplInvoicePaper === 'A4') {
                           const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
                           const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
-                          const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+                          const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                           printHtml(generateDocumentPrintHtml(template, data, options));
                         } else {
                           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
@@ -11529,7 +11762,7 @@ export default function POSSales() {
             const walletSales = Number(xSummary.walletSales ?? 0);
             const dropIn = Number(xSummary.cashDropIn ?? 0);
             const dropOut = Number(xSummary.cashDropOut ?? 0);
-            const expectedCash = Number(xSummary.expectedCash ?? (openingCash + cashSales + dropIn - dropOut));
+            const expectedCash = Number(xSummary.expectedCash ?? 0);
             const sessionStart = sess?.openedAt ? parseUTCDate(sess.openedAt) : (sess?.startTime ? parseUTCDate(sess.startTime) : null);
             const diffMin = sessionStart ? Math.floor((sessionNowMs - sessionStart.getTime()) / 60000) : 0;
             const durH = Math.floor(diffMin / 60);
@@ -11814,7 +12047,7 @@ export default function POSSales() {
                 if (tplInvoicePaper === 'A4') {
                   const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
                   const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
-                  const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+                  const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                   printHtml(await generatePrintHtmlAsync(template, data, options));
                 } else {
                   // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
@@ -15122,7 +15355,7 @@ export default function POSSales() {
               if (tplInvoicePaper === 'A4') {
                 const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(receiptInvoice));
                 const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(receiptInvoice) ? tplInvoiceHeader : tplReceiptHeader);
-                const options = { companyProfile: { companyName: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+                const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                 printHtml(await generatePrintHtmlAsync(template, data, options));
               } else {
                 // Delivery Settlement receipt: unlike the Out-for-Delivery slip, this

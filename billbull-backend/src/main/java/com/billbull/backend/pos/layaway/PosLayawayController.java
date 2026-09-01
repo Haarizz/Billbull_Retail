@@ -46,8 +46,11 @@ public class PosLayawayController {
 
     @PostMapping("/{id}/cancel")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<PosLayaway> cancel(@PathVariable Long id) {
-        return ResponseEntity.ok(service.cancel(id));
+    public ResponseEntity<PosLayaway> cancel(@PathVariable Long id,
+                                             @RequestParam(required = false) Long posSessionId) {
+        // Stated by the caller, validated server-side, never inferred. Required when the
+        // deposit being returned was taken in cash.
+        return ResponseEntity.ok(service.cancel(id, posSessionId));
     }
 
     /** Supervisor-gated manual release of stock holds without cancelling the layaway. */
@@ -69,7 +72,8 @@ public class PosLayawayController {
     public ResponseEntity<PosLayawayPayment> recordPayment(@PathVariable Long id,
                                                             @RequestBody PaymentRequest body) {
         return ResponseEntity.ok(service.recordPayment(
-                id, body.getAmount(), body.getPaymentMode(), body.getReferenceNumber(), body.getNotes()));
+                id, body.getAmount(), body.getPaymentMode(), body.getReferenceNumber(), body.getNotes(),
+                body.getPosSessionId()));
     }
 
     @GetMapping("/{id}/payments")
@@ -92,6 +96,12 @@ public class PosLayawayController {
         public void setReferenceNumber(String referenceNumber) { this.referenceNumber = referenceNumber; }
         public String getNotes() { return notes; }
         public void setNotes(String notes) { this.notes = notes; }
+        /** The drawer session collecting this instalment — required for a cash instalment.
+         *  Never defaulted to the layaway's originating session. */
+        public Long getPosSessionId() { return posSessionId; }
+        public void setPosSessionId(Long posSessionId) { this.posSessionId = posSessionId; }
+
+        private Long posSessionId;
     }
 
     public static class ConvertRequest {

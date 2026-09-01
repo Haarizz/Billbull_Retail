@@ -60,6 +60,9 @@ public class PaymentService {
     private com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     @Autowired
+    private com.billbull.backend.pos.session.PosDrawerSessionValidator drawerSessionValidator;
+
+    @Autowired
     private com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
 
     @Autowired
@@ -185,12 +188,51 @@ public class PaymentService {
 
     @Transactional
     public Payment savePayment(Payment payment) {
+        return savePayment(payment, null);
+    }
+
+    /**
+     * @param declaredPosSessionId the POS drawer session the caller states collected this
+     *      tender, or {@code null} for a back-office receipt that never touched a till. It is
+     *      validated by {@link com.billbull.backend.pos.session.PosDrawerSessionValidator} and
+     *      never discovered: no terminal lookup, no current-open-session fallback, and never
+     *      {@code SalesInvoice.posSessionId} (the SALE session, which may belong to a different
+     *      — possibly already reconciled — drawer).
+     *
+     *      <p>This is the one legitimate way {@code Payment.posSessionId} is set on this path.
+     *      The field stays {@code READ_ONLY} to JSON deserialization, so a value in the request
+     *      body is still silently dropped; only this server-validated parameter can stamp it.
+     */
+    @Transactional
+    public Payment savePayment(Payment payment, Long declaredPosSessionId) {
         Payment existingPayment = null;
         if (payment.getId() != null) {
             existingPayment = paymentRepository.findById(payment.getId()).orElse(null);
             if (payment.getReceiptVoucherRecordId() == null && existingPayment != null) {
                 payment.setReceiptVoucherRecordId(existingPayment.getReceiptVoucherRecordId());
             }
+        }
+
+        // Drawer attribution is decided once, when the tender is created, and is immutable
+        // afterward. Re-pointing collected cash at a different drawer would silently move the
+        // amount out of one session's Expected Cash and into another's — including sessions
+        // already closed and counted — so an edit may neither change it nor clear it.
+        if (existingPayment != null) {
+            if (declaredPosSessionId != null
+                    && !java.util.Objects.equals(declaredPosSessionId, existingPayment.getPosSessionId())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "The POS session that collected a payment cannot be changed after the fact. "
+                                + "Void or correct the original payment instead.");
+            }
+            // The incoming entity is deserialized from client JSON, where posSessionId is
+            // READ_ONLY and therefore always null — carry the original forward so an ordinary
+            // edit cannot erase the drawer attribution.
+            payment.setPosSessionId(existingPayment.getPosSessionId());
+        } else if (declaredPosSessionId != null) {
+            payment.setPosSessionId(
+                    drawerSessionValidator
+                            .requireOpenDrawerSession(declaredPosSessionId, "Recording a customer payment")
+                            .getId());
         }
 
         // Branch guard + stamp/lock (PDF §3.4).

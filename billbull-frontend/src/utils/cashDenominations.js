@@ -1,13 +1,27 @@
-// Single source of truth for the cash-drawer denomination ladder.
+// The denomination ladder used to RENDER the cash-count screens.
 //
-// Every cash-count surface (session-open float, Close Session dialog, X-Report
-// denomination table, report view-model) reads from here so the ladders cannot
-// drift apart — they previously existed as five hand-maintained copies.
+// The server is authoritative. `GET /api/pos/denominations` returns the ladder for the drawer's
+// currency, and every submitted count is validated against it server-side — a denomination that
+// is not legal tender, or a currency with no configured ladder, is rejected there regardless of
+// what this file says. The values below are a bundled AED fallback so the count dialog still
+// renders if that call fails; they cannot widen what the server will accept.
 //
-// Values are AED. The active currency is configurable (see POSCurrency.js
-// setActiveCurrency), so making this currency-aware means turning the two
-// exports below into a per-currency lookup keyed on the active code — the call
-// sites already consume them as opaque lists and need no further change.
+// This file no longer computes money. Counted Cash is Σ(denomination × quantity) performed by
+// the backend, because a total the browser calculates and posts is a number nobody can verify.
+
+/** Applies a server ladder fetched from GET /api/pos/denominations. */
+let serverLadder = null;
+export const setDenominationLadder = (ladder) => {
+  serverLadder = (ladder && Array.isArray(ladder.allKeys) && ladder.allKeys.length) ? ladder : null;
+};
+
+/** The active ladder: the server's when available, else the bundled AED fallback. */
+export const getDenominationLadder = () => serverLadder || {
+  currencyCode: 'AED',
+  noteKeys: CASH_NOTE_KEYS,
+  coinKeys: CASH_COIN_KEYS,
+  allKeys: DENOM_KEYS,
+};
 
 /** Bank notes, largest first — the physical notes a drawer holds. */
 export const CASH_NOTE_KEYS = ['1000', '500', '200', '100', '50', '20', '10', '5'];

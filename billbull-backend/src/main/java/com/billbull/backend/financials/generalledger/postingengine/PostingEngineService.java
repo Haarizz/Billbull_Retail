@@ -86,6 +86,10 @@ public class PostingEngineService {
         public static final String ACC_INTEREST_INCOME     = "7002";  // Interest Income
         public static final String ACC_COGS                = "5001";  // Purchase / COGS
         public static final String ACC_EXPENSE_GENERAL     = "6099";  // General Expense
+        /** Physical drawer discrepancies. Two accounts rather than one dual-direction
+         *  account, matching how this chart already splits Loss/Gain on Disposal. */
+        public static final String ACC_CASH_SHORT          = "6060";  // Cash Short (expense)
+        public static final String ACC_CASH_OVER           = "7005";  // Cash Over (income)
         public static final String ACC_ROUNDING            = "5999";  // Rounding Adjustment
         public static final String ACC_DISCOUNT_ALLOWED    = "6050";  // Discount Allowed (Sales)
         public static final String ACC_SALARY_EXPENSE      = "6010";  // Salary Expense
@@ -3023,24 +3027,92 @@ public class PostingEngineService {
                 return post(entry);
         }
 
+        private static final String TX_SESSION_OPEN    = "SESSOPEN";  // POS session opening float
         private static final String TX_SESSION_CLOSE = "SCL";
 
         /**
-         * §3.7 POS session-close GL: daily cash pickup.
-         *   Dr  Bank Account (1010)    closingCash   [cash moved to bank/safe at end-of-day]
-         *     Cr  Cash in Hand (1001)   closingCash
+         * The opening float entering the drawer.
          *
-         * Only posts when closingCash > 0 and the session has cash sales.
-         * Reference: "SCL-{sessionId}" — idempotent per session.
+         * <pre>
+         *   Dr Cash in Hand (1001)   float
+         *     Cr Petty Cash  (1012)  float
+         * </pre>
+         *
+         * <p>Session opening previously posted nothing at all, while the close credited Cash in
+         * Hand. Every session therefore left a negative Cash-in-Hand residual exactly equal to
+         * its float: the notes were physically in the till but had never entered the ledger, and
+         * the close swept out money the books said was never there.
+         *
+         * <p>Petty Cash is the counterparty because that is already this system's convention for
+         * cash moving from the safe into a till — a DROP_IN posts the same pair
+         * ({@link #createJournalFromCashMovement}). Using it here keeps the float and a float
+         * top-up indistinguishable in the ledger, which is what they are physically.
+         *
+         * <p>Idempotent on {@code SESSOPEN-{sessionId}}, so a retried open cannot double the float.
+         */
+        @Transactional
+        public JournalEntry createJournalFromSessionOpen(
+                        Long sessionId,
+                        BigDecimal openingFloat,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (sessionId == null || openingFloat == null || openingFloat.signum() <= 0) {
+                        return null;
+                }
+                String ref = TX_SESSION_OPEN + "-" + sessionId;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "POS Session Open - Opening Float - Session " + sessionId,
+                        TX_SESSION_OPEN,
+                        branch);
+
+                addLine(entry, "Cash in Hand", ACC_CASH,       "Opening float to drawer", openingFloat,    BigDecimal.ZERO);
+                addLine(entry, "Petty Cash",   ACC_PETTY_CASH, "Opening float to drawer", BigDecimal.ZERO, openingFloat);
+
+                return post(entry);
+        }
+
+        /**
+         * Session close: the counted cash is settled, and any discrepancy is named.
+         *
+         * <pre>
+         *   Dr Bank Account (1010)   counted cash
+         *   Dr Cash Short   (6060)   shortage, when counted &lt; expected
+         *     Cr Cash in Hand (1001) EXPECTED cash
+         *     Cr Cash Over    (7005) overage, when counted &gt; expected
+         * </pre>
+         *
+         * <p>The crucial line is the credit: Cash in Hand is relieved by what the drawer
+         * <em>should</em> have held, not by what was found in it. Crediting the counted amount —
+         * as this did before — makes the entry balance no matter what the count was, which is
+         * precisely how a shortage disappears into the cash account instead of being recognised.
+         * With the float now debited at open, a balanced session leaves Cash in Hand at exactly
+         * zero and a discrepancy lands in its own account where it can be seen and investigated.
+         *
+         * <p>An uncounted close posts nothing: there is no counted figure to settle and no
+         * variance to recognise, and inventing either would fabricate a reconciliation.
+         *
+         * @param countedCash the server-derived denomination total, or null when uncounted
+         * @param expectedCash the authoritative expected drawer position
          */
         @Transactional
         public JournalEntry createJournalFromSessionClose(
                         Long sessionId,
-                        BigDecimal closingCash,
+                        BigDecimal countedCash,
+                        BigDecimal expectedCash,
                         LocalDate date,
                         com.billbull.backend.settings.branch.Branch branch) {
 
-                if (sessionId == null || closingCash == null || closingCash.signum() <= 0) {
+                if (sessionId == null || countedCash == null) {
+                        return null;
+                }
+                BigDecimal expected = expectedCash != null ? expectedCash : BigDecimal.ZERO;
+                BigDecimal variance = countedCash.subtract(expected);
+                if (countedCash.signum() <= 0 && expected.signum() <= 0) {
                         return null;
                 }
                 String ref = TX_SESSION_CLOSE + "-" + sessionId;
@@ -3049,14 +3121,145 @@ public class PostingEngineService {
                 JournalEntry entry = createBaseEntry(
                         date != null ? date : LocalDate.now(),
                         ref,
-                        "POS Session Close - Cash Pickup - Session " + sessionId,
+                        "POS Session Close - Cash Settlement - Session " + sessionId,
                         TX_SESSION_CLOSE,
                         branch);
 
-                addLine(entry, "Bank Account",  ACC_BANK,  "Daily cash pickup", closingCash,         BigDecimal.ZERO);
-                addLine(entry, "Cash in Hand",  ACC_CASH,  "Daily cash pickup", BigDecimal.ZERO, closingCash);
+                if (countedCash.signum() > 0) {
+                        addLine(entry, "Bank Account", ACC_BANK, "Cash pickup (counted)",
+                                        countedCash, BigDecimal.ZERO);
+                }
+                if (variance.signum() < 0) {
+                        addLine(entry, "Cash Short", ACC_CASH_SHORT,
+                                        "Drawer shortage - session " + sessionId,
+                                        variance.abs(), BigDecimal.ZERO);
+                }
+                if (expected.signum() > 0) {
+                        addLine(entry, "Cash in Hand", ACC_CASH, "Expected drawer position relieved",
+                                        BigDecimal.ZERO, expected);
+                }
+                if (variance.signum() > 0) {
+                        addLine(entry, "Cash Over", ACC_CASH_OVER,
+                                        "Drawer overage - session " + sessionId,
+                                        BigDecimal.ZERO, variance);
+                }
 
                 return post(entry);
+        }
+
+        /**
+         * The accounting effect of an approved post-close denomination correction.
+         *
+         * <p>One entry, {@code SCLADJ-{sessionId}-v{version}}, containing a full reversal of the
+         * original close journal followed by the corrected one:
+         *
+         * <pre>
+         *   original  SCL-1        Dr Bank 4,800 + Dr Cash Short 200 / Cr Cash 5,000
+         *   corrected counted 4,800 -&gt; 5,000
+         *   adjust    SCLADJ-1-v1  reversal: Dr Cash 5,000 / Cr Bank 4,800 + Cr Cash Short 200
+         *                          repost:   Dr Bank 5,000 / Cr Cash 5,000
+         * </pre>
+         *
+         * <h3>Why reverse-and-repost rather than a delta</h3>
+         * A delta entry has to reason about which direction the variance was and which it became
+         * — shortage to overage, overage to zero, and so on — and each case is a chance to post
+         * to the wrong account. Reversing the original outright and reposting the truth is
+         * direction-agnostic: it is correct for every transition without any case analysis, and
+         * it reads as what it is.
+         *
+         * <h3>The original is never touched</h3>
+         * {@code SCL-{sessionId}} is a historical fact: it records what was counted, approved and
+         * settled at the time. Rewriting it would destroy the evidence of the original count and
+         * of the approval given for it. The corrected state is the net of both entries.
+         *
+         * <p>Idempotent on the versioned reference, so a retried correction resolves to the same
+         * entry rather than posting a second adjustment.
+         *
+         * @param originalCountedCash what the close journal actually settled
+         * @param correctedCountedCash the effective count after the correction
+         * @param expectedCash unchanged by a denomination correction — a recount changes what was
+         *        found in the drawer, never what should have been in it
+         */
+        @Transactional
+        public JournalEntry createAdjustmentJournalFromSessionCorrection(
+                        Long sessionId,
+                        int version,
+                        BigDecimal originalCountedCash,
+                        BigDecimal correctedCountedCash,
+                        BigDecimal expectedCash,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+
+                if (sessionId == null || originalCountedCash == null || correctedCountedCash == null) {
+                        return null;
+                }
+                BigDecimal expected = expectedCash != null ? expectedCash : BigDecimal.ZERO;
+                if (originalCountedCash.compareTo(correctedCountedCash) == 0) {
+                        // Nothing moved, so there is nothing to adjust. Posting a self-cancelling
+                        // entry would add noise to the ledger and imply a change that never happened.
+                        return null;
+                }
+
+                String ref = TX_SESSION_CLOSE + "ADJ-" + sessionId + "-v" + version;
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                JournalEntry entry = createBaseEntry(
+                        date != null ? date : LocalDate.now(),
+                        ref,
+                        "POS Session Close Correction - Session " + sessionId + " (v" + version + ")",
+                        TX_SESSION_CLOSE,
+                        branch);
+
+                String reversalNote = "Reverse original close (SCL-" + sessionId + ")";
+                String repostNote = "Repost corrected close - session " + sessionId;
+
+                // ── Reversal of the original close, line for line, mirrored ──────────────
+                BigDecimal originalVariance = originalCountedCash.subtract(expected);
+                if (originalCountedCash.signum() > 0) {
+                        addLine(entry, "Bank Account", ACC_BANK, reversalNote,
+                                        BigDecimal.ZERO, originalCountedCash);
+                }
+                if (originalVariance.signum() < 0) {
+                        addLine(entry, "Cash Short", ACC_CASH_SHORT, reversalNote,
+                                        BigDecimal.ZERO, originalVariance.abs());
+                }
+                if (expected.signum() > 0) {
+                        addLine(entry, "Cash in Hand", ACC_CASH, reversalNote, expected, BigDecimal.ZERO);
+                }
+                if (originalVariance.signum() > 0) {
+                        addLine(entry, "Cash Over", ACC_CASH_OVER, reversalNote,
+                                        originalVariance, BigDecimal.ZERO);
+                }
+
+                // ── The corrected close, in the same shape as the original ───────────────
+                BigDecimal correctedVariance = correctedCountedCash.subtract(expected);
+                if (correctedCountedCash.signum() > 0) {
+                        addLine(entry, "Bank Account", ACC_BANK, repostNote,
+                                        correctedCountedCash, BigDecimal.ZERO);
+                }
+                if (correctedVariance.signum() < 0) {
+                        addLine(entry, "Cash Short", ACC_CASH_SHORT, repostNote,
+                                        correctedVariance.abs(), BigDecimal.ZERO);
+                }
+                if (expected.signum() > 0) {
+                        addLine(entry, "Cash in Hand", ACC_CASH, repostNote, BigDecimal.ZERO, expected);
+                }
+                if (correctedVariance.signum() > 0) {
+                        addLine(entry, "Cash Over", ACC_CASH_OVER, repostNote,
+                                        BigDecimal.ZERO, correctedVariance);
+                }
+
+                return post(entry);
+        }
+
+        /** Retained for callers that have no expected figure; settles counted against Cash. */
+        @Transactional
+        public JournalEntry createJournalFromSessionClose(
+                        Long sessionId,
+                        BigDecimal closingCash,
+                        LocalDate date,
+                        com.billbull.backend.settings.branch.Branch branch) {
+                return createJournalFromSessionClose(sessionId, closingCash, closingCash, date, branch);
         }
 
         /**

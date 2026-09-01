@@ -62,6 +62,8 @@ class SalesInvoiceAdvanceAutoApplyTest {
 
         advanceApplicationService = new AdvanceApplicationService(
                 applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService,
+                org.mockito.Mockito.mock(com.billbull.backend.pos.session.PosDrawerSessionValidator.class),
+                org.mockito.Mockito.mock(com.billbull.backend.sales.advance.AdvanceCashRefundService.class),
                 entityManager, effectiveCorrectionViewService);
 
         service = newServiceWithMockedDeps(advanceApplicationService);

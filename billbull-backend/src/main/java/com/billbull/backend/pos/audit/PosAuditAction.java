@@ -61,5 +61,21 @@ public enum PosAuditAction {
     TERMINAL_RESTORED,
     TERMINAL_KEPT_ACTIVE,
     TERMINAL_EXEMPT_CHANGED,
+
+    // ── Cash variance and its accounting ─────────────────────────────────────────────
+    // A discrepancy is an exception about money, so each step of its life is its own event
+    // rather than a sentence inside a close log: detected, authorized (or not), and posted.
+    /** A drawer closed with a real discrepancy, within threshold or not. */
+    VARIANCE_DETECTED,
+    /** The discrepancy exceeded the branch threshold and a close was refused without a grant. */
+    VARIANCE_APPROVAL_REQUIRED,
+    /** A supervisor authorized this exact expected/counted pair. */
+    VARIANCE_APPROVED,
+    /** A shortage was recognised in the ledger. */
+    CASH_SHORT_POSTED,
+    /** An overage was recognised in the ledger. */
+    CASH_OVER_POSTED,
+    /** The session-close journal did not post. The close stands; the accounting does not. */
+    GL_POSTING_FAILED,
     TERMINAL_DECOMMISSIONED
 }

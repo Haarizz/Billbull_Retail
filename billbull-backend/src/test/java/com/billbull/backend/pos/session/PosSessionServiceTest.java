@@ -43,6 +43,7 @@ import com.billbull.backend.pos.checkout.PosPaymentPlan;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
 import com.billbull.backend.pos.terminal.PosTerminalRepository;
+import com.billbull.backend.sales.payment.Payment;
 import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.sales.returns.SalesReturn;
 import com.billbull.backend.sales.returns.SalesReturnRepository;
@@ -141,6 +142,30 @@ class PosSessionServiceTest {
         // exactly what the closure tests are asserting, and mocking them would assert nothing.
         // Individual closeSession tests still override these with mocks via
         // authorizeSessionClose() where they only want to reach the timestamping logic.
+        // A REAL reconciliation service over the same mocked repositories, not a mock: Expected
+        // Cash is exactly what these tests assert, and stubbing it would assert nothing. This is
+        // also what keeps the zero-variance suite meaningful after the extraction — it now
+        // exercises the authoritative service through getXReport()/closeSession().
+        // A REAL denomination count service too: the whole point of the phase is that the server
+        // derives Counted Cash, so stubbing it would assert nothing. No company profile and no
+        // base currency are stubbed, which resolves to AED -- the ladder these tests count in.
+        // Real policy and registry: the variance gate and its grants are exactly what the close
+        // tests assert on, and stubbing them would assert nothing. The policy reads the same
+        // PosSettings mock the rest of the suite uses, so a test that sets a threshold gets it.
+        org.springframework.test.util.ReflectionTestUtils.setField(service,
+                "variancePolicy", new PosVariancePolicy(posSettingsRepository));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,
+                "varianceApprovalRegistry", new PosVarianceApprovalRegistry());
+        org.springframework.test.util.ReflectionTestUtils.setField(service,
+                "denominationCountService",
+                new com.billbull.backend.pos.session.denomination.PosDenominationCountService(
+                        org.mockito.Mockito.mock(com.billbull.backend.settings.company.CompanyProfileService.class),
+                        org.mockito.Mockito.mock(com.billbull.backend.financials.currency.CurrencyRepository.class),
+                        new com.fasterxml.jackson.databind.ObjectMapper()));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,
+                "cashReconciliationService", new PosCashReconciliationService(
+                        paymentRepository, receiptVoucherRepository,
+                        effectiveCorrectionViewService, entityManager));
         org.springframework.test.util.ReflectionTestUtils.setField(service,
                 "posSessionAuthorizationService", new com.billbull.backend.pos.auth.PosSessionAuthorizationService());
         org.springframework.test.util.ReflectionTestUtils.setField(service,
@@ -152,6 +177,7 @@ class PosSessionServiceTest {
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(effectiveCorrectionViewService.resolveOverlays(any(), org.mockito.ArgumentMatchers.anyList(), any())).thenAnswer(inv -> inv.getArgument(1));
         lenient().when(transferLogRepository.findBySessionIdOrderByCreatedAtDesc(anyLong())).thenReturn(List.of());
+        org.mockito.Mockito.lenient().when(repo.findByIdForUpdate(org.mockito.ArgumentMatchers.any())).thenAnswer(i -> repo.findById((Long) i.getArgument(0)));
         // Default: no linked User row â€” resolveDisplayName() falls back to the raw username.
         lenient().when(userRepository.findByUsername(any())).thenReturn(java.util.Optional.empty());
         // Default: no tender / audit rows unless a test stubs them. aggregateTender/
@@ -439,7 +465,7 @@ class PosSessionServiceTest {
 
         PosSession opened = service.openSession("T1", "Counter 1", bd("100"));
 
-        assertEquals(LocalDate.now(), opened.getTradingDate());
+        assertEquals(businessDayWindowService.clock().now().toLocalDate(), opened.getTradingDate());
     }
 
     // ---------------------------------------------------------------------
@@ -702,7 +728,7 @@ class PosSessionServiceTest {
         when(repo.findById(1L)).thenReturn(Optional.of(session));
 
         LocalDate before = session.getTradingDate();
-        service.closeSession(1L, bd("0"), "eod");
+        service.closeSession(1L, denoms("0"), null, "eod");
 
         assertEquals(before, session.getTradingDate());
     }
@@ -1191,8 +1217,8 @@ class PosSessionServiceTest {
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
         when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(businessDate);
         // Gate operands are the Candidate Business Day (today), not the pointer.
-        when(businessDateService.isDateClosed(1L, LocalDate.now())).thenReturn(false);
-        when(repo.findUnclosedSessionsBeforeDate(1L, LocalDate.now())).thenReturn(List.of());
+        when(businessDateService.isDateClosed(org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.any())).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
         PosSession existing = openSession();
         existing.setOpenedBy("cashier1");
         when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN))
@@ -1291,7 +1317,7 @@ class PosSessionServiceTest {
                 .thenReturn(Optional.of(openSegment));
         when(sessionTerminalHistoryRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        service.closeSession(1L, bd("0"), "eod");
+        service.closeSession(1L, denoms("0"), null, "eod");
 
         assertTrue(openSegment.getEndedAt() != null);
         verify(sessionTerminalHistoryRepository).save(openSegment);
@@ -1345,11 +1371,13 @@ class PosSessionServiceTest {
 
     @Test
     void closeSessionComputesExpectedCashAndDifference() {
+        allowVarianceUpTo("100");
         // closeSession() verifies the caller's identity and authorization before it does
         // anything else; without this the test never reaches the behavior it asserts on.
         authenticateCashier();
         authorizeSessionClose(null);
         PosSession session = openSession();
+        session.setBranchId(1L);
         session.setOpeningCash(bd("100"));
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("50")));
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("20")));
@@ -1361,7 +1389,7 @@ class PosSessionServiceTest {
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("250"), 1L }));
 
         // expected = opening(100) + cashTender(250) + (dropIn 50 - dropOut 20) = 380
-        PosSession closed = service.closeSession(1L, bd("400"), "ok");
+        PosSession closed = service.closeSession(1L, denoms("400"), null, "ok");
 
         assertMoney("380", closed.getExpectedCash());
         // over by 20
@@ -1373,6 +1401,7 @@ class PosSessionServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void closeSessionAndXReportAgreeOnExpectedCashForNonStandardPaymentMode() {
+        allowVarianceUpTo("100");
         // closeSession() verifies the caller's identity and authorization before it does
         // anything else; without this the test never reaches the behavior it asserts on.
         authenticateCashier();
@@ -1380,9 +1409,10 @@ class PosSessionServiceTest {
         // Regression test for the modal/X-Report desync: a payment mode that isn't a
         // literal "cash"/"card"/"credit" match (e.g. a voucher tender row) must still
         // produce the SAME expected cash from closeSession() and getXReport(), since
-        // both now share computeExpectedCash()/aggregateTender() instead of diverging
+        // both now share PosCashReconciliationService instead of diverging
         // (one via the session.totalCashSales counter, the other via a live query).
         PosSession session = openSession();
+        session.setBranchId(1L);
         session.setOpeningCash(bd("100"));
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("50")));
         session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("20")));
@@ -1393,7 +1423,7 @@ class PosSessionServiceTest {
 
         Map<String, Object> report = service.getXReport(1L);
         Map<String, Object> summary = (Map<String, Object>) report.get("summary");
-        PosSession closed = service.closeSession(1L, bd("400"), "ok");
+        PosSession closed = service.closeSession(1L, denoms("400"), null, "ok");
 
         assertMoney("380", (BigDecimal) summary.get("expectedCash"));
         assertMoney("380", closed.getExpectedCash());
@@ -1411,27 +1441,33 @@ class PosSessionServiceTest {
         // no cash movements
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
 
-        PosSession closed = service.closeSession(1L, null, null);
+        PosSession closed = service.closeSession(1L, null, null, null);
 
         // opening(0) + cashSales(0) + net(0) = 0
         assertMoney("0", closed.getExpectedCash());
-        // closingCash null -> coalesced to 0, and difference 0 when closing null
-        assertMoney("0", closed.getClosingCash());
-        assertMoney("0", closed.getCashDifference());
+        // Closing with no denominations submitted is NOT COUNTED, not counted-zero. The drawer
+        // was never verified, so there is no counted cash and no variance to state. Coalescing
+        // the absent count to 0.00 (the old behaviour) asserted that someone had looked in the
+        // drawer and found it empty.
+        assertNull(closed.getClosingCash());
+        assertNull(closed.getCashDifference());
+        assertNull(closed.getCountedAt());
     }
 
     @Test
     void closeSessionShortfallIsNegativeDifference() {
+        allowVarianceUpTo("100");
         // closeSession() verifies the caller's identity and authorization before it does
         // anything else; without this the test never reaches the behavior it asserts on.
         authenticateCashier();
         authorizeSessionClose(null);
         PosSession session = openSession();
+        session.setBranchId(1L);
         session.setOpeningCash(bd("100"));
         session.setTotalCashSales(bd("0"));
         when(repo.findById(1L)).thenReturn(java.util.Optional.of(session));
 
-        PosSession closed = service.closeSession(1L, bd("90"), null);
+        PosSession closed = service.closeSession(1L, denoms("90"), null, null);
 
         assertMoney("100", closed.getExpectedCash());
         // counted 90 against expected 100 -> short by 10
@@ -1677,7 +1713,7 @@ class PosSessionServiceTest {
         when(paymentRepository.sumTenderByModeForSessions(eq(List.of(100L))))
                 .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("195"), 1L }));
 
-        PosSession closed = service.closeSession(100L, bd("295"), "ok");
+        PosSession closed = service.closeSession(100L, denoms("295"), null, "ok");
 
         assertMoney("295", closed.getExpectedCash());
         assertMoney("0", closed.getCashDifference());
@@ -1699,7 +1735,7 @@ class PosSessionServiceTest {
         // yet at the moment session 99 closes.
         when(paymentRepository.sumTenderByModeForSessions(eq(List.of(99L)))).thenReturn(List.of());
 
-        PosSession closed = service.closeSession(99L, bd("100"), "ok");
+        PosSession closed = service.closeSession(99L, denoms("100"), null, "ok");
 
         assertMoney("100", closed.getExpectedCash());
         assertMoney("0", closed.getCashDifference());
@@ -2041,9 +2077,12 @@ class PosSessionServiceTest {
         assertMoney("30", (BigDecimal) cashPosition.get("cashDropTotal"));
         assertMoney("0", (BigDecimal) cashPosition.get("customerReceiptsTotal"));
         assertMoney("0", (BigDecimal) cashPosition.get("customerAdvancesTotal"));
-        assertEquals(false, cashPosition.get("cashRefundsSupported"));
-        // net = opening(100) + cashSales(300) + receipts(0) + advances(0) + dropIn(40) - dropOut(10)
-        assertMoney("430", (BigDecimal) cashPosition.get("netCashPosition"));
+        // The composite netCashPosition is gone: it added back-office cash onto a drawer figure,
+        // producing a number that was neither, and reconcilable against nothing.
+        assertNull(cashPosition.get("netCashPosition"));
+        assertEquals("BACK_OFFICE_NON_DRAWER", cashPosition.get("scope"));
+        // Drawer reconciliation is unaffected by this block and comes from the authority.
+        assertMoney("430", (BigDecimal) summary.get("expectedCash"));
 
         // X-Report must never query back-office receipts (no session linkage exists yet).
         verify(receiptVoucherRepository, org.mockito.Mockito.never())
@@ -2101,8 +2140,471 @@ class PosSessionServiceTest {
         assertMoney("30", (BigDecimal) cashPosition.get("cashDropIn"));
         assertMoney("5", (BigDecimal) cashPosition.get("cashDropOut"));
 
-        // net = opening(100) + cashSales(200) + receipts(50) + advances(75) + dropIn(30) - dropOut(5)
-        assertMoney("450", (BigDecimal) cashPosition.get("netCashPosition"));
+        // Back-office cash is reported, clearly scoped, and summed with nothing.
+        assertEquals("BACK_OFFICE_NON_DRAWER", cashPosition.get("scope"));
+        assertNull(cashPosition.get("netCashPosition"));
+    }
+
+    /**
+     * Anti-double-count guard for the Consolidated Cash Position (release 1 item 7).
+     *
+     * <p>customerReceiptsTotal / customerAdvancesTotal are branch+date scoped, so they sweep up
+     * every cash receipt and advance for the day — including the ones collected THROUGH the
+     * reported sessions, which cashSales already contains. Once POS credit receipts and POS
+     * advances carry their collecting drawer session, counting both sides adds the same
+     * physical notes twice. Anything already represented in tender must be excluded.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void zReportCashPositionExcludesReceiptsAndAdvancesAlreadyCountedAsTender() {
+        PosSession s1 = openSession();
+        s1.setStatus(PosSessionStatus.CLOSED);
+        s1.setBranchId(7L);
+        s1.setOpeningCash(bd("100"));
+        s1.setInvoiceCount(1);
+
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
+                .thenReturn(List.of(s1));
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
+                .thenReturn(List.of(invoiceWithTax(200.0, 0.0)));
+        // cashSales already contains BOTH the 50 credit receipt and the 75 advance:
+        // 75 sale + 50 receipt + 75 advance = 200.
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 3L }));
+
+        // The POS credit receipt: the session lives on the Payment, and its generated voucher
+        // is reached through Payment.receiptVoucherRecordId.
+        ReceiptVoucher posReceipt = receiptVoucher("Alice", "Cash", bd("50"));
+        org.springframework.test.util.ReflectionTestUtils.setField(posReceipt, "id", 501L);
+        Payment tenderedLeg = new Payment();
+        tenderedLeg.setPaymentMode("Cash");
+        tenderedLeg.setAmount(bd("50"));
+        tenderedLeg.setReceiptVoucherRecordId(501L);
+        when(paymentRepository.findTenderForSessions(List.of(1L))).thenReturn(List.of(tenderedLeg));
+
+        // A genuine back-office receipt, collected through no drawer: must still be reported.
+        ReceiptVoucher backOfficeReceipt = receiptVoucher("Bob", "Cash", bd("40"));
+        org.springframework.test.util.ReflectionTestUtils.setField(backOfficeReceipt, "id", 502L);
+
+        when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(eq(7L), any(LocalDate.class), eq(ReceiptPurpose.CASH_SALE)))
+                .thenReturn(List.of(posReceipt, backOfficeReceipt));
+        when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(eq(7L), any(LocalDate.class), eq(ReceiptPurpose.AGAINST_INVOICE)))
+                .thenReturn(List.of());
+
+        // The POS advance carries the collecting session on the voucher itself.
+        ReceiptVoucher posAdvance = receiptVoucher("Dana", "Cash", bd("75"));
+        org.springframework.test.util.ReflectionTestUtils.setField(posAdvance, "id", 601L);
+        posAdvance.setPosSessionId(1L);
+        // A back-office advance, no drawer: must still be reported.
+        ReceiptVoucher backOfficeAdvance = receiptVoucher("Eve", "Cash", bd("20"));
+        org.springframework.test.util.ReflectionTestUtils.setField(backOfficeAdvance, "id", 602L);
+        when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(eq(7L), any(LocalDate.class), eq(ReceiptPurpose.ADVANCE_RECEIVED)))
+                .thenReturn(List.of(posAdvance, backOfficeAdvance));
+
+        Map<String, Object> result = service.getZReport(7L, LocalDate.now());
+        Map<String, Object> summary = (Map<String, Object>) result.get("summary");
+        Map<String, Object> cashPosition = (Map<String, Object>) summary.get("cashPosition");
+
+        // 50 excluded (already tender), 40 back-office kept.
+        assertMoney("40", (BigDecimal) cashPosition.get("customerReceiptsTotal"));
+        // 75 excluded (already tender), 20 back-office kept.
+        assertMoney("20", (BigDecimal) cashPosition.get("customerAdvancesTotal"));
+
+        // The composite that could double-count them is gone entirely, so the exclusions above
+        // now guard a reporting figure rather than a second cash model.
+        assertNull(cashPosition.get("netCashPosition"));
+        // And back-office cash reaches POS drawer reconciliation nowhere: the day's expected
+        // cash is the sum of the frozen session snapshots and nothing else.
+        assertMoney("0", (BigDecimal) summary.get("expectedCash"));
+    }
+
+    @Test
+    void aClosedSessionCannotBeCountedAgainThroughTheClosePath() {
+        // A drawer that has been counted and closed is a finished financial record. Re-running
+        // the close path would overwrite its counted cash and variance with a fresh count,
+        // silently rewriting what someone was already held accountable for. Corrections exist
+        // for that, and they preserve the original.
+        authenticateCashier();
+        PosSession session = openSession();
+        session.setStatus(PosSessionStatus.CLOSED);
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.closeSession(1L, denoms("100"), null, "again"));
+
+        assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("already closed"));
+    }
+
+    // =====================================================================
+    // ZERO-VARIANCE ACCEPTANCE SUITE
+    // =====================================================================
+    //
+    // The business invariant this whole change set exists to make true:
+    //
+    //     Expected Closing Cash = Opening Float
+    //                           + Cash Tender Collected
+    //                           + Authorized Cash-In
+    //                           - Authorized Cash-Out
+    //     Variance = Counted Cash - Expected Closing Cash = 0
+    //
+    // One test per physical cash flow the POS can produce, each asserting that a drawer
+    // holding exactly the right notes reconciles to zero. The formula itself is unchanged and
+    // has no per-category terms; what each test really pins down is that the flow reaches the
+    // formula through the correct bucket, exactly once.
+    //
+    // Float is 100.00 throughout.
+
+    private static final BigDecimal FLOAT_100 = new BigDecimal("100");
+
+    /** An open session with the standard float and the given drawer movements. */
+    private PosSession sessionWithFloat(PosCashMovement... movements) {
+        PosSession session = openSession();
+        session.setBranchId(7L);
+        session.setSessionDate(LocalDate.now());
+        session.setOpeningCash(FLOAT_100);
+        for (PosCashMovement m : movements) session.getCashMovements().add(m);
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        lenient().when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+        return session;
+    }
+
+    /** Cash tender collected through this session, as sales_payments would report it. */
+    private void cashTender(String amount) {
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd(amount), 1L }));
+    }
+
+    /** Asserts Expected Cash, and that a drawer physically holding it reconciles to zero. */
+    @SuppressWarnings("unchecked")
+    private void assertReconcilesToZero(String expected) {
+        Map<String, Object> summary =
+                (Map<String, Object>) service.getXReport(1L).get("summary");
+        BigDecimal expectedCash = (BigDecimal) summary.get("expectedCash");
+        assertMoney(expected, expectedCash);
+
+        BigDecimal counted = bd(expected);
+        assertEquals(0, counted.subtract(expectedCash).compareTo(BigDecimal.ZERO),
+                "a physically correct drawer must reconcile to zero variance");
+    }
+
+    // -- 1. POS cash sale ---------------------------------------------------------------
+    @Test
+    void zeroVariance_posCashSale() {
+        sessionWithFloat();
+        cashTender("300");
+        assertReconcilesToZero("400");
+    }
+
+    // -- 2. Delivery cash collection ----------------------------------------------------
+    @Test
+    void zeroVariance_deliveryCashCollection() {
+        // Keyed on Payment.posSessionId (the COLLECTION session), so a delivery order rung up
+        // in an older session credits THIS drawer the moment the money is taken.
+        sessionWithFloat();
+        cashTender("400");
+        assertReconcilesToZero("500");
+    }
+
+    // -- 3. POS customer credit receipt in cash (release 1 item 1) -----------------------
+    @Test
+    void zeroVariance_posCustomerCreditReceiptInCash() {
+        // Reaches the drawer as ordinary cash tender now that the POS Customer view declares
+        // the collecting session. Before that it was invisible here: false shortage of 250.
+        sessionWithFloat();
+        cashTender("250");
+        assertReconcilesToZero("350");
+    }
+
+    // -- 4. POS customer advance in cash (release 1 item 2) ------------------------------
+    @Test
+    void zeroVariance_posCustomerAdvanceInCash() {
+        // An ADVANCE_RECEIVED voucher stamped with this session is Cash Tender Collected too:
+        // aggregateTender reads exactly these. Before the reroute no voucher ever carried a
+        // session, so this leg was dead code: false overage of 200.
+        sessionWithFloat();
+        ReceiptVoucher advance = receiptVoucher("Acme", "Cash", bd("200"));
+        advance.setPurpose(ReceiptPurpose.ADVANCE_RECEIVED);
+        when(receiptVoucherRepository.findByPosSessionId(1L)).thenReturn(List.of(advance));
+        assertReconcilesToZero("300");
+    }
+
+    // -- 5. Layaway deposit in cash (release 1 item 4) -----------------------------------
+    @Test
+    void zeroVariance_layawayDepositInCash() {
+        // Authorized Cash-In via DROP_IN, deliberately NOT tender: a layaway is not an invoice
+        // and must not enter cash sales or sales revenue.
+        sessionWithFloat(cashMovement(PosCashMovementType.DROP_IN, bd("600")));
+        assertReconcilesToZero("700");
+    }
+
+    // -- 6. Layaway instalment in cash (release 1 item 4) --------------------------------
+    @Test
+    void zeroVariance_layawayInstalmentInCash() {
+        sessionWithFloat(cashMovement(PosCashMovementType.DROP_IN, bd("200")));
+        assertReconcilesToZero("300");
+    }
+
+    // -- 7. Sales return cash refund -----------------------------------------------------
+    @Test
+    void zeroVariance_salesReturnCashRefund() {
+        sessionWithFloat(cashMovement(PosCashMovementType.DROP_OUT, bd("150")));
+        cashTender("500");
+        assertReconcilesToZero("450");
+    }
+
+    // -- 8. Customer advance cash refund (release 1 item 3) ------------------------------
+    @Test
+    void zeroVariance_customerAdvanceCashRefund() {
+        // Previously GL-only: false shortage of 100.
+        sessionWithFloat(cashMovement(PosCashMovementType.DROP_OUT, bd("100")));
+        assertReconcilesToZero("0");
+    }
+
+    // -- 9. Layaway cancellation cash refund (release 1 item 5) --------------------------
+    @Test
+    void zeroVariance_layawayCancellationCashRefund() {
+        // Deposit in, then returned on cancellation: the drawer nets back to the float.
+        sessionWithFloat(
+                cashMovement(PosCashMovementType.DROP_IN, bd("600")),
+                cashMovement(PosCashMovementType.DROP_OUT, bd("600")));
+        assertReconcilesToZero("100");
+    }
+
+    // -- 10. Cash payout / expense -------------------------------------------------------
+    @Test
+    void zeroVariance_cashPayout() {
+        sessionWithFloat(cashMovement(PosCashMovementType.DROP_OUT, bd("75")));
+        assertReconcilesToZero("25");
+    }
+
+    // -- 11. Cash drop-in ----------------------------------------------------------------
+    @Test
+    void zeroVariance_cashDropIn() {
+        sessionWithFloat(cashMovement(PosCashMovementType.DROP_IN, bd("1000")));
+        assertReconcilesToZero("1100");
+    }
+
+    // -- 12. Cash drop-out / safe deposit ------------------------------------------------
+    @Test
+    void zeroVariance_cashDropOut() {
+        sessionWithFloat(cashMovement(PosCashMovementType.DROP_OUT, bd("40")));
+        assertReconcilesToZero("60");
+    }
+
+    // -- 13. Mixed tender ----------------------------------------------------------------
+    @Test
+    void zeroVariance_mixedTenderOnlyCashLegReachesTheDrawer() {
+        sessionWithFloat();
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(
+                        new Object[]{ "Cash", bd("150"), 1L },
+                        new Object[]{ "Visa", bd("250"), 1L }));
+        assertReconcilesToZero("250");
+    }
+
+    // -- 14. Credit sale with no collection ----------------------------------------------
+    @Test
+    void zeroVariance_creditSaleWithNoCollectionLeavesTheDrawerUntouched() {
+        // A CREDIT allocation creates no Payment row at all, so there is nothing to exclude:
+        // the drawer simply never sees it.
+        sessionWithFloat();
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of(invoiceWithTax(800.0, 0.0)));
+        assertReconcilesToZero("100");
+    }
+
+    // -- Cross-module composite ----------------------------------------------------------
+    @Test
+    void zeroVariance_crossModuleComposite() {
+        // The composite from the cross-module audit, which under the old code produced a false
+        // variance from four independent defects with opposite signs.
+        //
+        //   Opening float                        +100
+        //   POS cash sale                        +300  tender
+        //   Customer credit receipt in cash      +250  tender   (was missing)
+        //   Delivery cash collection             +400  tender
+        //   Customer advance in cash             +200  tender   (was missing)
+        //   Layaway deposit in cash              +600  cash-in  (was missing)
+        //   Sales return cash refund             -150  cash-out
+        //   Customer advance cash refund         -100  cash-out (was missing)
+        //   Cash payout                           -75  cash-out
+        //   Drop-out to safe                     -400  cash-out
+        //   Card leg of a mixed sale                0  non-cash
+        //                                        -----
+        //                                        1,125
+        sessionWithFloat(
+                cashMovement(PosCashMovementType.DROP_IN, bd("600")),
+                cashMovement(PosCashMovementType.DROP_OUT, bd("150")),
+                cashMovement(PosCashMovementType.DROP_OUT, bd("100")),
+                cashMovement(PosCashMovementType.DROP_OUT, bd("75")),
+                cashMovement(PosCashMovementType.DROP_OUT, bd("400")));
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(
+                        new Object[]{ "Cash", bd("950"), 3L },
+                        new Object[]{ "Visa", bd("500"), 1L }));
+        ReceiptVoucher advance = receiptVoucher("Acme", "Cash", bd("200"));
+        advance.setPurpose(ReceiptPurpose.ADVANCE_RECEIVED);
+        when(receiptVoucherRepository.findByPosSessionId(1L)).thenReturn(List.of(advance));
+
+        assertReconcilesToZero("1125");
+    }
+
+    // -- Voided movements never contribute ------------------------------------------------
+    @Test
+    void zeroVariance_voidedMovementIsExcluded() {
+        PosCashMovement voided = cashMovement(PosCashMovementType.DROP_OUT, bd("500"));
+        voided.setStatus(PosCashMovementStatus.VOIDED);
+        sessionWithFloat(voided);
+        assertReconcilesToZero("100");
+    }
+
+    // -- Back-office cash must not touch a POS drawer ------------------------------------
+    @Test
+    void zeroVariance_backOfficeAdvanceRefundDoesNotAffectPosExpectedCash() {
+        // An advance refunded in cash from the office safe on the same business day books no
+        // drawer movement (AdvanceCashRefundServiceTest#backOfficeCashRefundBooksNoDrawerMovement),
+        // so the till it never touched still reconciles exactly. This is the session-level
+        // counterpart of that guarantee: office cash and drawer cash stay separate ledgers.
+        sessionWithFloat();
+        cashTender("300");
+        assertReconcilesToZero("400");
+    }
+
+    // -- A POS advance is counted once, not twice ----------------------------------------
+    @Test
+    @SuppressWarnings("unchecked")
+    void posAdvanceAppearsExactlyOnceAcrossExpectedCashAndTheCashPosition() {
+        // The advance is Cash Tender Collected (it carries this session). The Consolidated Cash
+        // Position lists back-office receipts/advances for the branch+date, and would otherwise
+        // add the same notes again -- so it must exclude this one.
+        PosSession s1 = openSession();
+        s1.setStatus(PosSessionStatus.CLOSED);
+        s1.setBranchId(7L);
+        s1.setOpeningCash(bd("100"));
+        s1.setInvoiceCount(0);
+        // The figure this drawer was actually closed against: 100 float + the 200 advance.
+        // The Z-Report reads this frozen value rather than recomputing, so a session that was
+        // never closed with one contributes nothing -- which is why it is set explicitly here.
+        s1.setExpectedCash(bd("300"));
+
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(anyLong(), any(LocalDate.class)))
+                .thenReturn(List.of(s1));
+        when(invoiceRepo.findByBranchIdAndPosSessionIdInWithItems(anyLong(), any()))
+                .thenReturn(List.of());
+        // cashSales is the advance and nothing else.
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("200"), 1L }));
+
+        ReceiptVoucher posAdvance = receiptVoucher("Acme", "Cash", bd("200"));
+        org.springframework.test.util.ReflectionTestUtils.setField(posAdvance, "id", 601L);
+        posAdvance.setPosSessionId(1L);
+        when(receiptVoucherRepository.findCompletedByBranchAndDateAndPurpose(
+                eq(7L), any(LocalDate.class), eq(ReceiptPurpose.ADVANCE_RECEIVED)))
+                .thenReturn(List.of(posAdvance));
+
+        Map<String, Object> summary =
+                (Map<String, Object>) service.getZReport(7L, LocalDate.now()).get("summary");
+        Map<String, Object> cashPosition = (Map<String, Object>) summary.get("cashPosition");
+
+        // Once, as tender.
+        assertMoney("200", (BigDecimal) cashPosition.get("cashSales"));
+        // Not a second time, as a back-office advance.
+        assertMoney("0", (BigDecimal) cashPosition.get("customerAdvancesTotal"));
+        // And not a third time through a consolidated position, which no longer exists.
+        assertNull(cashPosition.get("netCashPosition"));
+        // The drawer figure is the frozen session snapshot: 100 float + 200 advance, once.
+        assertMoney("300", (BigDecimal) summary.get("expectedCash"));
+    }
+
+    // =====================================================================
+    // PHASE 2 — X-REPORT AND CLOSE SESSION SHARE ONE AUTHORITY
+    // =====================================================================
+    //
+    // These paths used to compute Expected Cash separately: getXReport() resolved correction
+    // overlays first, closeSession() did not. The same session could therefore be reported one
+    // way on screen and closed against another, and only after a correction would anyone notice.
+    // Both now read PosCashReconciliationService, so agreement is structural rather than
+    // maintained by hand -- these tests hold that line.
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportAndCloseSessionAgreeOnExpectedCashWithNoCorrection() {
+        authenticateCashier();
+        authorizeSessionClose(null);
+        PosSession session = openSession();
+        session.setBranchId(7L);
+        session.setSessionDate(LocalDate.now());
+        session.setOpeningCash(bd("100"));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_IN, bd("60")));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("25")));
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("400"), 1L }));
+
+        Map<String, Object> summary = (Map<String, Object>) service.getXReport(1L).get("summary");
+        BigDecimal fromXReport = (BigDecimal) summary.get("expectedCash");
+        PosSession closed = service.closeSession(1L, denoms("535"), null, "ok");
+
+        assertMoney("535", fromXReport);                       // 100 + 400 + 60 - 25
+        assertEquals(0, fromXReport.compareTo(closed.getExpectedCash()));
+        assertMoney("0", closed.getCashDifference());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportAndCloseSessionAgreeOnExpectedCashAfterAnApprovedCorrection() {
+        authenticateCashier();
+        authorizeSessionClose(null);
+        PosSession session = openSession();
+        session.setBranchId(7L);
+        session.setSessionDate(LocalDate.now());
+        session.setOpeningCash(bd("100"));
+        session.getCashMovements().add(cashMovement(PosCashMovementType.DROP_OUT, bd("300")));
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("500"), 1L }));
+
+        // Approved correction: the payout was really 200, not 300. Before this phase the
+        // X-Report would have reflected it and closeSession would not -- a 100 discrepancy
+        // between the figure the cashier saw and the one they were counted against.
+        PosCashMovement corrected = cashMovement(PosCashMovementType.DROP_OUT, bd("200"));
+        when(effectiveCorrectionViewService.resolveOverlays(
+                eq(com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT),
+                org.mockito.ArgumentMatchers.anyList(), any()))
+                .thenReturn(List.of(corrected));
+
+        Map<String, Object> summary = (Map<String, Object>) service.getXReport(1L).get("summary");
+        BigDecimal fromXReport = (BigDecimal) summary.get("expectedCash");
+        PosSession closed = service.closeSession(1L, denoms("400"), null, "ok");
+
+        assertMoney("400", fromXReport);                       // 100 + 500 - 200 (corrected)
+        assertEquals(0, fromXReport.compareTo(closed.getExpectedCash()),
+                "the corrected figure must be the one the session is closed against");
+        assertMoney("0", closed.getCashDifference());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void xReportReportsNoVarianceWhileTheDrawerIsUncounted() {
+        // A mid-shift X-Report must not invent a count. Reporting countedCash 0 would state a
+        // reconciliation that never happened and show the whole drawer as a shortage.
+        PosSession session = openSession();
+        session.setBranchId(7L);
+        session.setSessionDate(LocalDate.now());
+        session.setOpeningCash(bd("100"));
+        when(repo.findById(1L)).thenReturn(Optional.of(session));
+        when(invoiceRepo.findByPosSessionIdWithItems(1L)).thenReturn(List.of());
+        when(paymentRepository.sumTenderByModeForSessions(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{ "Cash", bd("250"), 1L }));
+
+        Map<String, Object> summary = (Map<String, Object>) service.getXReport(1L).get("summary");
+
+        assertMoney("350", (BigDecimal) summary.get("expectedCash"));
+        assertNull(summary.get("countedCash"));
+        assertNull(summary.get("cashVariance"));
+        assertEquals(PosCashReconciliationStatus.NOT_COUNTED, summary.get("reconciliationStatus"));
     }
 
     // ---------------------------------------------------------------------
@@ -2122,7 +2624,7 @@ class PosSessionServiceTest {
         s1.setOpeningCash(bd("100"));
         s1.setInvoiceCount(1);
         // Persisted per-session Expected Cash already correctly includes the drop in/out
-        // (computeExpectedCash is untouched): 100 opening + 200 cash tender + 50 dropIn - 20 dropOut = 330.
+        // (the formula is untouched): 100 opening + 200 cash tender + 50 dropIn - 20 dropOut = 330.
         s1.setExpectedCash(bd("330"));
 
         when(dayCloseRepository.existsByBranchIdAndCloseDate(branchId, date)).thenReturn(false);
@@ -2603,8 +3105,8 @@ class PosSessionServiceTest {
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
         when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(businessDate);
         // Gate operands are the Candidate Business Day (today), not the pointer.
-        when(businessDateService.isDateClosed(1L, LocalDate.now())).thenReturn(false);
-        when(repo.findUnclosedSessionsBeforeDate(1L, LocalDate.now())).thenReturn(List.of());
+        when(businessDateService.isDateClosed(org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.any())).thenReturn(false);
+        when(repo.findUnclosedSessionsBeforeDate(org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
 
         PosSession ownerSessionElsewhere = openSession();
         ownerSessionElsewhere.setId(9L);
@@ -3136,6 +3638,51 @@ class PosSessionServiceTest {
         return s;
     }
 
+    /**
+     * A physical denomination count that adds up to {@code amount}, greedily over the AED ladder.
+     *
+     * <p>Tests state what the drawer physically held, not what it totalled: the server derives
+     * the total. Passing an amount directly is no longer possible, which is the point of the
+     * phase — a caller cannot assert Counted Cash.
+     */
+    private static java.util.Map<String, Object> denoms(String amount) {
+        java.math.BigDecimal remaining = new java.math.BigDecimal(amount);
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        for (String key : List.of("1000", "500", "200", "100", "50", "20", "10", "5",
+                                  "1", "0.50", "0.25", "0.10", "0.05")) {
+            java.math.BigDecimal value = new java.math.BigDecimal(key);
+            java.math.BigDecimal qty = remaining.divideToIntegralValue(value);
+            if (qty.signum() > 0) {
+                out.put(key, qty.intValueExact());
+                remaining = remaining.subtract(value.multiply(qty));
+            }
+        }
+        if (remaining.signum() != 0) {
+            throw new IllegalArgumentException(amount + " is not representable in AED denominations");
+        }
+        return out;
+    }
+
+    /**
+     * Lets this branch close a discrepancy up to {@code amount} without a supervisor.
+     *
+     * <p>Needed because the threshold now means what it says: 0 is zero tolerance, so ANY
+     * variance requires authorization. The old gate read {@code threshold.signum() > 0}, which
+     * made the default of 0 disable the check entirely — the strictest setting was the one that
+     * never fired. Tests that assert on variance arithmetic rather than on the gate configure a
+     * tolerance here.
+     */
+    private void allowVarianceUpTo(String amount) {
+        // A session with no branch cannot have branch settings, and an unknown branch resolves
+        // to the strictest threshold. Production always stamps a branch at open; the fixture
+        // does not, so tests that exercise the tolerance give it one.
+        com.billbull.backend.pos.settings.PosSettings settings =
+                new com.billbull.backend.pos.settings.PosSettings();
+        settings.setCashVarianceThreshold(bd(amount));
+        lenient().when(posSettingsRepository.findByBranchId(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(Optional.of(settings));
+    }
+
     private PosCashMovement cashMovement(PosCashMovementType type, BigDecimal amount) {
         PosCashMovement m = new PosCashMovement();
         m.setMovementType(type);
@@ -3374,7 +3921,7 @@ class PosSessionServiceTest {
         authenticateCashier();
         openSessionForClose(LocalDateTime.now(BUSINESS_ZONE).minusHours(2));
 
-        PosSession closed = service.closeSession(1L, bd("100"), "ok");
+        PosSession closed = service.closeSession(1L, denoms("100"), null, "ok");
 
         assertBusinessDayWallClock("closedAt", closed.getClosedAt());
     }
@@ -3387,7 +3934,7 @@ class PosSessionServiceTest {
         // inflated on a host ahead of the business zone, negative on a host behind it.
         openSessionForClose(LocalDateTime.now(BUSINESS_ZONE).minusMinutes(30));
 
-        PosSession closed = service.closeSession(1L, bd("100"), "ok");
+        PosSession closed = service.closeSession(1L, denoms("100"), null, "ok");
 
         Long duration = closed.getDurationSeconds();
         assertNotNull(duration);
@@ -3403,7 +3950,7 @@ class PosSessionServiceTest {
         // clocks made this negative whenever the JVM zone lagged the Business Day zone.
         openSessionForClose(LocalDateTime.now(BUSINESS_ZONE));
 
-        PosSession closed = service.closeSession(1L, bd("100"), "ok");
+        PosSession closed = service.closeSession(1L, denoms("100"), null, "ok");
 
         assertTrue(closed.getDurationSeconds() >= 0,
                 "duration must never be negative, was " + closed.getDurationSeconds());
@@ -3417,7 +3964,7 @@ class PosSessionServiceTest {
         authenticateCashier();
         openSessionForClose(LocalDateTime.now(BUSINESS_ZONE).minusHours(1));
 
-        PosSession closed = service.closeSession(1L, bd("100"), "ok");
+        PosSession closed = service.closeSession(1L, denoms("100"), null, "ok");
 
         // One operation, one authoritative timestamp: the Z-Report snapshot must carry the
         // very same closedAt that was written to the session, not an independent second read.
@@ -3433,7 +3980,7 @@ class PosSessionServiceTest {
         PosSession session = openSessionForClose(LocalDateTime.now(BUSINESS_ZONE).minusHours(1));
         session.setXReportGeneratedAt(null);
 
-        PosSession closed = service.closeSession(1L, bd("100"), "ok");
+        PosSession closed = service.closeSession(1L, denoms("100"), null, "ok");
 
         // Closing implies the shift read; it must share the one close timestamp.
         assertEquals(closed.getClosedAt(), closed.getXReportGeneratedAt());

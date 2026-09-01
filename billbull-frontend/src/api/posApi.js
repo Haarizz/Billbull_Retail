@@ -159,15 +159,22 @@ export const syncPosSession = async (sessionId, terminalId) => {
   return res.data;
 };
 
+/**
+ * Closes a session against a physically counted drawer.
+ *
+ * Sends denomination QUANTITIES only. Counted Cash, Expected Cash and the variance are all
+ * derived server-side; `closingCash` is deliberately not in this contract, because a total the
+ * client computes is a financial figure nobody can verify.
+ */
 export const closePosSession = async (sessionId, {
-  closingCash, notes, closingDenominations, supervisorApproved,
+  notes, closingDenominations, currencyCode, varianceApprovalToken,
   cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
   // Single-use grant from verifySessionClosurePermission. Required when the logged-in
   // user isn't the session owner (Day Close closing another cashier's session).
   closureAuthToken,
 } = {}) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/close`, {
-    closingCash, notes, closingDenominations, supervisorApproved,
+    notes, closingDenominations, currencyCode, varianceApprovalToken,
     cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
     closureAuthToken,
   });
@@ -404,8 +411,16 @@ export const getLayaway = async (id) => {
 };
 
 /** Cancel a layaway (releases reserved stock). Requires supervisor/delete rights — 403 otherwise. */
-export const cancelLayaway = async (id) => {
-  const res = await api.post(`${BASE}/layaways/${id}/cancel`);
+/**
+ * @param {number|null} posSessionId  the drawer session returning the deposit. Required by the
+ *   server when the deposit was taken in cash, so the payout reduces that session's Expected
+ *   Cash. Never inferred server-side, and never taken from the session the layaway was created
+ *   in — a cancellation weeks later is paid from whichever till is open now.
+ */
+export const cancelLayaway = async (id, posSessionId = null) => {
+  const res = await api.post(`${BASE}/layaways/${id}/cancel`, null, {
+    params: posSessionId ? { posSessionId } : undefined,
+  });
   return res.data;
 };
 
@@ -508,5 +523,38 @@ export const beginPosSessionClosure = async (sessionId, { closureAuthToken } = {
 export const cancelPosSessionClosure = async (sessionId, { reason, usernameOrEmail, password } = {}) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/cancel-closure`,
     { reason, usernameOrEmail, password });
+  return res.data;
+};
+
+/**
+ * The server-authoritative denomination ladder for the drawer currency.
+ *
+ * The count screens render from this. The bundled AED list in utils/cashDenominations.js is a
+ * fallback for when this call fails — it affects rendering only, never what the server accepts.
+ */
+export const getDenominationLadder = async (currencyCode) => {
+  const res = await api.get(`${BASE}/denominations`, {
+    params: currencyCode ? { currencyCode } : undefined,
+  });
+  return res.data;
+};
+
+/**
+ * Asks a supervisor's credentials to authorize a cash variance on this session.
+ *
+ * The server re-derives expected and counted cash itself and mints a single-use grant bound to
+ * this session AND those exact figures. The client never states any financial number: it sends
+ * the denominations it counted and receives back the server's view plus a token to spend on the
+ * close. A recount afterwards invalidates the token, so an approval for a small discrepancy can
+ * never be spent on a large one.
+ *
+ * There is deliberately no client-side approval flag. `supervisorApproved` was removed from the
+ * request path entirely — it was once the sole input to this gate, with no credentials and no
+ * approver identity behind it.
+ */
+export const authorizePosVariance = async (sessionId, { usernameOrEmail, password, reason, closingDenominations, currencyCode }) => {
+  const res = await api.post(`${BASE}/sessions/${sessionId}/authorize-variance`, {
+    usernameOrEmail, password, reason, closingDenominations, currencyCode,
+  });
   return res.data;
 };

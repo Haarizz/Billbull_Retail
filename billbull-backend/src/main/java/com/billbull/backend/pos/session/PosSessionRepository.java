@@ -24,6 +24,22 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     Optional<PosSession> findByTerminalIdAndStatus(String terminalId, PosSessionStatus status);
 
+    /**
+     * The session row, locked for the rest of the enclosing transaction.
+     *
+     * <p>Closing a drawer reads its status, spends a single-use approval grant, freezes a
+     * financial snapshot, posts a journal and writes an audit completion. Without a lock two
+     * simultaneous closes can both pass the status check under read-committed and interleave
+     * through all of it. GL idempotency on {@code SCL-{id}} prevents a duplicate journal, but
+     * not a duplicate finalization, a doubly-spent grant, or two audit completions.
+     *
+     * <p>Same pattern as {@code ReceiptVoucherRepository#findByIdForUpdate}, which serialises
+     * concurrent advance applications for the same reason.
+     */
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @org.springframework.data.jpa.repository.Query("SELECT s FROM PosSession s WHERE s.id = :id")
+    Optional<PosSession> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") Long id);
+
     Optional<PosSession> findByTerminalPkAndStatus(Long terminalPk, PosSessionStatus status);
 
     // Most recent session regardless of status — used by the Terminal Auto-Archive lifecycle

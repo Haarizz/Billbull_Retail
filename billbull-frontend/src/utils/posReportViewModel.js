@@ -36,6 +36,32 @@ export const parseUTCDate = (ts) => {
   return isNaN(d.getTime()) ? null : d;
 };
 
+/**
+ * Display-only sum of a denomination breakdown.
+ *
+ * NOT the source of Counted Cash. The authoritative total is computed by the backend
+ * (PosDenominationCountService) from the submitted quantities and returned as countedCash; this
+ * exists so a report can render a denomination table's own subtotal without a round-trip. It
+ * must never be posted to the server or substituted for countedCash — a client-computed cash
+ * figure is exactly what this phase removed.
+ */
+/** Human labels for the backend reconciliation statuses. */
+export const STATUS_LABELS = {
+  NOT_COUNTED: 'Not counted',
+  BALANCED: 'Balanced',
+  OVER: 'Excess',
+  SHORT: 'Short',
+};
+
+/**
+ * Renders a possibly-absent money value. A missing figure shows as an em dash, never as 0.00 —
+ * an uncounted drawer has no counted cash and no variance, and printing zero would state a
+ * reconciliation that never happened.
+ */
+export const money = (value, fmtFn) => (value === null || value === undefined
+  ? '—'
+  : (fmtFn ? fmtFn(value) : Number(value).toFixed(2)));
+
 export const calculateDenominationTotal = (denom) => {
   if (!denom || typeof denom !== 'object') return 0;
   return Object.entries(denom).reduce((total, [note, count]) => {
@@ -105,13 +131,21 @@ export function buildXReportViewModel(xReportData, opts = {}) {
   const invoiceCount = xSummary.invoiceCount ?? sess?.invoiceCount ?? 0;
   const cashPosition = xSummary.cashPosition || {};
   const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
-  const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-  const cpNet = Number(cashPosition.netCashPosition ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
-  const expectedCashVal = Number(xSummary.expectedCash ?? (openingCashVal + cashSalesV + cashDropIn - cashDropOut));
+  // netCashPosition removed: it summed back-office cash onto a drawer figure, producing a
+  // number that reconciled against nothing. The receipt/advance rows below survive, scoped as
+  // non-drawer cash.
+  // Expected Cash is computed by PosCashReconciliationService and read here as-is.
+  // There is deliberately no client-side fallback formula: a second implementation is
+  // how the X and Z reports drifted apart in the first place, and a fallback silently
+  // produces a plausible wrong number instead of an obvious missing one.
+  const expectedCashVal = Number(xSummary.expectedCash ?? 0);
   const reportDenominations = resolveDenominations(xReportData, opts);
-  const actualCash = calculateDenominationTotal(reportDenominations);
-  const cashVariance = actualCash - expectedCashVal;
-  const varStatus = actualCash === 0 ? 'Pending Count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess';
+  // Counted cash and variance are backend-authoritative. `actualCash === 0` used to stand in
+  // for "not counted", which is exactly the NOT_COUNTED / COUNTED_ZERO conflation the count
+  // model removed: a drawer counted and found empty is not an uncounted drawer.
+  const cashVariance = xSummary.cashVariance ?? null;
+  const actualCash = xSummary.countedCash ?? null;
+  const varStatus = STATUS_LABELS[xSummary.reconciliationStatus] ?? 'Pending Count';
   const sessId = sess?.id;
   const reportNo = xReportData?.reportNumber || (sessId ? `XR-${String(sessId).padStart(9, '0')}` : '—');
 
@@ -164,9 +198,9 @@ export function buildXReportViewModel(xReportData, opts = {}) {
       { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
       { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
       { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
-      { label: 'Expected Cash', value: fmt(expectedCashVal), hint: 'Opening + cash sales', icon: 'EC' },
-      { label: 'Actual Cash', value: fmt(actualCash), hint: 'Denomination count', icon: 'AC' },
-      { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: varStatus, icon: 'CV' },
+      { label: 'Expected Cash', value: fmt(expectedCashVal), hint: 'Opening + tender + cash in - cash out', icon: 'EC' },
+      { label: 'Actual Cash', value: money(actualCash, fmt), hint: 'Denomination count', icon: 'AC' },
+      { label: 'Cash Variance', value: money(cashVariance, fmt), hint: varStatus, icon: 'CV' },
     ],
     sections: [
       {
@@ -190,7 +224,7 @@ export function buildXReportViewModel(xReportData, opts = {}) {
         title: '1. Denomination Count', type: 'table',
         cols: ['Denomination', 'Quantity', 'Total Amount'],
         rows: DENOM_KEYS.map(k => [DENOM_LABELS[k], String(reportDenominations[k] || 0), fmt((reportDenominations[k] || 0) * parseFloat(k))]),
-        footer: ['Total Cash Counted', '', fmt(actualCash)],
+        footer: ['Total Cash Counted', '', money(actualCash, fmt)],
       },
       {
         title: '2. Cash Drawer Summary', type: 'table',
@@ -201,12 +235,14 @@ export function buildXReportViewModel(xReportData, opts = {}) {
           ['Cash Drop In', fmt(cashDropIn)],
           ['Cash Drop Out', fmt(cashDropOut)],
           ['Expected Cash in Drawer', fmt(expectedCashVal)],
-          ['Actual Cash Counted', fmt(actualCash)],
+          ['Actual Cash Counted', money(actualCash, fmt)],
         ],
-        footer: ['Cash Variance (' + varStatus + ')', fmt(Math.abs(cashVariance))],
+        footer: ['Cash Variance (' + varStatus + ')', money(cashVariance, fmt)],
       },
       {
-        title: '2a. Consolidated Cash Position (Informational)', type: 'table',
+        // Context, not reconciliation. These figures are NOT inputs to Expected Cash, Counted
+        // Cash or variance, and are deliberately no longer totalled into a single number.
+        title: '2a. Cash Context — Back-Office / Non-Drawer (Informational)', type: 'table',
         cols: ['Description', 'Amount'],
         rows: [
           ['Opening Cash', fmt(openingCashVal)],
@@ -214,10 +250,9 @@ export function buildXReportViewModel(xReportData, opts = {}) {
           ['Customer Receipts (Cash)', 'Not available in X-Report (no session linkage yet)'],
           ['Customer Advances (Cash)', 'Not available in X-Report (no session linkage yet)'],
           ['Cash Drop In', fmt(cashDropIn)],
-          ['Cash Refunds (Cash)', cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not available — refund payment mode not tracked'],
           ['Cash Drop Out', cashDropOut > 0 ? `(${fmt(cashDropOut)})` : fmt(0)],
         ],
-        footer: ['Net Cash Position', fmt(cpNet)],
+        footer: ['Drawer reconciliation is reported above', ''],
       },
       {
         title: '2b. Cash Drop / Cash Out', type: 'table',
@@ -356,7 +391,11 @@ export function buildZReportViewModel(zReportData, opts = {}) {
   const invoiceCount = zSummary.invoiceCount ?? 0;
   const sessionCount = zSummary.sessionCount ?? zSessions.length;
   const openingCash = zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0);
-  const expectedCash = openingCash + cashSalesV;
+  // Z-Report Expected Cash now comes from the backend, which sums the authoritative
+  // per-session figures frozen at each close. The previous local formula was
+  // `opening + cashSales`, which omitted every cash movement -- and therefore hid every
+  // cash refund, drop and payout from the day's expected drawer position.
+  const expectedCash = Number(zSummary.expectedCash ?? 0);
   const cashPosition = zSummary.cashPosition || {};
   const cpOpeningCash = Number(cashPosition.openingCash ?? openingCash);
   const cpCashSales = Number(cashPosition.cashSales ?? cashSalesV);
@@ -364,8 +403,7 @@ export function buildZReportViewModel(zReportData, opts = {}) {
   const cpAdvancesTotal = Number(cashPosition.customerAdvancesTotal ?? 0);
   const cpDropIn = Number(cashPosition.cashDropIn ?? 0);
   const cpDropOut = Number(cashPosition.cashDropOut ?? 0);
-  const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-  const cpNet = Number(cashPosition.netCashPosition ?? (cpOpeningCash + cpCashSales + cpReceiptsTotal + cpAdvancesTotal + cpDropIn - cpDropOut));
+  // netCashPosition removed — see the X-Report note.
   const cpReceiptRows = Array.isArray(cashPosition.customerReceiptRows) ? cashPosition.customerReceiptRows : [];
   const cpAdvanceRows = Array.isArray(cashPosition.customerAdvanceRows) ? cashPosition.customerAdvanceRows : [];
   const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
@@ -382,8 +420,11 @@ export function buildZReportViewModel(zReportData, opts = {}) {
   const totalPaidV = Number(zSummary.totalPaid ?? totalSalesV);
   const voidAmountV = Number(zSummary.voidAmount ?? 0);
   const refundTotal = Number(zSummary.totalRefunds ?? 0);
-  const actualCash = zSessions.reduce((s, ss) => s + Number(ss.closingCash ?? 0), 0);
-  const cashVariance = actualCash - expectedCash;
+  // Backend-authoritative, summed from the frozen session snapshots. Reconstructing it here
+  // coalesced every uncounted session to 0, silently turning "nobody counted this drawer" into
+  // "this drawer was empty".
+  const actualCash = zSummary.countedCash ?? null;
+  const cashVariance = zSummary.cashVariance ?? null;
   const zCashierLabel = cashierRows.length
     ? cashierRows.map(c => c.cashierDisplayName || c.cashier).filter(Boolean).join(', ')
     : 'All cashiers';
@@ -421,9 +462,9 @@ export function buildZReportViewModel(zReportData, opts = {}) {
       { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
       { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
       { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
-      { label: 'Expected Cash', value: fmt(expectedCash), hint: 'Opening + cash sales', icon: 'EC' },
-      { label: 'Actual Cash', value: fmt(actualCash), hint: 'Closed session counts', icon: 'AC' },
-      { label: 'Cash Variance', value: fmt(Math.abs(cashVariance)), hint: actualCash === 0 ? 'Pending close count' : Math.abs(cashVariance) < 0.01 ? 'Balanced' : cashVariance < 0 ? 'Short' : 'Excess', icon: 'CV' },
+      { label: 'Expected Cash', value: fmt(expectedCash), hint: 'Opening + tender + cash in - cash out', icon: 'EC' },
+      { label: 'Actual Cash', value: money(actualCash, fmt), hint: 'Closed session counts', icon: 'AC' },
+      { label: 'Cash Variance', value: money(cashVariance, fmt), hint: STATUS_LABELS[zSummary.reconciliationStatus] ?? 'Pending close count', icon: 'CV' },
     ],
     sections: [
       {
@@ -497,10 +538,9 @@ export function buildZReportViewModel(zReportData, opts = {}) {
           ['Customer Receipts (Cash)', fmt(cpReceiptsTotal)],
           ['Customer Advances (Cash)', fmt(cpAdvancesTotal)],
           ['Cash Drop In', fmt(cpDropIn)],
-          ['Cash Refunds (Cash)', cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not available — refund payment mode not tracked'],
           ['Cash Drop Out', cpDropOut > 0 ? `(${fmt(cpDropOut)})` : fmt(0)],
         ],
-        footer: ['Net Cash Position', fmt(cpNet)],
+        footer: ['Back-office cash is excluded from POS drawer reconciliation', ''],
       },
       {
         title: '4b. Customer Receipts', type: 'table',

@@ -111,6 +111,7 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-7002", "7002", "Interest Income",           "Income",      "Income",    "Cr", "PL", false, "7000", "OTHER_INCOME"),
             new AccountSeed("SYS-7003", "7003", "Trade Discount Income",     "Income",      "Income",    "Cr", "PL", false, "7000", "OTHER_INCOME"),
             new AccountSeed("SYS-7004", "7004", "Gain on Disposal",          "Income",      "Income",    "Cr", "PL", false, "7000", "OTHER_INCOME"),
+            new AccountSeed("SYS-7005", "7005", "Cash Over",                 "Income",      "Income",    "Cr", "PL", false, "7000", "OTHER_INCOME"),
             // ── COGS (parent: 5100 group) ─────────────────────────────────────
             new AccountSeed("SYS-5001", "5001", "Purchase / COGS",           "Expenses",    "Expense",   "Dr", "PL", false, "5100", "COGS"),
             new AccountSeed("SYS-5002", "5002", "Purchase Returns",          "Expenses",    "Expense",   "Cr", "PL", false, "5100", "COGS"),
@@ -134,6 +135,11 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-6030", "6030", "Depreciation Expense",      "Expenses",    "Expense",   "Dr", "PL", false, "6000", "OPERATING_EXPENSES"),
             new AccountSeed("SYS-6040", "6040", "Loss on Disposal",          "Expenses",    "Expense",   "Dr", "PL", false, "6000", "OPERATING_EXPENSES"),
             new AccountSeed("SYS-6050", "6050", "Discount Allowed (Sales)",  "Expenses",    "Expense",   "Dr", "PL", false, "6000", "OPERATING_EXPENSES"),
+            // Cash Short / Cash Over: the two directions of a physical drawer discrepancy.
+            // Modelled as a separate expense and income account, matching how this chart already
+            // handles the two directions of one economic event (Loss on Disposal 6040 / Gain on
+            // Disposal 7004) rather than one dual-direction account.
+            new AccountSeed("SYS-6060", "6060", "Cash Short",                 "Expenses",    "Expense",   "Dr", "PL", false, "6000", "OPERATING_EXPENSES"),
             new AccountSeed("SYS-6099", "6099", "General Expense",           "Expenses",    "Expense",   "Dr", "PL", false, "6000", "OPERATING_EXPENSES"),
             // ── Other Expenses (parent: 7500 group, range 7500-7999) ──────────
             new AccountSeed("SYS-7501", "7501", "Bank Charges",              "Expenses",    "Expense",   "Dr", "PL", false, "7500", "OTHER_EXPENSES"),

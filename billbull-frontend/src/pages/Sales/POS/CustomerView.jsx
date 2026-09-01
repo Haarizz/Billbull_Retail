@@ -8,8 +8,7 @@ import {
   DollarSign, Plus, Phone, Download, Printer, ChevronRight,
 } from 'lucide-react';
 import { saveSalesPayment, getOpenInvoicesForCustomer } from '../../../api/salesPaymentApi';
-import { receiptVoucherApi } from '../../../api/receiptVoucherApi';
-import { getOpenAdvances, applyAdvance, hasAdvanceHistory, applyAdvanceAgainstOutstanding } from '../../../api/advanceApplicationApi';
+import { getOpenAdvances, applyAdvance, hasAdvanceHistory, applyAdvanceAgainstOutstanding, receiveAdvance } from '../../../api/advanceApplicationApi';
 import { fetchStatementOfAccount } from '../../../api/financialsApi';
 import { getBankAccounts } from '../../../api/ledgerApi';
 import { printHtml } from '../../../utils/printGenerator';
@@ -35,7 +34,7 @@ const getCustInitials = (name = '') =>
 const getCustAvatarColor = (name = '') =>
   CUST_AVATAR_COLORS[name.charCodeAt(0) % CUST_AVATAR_COLORS.length];
 
-const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal, printTemplate }) => {
+const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurrentView, syncPosData, printerConfigs, currentTerminal, currentSession, printTemplate }) => {
   const { company } = useCompany();
   const { activeBranch } = useBranch();
   // Branding for the branded ESC/POS header — prefer the print-template config
@@ -312,6 +311,12 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     if (!selected) return alert('Please select a customer.');
     if (!receiptMethod) return alert('Please select a payment method.');
     if (receiptMethod !== 'Cash' && !receiptBank) return alert('Please select a bank account for this payment method.');
+    // Cash taken at this counter goes into this terminal's drawer, so it must be attributed to
+    // the open session or it will never reach that session's Expected Cash. The backend
+    // enforces this too (it never infers a session); blocking here just gives a better message.
+    if (receiptMethod === 'Cash' && !currentSession?.id) {
+      return alert('Open a POS session before collecting cash — otherwise the cash cannot be attributed to this drawer. Use a non-cash method, or open a session first.');
+    }
 
     const invoicesToPay = Object.keys(receiptSelectedInvoices).filter(k => receiptSelectedInvoices[k]);
     const totalAmount = invoicesToPay.length > 0 ? receiptTotalToSettle : Number(receiptAmount) || 0;
@@ -346,7 +351,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
             invoiceAmount: inv.invoiceTotal,
             invoiceBalance: inv.balance,
             status: amount < Number(inv.balance ?? 0) ? 'PARTIAL' : 'COMPLETED',
-          });
+          }, currentSession?.id ?? null);
           settledInvoices.push({ invoiceNumber: invNo, amount });
         }
       } else {
@@ -362,7 +367,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
           referenceNumber: receiptRef || null,
           linkedInvoice: null,
           status: 'COMPLETED',
-        });
+        }, currentSession?.id ?? null);
       }
       setLastPayment(saved);
       setReceiptSuccess(
@@ -403,7 +408,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     } finally {
       setReceiptBusy(false);
     }
-  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, receiptSelectedInvoices, receiptSettleAmounts, receiptTotalToSettle, receiptOpenInvoices, customerOptions, syncPosData, printVoucherToConfiguredPrinter]);
+  }, [receiptCust, receiptAmount, receiptMethod, receiptBank, receiptChequeDate, receiptRef, receiptSelectedInvoices, receiptSettleAmounts, receiptTotalToSettle, receiptOpenInvoices, customerOptions, syncPosData, printVoucherToConfiguredPrinter, currentSession?.id]);
 
   const handlePrintReceipt = React.useCallback(async () => {
     if (!lastPayment) return;
@@ -440,23 +445,27 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     if (!selected) return alert('Please select a customer.');
     if (!advAmount || Number(advAmount) <= 0) return alert('Enter a valid advance amount.');
     if (!advMethod) return alert('Please select a payment method.');
+    // A cash advance taken at this counter goes into this terminal's drawer. Without the
+    // collecting session the voucher never reaches that session's Expected Cash and the
+    // drawer closes over by the advance amount.
+    if (advMethod === 'Cash' && !currentSession?.id) {
+      return alert('Open a POS session before receiving a cash advance — otherwise the cash cannot be attributed to this drawer. Use a non-cash method, or open a session first.');
+    }
     setAdvBusy(true);
     setAdvSuccess(null);
     try {
-      const payload = {
-        date: new Date().toISOString().slice(0, 10),
-        memberName: selected.name,
+      // Routed through the advance service rather than posting a ReceiptVoucher directly, so
+      // the voucher is stamped with the drawer session that actually collected the money. The
+      // direct receipt-voucher post had no way to carry one.
+      const savedAdvance = await receiveAdvance({
         customerCode: selected.code,
-        category: 'Advance Received',
         amount: Number(advAmount),
         paymentMode: advMethod,
+        reference: null,
+        posSessionId: currentSession?.id ?? null,
+        memberName: selected.name,
         notes: advNotes || null,
-        status: 'Completed',
-        purpose: 'ADVANCE_RECEIVED',
-      };
-      const fd = new FormData();
-      fd.append('data', JSON.stringify(payload));
-      const savedAdvance = await receiptVoucherApi.create(fd);
+      });
       let successMsg = `Advance of ${Number(advAmount).toFixed(2)} received for ${selected.name}.`;
       // Opt-in sweep against the customer's existing open invoices (see
       // advAutoApply declaration). Failure here shouldn't roll back the
@@ -485,7 +494,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
       // immediately without re-selecting the customer.
       refreshOpenAdvances(advanceCust);
       // Auto-print the Advance Receipt now that the advance is recorded. Map the
-      // created voucher (falling back to the just-sent payload if the API returns
+      // created voucher (falling back to what was just entered if the API returns
       // no body) into the shared receipt-voucher shape, then print silently and
       // non-blocking. Same 80mm template as the payment receipt, titled
       // "ADVANCE RECEIPT". Dedupe guard prevents a double-click reprinting it.
@@ -496,7 +505,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
         customerCode: savedAdvance?.customerCode || selected.code,
         amount: savedAdvance?.amount ?? Number(advAmount),
         paymentMode: savedAdvance?.paymentMode || advMethod,
-        paymentDate: savedAdvance?.date || payload.date,
+        paymentDate: savedAdvance?.date || new Date().toISOString().slice(0, 10),
         referenceNumber: savedAdvance?.notes || advNotes || null,
       };
       void printVoucherToConfiguredPrinter(voucher, {
@@ -510,7 +519,7 @@ const CustomerView = React.memo(({ customerOptions, posCustomersLoading, setCurr
     } finally {
       setAdvBusy(false);
     }
-  }, [advanceCust, advAmount, advMethod, advNotes, advAutoApply, customerOptions, syncPosData, printVoucherToConfiguredPrinter, refreshOpenAdvances]);
+  }, [advanceCust, advAmount, advMethod, advNotes, advAutoApply, customerOptions, syncPosData, printVoucherToConfiguredPrinter, refreshOpenAdvances, currentSession?.id]);
 
   React.useEffect(() => {
     if (advanceCust) refreshOpenAdvances(advanceCust);

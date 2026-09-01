@@ -30,6 +30,9 @@ import java.util.Optional;
 @CrossOrigin
 public class PosSessionController {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(PosSessionController.class);
+
     private final PosSessionService service;
     private final PosSessionSyncService syncService;
     private final ObjectMapper objectMapper;
@@ -148,11 +151,27 @@ public class PosSessionController {
     public ResponseEntity<PosSession> closeSession(
             @PathVariable Long id,
             @RequestBody(required = false) Map<String, Object> body) {
-        BigDecimal closingCash = body != null && body.get("closingCash") != null
-                ? new BigDecimal(body.get("closingCash").toString()) : null;
+        // Counted Cash is derived server-side from the denomination quantities. A legacy client
+        // may still send closingCash; it is logged and dropped here and never reaches the
+        // service, so it cannot influence any persisted financial value. Accepting-and-ignoring
+        // is safe precisely because the server recomputes -- unlike the retired terminalId,
+        // where ignoring would have created unattributed cash, here the stale field has no
+        // path to the total at all. Rejecting would instead take every un-reloaded till out of
+        // service mid-shift for no financial benefit.
+        if (body != null && body.get("closingCash") != null) {
+            log.warn("[PosSession] Session {} close supplied a client closingCash ({}); ignoring it. "
+                            + "Counted Cash is computed from the submitted denominations.",
+                    id, body.get("closingCash"));
+        }
         String notes = body != null ? (String) body.get("notes") : null;
-        boolean supervisorApproved = body != null && Boolean.TRUE.equals(body.get("supervisorApproved"));
-        String closingDenominationsJson = toJson(body != null ? body.get("closingDenominations") : null);
+        // `supervisorApproved` is no longer read at all. It was once the sole input to the
+        // variance gate -- a client boolean with no credentials and no approver identity behind
+        // it. Authorization now comes from a server-issued grant; a stale client may still send
+        // the flag and it has no effect whatsoever.
+        Map<String, Object> closingDenominations = asDenominationMap(
+                body != null ? body.get("closingDenominations") : null);
+        String currencyCode = body != null && body.get("currencyCode") != null
+                ? body.get("currencyCode").toString() : null;
         String cardBatchNo = body != null ? (String) body.get("cardBatchNo") : null;
         Boolean cardSettlementVerified = body != null ? (Boolean) body.get("cardSettlementVerified") : null;
         BigDecimal cardClosingCash = body != null && body.get("cardClosingCash") != null
@@ -161,9 +180,11 @@ public class PosSessionController {
         String closingSupervisorName = body != null ? (String) body.get("closingSupervisorName") : null;
         String closingRemarks = body != null ? (String) body.get("closingRemarks") : null;
         String closureAuthToken = body != null ? (String) body.get("closureAuthToken") : null;
-        return ResponseEntity.ok(service.closeSession(id, closingCash, notes, supervisorApproved, closingDenominationsJson,
-                cardBatchNo, cardSettlementVerified, cardClosingCash, closingCashierName, closingSupervisorName, closingRemarks,
-                closureAuthToken));
+        String varianceApprovalToken = body != null ? (String) body.get("varianceApprovalToken") : null;
+        return ResponseEntity.ok(service.closeSession(id, closingDenominations, currencyCode, notes,
+                cardBatchNo, cardSettlementVerified, cardClosingCash,
+                closingCashierName, closingSupervisorName, closingRemarks, closureAuthToken,
+                varianceApprovalToken));
     }
 
     /**
@@ -399,5 +420,72 @@ public class PosSessionController {
     public ResponseEntity<Void> touchActivity(@PathVariable Long id) {
         service.touchActivity(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * The submitted denomination quantities, or {@code null} when none were sent.
+     *
+     * <p>{@code null} means "no count was taken" and must stay distinguishable from an empty
+     * object, which means "counted, and the drawer held nothing".
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asDenominationMap(Object raw) {
+        if (raw == null) return null;
+        if (raw instanceof Map<?, ?> map) {
+            Map<String, Object> out = new java.util.LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                out.put(String.valueOf(e.getKey()), e.getValue());
+            }
+            return out;
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "closingDenominations must be an object of denomination-to-quantity entries, "
+                        + "for example {\"500\": 2, \"100\": 3}.");
+    }
+
+    /**
+     * Authorizes a cash variance so the session can be closed.
+     *
+     * <p>Mirrors {@code authorize-closure}: a supervisor's credentials are verified here, and the
+     * caller receives an opaque single-use token to spend on the close that follows. The
+     * supervisor's password therefore crosses the wire once, and the close request carries proof
+     * of authorization rather than a self-asserted flag.
+     *
+     * <p>The grant is bound to the exact figures supplied. If the drawer is recounted afterwards,
+     * the token no longer matches what is being closed and is refused — an approval for a small
+     * discrepancy cannot be spent on a large one.
+     *
+     * <p>{@code expectedCash} and {@code countedCash} are NOT taken from the request: they are
+     * recomputed here from the authoritative reconciliation and the submitted denominations, so a
+     * client cannot obtain a grant for figures it invented.
+     */
+    @PostMapping("/{id}/authorize-variance")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> authorizeVariance(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+
+        String usernameOrEmail = body != null ? (String) body.get("usernameOrEmail") : null;
+        String password = body != null ? (String) body.get("password") : null;
+        String reason = body != null ? (String) body.get("reason") : null;
+        Map<String, Object> denominations = asDenominationMap(
+                body != null ? body.get("closingDenominations") : null);
+        String currencyCode = body != null && body.get("currencyCode") != null
+                ? body.get("currencyCode").toString() : null;
+
+        if (reason == null || reason.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A reason is required to authorize a cash variance.");
+        }
+
+        CredentialVerificationResult cred =
+                credentialVerificationService.verifyCredentials(usernameOrEmail, password);
+        if (!cred.valid()) {
+            return ResponseEntity.ok(Map.of(
+                    "authorized", false, "code", "INVALID_CREDENTIALS", "message", cred.message()));
+        }
+
+        return ResponseEntity.ok(service.authorizeVariance(id, denominations, currencyCode,
+                cred.user(), reason));
     }
 }

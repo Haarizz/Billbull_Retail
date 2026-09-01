@@ -89,7 +89,7 @@ const POSConsole = React.memo((props) => {
   const { 
     currentTerminal, setCurrentTerminal, setTerminalsLoading, setTerminalList, setEditingTerminalId, setEditTerminalName, setEditCounterName, setTerminalSaving, editTerminalName, editCounterName, terminalList, 
     setCurrentView, consoleTab, setConsoleTab, settingsSaving, setSettingsSaving, posSettings, setPosSettings, settingsSavedFlash, setSettingsSavedFlash, 
-    tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone, 
+    tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn, tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone, effectiveOutletTrn,
     tplLogoDataUrl, setTplLogoDataUrl, tplStampDataUrl, setTplStampDataUrl, 
     tplReceiptHeader, setTplReceiptHeader, tplReceiptHeaderAr, setTplReceiptHeaderAr, tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
     tplReceiptShowLogo, tplReceiptShowTrn, tplReceiptShowStamp, tplReceiptShowBarcode, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, 
@@ -1924,7 +1924,7 @@ const POSConsole = React.memo((props) => {
             const componentTemplateData = useComponentTemplate
               ? activeTemplate.mapData(
                   {
-                    name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
+                    name: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone,
                     // Stamp is passed as stampDataUrl (not qrDataUrl) so it isn't
                     // mislabelled as a scannable QR. The designer has no live ZATCA
                     // QR to render, so the component shows its placeholder when QR
@@ -1982,8 +1982,8 @@ const POSConsole = React.memo((props) => {
               let html;
               if (cfg.paper === 'A4') {
                 html = templateSubTab === 'jobcard'
-                  ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
-                  : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},{
+                  ? buildServiceJobA4Html({companyName:tplOutletName,trn:effectiveOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
+                  : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:effectiveOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},{
                       hasTax:hasTaxPreview,
                       showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
                       showTerms:cfg.showFooterText,showNotes:cfg.showLoyaltyPoints,showBankDetails:cfg.showCreditBalance,
@@ -1994,9 +1994,9 @@ const POSConsole = React.memo((props) => {
                     });
               } else if (templateSubTab === 'jobcard') {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
-                html = buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn});
+                html = buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:effectiveOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn});
               } else {
-                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement});
+                html = buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:effectiveOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement});
               }
               const w = window.open('','_blank');
               w && w.document.write(html);
@@ -2011,7 +2011,7 @@ const POSConsole = React.memo((props) => {
                 printHtml(activeTemplate.buildHtml(componentTemplateData));
                 return;
               }
-              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:tplOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
+              printHtml(buildThermalSampleHtml(cfg.paper,{companyName:tplOutletName,trn:effectiveOutletTrn,header:cfg.header,footer:cfg.footer,hasTax:hasTaxPreview,showTrn:cfg.showTrn,showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showServiceCharge:cfg.showServiceCharge,showVatSummary:cfg.showVatSummary,showPaymentDetails:cfg.showPaymentDetails,showQRCode:cfg.showQRCode,showCustomerDetails:cfg.showCustomerDetails,showLoyaltyPoints:cfg.showLoyaltyPoints,showCreditBalance:cfg.showCreditBalance,showFooterText:cfg.showFooterText,logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,isReturn:templateSubTab==='return',qrPlacement:cfg.qrPlacement}));
             };
 
             const handleTestPrint = async () => {
@@ -2029,14 +2029,14 @@ const POSConsole = React.memo((props) => {
                   logoDataUrl:tplLogoDataUrl,stampDataUrl:tplStampDataUrl,
                 };
                 const html = templateSubTab === 'jobcard'
-                  ? buildServiceJobA4Html({companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
-                  : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:tplOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},toggles);
+                  ? buildServiceJobA4Html({companyName:tplOutletName,trn:effectiveOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
+                  : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:effectiveOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},toggles);
                 printHtml(html);
                 return;
               }
               if (templateSubTab === 'jobcard') {
                 const sampleJob = { jobNumber:'SRV-000028', createdAt: new Date().toISOString(), technicianName:'Mohammed Ali', customerName:'Fatima Hassan', customerPhone:'+971 50 123 4567', deviceName:'Samsung Galaxy A55', serialNumber:'SNSA55-20260312', warranty:'Under Warranty', problemDescription:'Display issue — screen flickering', expectedDate:'29 Jun 2026' };
-                printHtml(buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:tplOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn}));
+                printHtml(buildThermalJobCardHtml(cfg.paper, sampleJob, {companyName:tplOutletName,trn:effectiveOutletTrn,footer:cfg.footer,showTrn:cfg.showTrn}));
                 return;
               }
 
@@ -2058,7 +2058,7 @@ const POSConsole = React.memo((props) => {
 
               const isReturn = templateSubTab === 'return';
               const sampleInvoice = buildSampleInvoice({ isReturn, noTax: !hasTaxPreview });
-              const outlet = { name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl };
+              const outlet = { name: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, qrDataUrl: tplStampDataUrl };
               const escPosOpts = {
                 ...buildSampleOpts({ outlet, cfg }),
                 isReturn,
@@ -2158,7 +2158,7 @@ const POSConsole = React.memo((props) => {
                           </div>
                           <div>
                             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">TRN</label>
-                            <input value={tplOutletTrn} onChange={e=>setTplOutletTrn(e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
+                            <input value={tplOutletTrn} onChange={e=>setTplOutletTrn(e.target.value)} placeholder={effectiveOutletTrn ? `${effectiveOutletTrn} (from branch / company profile)` : 'Not set in branch or company profile'} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-gray-50 focus:bg-white transition-colors" />
                           </div>
                         </div>
                         <div>
@@ -2423,13 +2423,13 @@ const POSConsole = React.memo((props) => {
                                 template={templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate}
                                 isReturn={templateSubTab==='return'}
                                 hasTax={hasTaxPreview}
-                                outlet={{ name: tplOutletName, trn: tplOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl }}
+                                outlet={{ name: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl }}
                                 footerNote={cfg.footer}
                                 scale={0.42}
                               />
                             : <A4LivePreview
                               category={templateSubTab==='return'?'Sales Return':'Sales Invoice'}
-                              companyName={tplOutletName} trn={tplOutletTrn}
+                              companyName={tplOutletName} trn={effectiveOutletTrn}
                               address={tplOutletAddress} phone={tplOutletPhone}
                               footerNote={cfg.footer} scale={0.42}
                               toggles={{
@@ -2452,7 +2452,7 @@ const POSConsole = React.memo((props) => {
                               outletName={tplOutletName}
                               outletAddress={tplOutletAddress}
                               outletPhone={tplOutletPhone}
-                              outletTrn={tplOutletTrn}
+                              outletTrn={effectiveOutletTrn}
                               logoDataUrl={tplLogoDataUrl}
                               stampDataUrl={tplStampDataUrl}
                               headerText={cfg.header}

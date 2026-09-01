@@ -102,6 +102,51 @@ public class PosCashMovement extends BaseEntity {
     @Column(name = "performed_by_user_id")
     private Long performedByUserId;
 
+    /**
+     * A transient, persistence-context-free copy of this movement, for display-time correction
+     * overlays.
+     *
+     * <p>Overlay resolution merges the corrected snapshot <em>into</em> the object it is given
+     * ({@code ObjectMapper.readerForUpdating}), so it must never be handed a managed entity or
+     * the corrected value would be flushed back to the row. Detaching was the previous guard,
+     * but {@code EntityManager.detach} on a movement reached through {@code
+     * PosSession.getCashMovements()} leaves that still-managed collection holding a detached
+     * element: the next flush cascades PERSIST over the collection and Hibernate fails the whole
+     * transaction with "detached entity passed to persist" (hit by every Cash Out, which
+     * reconciles the drawer before saving). Copying leaves the persistence context untouched.
+     *
+     * <p>{@code posSession} is deliberately not copied — nothing reading an overlay needs to
+     * navigate back to the session, and leaving it null keeps the copy free of any managed
+     * reference.
+     */
+    public PosCashMovement detachedCopy() {
+        PosCashMovement copy = new PosCashMovement();
+        copy.setId(getId());
+        copy.setActive(isActive());
+        copy.movementType = this.movementType;
+        copy.amount = this.amount;
+        copy.description = this.description;
+        copy.performedBy = this.performedBy;
+        copy.performedAt = this.performedAt;
+        copy.reference = this.reference;
+        copy.status = this.status;
+        copy.voidReason = this.voidReason;
+        copy.voidedBy = this.voidedBy;
+        copy.voidedAt = this.voidedAt;
+        copy.editedBy = this.editedBy;
+        copy.editedAt = this.editedAt;
+        copy.editCount = this.editCount;
+        copy.originalDescription = this.originalDescription;
+        copy.originalReference = this.originalReference;
+        copy.businessDate = this.businessDate;
+        copy.branchId = this.branchId;
+        copy.categoryId = this.categoryId;
+        copy.postedAccountCode = this.postedAccountCode;
+        copy.postedAccountName = this.postedAccountName;
+        copy.performedByUserId = this.performedByUserId;
+        return copy;
+    }
+
     // Getters & Setters
 
     public PosSession getPosSession() { return posSession; }
