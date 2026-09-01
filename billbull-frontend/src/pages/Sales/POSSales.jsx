@@ -212,6 +212,12 @@ const DELIVERY_SETTLE_METHODS = [
 ];
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
+// 'YYYY-MM-DD' for the browser's local calendar day — toISOString() would shift
+// the day in negative-UTC zones. Used as the layaway due-date default/floor.
+const todayInputDate = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const buildPosScannerStorageKey = (branchId, terminalId) => {
   if (!branchId && !terminalId) return null;
   return `billbull:pos:scanner:${branchId ?? 'branch'}:${terminalId || 'shared'}`;
@@ -1054,11 +1060,16 @@ export default function POSSales() {
   // Save Layaway modal
   const [showSaveLayaway, setShowSaveLayaway] = useState(false);
   const [saveLayawayDepositReq, setSaveLayawayDepositReq] = useState(true);
-  const [saveLayawayDueDate, setSaveLayawayDueDate] = useState('2026-06-28');
+  const [saveLayawayDueDate, setSaveLayawayDueDate] = useState(todayInputDate);
   const [saveLayawayRemarks, setSaveLayawayRemarks] = useState('');
   const [saveLayawayReserveStock, setSaveLayawayReserveStock] = useState(true);
   const [saveLayawayPrintReceipt, setSaveLayawayPrintReceipt] = useState(true);
   const [saveLayawaySendSms, setSaveLayawaySendSms] = useState(false);
+  // Reset the due date to today each time the dialog opens, so a terminal left
+  // running past midnight never offers a stale (past) default.
+  useEffect(() => {
+    if (showSaveLayaway) setSaveLayawayDueDate(todayInputDate());
+  }, [showSaveLayaway]);
   // Serial / Batch Check modal
   const [showSerialBatch, setShowSerialBatch] = useState(false);
   const [serialBatchQuery, setSerialBatchQuery] = useState('');
@@ -1453,8 +1464,10 @@ export default function POSSales() {
 
   // Confirms the server accepts progressive payment allocations before any sale is settled.
   // Probed when the checkout opens; settlement stays blocked until it answers yes, because a
-  // server that ignores the field would post the invoice with no payment recorded.
-  const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog);
+  // server that ignores the field would post the invoice with no payment recorded. The Save
+  // Layaway dialog takes a deposit through the same allocation panel, so it arms the probe
+  // too — otherwise its banner would sit on "checking" forever, never having asked.
+  const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog || showSaveLayaway);
 
   // The payment fields of the checkout payload, plus the post-checkout figures (change,
   // credit carried forward, whether the drawer opens) — all projected from the allocations.
@@ -2768,6 +2781,22 @@ export default function POSSales() {
     setXReportVarianceRemarks(info.varianceRemarks || '');
     setXReportCardBatchNo(info.cardBatchNo || '');
     setXReportCardVerified(!!info.cardSettlementVerified);
+    // A drawer count belongs to exactly one session. `closingDenominations` is
+    // component state that outlives a close, so without this the quantities counted
+    // for the previous session stayed in the inputs and pre-filled the next session's
+    // X-Report and Close Session dialog with a drawer that was never counted.
+    // Re-hydrate from what the server persisted for THIS session, else start empty.
+    let saved = null;
+    const rawSaved = info.closingDenominationsJson || xReportData?.session?.closingDenominationsJson;
+    if (rawSaved) {
+      try {
+        const parsed = typeof rawSaved === 'string' ? JSON.parse(rawSaved) : rawSaved;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed;
+      } catch (err) {
+        console.warn('Unable to parse saved closing denominations', err);
+      }
+    }
+    setClosingDenominations(saved ? { ...emptyDenominations(), ...saved } : emptyDenominations());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [xReportData?.session?.id]);
 
@@ -2799,6 +2828,10 @@ export default function POSSales() {
       const counterName = currentTerminal?.counterName || 'Main Counter';
       const session = await openPosSession({ terminalId, counterName, openingCash: total });
       setCurrentSession(session);
+      // The count has been banked as this session's opening cash — leave nothing
+      // behind for the next session's open/close dialogs to inherit.
+      setDenominations(emptyDenominations());
+      setClosingDenominations(emptyDenominations());
       setXReportData(null);
       setZReportData(null);
       setSessionNowMs(Date.now());
@@ -2876,6 +2909,10 @@ export default function POSSales() {
         if (isStale()) return; // Abort silently
 
         setCurrentSession(session);
+        // The count has been banked as this session's opening cash — leave nothing
+        // behind for the next session's open/close dialogs to inherit.
+        setDenominations(emptyDenominations());
+        setClosingDenominations(emptyDenominations());
         setXReportData(null);
         setZReportData(null);
         setSessionNowMs(Date.now());
@@ -13752,7 +13789,7 @@ export default function POSSales() {
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 block mb-0.5">Due / Expiry Date</label>
-                        <input type="date" value={saveLayawayDueDate} onChange={e => setSaveLayawayDueDate(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                        <input type="date" value={saveLayawayDueDate} min={todayInputDate()} onChange={e => setSaveLayawayDueDate(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
                       </div>
                       <div>
                         <label className="text-xs text-gray-500 block mb-0.5">Remarks</label>

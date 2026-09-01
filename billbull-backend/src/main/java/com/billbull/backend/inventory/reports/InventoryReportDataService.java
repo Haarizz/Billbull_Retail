@@ -916,6 +916,24 @@ public class InventoryReportDataService {
         return report;
     }
 
+    private boolean isVoided(SalesInvoiceItem item) {
+        return item.getVoided() != null && item.getVoided();
+    }
+
+    /**
+     * Ex-VAT value of a sales invoice line. {@code netAmount} is persisted
+     * VAT-inclusive (net = taxable + tax, see
+     * {@code com.billbull.backend.sales.common.VatCalculator}), so using it raw as
+     * revenue inflated sales and gross profit by the VAT collected. Falls back to
+     * {@code grossAmount} only when no net was stored.
+     */
+    private BigDecimal exVatLineValue(SalesInvoiceItem item) {
+        if (item.getNetAmount() == null) {
+            return bd(item.getGrossAmount());
+        }
+        return bd(item.getNetAmount()).subtract(bd(item.getTaxAmount()));
+    }
+
     private InventoryReportDataResponse itemMarginReport(java.util.Collection<Long> scope) {
         Map<String, MarginAccumulator> acc = new LinkedHashMap<>();
         for (SalesInvoice invoice : salesInvoiceRepo.findAll()) {
@@ -924,10 +942,11 @@ public class InventoryReportDataService {
             }
             if (!inScope(scope, invoice.getBranchId())) continue;
             for (SalesInvoiceItem item : invoice.getItems()) {
+                if (isVoided(item)) continue;
                 String key = firstNonBlank(item.getSku(), item.getItemCode(), item.getItemName());
                 MarginAccumulator a = acc.computeIfAbsent(key, k -> new MarginAccumulator(key, item.getItemName()));
                 BigDecimal qty = bd(item.getQuantity());
-                BigDecimal revenue = bd(item.getNetAmount());
+                BigDecimal revenue = exVatLineValue(item);
                 BigDecimal cogs = bd(item.getRecognizedCogs()).compareTo(BigDecimal.ZERO) > 0
                         ? bd(item.getRecognizedCogs())
                         : bd(item.getCost()).multiply(qty);
@@ -1150,13 +1169,16 @@ public class InventoryReportDataService {
             if (!inScope(scope, invoice.getBranchId())) continue;
 
             for (SalesInvoiceItem item : invoice.getItems()) {
+                if (isVoided(item)) continue;
                 String key = firstNonBlank(item.getSku(), item.getItemCode(), item.getItemName());
                 MarginAccumulator a = acc.computeIfAbsent(key, k -> new MarginAccumulator(key, item.getItemName()));
                 a.qty = a.qty.add(bd(item.getQuantity()));
                 if (item.getFoc() != null) {
                     a.qty = a.qty.add(bd(item.getFoc()));
                 }
-                a.sales = a.sales.add(bd(item.getNetAmount() != null ? item.getNetAmount() : item.getGrossAmount()));
+                // Ex-VAT, to stay on the same basis as the sales returns subtracted
+                // below, whose line total is already net of tax.
+                a.sales = a.sales.add(exVatLineValue(item));
             }
         }
         

@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -35,7 +35,7 @@ import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from "recharts";
-import { getSalesReportData, getSalesReportSalespersons } from "../../../api/salesReportsApi";
+import { getSalesReportData, getSalesReportSalespersons, getSalesReportFilterSuggestions } from "../../../api/salesReportsApi";
 import { getPosXReports, getPosZReports, getPosReportXDetail, getPosReportZDetail, checkPosReportPrintable, checkPosReportExportable } from "../../../api/posReportsApi";
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from "../../../utils/posReportViewModel";
 import { exportToExcel } from "../../../utils/exportUtils";
@@ -488,9 +488,9 @@ let mockDiscountData: { cashier: string; bills: number; discountedBills: number;
 let mockPromotionData: { promotionName: string; type: string; period: string; salesBefore: number; salesDuring: number; uplift: number; discountCost: number; netMargin: number }[] = [];
 let mockFreeIssueData: { scheme: string; item: string; triggerQty: number; freeQty: number; activatedTimes: number; freeQtyIssued: number; freeIssueCost: number; totalSales: number }[] = [];
 let mockTaxData = [
-  { taxRate: "5% VAT Standard", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
-  { taxRate: "0% Zero-Rated", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
-  { taxRate: "Exempt", taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+  { taxRate: "Standard Rated", rate: 0, taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+  { taxRate: "0% Zero-Rated", rate: 0, taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
+  { taxRate: "Exempt", rate: 0, taxableSales: 0, taxAmount: 0, exemptSales: 0, zeroRated: 0, netTaxPayable: 0 },
 ];
 let mockVATOutputData: { invoiceNo: string; date: string; customer: string; taxableAmt: number; vatRate: string; vatAmt: number; totalAmt: number; trn: string }[] = [];
 let mockPriceOverrideData: { date: string; time: string; item: string; originalPrice: number; newPrice: number; change: number; cashier: string; approvedBy: string; reason: string; billNo: string }[] = [];
@@ -1332,7 +1332,10 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
       const adjustment = rows.find((row) => asText(row.status).toLowerCase().includes("adjustment")) || {};
       mockTaxData = [
         {
-          taxRate: asText(standard.name, "5% VAT Standard"),
+          taxRate: asText(standard.name, "Standard Rated"),
+          // Blended rate the backend actually derived from the invoices in range,
+          // not an assumed 5% — jurisdictions and mixed-rate periods differ.
+          rate: n(standard.rate),
           taxableSales: n(standard.taxableAmount),
           taxAmount: n(standard.vatAmount),
           exemptSales: 0,
@@ -1341,6 +1344,7 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
         },
         {
           taxRate: asText(zero.name, "0% Zero-Rated"),
+          rate: 0,
           taxableSales: 0,
           taxAmount: 0,
           exemptSales: 0,
@@ -1349,6 +1353,7 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
         },
         {
           taxRate: asText(exempt.name, "Exempt"),
+          rate: 0,
           taxableSales: 0,
           taxAmount: 0,
           exemptSales: n(exempt.taxableAmount),
@@ -1573,6 +1578,20 @@ interface SalesReportsProps {
   onNavigate?: (section: string) => void;
 }
 
+/** One entry in the "Customer / Item" filter typeahead, as returned by the backend. */
+type FilterSuggestion = {
+  id: string;
+  type: "CUSTOMER" | "ITEM";
+  code: string;
+  name: string;
+  subtitle?: string;
+};
+
+/** How a picked suggestion reads in the search box and in the Applied Filters chip. */
+function suggestionLabel(pick: FilterSuggestion): string {
+  return pick.code ? `${pick.code} — ${pick.name}` : pick.name;
+}
+
 export function SalesReports({ onNavigate }: SalesReportsProps) {
   const {
     activeBranchId,
@@ -1615,10 +1634,21 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const [cashierOpen, setCashierOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Customer / Item filter typeahead. `searchPick` is set only when the user chooses an
+  // entry from the dropdown — that sends an exact customerCode/itemCode to the backend,
+  // whereas raw typed text is sent as a free-text `search`.
+  const [searchPick, setSearchPick] = useState<FilterSuggestion | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<FilterSuggestion[]>([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestIndex, setSuggestIndex] = useState(-1);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
+
   // Tracks the filter values that were actually sent to the backend on the last Generate.
   // Applied Filters chips read from here so they always match what's in the rendered data.
   const [committedFilters, setCommittedFilters] = useState<{
     dateFrom: string; dateTo: string; branchLabel: string; channel: string; cashier: string; searchText: string;
+    pick: FilterSuggestion | null;
   } | null>(null);
 
   useEffect(() => {
@@ -1629,6 +1659,62 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       .then((data: string[]) => setSalespersons(data))
       .catch((err) => console.warn("Could not load salespersons", err));
   }, []);
+
+  // Customer / Item typeahead — debounced so a fast typist issues one query, not one
+  // per keystroke, and aborted on re-type so a slow response can't overwrite a newer one.
+  useEffect(() => {
+    const term = searchText.trim();
+    if (!searchOpen || term.length < 2) {
+      setSuggestions([]);
+      setSuggestLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setSuggestLoading(true);
+    const timer = setTimeout(() => {
+      getSalesReportFilterSuggestions(term, controller.signal)
+        .then((rows: FilterSuggestion[]) => {
+          setSuggestions(rows);
+          setSuggestIndex(-1);
+        })
+        .finally(() => setSuggestLoading(false));
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchText, searchOpen]);
+
+  // Close the typeahead on an outside click (mousedown, so a click on a result still lands).
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(event.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [searchOpen]);
+
+  /** Applies a picked customer/item and immediately refreshes the report. */
+  function choosePick(pick: FilterSuggestion) {
+    setSearchPick(pick);
+    setSearchText(suggestionLabel(pick));
+    setSearchOpen(false);
+    setSuggestions([]);
+    setSuggestIndex(-1);
+    loadReport(undefined, false, { searchText: suggestionLabel(pick), pick });
+  }
+
+  /** Drops the customer/item filter entirely (typed text and picked entry alike). */
+  function clearSearchFilter(refresh = true) {
+    setSearchPick(null);
+    setSearchText("");
+    setSuggestions([]);
+    setSearchOpen(false);
+    if (refresh) loadReport(undefined, false, { searchText: "", pick: null });
+  }
 
   const reportBranchId = useMemo(
     () => (isAllBranches || !activeBranchId || activeBranchId === "ALL" ? "All" : String(activeBranchId)),
@@ -1691,7 +1777,11 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     return byGroup;
   }, [filteredReports]);
 
-  async function loadReport(signal?: AbortSignal, clearFirst = false, overrides: { cashier?: string; channel?: string; searchText?: string } = {}) {
+  async function loadReport(
+    signal?: AbortSignal,
+    clearFirst = false,
+    overrides: { cashier?: string; channel?: string; searchText?: string; pick?: FilterSuggestion | null } = {}
+  ) {
     if (branchLoading) return;
     // POS Reports (X/Z historical browser) is a self-contained module with its own
     // paginated backend calls and its own filter set — it never goes through the
@@ -1705,6 +1795,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     const effectiveCashier = overrides.cashier !== undefined ? overrides.cashier : cashier;
     const effectiveChannel = overrides.channel !== undefined ? overrides.channel : channel;
     const effectiveSearch = overrides.searchText !== undefined ? overrides.searchText : searchText;
+    const effectivePick = overrides.pick !== undefined ? overrides.pick : searchPick;
     const effectiveBranchLabel = branchLabel;
 
     const filterSnapshot = {
@@ -1714,7 +1805,11 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       salesChannel: toBackendSalesChannel(effectiveChannel),
       salesperson: effectiveCashier,
       valuationMethod: "average_cost",
-      searchQuery: effectiveSearch,
+      // A picked customer/item filters on its exact code; only free-typed text falls
+      // through to the backend's free-text search.
+      searchQuery: effectivePick ? "" : effectiveSearch,
+      customerCode: effectivePick?.type === "CUSTOMER" ? effectivePick.code : undefined,
+      itemCode: effectivePick?.type === "ITEM" ? effectivePick.code : undefined,
     };
     if (clearFirst) {
       applyLiveReportData(activeReport, { rows: [], charts: [] });
@@ -1729,6 +1824,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       channel: effectiveChannel,
       cashier: effectiveCashier,
       searchText: effectiveSearch,
+      pick: effectivePick,
     });
     try {
       const data = await getSalesReportData(activeReport, filterSnapshot, signal);
@@ -1761,7 +1857,12 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       { label: "Branch", value: committedFilters.branchLabel },
       { label: "Sales Channel", value: committedFilters.channel },
       { label: "Cashier / Salesperson", value: committedFilters.cashier },
-      { label: "Search", value: committedFilters.searchText },
+      committedFilters.pick
+        ? {
+            label: committedFilters.pick.type === "CUSTOMER" ? "Customer" : "Item",
+            value: suggestionLabel(committedFilters.pick),
+          }
+        : { label: "Search", value: committedFilters.searchText },
     ].filter((f) => f.value && f.value !== "All");
   }
 
@@ -1772,7 +1873,8 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     committedFilters.branchLabel !== branchLabel ||
     committedFilters.channel !== channel ||
     committedFilters.cashier !== cashier ||
-    committedFilters.searchText !== searchText
+    committedFilters.searchText !== searchText ||
+    (committedFilters.pick?.id || "") !== (searchPick?.id || "")
   );
 
   // Single source of truth for exports: the exact view-model the screen rendered.
@@ -2174,16 +2276,119 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                       </div>
                     </div>
 
-                    <div className="space-y-1.5 col-span-2">
+                    <div className="space-y-1.5 col-span-2" ref={searchBoxRef}>
                       <label className="text-[11px] text-slate-600">
                         Customer / Item Filter
                       </label>
-                      <Input
-                        value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
-                        placeholder="Search customer name or item..."
-                        className="h-8 text-[11px] bg-slate-50 border-slate-200"
-                      />
+                      <div className="relative">
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                        <Input
+                          value={searchText}
+                          onChange={(e) => {
+                            setSearchText(e.target.value);
+                            // Typing after a pick drops the exact-code filter — the box is
+                            // back to free text until another entry is chosen.
+                            if (searchPick) setSearchPick(null);
+                            setSearchOpen(true);
+                          }}
+                          onFocus={() => setSearchOpen(true)}
+                          onKeyDown={(e) => {
+                            if (e.key === "ArrowDown") {
+                              e.preventDefault();
+                              setSearchOpen(true);
+                              setSuggestIndex((i) => Math.min(i + 1, suggestions.length - 1));
+                            } else if (e.key === "ArrowUp") {
+                              e.preventDefault();
+                              setSuggestIndex((i) => Math.max(i - 1, -1));
+                            } else if (e.key === "Enter") {
+                              e.preventDefault();
+                              if (searchOpen && suggestIndex >= 0 && suggestions[suggestIndex]) {
+                                choosePick(suggestions[suggestIndex]);
+                              } else {
+                                setSearchOpen(false);
+                                loadReport();
+                              }
+                            } else if (e.key === "Escape") {
+                              setSearchOpen(false);
+                            }
+                          }}
+                          placeholder="Search by customer code / name or item code / barcode..."
+                          className={`h-8 text-[11px] bg-slate-50 border-slate-200 pl-7 ${searchText ? "pr-7" : ""} ${
+                            searchPick ? "border-[#E5B426] bg-[#FFF8E7]" : ""
+                          }`}
+                        />
+                        {searchText && (
+                          <button
+                            type="button"
+                            onClick={() => clearSearchFilter()}
+                            title="Clear customer / item filter"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 text-[12px] leading-none"
+                          >
+                            &times;
+                          </button>
+                        )}
+
+                        {searchOpen && searchText.trim().length >= 2 && (
+                          <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                            {suggestLoading && suggestions.length === 0 && (
+                              <div className="px-3 py-2 text-[11px] text-slate-400">Searching...</div>
+                            )}
+                            {!suggestLoading && suggestions.length === 0 && (
+                              <div className="px-3 py-2 text-[11px] text-slate-400">
+                                No customer or item matches - press Enter to search the report text anyway.
+                              </div>
+                            )}
+                            {(["CUSTOMER", "ITEM"] as const).map((group) => {
+                              const rows = suggestions.filter((sug) => sug.type === group);
+                              if (rows.length === 0) return null;
+                              return (
+                                <div key={group}>
+                                  <div className="px-3 py-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400 bg-slate-50 sticky top-0">
+                                    {group === "CUSTOMER" ? "Customers" : "Items"}
+                                  </div>
+                                  {rows.map((sug) => {
+                                    const index = suggestions.indexOf(sug);
+                                    return (
+                                      <button
+                                        key={sug.id}
+                                        type="button"
+                                        onMouseEnter={() => setSuggestIndex(index)}
+                                        onMouseDown={(e) => {
+                                          e.preventDefault();
+                                          choosePick(sug);
+                                        }}
+                                        className={`w-full text-left px-3 py-1.5 flex items-center gap-2 ${
+                                          suggestIndex === index ? "bg-[#FFF6D8]" : "hover:bg-[#FFF8E7]"
+                                        }`}
+                                      >
+                                        {sug.type === "CUSTOMER" ? (
+                                          <Users className="h-3 w-3 text-slate-400 shrink-0" />
+                                        ) : (
+                                          <Package className="h-3 w-3 text-slate-400 shrink-0" />
+                                        )}
+                                        <span className="min-w-0">
+                                          <span className="block text-[11px] text-slate-800 truncate">
+                                            <b className="text-slate-900">{sug.code}</b>
+                                            {sug.name ? ` \u2014 ${sug.name}` : ""}
+                                          </span>
+                                          {sug.subtitle && (
+                                            <span className="block text-[9px] text-slate-400 truncate">{sug.subtitle}</span>
+                                          )}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-[9px] text-slate-400">
+                        {searchPick
+                          ? `Filtering on ${searchPick.type === "CUSTOMER" ? "customer" : "item"} ${searchPick.code}`
+                          : "Pick a customer or item from the list for an exact match, or press Enter to search as free text."}
+                      </p>
                     </div>
                   </>
                 )}
@@ -2217,13 +2422,18 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                 className="text-[10px] px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[#7c5e00] flex items-center gap-1"
               >
                 <b className="text-[#5b4500]">{f.label}:</b> {f.value}
-                {(f.label === "Cashier / Salesperson" || f.label === "Sales Channel" || f.label === "Search") && (
+                {(f.label === "Cashier / Salesperson" || f.label === "Sales Channel" || f.label === "Search"
+                  || f.label === "Customer" || f.label === "Item") && (
                   <button
                     onClick={() => {
-                      const ov: { cashier?: string; channel?: string; searchText?: string } = {};
+                      const ov: { cashier?: string; channel?: string; searchText?: string; pick?: FilterSuggestion | null } = {};
                       if (f.label === "Cashier / Salesperson") { setCashier("All"); setCashierSearch(""); ov.cashier = "All"; }
                       if (f.label === "Sales Channel") { setChannel("All"); ov.channel = "All"; }
-                      if (f.label === "Search") { setSearchText(""); ov.searchText = ""; }
+                      if (f.label === "Search" || f.label === "Customer" || f.label === "Item") {
+                        clearSearchFilter(false);
+                        ov.searchText = "";
+                        ov.pick = null;
+                      }
                       loadReport(undefined, false, ov);
                     }}
                     className="ml-0.5 text-[#7c5e00] hover:text-red-600 font-bold leading-none"
@@ -2244,8 +2454,8 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                   setCashier("All");
                   setCashierSearch("");
                   setChannel("All");
-                  setSearchText("");
-                  loadReport(undefined, false, { cashier: "All", channel: "All", searchText: "" });
+                  clearSearchFilter(false);
+                  loadReport(undefined, false, { cashier: "All", channel: "All", searchText: "", pick: null });
                 }}
                 className="text-[10px] text-slate-400 hover:text-red-500 underline ml-1"
               >
@@ -2325,7 +2535,7 @@ function SalesSummaryReport() {
     kpis: [
       { label: "Net Sales", value: `AED ${totalNetSales.toLocaleString()}`, hint: "After returns & discounts" },
       { label: "Gross Profit", value: `AED ${totalGrossProfit.toLocaleString()}`, hint: `GP: ${avgGP.toFixed(1)}%` },
-      { label: "Tax Collected", value: `AED ${totalTax.toLocaleString()}`, hint: "VAT @ 5%" },
+      { label: "Tax Collected", value: `AED ${totalTax.toLocaleString()}`, hint: "Output VAT" },
       { label: "Returns", value: `AED ${totalReturns.toLocaleString()}`, hint: `${returnsPct}% of gross` },
     ],
     sections: [
@@ -2402,7 +2612,7 @@ function SalesSummaryReport() {
               <Shield className="h-4 w-4 text-blue-600" />
             </div>
             <div className="text-xl font-bold text-blue-700"><CurrencySymbol /> {totalTax.toLocaleString()}</div>
-            <div className="text-[9px] text-slate-500 mt-1">VAT @ 5%</div>
+            <div className="text-[9px] text-slate-500 mt-1">Output VAT</div>
           </CardContent>
         </Card>
 
@@ -2793,7 +3003,7 @@ function DailySalesReport() {
         <Row label="Less: Sales Returns"    value={`(${fmt(d.salesReturns)})`}  indent={1} debit />
         <Row label="Less: Discounts"        value={`(${fmt(d.discounts)})`}     indent={1} debit />
         <Row label="Net Sales"              value={fmt(d.netSales)} bold accent />
-        <Row label="VAT on Sales (5%)"      value={fmt(d.vatOnSales)} indent={1} />
+        <Row label="VAT on Sales"           value={fmt(d.vatOnSales)} indent={1} />
 
         <div className="mt-3 mb-1 text-[10px] font-semibold text-slate-600">Payment Mode Breakdown</div>
         <SubTable
@@ -2819,7 +3029,7 @@ function DailySalesReport() {
         <Row label="Total Purchases (Gross)" value={fmt(d.totalPurchases)} />
         <Row label="Less: Purchase Returns"  value={`(${fmt(d.purchaseReturns)})`} indent={1} debit />
         <Row label="Net Purchases"           value={fmt(d.netPurchases)} bold accent />
-        <Row label="VAT on Purchases (5%)"   value={fmt(d.vatOnPurchases)} indent={1} />
+        <Row label="VAT on Purchases"        value={fmt(d.vatOnPurchases)} indent={1} />
 
         <div className="mt-3 mb-1 text-[10px] font-semibold text-slate-600">Payment Mode Breakdown</div>
         <SubTable
@@ -6228,6 +6438,8 @@ function FreeIssueSchemeReport() {
 function TaxSummaryReport() {
   useDataRevision();
   const COLORS = ['#F5C742','#3b82f6','#10b981'];
+  // Effective output-VAT rate for the selected period, from the backend.
+  const standardRateLabel = mockTaxData[0].rate > 0 ? `${mockTaxData[0].rate}% VAT` : "VAT";
   useReportView("tax_summary", {
     kpis: [
       { label: "VAT Collected", value: `AED ${mockTaxData[0].taxAmount.toLocaleString()}` },
@@ -6241,7 +6453,7 @@ function TaxSummaryReport() {
           { key: "amount", header: "Amount", align: "right", width: 18 },
         ],
         rows: [
-          { label: "Taxable Sales (5% VAT)", amount: `AED ${mockTaxData[0].taxableSales.toLocaleString()}` },
+          { label: `Taxable Sales (${standardRateLabel})`, amount: `AED ${mockTaxData[0].taxableSales.toLocaleString()}` },
           { label: "VAT Collected", amount: `AED ${mockTaxData[0].taxAmount.toLocaleString()}` },
           { label: "Zero-Rated Sales", amount: `AED ${mockTaxData[1].zeroRated.toLocaleString()}` },
           { label: "Exempt Sales", amount: `AED ${mockTaxData[2].exemptSales.toLocaleString()}` },
@@ -6261,7 +6473,7 @@ function TaxSummaryReport() {
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie data={[
-                  { name: "Taxable (5%)", value: mockTaxData[0].taxableSales },
+                  { name: "Taxable", value: mockTaxData[0].taxableSales },
                   { name: "Zero-Rated", value: mockTaxData[1].zeroRated },
                   { name: "Exempt", value: mockTaxData[2].exemptSales },
                 ]} cx="50%" cy="50%" outerRadius={70} dataKey="value" label={({ name, percent }) => `${name.split(' ')[0]}: ${(percent * 100).toFixed(0)}%`} labelStyle={{ fontSize: '9px' }}>
@@ -6276,7 +6488,7 @@ function TaxSummaryReport() {
           <CardContent className="p-4 space-y-3">
             <div className="text-[10px] text-blue-700 font-semibold">VAT Summary</div>
             <div className="flex justify-between text-[11px]">
-              <span className="text-slate-600">Taxable Sales (5% VAT)</span>
+              <span className="text-slate-600">Taxable Sales ({standardRateLabel})</span>
               <span className="font-semibold"><CurrencySymbol /> {mockTaxData[0].taxableSales.toLocaleString()}</span>
             </div>
             <div className="flex justify-between text-[11px]">

@@ -13,14 +13,16 @@ public class TaxReconciliationDTO {
 
     public static class TaxAuditLine {
         private String documentNumber;
+        private String date; // ISO transaction date of the voucher
         private String type; // SALES or PURCHASE
         private BigDecimal baseAmount;
         private BigDecimal taxAmount;
         private String accountName;
 
-        public TaxAuditLine(String documentNumber, String type, BigDecimal baseAmount, BigDecimal taxAmount,
-                String accountName) {
+        public TaxAuditLine(String documentNumber, String date, String type, BigDecimal baseAmount,
+                BigDecimal taxAmount, String accountName) {
             this.documentNumber = documentNumber;
+            this.date = date;
             this.type = type;
             this.baseAmount = baseAmount;
             this.taxAmount = taxAmount;
@@ -29,6 +31,10 @@ public class TaxReconciliationDTO {
 
         public String getDocumentNumber() {
             return documentNumber;
+        }
+
+        public String getDate() {
+            return date;
         }
 
         public String getType() {

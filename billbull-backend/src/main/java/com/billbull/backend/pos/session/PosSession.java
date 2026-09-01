@@ -345,18 +345,27 @@ public class PosSession extends BaseEntity {
     public LocalDateTime getOpenedAt() { return openedAt; }
     public void setOpenedAt(LocalDateTime openedAt) { this.openedAt = openedAt; }
 
+    /** Serialized with the <b>Business Day</b> zone, never {@code ZoneId.systemDefault()}:
+     *  {@link #openedAt} is a wall-clock reading taken by {@code BusinessDayClock.now()}
+     *  in {@code pos.businessday.timezone}, so that is the only zone under which it
+     *  denotes the moment it was stamped. See {@code BusinessDayClock#presentationZone()}. */
     @com.fasterxml.jackson.annotation.JsonProperty("openedAt")
     public java.time.ZonedDateTime getOpenedAtZoned() {
-        return openedAt != null ? openedAt.atZone(java.time.ZoneId.systemDefault()) : null;
+        return openedAt != null ? openedAt.atZone(businessDayZone()) : null;
     }
 
     @JsonIgnore
     public LocalDateTime getClosedAt() { return closedAt; }
     public void setClosedAt(LocalDateTime closedAt) { this.closedAt = closedAt; }
 
+    /** Business Day zone, for the same reason as {@link #getOpenedAtZoned()}. */
     @com.fasterxml.jackson.annotation.JsonProperty("closedAt")
     public java.time.ZonedDateTime getClosedAtZoned() {
-        return closedAt != null ? closedAt.atZone(java.time.ZoneId.systemDefault()) : null;
+        return closedAt != null ? closedAt.atZone(businessDayZone()) : null;
+    }
+
+    private static java.time.ZoneId businessDayZone() {
+        return com.billbull.backend.pos.businessdate.BusinessDayClock.presentationZone();
     }
 
     public Long getDurationSeconds() { return durationSeconds; }

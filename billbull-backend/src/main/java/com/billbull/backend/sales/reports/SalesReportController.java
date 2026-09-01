@@ -35,6 +35,19 @@ public class SalesReportController {
         return ResponseEntity.ok(reportDataService.getDistinctSalespersons());
     }
 
+    /**
+     * Typeahead source for the "Customer / Item" filter — matching customers and items
+     * the user can pick to filter on an exact code.
+     */
+    @GetMapping("/filter-suggestions")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<SalesReportFilterSuggestion>> getFilterSuggestions(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false, defaultValue = "8") int limit) {
+        modulePermissionService.requireCanView(MODULE);
+        return ResponseEntity.ok(reportDataService.getFilterSuggestions(q, limit));
+    }
+
     @GetMapping("/data/{reportId}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SalesReportDataResponse> getReportData(
@@ -45,7 +58,9 @@ public class SalesReportController {
             @RequestParam(required = false) String salesChannel,
             @RequestParam(required = false) String salesperson,
             @RequestParam(required = false) String valuationMethod,
-            @RequestParam(required = false) String search) {
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String customerCode,
+            @RequestParam(required = false) String itemCode) {
         modulePermissionService.requireCanView(MODULE);
         return ResponseEntity.ok(reportDataService.getReport(
                 reportId,
@@ -55,6 +70,8 @@ public class SalesReportController {
                 salesChannel,
                 salesperson,
                 valuationMethod,
-                search));
+                search,
+                customerCode,
+                itemCode));
     }
 }

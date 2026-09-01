@@ -377,4 +377,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                 "WHERE p.isActive = true " +
                 "AND (p.productType IS NULL OR p.productType <> com.billbull.backend.inventory.product.ProductType.SERVICE)")
         List<Object[]> findActiveProductReportBasics();
+
+        /**
+         * Lightweight typeahead projection (code, name, sku, category) for the Sales
+         * Reports "Customer / Item" filter. Matches on code, SKU, name or barcode so a
+         * scanned barcode resolves to the same item the cashier sold.
+         */
+        @Query("SELECT p.code, p.name, p.sku, p.category " +
+                        "FROM Product p WHERE p.isActive = true AND (" +
+                        "  LOWER(p.code) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+                        "  LOWER(p.sku)  LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+                        "  LOWER(p.name) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+                        "  EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :q, '%')))" +
+                        ") ORDER BY p.name ASC")
+        List<Object[]> findReportFilterSuggestions(@org.springframework.data.repository.query.Param("q") String q,
+                        Pageable pageable);
 }

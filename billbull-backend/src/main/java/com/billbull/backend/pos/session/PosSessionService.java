@@ -464,6 +464,18 @@ public class PosSessionService {
             if (!currentUser().equals(existing.get().getOpenedBy())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Terminal is already in use by active cashier: " + existing.get().getOpenedBy());
             }
+
+            // 1. Enforce business date invariants
+            LocalDate existingBusinessDate = existing.get().getTradingDate() != null ? existing.get().getTradingDate() : existing.get().getSessionDate();
+            if (existingBusinessDate != null && !existingBusinessDate.equals(candidateBusinessDay)) {
+                throw PreviousBusinessDaySessionException.of(existing.get(), existingBusinessDate);
+            }
+
+            // 2. Protect opening float for same-day resume
+            if (openingCash != null && openingCash.compareTo(BigDecimal.ZERO) > 0) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot apply new opening float: an active session already exists for this terminal and user.");
+            }
+
             return existing.get();
         }
 
@@ -2105,6 +2117,9 @@ public class PosSessionService {
     }
 
     private Map<String, Object> buildDayCloseSummary(ResolvedSessionRange range) {
+        // The zone that stamped these timestamps (pos.businessday.timezone), never the JVM
+        // default — see buildSessionInfo for the full reasoning.
+        ZoneId businessDayZone = businessDayWindowService.clock().zone();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("branchId", range.branchId);
         result.put("businessDate", range.date.toString());
@@ -2121,11 +2136,11 @@ public class PosSessionService {
                 .filter(Objects::nonNull).distinct().toList());
         result.put("tradingStart", range.resolvedSessions.stream().map(PosSession::getOpenedAt)
                 .filter(Objects::nonNull).min(Comparator.naturalOrder())
-                .map(t -> t.atZone(ZoneId.systemDefault())).orElse(null));
+                .map(t -> t.atZone(businessDayZone)).orElse(null));
         result.put("tradingEnd", range.resolvedSessions.stream()
                 .map(s -> s.getClosedAt() != null ? s.getClosedAt() : s.getOpenedAt())
                 .filter(Objects::nonNull).max(Comparator.naturalOrder())
-                .map(t -> t.atZone(ZoneId.systemDefault())).orElse(null));
+                .map(t -> t.atZone(businessDayZone)).orElse(null));
         result.put("sessions", range.resolvedSessions.stream().map(this::buildSessionInfo).toList());
 
         long openCount = range.allSessionsForDate.stream().filter(s -> s.getStatus() == PosSessionStatus.OPEN).count();
@@ -2922,8 +2937,15 @@ public class PosSessionService {
         info.put("device", deviceName != null ? deviceName : s.getTerminalId());
         info.put("deviceInfo", deviceInfo);
         info.put("shift", deriveShift(s.getOpenedAt()));
-        info.put("openedAt", s.getOpenedAt() != null ? s.getOpenedAt().atZone(java.time.ZoneId.systemDefault()) : null);
-        info.put("closedAt", s.getClosedAt() != null ? s.getClosedAt().atZone(java.time.ZoneId.systemDefault()) : null);
+        // openedAt/closedAt are wall-clock readings taken by BusinessDayClock in
+        // pos.businessday.timezone, so they must be labelled with that same zone. Labelling
+        // them with ZoneId.systemDefault() (pinned to Asia/Dubai in BillbullBackendApplication,
+        // whatever the tenant) does not re-express the moment they were stamped — it shifts it
+        // by the offset between the two zones, which is how a session opened at 10:05 IST came
+        // back as 11:35 and appeared to have opened in the future.
+        ZoneId businessDayZone = businessDayWindowService.clock().zone();
+        info.put("openedAt", s.getOpenedAt() != null ? s.getOpenedAt().atZone(businessDayZone) : null);
+        info.put("closedAt", s.getClosedAt() != null ? s.getClosedAt().atZone(businessDayZone) : null);
         info.put("durationSeconds", s.getDurationSeconds());
         info.put("openingCash", nz(s.getOpeningCash()));
 

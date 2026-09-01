@@ -46,6 +46,10 @@ const Login = () => {
       sessionStorage.setItem("user", data.username);
       sessionStorage.setItem("fullName", data.fullName || data.username);
 
+      // Every login starts with the sidebar collapsed, regardless of how the
+      // previous session left it. Toggling it during the session still persists.
+      localStorage.setItem("sidebarCollapsed", "true");
+
       refreshCompany();
       // Tell BranchProvider to reload — it mounted before the token existed
       // and otherwise won't refresh until next full page reload.

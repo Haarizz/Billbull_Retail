@@ -36,7 +36,7 @@ public class PreviousBusinessDaySessionException extends ResponseStatusException
         this.previousBusinessDay = previousBusinessDay;
     }
 
-    static PreviousBusinessDaySessionException of(PosSession session, LocalDate sessionBusinessDay) {
+    public static PreviousBusinessDaySessionException of(PosSession session, LocalDate sessionBusinessDay) {
         String status = session.getStatus() != null ? session.getStatus().name() : "OPEN";
         String message = buildMessage(session.getId(), session.getTerminalId(), status, sessionBusinessDay);
         return new PreviousBusinessDaySessionException(message, session.getId(), session.getTerminalId(),

@@ -18,6 +18,7 @@ import static org.mockito.Mockito.when;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -714,6 +715,147 @@ class PosSessionServiceTest {
                 eq(1L), eq(businessDate), eq(LocalDate.now()), eq(false));
     }
 
+    // ---------------------------------------------------------------------
+    // POS Session Lifecycle Bug Fix Tests
+    // ---------------------------------------------------------------------
+
+    @Test
+    void openSession_NoExistingSession_CreatesNewSession() {
+        LocalDate businessDate = businessDayWindowService.clock().now().toLocalDate();
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        PosSession opened = service.openSession("T1", "Counter 1", bd("1000"));
+
+        assertEquals(PosSessionStatus.OPEN, opened.getStatus());
+        assertEquals(bd("1000"), opened.getOpeningCash());
+    }
+
+    @Test
+    void openSession_ExistingSessionSameDayZeroFloat_ResumesExisting() {
+        LocalDate businessDate = businessDayWindowService.clock().now().toLocalDate();
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        PosSession existing = new PosSession();
+        existing.setId(10L);
+        existing.setTradingDate(businessDate);
+        existing.setOpenedBy("system");
+        existing.setStatus(PosSessionStatus.OPEN);
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN)).thenReturn(Optional.of(existing));
+
+        PosSession resumed = service.openSession("T1", "Counter 1", BigDecimal.ZERO);
+        assertEquals(10L, resumed.getId());
+    }
+
+    @Test
+    void openSession_ExistingSessionPreviousDay_ThrowsException() {
+        LocalDate businessDate = businessDayWindowService.clock().now().toLocalDate();
+        LocalDate previousDate = businessDate.minusDays(1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        PosSession existing = new PosSession();
+        existing.setId(10L);
+        existing.setTradingDate(previousDate);
+        existing.setOpenedBy("system");
+        existing.setStatus(PosSessionStatus.OPEN);
+        existing.setTerminalId("T1");
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN)).thenReturn(Optional.of(existing));
+
+        ResponseStatusException ex = assertThrows(
+                com.billbull.backend.pos.businessdate.PreviousBusinessDaySessionException.class,
+                () -> service.openSession("T1", "Counter 1", BigDecimal.ZERO));
+        
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+    }
+
+    @Test
+    void openSession_PreviousDaySessionAndOpeningCash_ThrowsExceptionAndDoesNotDiscardFloat() {
+        LocalDate businessDate = businessDayWindowService.clock().now().toLocalDate();
+        LocalDate previousDate = businessDate.minusDays(1);
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        PosSession existing = new PosSession();
+        existing.setId(10L);
+        existing.setTradingDate(previousDate);
+        existing.setOpenedBy("system");
+        existing.setStatus(PosSessionStatus.OPEN);
+        existing.setTerminalId("T1");
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN)).thenReturn(Optional.of(existing));
+
+        ResponseStatusException ex = assertThrows(
+                com.billbull.backend.pos.businessdate.PreviousBusinessDaySessionException.class,
+                () -> service.openSession("T1", "Counter 1", bd("1000")));
+        
+        assertTrue(ex.getReason().contains("PREVIOUS_DAY_SESSION_OPEN"));
+    }
+
+    @Test
+    void openSession_SameDaySessionAndNonZeroOpeningCash_ThrowsConflict() {
+        LocalDate businessDate = businessDayWindowService.clock().now().toLocalDate();
+        stubOpenSessionPreconditions(1L, businessDate, "T1");
+
+        PosSession existing = new PosSession();
+        existing.setId(10L);
+        existing.setTradingDate(businessDate);
+        existing.setOpenedBy("system");
+        existing.setStatus(PosSessionStatus.OPEN);
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN)).thenReturn(Optional.of(existing));
+
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> service.openSession("T1", "Counter 1", bd("1000")));
+        
+        assertEquals(org.springframework.http.HttpStatus.CONFLICT, ex.getStatusCode());
+        assertTrue(ex.getReason().contains("Cannot apply new opening float"));
+    }
+
+    @Test
+    void openSession_BusinessDayBoundary_ChecksProperTimezoneDate() {
+        LocalDate actualCandidateDay = businessDayWindowService.clock().now().toLocalDate();
+        stubOpenSessionPreconditions(1L, actualCandidateDay, "T1");
+
+        PosSession existing = new PosSession();
+        existing.setId(10L);
+        existing.setTradingDate(actualCandidateDay.minusDays(1)); 
+        existing.setOpenedBy("system");
+        existing.setStatus(PosSessionStatus.OPEN);
+        existing.setTerminalId("T1");
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN)).thenReturn(Optional.of(existing));
+
+        assertThrows(
+                com.billbull.backend.pos.businessdate.PreviousBusinessDaySessionException.class,
+                () -> service.openSession("T1", "Counter 1", BigDecimal.ZERO));
+    }
+
+    @Test
+    void openSession_TimezoneRegression_UsesBusinessDayWindowServiceRatherThanSystemLocalDate() {
+        com.billbull.backend.pos.settings.PosSettings settings = new com.billbull.backend.pos.settings.PosSettings();
+        settings.setOperatingHoursEnabled(true);
+        settings.setOperatingStartTime(java.time.LocalTime.of(23, 0));
+        settings.setOperatingEndTime(java.time.LocalTime.of(8, 0)); 
+        settings.setBusinessDayWindowEnforcementEnabled(false);
+        when(posSettingsRepository.findByBranchIdForShare(1L)).thenReturn(Optional.of(settings));
+
+        LocalDate resolvedCandidateDay = com.billbull.backend.pos.businessdate.BusinessDayResolver.resolve(
+                businessDayWindowService.clock().now(),
+                com.billbull.backend.pos.businessdate.BusinessDaySettings.from(settings));
+                
+        stubOpenSessionPreconditions(1L, resolvedCandidateDay, "T1");
+        lenient().when(businessDateService.isDateClosed(1L, resolvedCandidateDay)).thenReturn(false);
+        lenient().when(repo.findUnclosedSessionsBeforeDate(1L, resolvedCandidateDay)).thenReturn(List.of());
+
+        PosSession existing = new PosSession();
+        existing.setId(10L);
+        existing.setTradingDate(resolvedCandidateDay.minusDays(1));
+        existing.setOpenedBy("system");
+        existing.setStatus(PosSessionStatus.OPEN);
+        existing.setTerminalId("T1");
+        when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN)).thenReturn(Optional.of(existing));
+
+        assertThrows(
+                com.billbull.backend.pos.businessdate.PreviousBusinessDaySessionException.class,
+                () -> service.openSession("T1", "Counter 1", BigDecimal.ZERO));
+    }
+
     /** Business Day, once persisted, is never re-derived â€” no other session
      *  lifecycle method (close/suspend/resume/transfer) touches tradingDate. */
     @Test
@@ -1213,7 +1355,7 @@ class PosSessionServiceTest {
         org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
                 new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
                         "cashier1", null, List.of()));
-        LocalDate businessDate = LocalDate.of(2026, 1, 1);
+        LocalDate businessDate = businessDayWindowService.clock().now().toLocalDate();
         when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
         when(businessDateService.getCurrentBusinessDate(1L)).thenReturn(businessDate);
         // Gate operands are the Candidate Business Day (today), not the pointer.
@@ -1221,10 +1363,11 @@ class PosSessionServiceTest {
         when(repo.findUnclosedSessionsBeforeDate(org.mockito.ArgumentMatchers.eq(1L), org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
         PosSession existing = openSession();
         existing.setOpenedBy("cashier1");
+        existing.setTradingDate(businessDate); // make sure it matches candidateBusinessDay to allow resume
         when(repo.findByBranchIdAndTerminalIdAndStatus(1L, "T1", PosSessionStatus.OPEN))
                 .thenReturn(Optional.of(existing));
 
-        PosSession result = service.openSession("T1", "Counter 1", bd("100"));
+        PosSession result = service.openSession("T1", "Counter 1", BigDecimal.ZERO);
 
         assertEquals(existing, result);
         verify(sessionTerminalHistoryRepository, org.mockito.Mockito.never()).save(any());
@@ -2024,6 +2167,40 @@ class PosSessionServiceTest {
         assertEquals(0L, summary.get("suspendedSessionCount"));
         assertFalse((Boolean) summary.get("readyToClose"));
         assertEquals(0, summary.get("excludedSessionCount"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void dayCloseSummaryTimestampsUseBusinessDayZoneNotJvmZone() {
+        // This service is wired with an Asia/Dubai Business Day clock (see setUp), while the
+        // host running the suite is on whatever zone it likes. Presenting these timestamps in
+        // ZoneId.systemDefault() therefore fails here on any non-Dubai host — which is the
+        // whole point: the presented zone must follow pos.businessday.timezone, not the JVM.
+        Long branchId = 7L;
+        LocalDate date = LocalDate.now();
+        LocalDateTime openedAt = date.atStartOfDay().plusHours(8);
+        LocalDateTime closedAt = date.atStartOfDay().plusHours(11);
+        PosSession s1 = sessionAt(1L, branchId, date, "cashierA", PosSessionStatus.CLOSED, openedAt);
+        PosSession s2 = sessionAt(2L, branchId, date, "cashierB", PosSessionStatus.CLOSED, closedAt);
+
+        when(repo.findByBranchIdAndTradingDateOrderByOpenedAtDesc(branchId, date)).thenReturn(List.of(s2, s1));
+
+        Map<String, Object> summary = service.getDayCloseSummary(branchId, date, null, null);
+
+        ZoneId businessDayZone = businessDayWindowService.clock().zone();
+        assertEquals(ZoneId.of("Asia/Dubai"), businessDayZone);
+
+        java.time.ZonedDateTime tradingStart = (java.time.ZonedDateTime) summary.get("tradingStart");
+        assertEquals(businessDayZone, tradingStart.getZone());
+        assertEquals(openedAt, tradingStart.toLocalDateTime());
+
+        java.time.ZonedDateTime tradingEnd = (java.time.ZonedDateTime) summary.get("tradingEnd");
+        assertEquals(businessDayZone, tradingEnd.getZone());
+
+        Map<String, Object> startSession = (Map<String, Object>) summary.get("startSession");
+        java.time.ZonedDateTime sessionOpenedAt = (java.time.ZonedDateTime) startSession.get("openedAt");
+        assertEquals(businessDayZone, sessionOpenedAt.getZone());
+        assertEquals(openedAt, sessionOpenedAt.toLocalDateTime());
     }
 
     @Test

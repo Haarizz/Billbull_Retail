@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState, useEffect } from "react";
+﻿import React, { useMemo, useRef, useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -47,7 +47,7 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { getPurchaseReportData } from "../../../api/purchaseReportsApi";
+import { getPurchaseReportData, getPurchaseReportFilterSuggestions } from "../../../api/purchaseReportsApi";
 import { exportToExcel } from "../../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
 import { getCompanyProfile } from "../../../api/companyProfileApi";
@@ -3186,7 +3186,7 @@ function VatInputRegisterReport() {
       <ReportHeader title="VAT Input Register (UAE)" subtitle="Input tax register for FTA filing — all taxable purchases" count={mockVatInput.length} />
       <div className="grid grid-cols-3 gap-3">
         <KpiCard label="Total Taxable Value" value={<><CurrencySymbol /> {totalTaxable.toLocaleString()}</>} sub="Excl. VAT" accent />
-        <KpiCard label="Total Input VAT" value={<><CurrencySymbol /> {totalVat.toLocaleString()}</>} sub="Recoverable @ 5%" />
+        <KpiCard label="Total Input VAT" value={<><CurrencySymbol /> {totalVat.toLocaleString()}</>} sub="Recoverable input VAT" />
         <KpiCard label="Total Incl. VAT" value={<><CurrencySymbol /> {(totalTaxable + totalVat).toLocaleString()}</>} sub="Gross" />
       </div>
       <Tbl>
@@ -3435,6 +3435,19 @@ function AuditTrailReport() {
 // Main component
 // ---------------------------------------------------------------------------
 
+/** One entry in the "Item / SKU Search" typeahead, as returned by the backend. */
+type ItemSuggestion = {
+  id: string;
+  code: string;
+  name: string;
+  subtitle?: string;
+};
+
+/** How a picked item reads in the search box. */
+function itemLabel(pick: ItemSuggestion): string {
+  return pick.code ? `${pick.code} — ${pick.name}` : pick.name;
+}
+
 export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (s: string) => void }) {
   const {
     activeBranchId,
@@ -3472,12 +3485,78 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
   const [vendorOpen, setVendorOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
+  // Item / SKU typeahead. `itemPick` is set only when the user chooses an entry from the
+  // dropdown — that sends an exact itemCode to the backend, whereas raw typed text is
+  // sent as a free-text `search`.
+  const [itemPick, setItemPick] = useState<ItemSuggestion | null>(null);
+  const [itemOpen, setItemOpen] = useState(false);
+  const [itemSuggestions, setItemSuggestions] = useState<ItemSuggestion[]>([]);
+  const [itemLoading, setItemLoading] = useState(false);
+  const [itemIndex, setItemIndex] = useState(-1);
+  const itemBoxRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
     getVendors()
       .then((data: any[]) => setVendorList(data.filter((v: any) => v.isActive !== false).map((v: any) => ({ id: v.id, name: v.name || v.vendorName || String(v.id) }))))
       .catch(() => {});
   }, []);
+
+  // Item / SKU typeahead — debounced so a fast typist issues one query, not one per
+  // keystroke, and aborted on re-type so a slow response can't overwrite a newer one.
+  useEffect(() => {
+    const term = searchText.trim();
+    if (!itemOpen || term.length < 2) {
+      setItemSuggestions([]);
+      setItemLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setItemLoading(true);
+    const timer = setTimeout(() => {
+      getPurchaseReportFilterSuggestions(term, controller.signal)
+        .then((rows: ItemSuggestion[]) => {
+          setItemSuggestions(rows);
+          setItemIndex(-1);
+        })
+        .finally(() => setItemLoading(false));
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchText, itemOpen]);
+
+  // Close the typeahead on an outside click (mousedown, so a click on a result still lands).
+  useEffect(() => {
+    if (!itemOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (itemBoxRef.current && !itemBoxRef.current.contains(event.target as Node)) {
+        setItemOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [itemOpen]);
+
+  /** Applies a picked item and immediately refreshes the report. */
+  function chooseItem(pick: ItemSuggestion) {
+    setItemPick(pick);
+    setSearchText(itemLabel(pick));
+    setItemOpen(false);
+    setItemSuggestions([]);
+    setItemIndex(-1);
+    loadReport(undefined, { searchText: itemLabel(pick), pick });
+  }
+
+  /** Drops the item filter entirely (typed text and picked entry alike). */
+  function clearItemFilter(refresh = true) {
+    setItemPick(null);
+    setSearchText("");
+    setItemSuggestions([]);
+    setItemOpen(false);
+    if (refresh) loadReport(undefined, { searchText: "", pick: null });
+  }
 
   const branchLabel = useMemo(() => {
     if (isAllBranches || !activeBranchId || activeBranchId === "ALL") return "All Branches";
@@ -3493,8 +3572,13 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
     [activeBranchId, branchLabel, isAllBranches]
   );
 
-  async function loadReport(signal?: AbortSignal) {
+  async function loadReport(
+    signal?: AbortSignal,
+    overrides: { searchText?: string; pick?: ItemSuggestion | null } = {}
+  ) {
     if (branchLoading) return;
+    const effectiveSearch = overrides.searchText !== undefined ? overrides.searchText : searchText;
+    const effectivePick = overrides.pick !== undefined ? overrides.pick : itemPick;
     try {
       applyLiveReportData(activeReport, { rows: [], charts: [] });
       setDataRevision((value) => value + 1);
@@ -3503,7 +3587,10 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
         dateTo,
         vendor,
         branch: branchFilter,
-        searchQuery: searchText,
+        // A picked item filters on its exact code; only free-typed text falls through to
+        // the backend's free-text search.
+        searchQuery: effectivePick ? "" : effectiveSearch,
+        itemCode: effectivePick ? effectivePick.code : undefined,
       }, signal);
       if (!data) return;
       applyLiveReportData(activeReport, data);
@@ -3902,16 +3989,101 @@ export default function VendorsPurchasesReports({ onNavigate }: { onNavigate?: (
                 </div>
 
                 {showAdvanced && (
-                  <div className="space-y-1.5 col-span-2 xl:col-start-1">
+                  <div className="space-y-1.5 col-span-2 xl:col-start-1" ref={itemBoxRef}>
                     <label className="text-[11px] text-slate-600">
                       Item / SKU Search
                     </label>
-                    <Input
-                      value={searchText}
-                      onChange={(e) => setSearchText(e.target.value)}
-                      placeholder="Search item name or SKU…"
-                      className="h-8 text-[11px] bg-slate-50 border-slate-200"
-                    />
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
+                      <Input
+                        value={searchText}
+                        onChange={(e) => {
+                          setSearchText(e.target.value);
+                          // Typing after a pick drops the exact-code filter — the box is
+                          // back to free text until another entry is chosen.
+                          if (itemPick) setItemPick(null);
+                          setItemOpen(true);
+                        }}
+                        onFocus={() => setItemOpen(true)}
+                        onKeyDown={(e) => {
+                          if (e.key === "ArrowDown") {
+                            e.preventDefault();
+                            setItemOpen(true);
+                            setItemIndex((i) => Math.min(i + 1, itemSuggestions.length - 1));
+                          } else if (e.key === "ArrowUp") {
+                            e.preventDefault();
+                            setItemIndex((i) => Math.max(i - 1, -1));
+                          } else if (e.key === "Enter") {
+                            e.preventDefault();
+                            if (itemOpen && itemIndex >= 0 && itemSuggestions[itemIndex]) {
+                              chooseItem(itemSuggestions[itemIndex]);
+                            } else {
+                              setItemOpen(false);
+                              loadReport();
+                            }
+                          } else if (e.key === "Escape") {
+                            setItemOpen(false);
+                          }
+                        }}
+                        placeholder="Search item name, code, SKU or barcode..."
+                        className={`h-8 text-[11px] bg-slate-50 border-slate-200 pl-7 ${searchText ? "pr-7" : ""} ${
+                          itemPick ? "border-[#E5B426] bg-[#FFF8E7]" : ""
+                        }`}
+                      />
+                      {searchText && (
+                        <button
+                          type="button"
+                          onClick={() => clearItemFilter()}
+                          title="Clear item filter"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-500 text-[12px] leading-none"
+                        >
+                          &times;
+                        </button>
+                      )}
+
+                      {itemOpen && searchText.trim().length >= 2 && (
+                        <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-64 overflow-y-auto">
+                          {itemLoading && itemSuggestions.length === 0 && (
+                            <div className="px-3 py-2 text-[11px] text-slate-400">Searching...</div>
+                          )}
+                          {!itemLoading && itemSuggestions.length === 0 && (
+                            <div className="px-3 py-2 text-[11px] text-slate-400">
+                              No item matches - press Enter to search the report text anyway.
+                            </div>
+                          )}
+                          {itemSuggestions.map((sug, index) => (
+                            <button
+                              key={sug.id}
+                              type="button"
+                              onMouseEnter={() => setItemIndex(index)}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                chooseItem(sug);
+                              }}
+                              className={`w-full text-left px-3 py-1.5 flex items-center gap-2 ${
+                                itemIndex === index ? "bg-[#FFF6D8]" : "hover:bg-[#FFF8E7]"
+                              }`}
+                            >
+                              <Package className="h-3 w-3 text-slate-400 shrink-0" />
+                              <span className="min-w-0">
+                                <span className="block text-[11px] text-slate-800 truncate">
+                                  <b className="text-slate-900">{sug.code}</b>
+                                  {sug.name ? ` \u2014 ${sug.name}` : ""}
+                                </span>
+                                {sug.subtitle && (
+                                  <span className="block text-[9px] text-slate-400 truncate">{sug.subtitle}</span>
+                                )}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[9px] text-slate-400">
+                      {itemPick
+                        ? `Filtering on item ${itemPick.code}`
+                        : "Pick an item from the list for an exact match, or press Enter to search as free text."}
+                    </p>
                   </div>
                 )}
 

@@ -1,5 +1,6 @@
 package com.billbull.backend.purchase.reports;
 
+import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.purchase.grn.GrnEntity;
 import com.billbull.backend.purchase.grn.GrnItemEntity;
 import com.billbull.backend.purchase.grn.GrnRepository;
@@ -17,6 +18,8 @@ import com.billbull.backend.purchase.payment.PaymentVoucher;
 import com.billbull.backend.purchase.payment.PaymentVoucherRepository;
 import com.billbull.backend.purchase.vendor.Vendor;
 import com.billbull.backend.purchase.vendor.VendorRepository;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,18 +46,48 @@ public class PurchaseReportDataService {
     private final GrnRepository grnRepository;
     private final PurchaseInvoiceRepository invoiceRepository;
     private final PaymentVoucherRepository paymentVoucherRepository;
+    private final ProductRepository productRepository;
 
     public PurchaseReportDataService(
             VendorRepository vendorRepository,
             LpoRepository lpoRepository,
             GrnRepository grnRepository,
             PurchaseInvoiceRepository invoiceRepository,
-            PaymentVoucherRepository paymentVoucherRepository) {
+            PaymentVoucherRepository paymentVoucherRepository,
+            ProductRepository productRepository) {
         this.vendorRepository = vendorRepository;
         this.lpoRepository = lpoRepository;
         this.grnRepository = grnRepository;
         this.invoiceRepository = invoiceRepository;
         this.paymentVoucherRepository = paymentVoucherRepository;
+        this.productRepository = productRepository;
+    }
+
+    /**
+     * Typeahead entries for the "Item / SKU Search" filter — products matching by code,
+     * SKU, name or barcode, so a scanned barcode resolves to the item it belongs to.
+     *
+     * <p>Capped in SQL over a column projection, so a keystroke costs one indexed LIKE
+     * query rather than a product load. A blank query returns nothing.
+     */
+    @Transactional(readOnly = true)
+    public List<PurchaseReportFilterSuggestion> getFilterSuggestions(String query, int limit) {
+        String q = safe(query);
+        if (q.isEmpty()) return List.of();
+
+        Pageable page = PageRequest.of(0, Math.max(1, Math.min(limit, 50)));
+        List<PurchaseReportFilterSuggestion> out = new ArrayList<>();
+        for (Object[] row : productRepository.findReportFilterSuggestions(q, page)) {
+            String code = (String) row[0];
+            String name = (String) row[1];
+            if (isAll(code) && isAll(name)) continue;
+            String sku = safe((String) row[2]);
+            String category = safe((String) row[3]);
+            String subtitle = sku.isEmpty() ? category
+                    : (category.isEmpty() ? "SKU " + sku : "SKU " + sku + " \u00b7 " + category);
+            out.add(new PurchaseReportFilterSuggestion(fallback(code, sku), fallback(name, code), subtitle));
+        }
+        return out;
     }
 
     @Transactional(readOnly = true)
@@ -64,8 +97,9 @@ public class PurchaseReportDataService {
             LocalDate dateTo,
             String vendor,
             String branch,
-            String search) {
-        PurchaseDataset data = loadDataset(dateFrom, dateTo, vendor, branch, search);
+            String search,
+            String itemCode) {
+        PurchaseDataset data = loadDataset(dateFrom, dateTo, vendor, branch, search, itemCode);
         String id = safe(reportId).toLowerCase();
         List<Map<String, Object>> rows = switch (id) {
             case "vendor-master" -> vendorMaster(data);
@@ -110,9 +144,11 @@ public class PurchaseReportDataService {
             LocalDate dateTo,
             String vendor,
             String branch,
-            String search) {
+            String search,
+            String itemCode) {
         PurchaseDataset data = new PurchaseDataset();
         data.asOf = dateTo != null ? dateTo : LocalDate.now();
+        data.itemCodeFilter = isAll(itemCode) ? null : safe(itemCode);
         data.vendors = vendorRepository.findAll().stream()
                 .filter(v -> matchesVendorName(v.getName(), vendor))
                 .filter(v -> matchesBranch(v.getBranch() == null ? null : v.getBranch().getName(),
@@ -122,16 +158,19 @@ public class PurchaseReportDataService {
         data.lpos = lpoRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(lpo -> matchesVendorName(lpo.getVendorName(), vendor))
                 .filter(lpo -> matchesBranch(lpo.getBranchName(), lpo.getBranchCode(), branch))
+                .filter(lpo -> containsLpoItem(lpo, data.itemCodeFilter))
                 .filter(lpo -> matchesLpoSearch(lpo, search))
                 .collect(Collectors.toList());
         data.grns = grnRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(grn -> matchesVendorName(grn.getVendorName(), vendor))
                 .filter(grn -> matchesBranch(grn.getBranchName(), grn.getBranchCode(), branch))
+                .filter(grn -> containsGrnItem(grn, data.itemCodeFilter))
                 .filter(grn -> matchesGrnSearch(grn, search))
                 .collect(Collectors.toList());
         data.invoices = invoiceRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(invoice -> matchesVendorName(invoice.getVendorName(), vendor))
                 .filter(invoice -> matchesBranch(invoice.getBranchName(), invoice.getBranchCode(), branch))
+                .filter(invoice -> containsInvoiceItem(invoice, data.itemCodeFilter))
                 .filter(invoice -> matchesInvoiceSearch(invoice, search))
                 .collect(Collectors.toList());
         data.payments = paymentVoucherRepository.findForReports(dateFrom, dateTo).stream()
@@ -231,7 +270,7 @@ public class PurchaseReportDataService {
     private List<Map<String, Object>> vendorPriceHistory(PurchaseDataset data) {
         Map<String, List<PricePoint>> grouped = new LinkedHashMap<>();
         for (PurchaseInvoice invoice : data.invoices) {
-            for (PurchaseInvoiceItem item : items(invoice)) {
+            for (PurchaseInvoiceItem item : invoiceItems(data, invoice)) {
                 String key = fallback(item.getItemCode(), item.getItemName()) + "::" + fallback(invoice.getVendorName(), "Unassigned");
                 grouped.computeIfAbsent(key, ignored -> new ArrayList<>())
                         .add(new PricePoint(invoice.getInvoiceDate(), item.getItemName(), item.getItemCode(), invoice.getVendorName(), n(item.getUnitCost())));
@@ -353,7 +392,7 @@ public class PurchaseReportDataService {
     private List<Map<String, Object>> grnVariance(PurchaseDataset data) {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (GrnEntity grn : data.grns) {
-            for (GrnItemEntity item : grn.getItems()) {
+            for (GrnItemEntity item : grnItems(data, grn)) {
                 double lpoQty = ni(item.getLpoQty());
                 double grnQty = ni(item.getReceivedQty());
                 double rate = n(item.getUnitCost());
@@ -382,7 +421,7 @@ public class PurchaseReportDataService {
 
     private List<Map<String, Object>> qcRejection(PurchaseDataset data) {
         return data.grns.stream()
-                .flatMap(grn -> grn.getItems().stream()
+                .flatMap(grn -> grnItems(data, grn).stream()
                         .filter(item -> ni(item.getRejectedQty()) > 0)
                         .map(item -> row(
                                 "grnNo", grn.getGrnNo(),
@@ -414,16 +453,16 @@ public class PurchaseReportDataService {
     }
 
     private List<Map<String, Object>> invoiceGrnVariance(PurchaseDataset data) {
-        Map<String, GrnItemEntity> grnItems = new LinkedHashMap<>();
+        Map<String, GrnItemEntity> grnItemsByKey = new LinkedHashMap<>();
         for (GrnEntity grn : data.grns) {
-            for (GrnItemEntity item : grn.getItems()) {
-                grnItems.put(grn.getGrnNo() + "::" + item.getProductCode(), item);
+            for (GrnItemEntity item : grnItems(data, grn)) {
+                grnItemsByKey.put(grn.getGrnNo() + "::" + item.getProductCode(), item);
             }
         }
         List<Map<String, Object>> rows = new ArrayList<>();
         for (PurchaseInvoice invoice : data.invoices) {
-            for (PurchaseInvoiceItem item : items(invoice)) {
-                GrnItemEntity grnItem = grnItems.get(fallback(invoice.getGrnNo(), "") + "::" + item.getItemCode());
+            for (PurchaseInvoiceItem item : invoiceItems(data, invoice)) {
+                GrnItemEntity grnItem = grnItemsByKey.get(fallback(invoice.getGrnNo(), "") + "::" + item.getItemCode());
                 double invQty = ni(item.getQty());
                 double invRate = n(item.getUnitCost());
                 double grnQty = grnItem == null ? 0 : ni(grnItem.getReceivedQty());
@@ -535,21 +574,52 @@ public class PurchaseReportDataService {
 
     private List<Map<String, Object>> vatInputRegister(PurchaseDataset data) {
         return data.invoices.stream()
-                .filter(invoice -> invoice.getStatus() != InvoiceStatus.REVERSED)
+                // Only invoices that actually exist for tax purposes. DRAFT invoices are
+                // unposted work-in-progress and must never appear on an FTA input register.
+                .filter(invoice -> invoice.getStatus() != InvoiceStatus.REVERSED
+                        && invoice.getStatus() != InvoiceStatus.DRAFT)
                 .map(invoice -> {
                     Vendor vendor = findVendor(data, invoice.getVendorName());
+                    double taxable = n(invoice.getSubTotal());
+                    double vat = n(invoice.getTaxTotal());
                     return row(
                             "invNo", invoice.getInvoiceNumber(),
                             "invDate", invoice.getInvoiceDate(),
                             "vendor", invoice.getVendorName(),
                             "trn", vendor == null ? "" : fallback(vendor.getTaxId(), ""),
-                            "taxableAmt", n(invoice.getSubTotal()),
-                            "vatAmt", n(invoice.getTaxTotal()),
-                            "totalAmt", n(invoice.getGrandTotal()),
-                            "vatRate", "5%",
+                            "taxableAmt", taxable,
+                            "vatAmt", vat,
+                            // Total on a VAT register is the taxable value plus its VAT.
+                            // grandTotal also carries landed cost (freight, duty, clearing),
+                            // which is not part of the vendor invoice tax base.
+                            "totalAmt", taxable + vat,
+                            "vatRate", vatRateLabel(invoice),
                             "period", periodLabel(invoice.getInvoiceDate()));
                 })
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Blended input-VAT rate actually charged on a purchase invoice, rendered for the
+     * register's VAT Rate column. Previously hardcoded to "5%", which mislabelled
+     * zero-rated, exempt and mixed-rate vendor invoices.
+     */
+    private String vatRateLabel(PurchaseInvoice invoice) {
+        double taxable = n(invoice.getSubTotal());
+        double vat = n(invoice.getTaxTotal());
+        double rate;
+        if (taxable > 0) {
+            rate = Math.round(vat / taxable * 10000.0) / 100.0;
+        } else {
+            rate = invoice.getItems() == null ? 0 : invoice.getItems().stream()
+                    .mapToDouble(item -> n(item.getTaxPercent()))
+                    .filter(r -> r > 0)
+                    .max()
+                    .orElse(0);
+        }
+        return (rate == Math.floor(rate)
+                ? String.valueOf((long) rate)
+                : String.valueOf(rate)) + "%";
     }
 
     private List<Map<String, Object>> periodLockViolations(PurchaseDataset data) {
@@ -774,6 +844,54 @@ public class PurchaseReportDataService {
                 .anyMatch(item -> matchesSearch(search, item.getItemCode(), item.getItemName(), item.getBarcode()));
     }
 
+    /** Lines of an LPO, narrowed to the picked item when the item filter is active. */
+    private List<LpoItem> lpoItems(PurchaseDataset data, Lpo lpo) {
+        List<LpoItem> all = lpo.getItems() == null ? List.of() : lpo.getItems();
+        if (data.itemCodeFilter == null) return all;
+        return all.stream()
+                .filter(item -> isItem(data.itemCodeFilter, item.getItemCode(), item.getBarcode()))
+                .collect(Collectors.toList());
+    }
+
+    /** Lines of a GRN, narrowed to the picked item when the item filter is active. */
+    private List<GrnItemEntity> grnItems(PurchaseDataset data, GrnEntity grn) {
+        List<GrnItemEntity> all = grn.getItems() == null ? List.of() : grn.getItems();
+        if (data.itemCodeFilter == null) return all;
+        return all.stream()
+                .filter(item -> isItem(data.itemCodeFilter, item.getProductCode(), item.getBarcode()))
+                .collect(Collectors.toList());
+    }
+
+    /** Lines of a purchase invoice, narrowed to the picked item when the item filter is active. */
+    private List<PurchaseInvoiceItem> invoiceItems(PurchaseDataset data, PurchaseInvoice invoice) {
+        List<PurchaseInvoiceItem> all = items(invoice);
+        if (data.itemCodeFilter == null) return all;
+        return all.stream()
+                .filter(item -> isItem(data.itemCodeFilter, item.getItemCode(), item.getBarcode()))
+                .collect(Collectors.toList());
+    }
+
+    private boolean containsLpoItem(Lpo lpo, String itemCode) {
+        if (isAll(itemCode) || lpo.getItems() == null) return isAll(itemCode);
+        return lpo.getItems().stream().anyMatch(item -> isItem(itemCode, item.getItemCode(), item.getBarcode()));
+    }
+
+    private boolean containsGrnItem(GrnEntity grn, String itemCode) {
+        if (isAll(itemCode) || grn.getItems() == null) return isAll(itemCode);
+        return grn.getItems().stream().anyMatch(item -> isItem(itemCode, item.getProductCode(), item.getBarcode()));
+    }
+
+    private boolean containsInvoiceItem(PurchaseInvoice invoice, String itemCode) {
+        if (isAll(itemCode)) return true;
+        return items(invoice).stream().anyMatch(item -> isItem(itemCode, item.getItemCode(), item.getBarcode()));
+    }
+
+    /** Exact (case-insensitive) match of a line's code or barcode against the picked item. */
+    private boolean isItem(String wanted, String code, String barcode) {
+        String term = normalize(wanted);
+        return normalize(code).equals(term) || (barcode != null && normalize(barcode).equals(term));
+    }
+
     private boolean matchesSearch(String search, Object... values) {
         if (isAll(search)) return true;
         String term = normalize(search);
@@ -926,6 +1044,13 @@ public class PurchaseReportDataService {
 
     private static class PurchaseDataset {
         private LocalDate asOf;
+        /**
+         * Exact item code picked in the "Item / SKU Search" filter, or null. LPOs, GRNs and
+         * invoices are pre-filtered to those carrying the item; this field is what narrows
+         * the *lines* of those documents down to the item itself, so an item-level report
+         * shows only the picked item and not every line that shared a document with it.
+         */
+        private String itemCodeFilter;
         private List<Vendor> vendors = List.of();
         private List<Lpo> lpos = List.of();
         private List<GrnEntity> grns = List.of();
