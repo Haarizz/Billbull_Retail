@@ -80,12 +80,26 @@ public interface ReceiptVoucherRepository extends JpaRepository<ReceiptVoucher, 
     List<ReceiptVoucher> findByCustomerCodeAndPurposeOrderByDateAsc(String customerCode, ReceiptPurpose purpose);
 
     /**
-     * Highest voucher_id for a given year-prefix (e.g. "RV-2026-"). Used to derive
-     * the next sequence safely — counting all rows can collide with existing keys
-     * if records span multiple years or any rows have been deleted.
+     * Highest sequence number for a given year-prefix (e.g. "RV-2026-"), compared
+     * NUMERICALLY. A string MAX() cannot be used here: ids are zero-padded to three
+     * digits, so once a year passes 999 the suffix grows to four digits and
+     * lexicographic ordering puts 'RV-2026-999' above 'RV-2026-1000'. That pinned the
+     * high-water mark at 999 forever and made the generator re-propose 1000 on every
+     * call, so every receipt (and the POS settlement behind it) failed on the
+     * voucher_id unique index. Native query — JPQL has no portable string→int cast.
+     *
+     * <p>The regex guard restricts the CAST to rows whose suffix is purely numeric, so
+     * any hand-entered or legacy id in another shape is skipped rather than throwing.
+     *
+     * @return highest sequence for the prefix, or {@code null} when none exist yet
      */
-    @Query("SELECT MAX(rv.voucherId) FROM ReceiptVoucher rv WHERE rv.voucherId LIKE CONCAT(:prefix, '%')")
-    String findMaxVoucherIdByPrefix(@Param("prefix") String prefix);
+    @Query(value = "SELECT MAX(CAST(substring(voucher_id FROM char_length(:prefix) + 1) AS integer)) "
+            + "FROM sales_receipt_vouchers "
+            + "WHERE voucher_id ~ ('^' || :prefix || '[0-9]+$')", nativeQuery = true)
+    Integer findMaxVoucherSequenceByPrefix(@Param("prefix") String prefix);
+
+    /** Collision guard for the voucher-id generator's retry loop. */
+    boolean existsByVoucherId(String voucherId);
 
     /**
      * Row-locked lookup for advance application. Held for the duration of the

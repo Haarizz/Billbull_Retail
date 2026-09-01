@@ -1,0 +1,1236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Code-traced audit of every 80mm POS print in BillBull Retail.">
+<title>The 80mm Roll</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+
+<style>
+:root{
+  --paper:#FBF7EC;
+  --paper-edge:#EDE6D6;
+  --ink:#15181D;
+  --ground:#F6F7F8;
+  --surface:#FFFFFF;
+  --surface-2:#EFF1F3;
+  --line:#DCDFE4;
+  --line-soft:#E8EAEE;
+  --text:#20242B;
+  --text-2:#5A6270;
+  --text-3:#8A929F;
+  --accent:#2E5C8A;
+  --accent-soft:#E4EDF6;
+  --crit:#A32218;
+  --crit-soft:#FBE9E7;
+  --warn:#8A5600;
+  --warn-soft:#FBF0DC;
+  --ok:#2A6350;
+  --ok-soft:#E3F0EB;
+  --unk:#5C5470;
+  --unk-soft:#EEEBF3;
+  --shadow:0 1px 2px rgba(21,24,29,.05),0 8px 24px rgba(21,24,29,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#E8E3D6;
+    --paper-edge:#CFC9B9;
+    --ink:#15181D;
+    --ground:#14171B;
+    --surface:#1B1F25;
+    --surface-2:#232830;
+    --line:#333A44;
+    --line-soft:#282E37;
+    --text:#E4E7EC;
+    --text-2:#A3ABB8;
+    --text-3:#79818E;
+    --accent:#7FAEDC;
+    --accent-soft:#1E2C3B;
+    --crit:#F09B92;
+    --crit-soft:#33201E;
+    --warn:#E0B266;
+    --warn-soft:#302516;
+    --ok:#7FC7AE;
+    --ok-soft:#172A24;
+    --unk:#B6ADCB;
+    --unk-soft:#242131;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#E8E3D6; --paper-edge:#CFC9B9; --ink:#15181D;
+  --ground:#14171B; --surface:#1B1F25; --surface-2:#232830;
+  --line:#333A44; --line-soft:#282E37;
+  --text:#E4E7EC; --text-2:#A3ABB8; --text-3:#79818E;
+  --accent:#7FAEDC; --accent-soft:#1E2C3B;
+  --crit:#F09B92; --crit-soft:#33201E;
+  --warn:#E0B266; --warn-soft:#302516;
+  --ok:#7FC7AE; --ok-soft:#172A24;
+  --unk:#B6ADCB; --unk-soft:#242131;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--text);
+  font-family:"Source Serif 4",Georgia,serif; font-size:16px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1140px;margin:0 auto;padding:0 24px 120px}
+.col{max-width:70ch}
+
+h1,h2,h3,h4,.disp{font-family:"Familjen Grotesk",system-ui,sans-serif;text-wrap:balance}
+h1{font-size:clamp(2.6rem,6vw,4.4rem);line-height:.98;letter-spacing:-.035em;font-weight:700;margin:0}
+h2{font-size:clamp(1.6rem,3vw,2.1rem);line-height:1.1;letter-spacing:-.02em;font-weight:700;margin:0}
+h3{font-size:1.18rem;line-height:1.25;letter-spacing:-.01em;font-weight:600;margin:0 0 .4em}
+h4{font-size:.95rem;font-weight:600;margin:0 0 .3em}
+p{margin:0 0 1em}
+a{color:var(--accent)}
+
+.mono,code,pre,table{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
+code{font-size:.86em;background:var(--surface-2);padding:.1em .35em;border-radius:3px;color:var(--text)}
+
+/* ── masthead ─────────────────────────────────────────────── */
+.mast{padding:72px 0 40px;border-bottom:1px solid var(--line)}
+.eyebrow{
+  font-family:"JetBrains Mono",monospace;font-size:.7rem;font-weight:500;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--text-3);margin:0 0 20px
+}
+.mast .lede{font-size:1.12rem;color:var(--text-2);max-width:62ch;margin-top:22px}
+.mast-meta{display:flex;flex-wrap:wrap;gap:0 40px;margin-top:34px;
+  font-family:"JetBrains Mono",monospace;font-size:.74rem;color:var(--text-3)}
+.mast-meta b{display:block;color:var(--text);font-weight:500;font-size:.86rem;margin-top:3px}
+
+/* ── section scaffolding ──────────────────────────────────── */
+section{padding:64px 0 0}
+.sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:8px;
+  border-top:2px solid var(--ink);padding-top:14px}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .sec-head{border-top-color:var(--text)}}
+:root[data-theme="dark"] .sec-head{border-top-color:var(--text)}
+.sec-id{font-family:"JetBrains Mono",monospace;font-size:.8rem;font-weight:700;
+  color:var(--accent);letter-spacing:.05em;flex:0 0 auto}
+.sec-sub{color:var(--text-2);margin:14px 0 34px;max-width:68ch}
+
+/* ── receipt paper ────────────────────────────────────────── */
+.roll{display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:28px;align-items:start}
+.slip{
+  background:var(--paper);color:var(--ink);border-radius:2px;
+  box-shadow:var(--shadow);position:relative;overflow:hidden;
+  border-left:1px solid var(--paper-edge);border-right:1px solid var(--paper-edge);
+}
+.slip::before,.slip::after{
+  content:"";display:block;height:8px;
+  background:
+    repeating-linear-gradient(-45deg,var(--paper) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(45deg,var(--paper) 0 5px,transparent 5px 10px);
+  background-size:10px 8px;
+}
+.slip-tag{
+  display:flex;justify-content:space-between;align-items:center;gap:12px;
+  padding:10px 16px;background:var(--ink);color:#F3F1EA;
+  font-family:"JetBrains Mono",monospace;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase
+}
+.slip-tag .n{opacity:.55}
+.slip pre{
+  margin:0;padding:16px 16px 20px;font-size:11px;line-height:1.42;
+  white-space:pre;overflow-x:auto;color:var(--ink)
+}
+.slip-note{
+  padding:12px 16px 16px;border-top:1px dashed var(--paper-edge);
+  font-family:"Source Serif 4",serif;font-size:.82rem;line-height:1.5;color:#4A463C
+}
+.slip-note b{font-family:"Familjen Grotesk",sans-serif;font-weight:600}
+.ruler{padding:8px 16px 0;font-family:"JetBrains Mono",monospace;font-size:9px;
+  color:#9C9484;white-space:pre;letter-spacing:0}
+
+/* ── tables ───────────────────────────────────────────────── */
+.tw{overflow-x:auto;background:var(--surface);border:1px solid var(--line);
+  border-radius:4px;box-shadow:var(--shadow);margin:0 0 24px}
+table{border-collapse:collapse;width:100%;font-size:.78rem;font-variant-numeric:tabular-nums}
+th{text-align:left;font-weight:700;padding:11px 14px;background:var(--surface-2);
+  color:var(--text);border-bottom:1px solid var(--line);white-space:nowrap;
+  font-size:.68rem;letter-spacing:.06em;text-transform:uppercase}
+td{padding:10px 14px;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--text-2)}
+tr:last-child td{border-bottom:none}
+td:first-child{color:var(--text);font-weight:500}
+td.wrapy{white-space:normal;min-width:230px;font-family:"Source Serif 4",serif;font-size:.86rem;line-height:1.45}
+
+/* ── status pills ─────────────────────────────────────────── */
+.p{display:inline-block;padding:1px 7px;border-radius:3px;font-size:.66rem;
+  font-weight:700;letter-spacing:.04em;white-space:nowrap;font-family:"JetBrains Mono",monospace}
+.p-ok{background:var(--ok-soft);color:var(--ok)}
+.p-part{background:var(--warn-soft);color:var(--warn)}
+.p-miss{background:var(--crit-soft);color:var(--crit)}
+.p-cond{background:var(--accent-soft);color:var(--accent)}
+.p-cfg{background:var(--unk-soft);color:var(--unk)}
+.p-bad{background:var(--crit-soft);color:var(--crit)}
+.p-unk{background:var(--surface-2);color:var(--text-3)}
+.p-na{color:var(--text-3)}
+
+/* ── findings ─────────────────────────────────────────────── */
+.finds{display:flex;flex-direction:column;gap:14px}
+.f{background:var(--surface);border:1px solid var(--line);border-radius:4px;
+  padding:18px 20px 16px;box-shadow:var(--shadow);border-left:3px solid var(--line)}
+.f.crit{border-left-color:var(--crit)}
+.f.high{border-left-color:var(--warn)}
+.f.med{border-left-color:var(--accent)}
+.f-top{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:7px}
+.f-id{font-family:"JetBrains Mono",monospace;font-size:.72rem;font-weight:700;color:var(--text-3)}
+.f-t{font-family:"Familjen Grotesk",sans-serif;font-weight:600;font-size:1.04rem;
+  letter-spacing:-.01em;color:var(--text);flex:1 1 260px}
+.f p{margin:0 0 .55em;font-size:.93rem;color:var(--text-2)}
+.f p:last-child{margin-bottom:0}
+.f .src{font-family:"JetBrains Mono",monospace;font-size:.72rem;color:var(--text-3);
+  margin-top:9px;padding-top:9px;border-top:1px dashed var(--line);word-break:break-word}
+
+/* ── misc ─────────────────────────────────────────────────── */
+.legend{display:flex;flex-wrap:wrap;gap:8px 14px;margin:0 0 28px;
+  font-size:.78rem;color:var(--text-2);align-items:center}
+.callout{background:var(--accent-soft);border-left:3px solid var(--accent);
+  padding:16px 20px;border-radius:0 4px 4px 0;margin:0 0 28px}
+.callout p{margin:0;font-size:.94rem;color:var(--text)}
+ul.tight{margin:0 0 1em;padding-left:1.15em}
+ul.tight li{margin-bottom:.34em;color:var(--text-2)}
+ul.tight li b{color:var(--text);font-family:"Familjen Grotesk",sans-serif;font-weight:600}
+hr.soft{border:none;border-top:1px solid var(--line);margin:44px 0}
+.kicker{font-family:"JetBrains Mono",monospace;font-size:.7rem;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--text-3);margin:36px 0 14px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:720px){
+  .roll{grid-template-columns:1fr}
+  .wrap{padding:0 16px 80px}
+  .slip pre{font-size:10px}
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">BillBull Retail · POS print surface · code audit</p>
+  <h1>The 80&nbsp;mm Roll</h1>
+  <p class="lede">Every receipt, slip, voucher and report the POS can push to an 80&nbsp;mm thermal printer — reconstructed from the code that actually builds the bytes, not from the screens or the settings copy. Nineteen live print paths, thirteen documented gaps, and twenty-eight defects between what the paper says and what the ledger holds.</p>
+  <div class="mast-meta">
+    <div>Audited<b>2026-09-01</b></div>
+    <div>Branch<b>feature/posclient</b></div>
+    <div>Live paths<b>19</b></div>
+    <div>Absent types<b>13</b></div>
+    <div>Findings<b>28</b></div>
+  </div>
+</header>
+
+<section id="method">
+  <div class="sec-head"><span class="sec-id">00</span><h2>How this was determined</h2></div>
+  <div class="col">
+    <p class="sec-sub">Every claim below was traced to a builder function, its call sites, and the option bag actually passed at those call sites. Where a value is a default that a call site never overrides, that default is what prints — and it is reported as what prints.</p>
+    <p>Four builders produce essentially all 80&nbsp;mm output. <code>buildEscPosReceipt</code> (Template&nbsp;1) emits ESC/POS text with rastered logo and native QR. <code>renderBilingualReceiptCanvas</code> (Template&nbsp;2) paints the whole receipt to a canvas and ships it as one raster. <code>buildEscPosDocument</code> wraps a plain-text body in a shared branded header and is used by every voucher, statement, layaway, return and report. <code>buildThermalReceiptText</code> is the text/GDI fallback — and, as shown in <a href="#f6">F6</a>, it is a materially different document from the ESC/POS one it substitutes for.</p>
+    <p>Physical geometry is fixed in <code>escPosReceipt.js</code>: 80&nbsp;mm paper is 576 dots / 48 Font-A columns, with a one-column software gutter each side, so <b>every body is built to 46 usable columns</b>. There is no <code>GS L</code>/<code>GS W</code> hardware margin — it was deliberately removed after a POS-80C leaked the width payload as a stray glyph. The mockups below are rendered at that exact 46-column width; the ruler above each one marks columns 1, 10, 20, 30, 40, 46.</p>
+    <p><b>Sample values in the mockups are illustrative.</b> They demonstrate the layout the code produces — field order, labels, alignment, separators, what is present and what is absent. They are not observed output and are not evidence of any figure being correct.</p>
+  </div>
+
+  <div class="legend" style="margin-top:28px">
+    <span class="p p-ok">IMPLEMENTED</span>
+    <span class="p p-part">PARTIAL</span>
+    <span class="p p-miss">MISSING</span>
+    <span class="p p-cond">CONDITIONAL</span>
+    <span class="p p-cfg">CONFIG-DEPENDENT</span>
+    <span class="p p-bad">INCORRECT</span>
+    <span class="p p-unk">NOT VERIFIED</span>
+  </div>
+</section>
+
+<section id="inventory">
+  <div class="sec-head"><span class="sec-id">A</span><h2>Complete print inventory</h2></div>
+  <p class="sec-sub">Nineteen distinct 80&nbsp;mm outputs exist in the code. They are produced by four builders and dispatched through one of two transports — the local print agent (USB / Bluetooth / Windows queue) or a backend raw-socket relay (network IP printers).</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>Print type</th><th>Title on paper</th><th>Builder</th><th>Trigger</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>01</td><td>POS Sale Receipt (Template 1)</td><td class="mono">TAX INVOICE / SALES INVOICE</td><td class="mono">buildEscPosReceipt</td><td>Checkout complete</td><td><span class="p p-ok">IMPLEMENTED</span></td></tr>
+      <tr><td>02</td><td>POS Sale Receipt (Template 2, bilingual)</td><td class="mono">TAX INVOICE + Arabic</td><td class="mono">renderBilingualReceiptCanvas</td><td>Checkout, when template = <code>billbull-ar</code></td><td><span class="p p-ok">IMPLEMENTED</span></td></tr>
+      <tr><td>03</td><td>Sale Reprint — Reprint panel</td><td class="mono">TAX INVOICE + *** COPY / REPRINT ***</td><td class="mono">buildEscPosReceipt</td><td>Reprint tab, per invoice</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>04</td><td>Sale Reprint — Last Receipt dialog</td><td class="mono">TAX INVOICE + *** COPY / REPRINT ***</td><td class="mono">buildEscPosReceipt</td><td>Last Receipt → Reprint</td><td><span class="p p-bad">INCONSISTENT</span></td></tr>
+      <tr><td>05</td><td>Delivery Order slip (Out for Delivery)</td><td class="mono">TAX INVOICE</td><td class="mono">buildEscPosReceipt</td><td>Delivery modal → Out for Delivery</td><td><span class="p p-bad">INCORRECT</span></td></tr>
+      <tr><td>06</td><td>Delivery Settlement receipt</td><td class="mono">TAX INVOICE</td><td class="mono">buildEscPosReceipt</td><td>Delivery Settlement → Finalize</td><td><span class="p p-bad">INCORRECT</span></td></tr>
+      <tr><td>07</td><td>Customer Payment Receipt</td><td class="mono">PAYMENT RECEIPT</td><td class="mono">buildReceiptVoucherThermalText</td><td>Auto on save + manual button</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>08</td><td>Customer Advance Receipt</td><td class="mono">ADVANCE RECEIPT</td><td class="mono">buildReceiptVoucherThermalText</td><td>Auto on advance save</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>09</td><td>Advance Applied / Adjustment</td><td class="mono">ADVANCE APPLIED</td><td class="mono">buildReceiptVoucherThermalText</td><td>Auto on apply-to-invoice</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>10</td><td>Customer Statement</td><td class="mono">CUSTOMER STATEMENT</td><td class="mono">buildStatementThermalText</td><td>Statement tab → Print</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>11</td><td>Layaway Receipt</td><td class="mono">NOT A TAX INVOICE / LAYAWAY RECEIPT</td><td class="mono">buildLayawayReceiptText</td><td>Auto on layaway save</td><td><span class="p p-ok">IMPLEMENTED</span></td></tr>
+      <tr><td>12</td><td>Sales Return / Refund receipt</td><td class="mono">Sales Return</td><td class="mono">buildSalesReturnReceiptBody</td><td>Return screen → Print / Reprint</td><td><span class="p p-bad">NO HEADER</span></td></tr>
+      <tr><td>13</td><td>Credit Voucher (Code 39 barcode)</td><td class="mono">Credit Voucher</td><td class="mono">buildCreditVoucherBody</td><td>Return screen → Print Voucher</td><td><span class="p p-bad">NO HEADER</span></td></tr>
+      <tr><td>14</td><td>X-Report / Session Close Report</td><td class="mono">X-REPORT / SESSION CLOSE REPORT</td><td class="mono">buildXReportViewModel</td><td>Manual Print — session closed only</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>15</td><td>Z-Report / End-of-Day Closing Report</td><td class="mono">Z-REPORT / END-OF-DAY CLOSING REPORT</td><td class="mono">buildZReportViewModel</td><td>Manual Print — day closed only</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>16</td><td>X/Z auto-print on Close Session / Close Day</td><td class="mono">as above</td><td class="mono">autoPrintReportThermal</td><td>Automatic, forced 80&nbsp;mm, dedupe-guarded</td><td><span class="p p-ok">IMPLEMENTED</span></td></tr>
+      <tr><td>17</td><td>Printer Test Receipt</td><td class="mono">POS PRINTER TEST</td><td class="mono">buildEscPosTestReceipt</td><td>Devices → Test Print</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>18</td><td>Sales Invoice thermal print (back office)</td><td class="mono">TAX INVOICE / SALES INVOICE</td><td class="mono">useInvoiceThermalPrint</td><td>Sales Invoice screen → thermal print</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>19</td><td>Text / GDI compatibility receipt</td><td class="mono">TAX INVOICE (plain)</td><td class="mono">buildThermalReceiptText</td><td>Automatic when the driver rejects raw ESC/POS</td><td><span class="p p-bad">DIVERGENT</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="kicker">Requested types with no 80&nbsp;mm print path in the codebase</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>Print type</th><th>What exists instead</th><th>State</th></tr></thead>
+    <tbody>
+      <tr><td>Void / Cancelled Sale receipt</td><td class="wrapy">Voided lines print inside the sale receipt tagged <code>[VOID]</code> with negative amounts and a "Voided Items (n)" row; voids also appear as X §10 / Z §10b. No standalone void slip.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Exchange receipt</td><td class="wrapy"><code>exchangeCount</code> / <code>exchangeTotal</code> are aggregated into X §8 and Z §8 only.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Cash In / Cash Out / Cash Drop slip</td><td class="wrapy"><code>CashMovements.jsx</code> creates <code>DROP_IN</code> / <code>DROP_OUT</code> records; the file contains no print call of any kind. Movements surface only inside X §2b and Z §4d.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Opening Session / Opening Float slip</td><td class="wrapy">Opening cash is captured at session open and printed only later, as a row inside the X-Report.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Session Close slip (separate from X-Report)</td><td class="wrapy">The X-Report <i>is</i> the session-close report — its own title says so.</td><td><span class="p p-cond">BY DESIGN</span></td></tr>
+      <tr><td>Denomination-only slip</td><td class="wrapy">Denominations print as X §1 / Z §1 inside the full report.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Expense / Petty Cash slip</td><td class="wrapy"><code>financials.expensevoucher</code> has A4/PDF paths only; no 80&nbsp;mm builder.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Quotation / Estimate</td><td class="wrapy">No thermal builder; quotations are A4 only.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Kitchen / preparation print</td><td class="wrapy"><code>PrintJobType.KITCHEN</code> exists in the backend enum. No producer anywhere writes it.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Hold / Recall slip</td><td class="wrapy"><code>PosHeldSale</code> persists parked sales; no print path references it.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Gift voucher / coupon</td><td class="wrapy">Only the return-issued Credit Voucher (#13) exists.</td><td><span class="p p-miss">MISSING</span></td></tr>
+      <tr><td>Loyalty / points receipt</td><td class="wrapy">A <code>showLoyaltyPoints</code> toggle is threaded through the option bag. Template 1 never reads it; Template 2 accepts it. No dedicated slip.</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>Cash Refund slip</td><td class="wrapy">Refunds print as the Sales Return receipt (#12) — which carries no company header at all.</td><td><span class="p p-part">PARTIAL</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="mockups">
+  <div class="sec-head"><span class="sec-id">B</span><h2>What each one actually prints</h2></div>
+  <p class="sec-sub">Reconstructed line-for-line from the builders, at the real 46-column body width inside a 48-column page. Field order, labels, separators, indentation and blank lines are the code's; the values are illustrative. Anything absent from a mockup is absent from the print.</p>
+  <div class="roll">
+<article class="slip"><div class="slip-tag"><span>POS Sale Receipt &mdash; Template 1</span><span class="n">01</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                  TAX INVOICE
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+ Invoice No:                    INV-2026-000841
+ Date:                     01/09/2026, 16:35:12
+ Cashier:                           John Mathew
+ Terminal ID:                            POS-01
+ Counter:                             Counter 1
+ ----------------------------------------------
+ 2x Almarai Fresh Milk 1L
+   Price @ AED 6.50                   AED 13.00
+   Discount (10.00%)                 - AED 1.30
+   Net @ AED 5.85                     AED 11.70
+   VAT: AED 5.00%
+   SKU: 6281007021234
+   Batch: ST-010926-L01-MILK1L-1
+ 1x Barakat Orange Juice 1.5L Chilled
+    Cold Pressed
+   @ AED 18.00                        AED 18.00
+   VAT: AED 5.00%
+   SKU: 6291000112345
+ ----------------------------------------------
+ Subtotal:                            AED 31.00
+ Discount:                             AED 1.30
+ Taxable Amount:                      AED 28.29
+ VAT (incl.):                          AED 1.41
+ ----------------------------------------------
+ TOTAL:                               AED 29.70
+ ----------------------------------------------
+ Payment Mode:                             Cash
+ Cash:                                AED 50.00
+ Change:                              AED 20.30
+ ----------------------------------------------
+ CUSTOMER
+ Name:                             Aisha Rahman
+ Mobile:                       +971 50 123 4567
+ Customer Code:                      CUST-00412
+ ----------------------------------------------
+     [ QR - native GS ( k, module size 4 ]
+                 Scan to verify
+ ----------------------------------------------
+         Thank you for shopping with us
+       Goods once sold are not returnable
+
+ -- feed 2 lines, feed 120 dots, partial cut --
+</pre><div class="slip-note"><b>TOTAL</b> prints at double height. The QR payload is <b>not ZATCA</b> &mdash; it is a multi-line plaintext blob listing every item (F2). <b>VAT: AED 5.00%</b> is a live formatting bug &mdash; the currency formatter is applied to a percentage (F19). No barcode, no delivery block, no stamp unless a stamp image replaces the QR entirely. Header lines are software-centred; the footer and &ldquo;Scan to verify&rdquo; use the printer&rsquo;s <code>ESC a 1</code>, which the code elsewhere states this hardware ignores (F20).</div></article>
+<article class="slip"><div class="slip-tag"><span>POS Sale Receipt &mdash; Template 2 (bilingual raster)</span><span class="n">02</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>    [ LOGO, max 60% width x 180 dots tall ]
+                  TAX INVOICE
+                 [Arabic title]
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+      - - - - - - - - - - - - - - - - - -
+ Invoice No / [ar]              INV-2026-000841
+ Date / [ar]                        01 Sep 2026
+ Time / [ar]                           16:35:12
+ Branch / [ar]         Main Branch - Dubai Mall
+ Terminal / [ar]                         POS-01
+ Cashier / [ar]                     John Mathew
+      - - - - - - - - - - - - - - - - - -
+ ITEMS + Arabic column headings
+ 2x Almarai Fresh Milk 1L
+    [Arabic item name if supplied]
+   6.50 x 2                               13.00
+      - - - - - - - - - - - - - - - - - -
+ Subtotal / [ar]                          31.00
+ Discount / [ar]                           1.30
+ TOTAL / [ar]                             29.70
+      - - - - - - - - - - - - - - - - - -
+ DELIVERY ADDRESS  (Template 2 only)
+ LOYALTY POINTS    (Template 2 only)
+      - - - - - - - - - - - - - - - - - -
+ VAT Standard 5% / [ar]                    1.41
+ VAT Zero-rated / [ar]                     0.00
+ Total VAT / [ar]                          1.41
+      - - - - - - - - - - - - - - - - - -
+                Thank You / [ar]
+           [ configured footer text ]
+       [ CODE 128B BARCODE - invoice no ]
+                INV-2026-000841
+       [ QR - rasterised, 72% of width ]
+             Scan to verify / [ar]
+      - - - - - - - - - - - - - - - - - -
+         BillBull Retail OS . geebu.io
+             Served by John Mathew
+</pre><div class="slip-note">A completely different document from Template 1, shipped as one bitmap. <b>Has</b>: Arabic throughout, a Code&nbsp;128 barcode, a delivery-address block, loyalty points, and a VAT standard/zero split. <b>Lacks</b>: any stamp support &mdash; the Show Stamp toggle is silently inert here (F13). The last two lines are <b>hardcoded vendor branding</b> on every customer receipt. Canvas height is estimated ahead of drawing and the output is cropped to that estimate, so a long basket can silently lose the barcode, QR and footer (F14).</div></article>
+<article class="slip"><div class="slip-tag"><span>Sale Reprint &mdash; Reprint panel</span><span class="n">03</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                  TAX INVOICE
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+             *** COPY / REPRINT ***
+ ----------------------------------------------
+ Invoice No:                    INV-2026-000841
+ Date:                     01/09/2026, 16:35:12
+ Cashier:                           John Mathew
+ Terminal ID:                            POS-01
+ ----------------------------------------------
+ [ identical item block to the original ]
+ ----------------------------------------------
+ Subtotal:                            AED 31.00
+ Discount:                             AED 1.30
+ Taxable Amount:                      AED 28.29
+ VAT (incl.):                          AED 1.41
+ ----------------------------------------------
+ TOTAL:                               AED 29.70
+ ----------------------------------------------
+ Payment Mode:                             Cash
+ ----------------------------------------------
+ CUSTOMER
+ Name:                             Aisha Rahman
+ ----------------------------------------------
+             [ QR ] Scan to verify
+ ----------------------------------------------
+             [ configured footer ]
+</pre><div class="slip-note">Correct where it matters: same invoice number, same totals, same tax, same business date, clear COPY marker, and the CREDIT ACCOUNT block is <b>deliberately suppressed</b> because its figures are a point-in-time snapshot that was never persisted. But the <b>tender breakdown is lost</b> &mdash; no payment allocations, no Cash Received, no Change; only the single &ldquo;Payment Mode&rdquo; row survives (F7). The Last&nbsp;Receipt dialog reprints the <i>same invoice</i> <b>with</b> those rows, so one invoice has two different reprints. Cashier is re-derived from <code>invoice.createdBy</code>, not from who is reprinting.</div></article>
+<article class="slip"><div class="slip-tag"><span>Delivery Order slip &mdash; Out for Delivery</span><span class="n">05</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                  TAX INVOICE
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+ Invoice No:                    INV-2026-000842
+ Date:                     01/09/2026, 17:02:44
+ Cashier:                           John Mathew
+ Terminal ID:                            POS-01
+ ----------------------------------------------
+ [ item block ]
+ ----------------------------------------------
+ Subtotal:                           AED 240.00
+ VAT (incl.):                         AED 11.43
+ Delivery Charge:                     AED 15.00
+ ----------------------------------------------
+ TOTAL:                              AED 255.00
+ ----------------------------------------------
+ CUSTOMER
+ Name:                             Aisha Rahman
+ Mobile:                       +971 50 123 4567
+ ----------------------------------------------
+             [ QR ] Scan to verify
+ ----------------------------------------------
+             [ configured footer ]
+</pre><div class="slip-note"><b>This is the defect, not a simplification.</b> The slip is titled TAX INVOICE, is byte-for-byte a sale receipt with the credit block forced off, and prints <b>none of the delivery data</b>: no delivery address, no driver, no delivery date, no time slot, no special instructions, no recipient signature line. Those fields are collected in the modal and packed into the invoice <code>notes</code> string, which no thermal builder reads (F9). A driver leaves with a slip that cannot tell them where to go.</div></article>
+<article class="slip"><div class="slip-tag"><span>Delivery Settlement receipt</span><span class="n">06</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                  TAX INVOICE
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+ Invoice No:                    INV-2026-000842
+ Date:                     01/09/2026, 17:02:44
+ Cashier:                           John Mathew
+ ----------------------------------------------
+ [ full item block reprinted ]
+ ----------------------------------------------
+ TOTAL:                              AED 255.00
+ ----------------------------------------------
+ Payment Mode:                             Card
+ Cash Received:                      AED 255.00
+ ----------------------------------------------
+ CUSTOMER
+ Name:                             Aisha Rahman
+ ----------------------------------------------
+ CREDIT ACCOUNT
+ Previous Balance:                   AED 255.00
+ Invoice Credit:                       AED 0.00
+ Amount Paid:                        AED 255.00
+ Updated Balance:                      AED 0.00
+ ----------------------------------------------
+             [ QR ] Scan to verify
+ ----------------------------------------------
+             [ configured footer ]
+</pre><div class="slip-note">The CREDIT ACCOUNT arithmetic here is right &mdash; Invoice Credit is deliberately zero because the invoice already hit the ledger at Out-for-Delivery, so Previous &minus; Paid = Updated. What is wrong is the tender line: the settled amount is passed as <code>cashGiven</code> with no payment block, so the builder prints <b>&ldquo;Cash Received&rdquo; even when the customer paid by card</b> (F10). Also still titled TAX INVOICE, and the Date shown is the <i>original</i> sale timestamp, not the settlement date.</div></article>
+<article class="slip"><div class="slip-tag"><span>Customer Payment Receipt</span><span class="n">07</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                PAYMENT RECEIPT
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+ Receipt No:                     RCV-2026-00119
+ Date:                              01 Sep 2026
+ Customer:                         Aisha Rahman
+ Code:                               CUST-00412
+ ----------------------------------------------
+ Payment Mode:                    Bank Transfer
+ Bank Account:                ENBD Current 0091
+ Reference:                           TRF-88213
+ ----------------------------------------------
+                INVOICES SETTLED
+ INV-2026-000771                     AED 480.00
+ INV-2026-000802                     AED 220.00
+ ----------------------------------------------
+ AMOUNT RECEIVED                     AED 700.00
+ ----------------------------------------------
+             Received with thanks.
+             [ configured footer ]
+</pre><div class="slip-note">Structurally sound and the settled-invoice list is a real strength. But this document carries <b>no cashier, no terminal, no counter, no time-of-day, no QR, no barcode and no reprint marker</b> &mdash; the manual Print Receipt button produces a slip indistinguishable from the original (F19). Paper size is <b>hardcoded to 80&nbsp;mm</b> at the call site, so a 58&nbsp;mm terminal prints an 80&nbsp;mm layout. If <code>paymentDate</code> is absent the builder substitutes <i>today</i>, so a reprint can carry a different date than the original.</div></article>
+<article class="slip"><div class="slip-tag"><span>Customer Advance Receipt</span><span class="n">08</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                ADVANCE RECEIPT
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+ Receipt No:                     ADV-2026-00047
+ Date:                              01 Sep 2026
+ Customer:                         Aisha Rahman
+ Code:                               CUST-00412
+ ----------------------------------------------
+ Payment Mode:                             Cash
+ Reference:              Deposit for bulk order
+ ----------------------------------------------
+ AMOUNT RECEIVED                   AED 1,500.00
+ ----------------------------------------------
+             Received with thanks.
+             [ configured footer ]
+</pre><div class="slip-note">The same builder as #07 with a different title. Note what a customer-advance document does <b>not</b> show: no running advance balance, no &ldquo;advance on account&rdquo; wording, no expiry or terms, and no indication that this is a liability rather than a settled sale. <code>paymentDate</code> falls back to <code>new Date()</code> at the call site, so the receipt date is the moment of saving, not a business date.</div></article>
+<article class="slip"><div class="slip-tag"><span>Advance Applied / Adjustment</span><span class="n">09</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                ADVANCE APPLIED
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+ Receipt No:                     ADV-2026-00047
+ Date:                              01 Sep 2026
+ Customer:                         Aisha Rahman
+ Code:                               CUST-00412
+ ----------------------------------------------
+ Payment Mode:                   Advance Credit
+ ----------------------------------------------
+ Applied to Invoice INV-2026-000855, INV-2026-0
+ ----------------------------------------------
+ AMOUNT RECEIVED                   AED 1,500.00
+ ----------------------------------------------
+             Received with thanks.
+</pre><div class="slip-note">Two problems visible in the layout itself. The invoice list is joined into <b>one comma-separated value that is right-truncated at the column edge</b> when more than one invoice is settled &mdash; unlike #07, which lists them one per line. And the total row still reads <b>&ldquo;AMOUNT RECEIVED&rdquo;</b> although no money changed hands; this is an application of an existing advance. Receipt No repeats the <i>source voucher</i> id, so every application of the same advance prints the same document number.</div></article>
+<article class="slip"><div class="slip-tag"><span>Customer Statement</span><span class="n">10</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+               CUSTOMER STATEMENT
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+ Customer:                         Aisha Rahman
+ Code:                               CUST-00412
+ Period:               2026-08-01 to 2026-08-31
+ ----------------------------------------------
+ Opening Balance                       1,240.00
+ ----------------------------------------------
+ 2026-08-04                       Sales Invoice
+ Counter sale - INV-2026-000712
+ Dr 480.00                         Bal 1,720.00
+ ----------------------------------------------
+ 2026-08-11                     Receipt Voucher
+ Bank transfer - RCV-2026-00098
+ Cr 700.00                         Bal 1,020.00
+ ----------------------------------------------
+ 2026-08-27                         Credit Note
+ Return - CRN-2026-00013
+ Cr 120.00                           Bal 900.00
+ ----------------------------------------------
+ CLOSING BAL.                        AED 900.00
+ ----------------------------------------------
+ Total Invoiced                        1,240.00
+ Total Paid                              820.00
+ ----------------------------------------------
+             [ configured footer ]
+</pre><div class="slip-note">Every entry costs three lines plus a full-width rule, so a 40-line month is roughly a metre of paper. More seriously, <b>only the closing balance carries a currency prefix</b> &mdash; every debit, credit, running balance and total prints as a bare number (F21). Opening Balance is printed but the entry list explicitly filters out the <code>OPENING_BALANCE</code> row, so the two are sourced differently. No cashier, terminal, generated-at timestamp or page marker.</div></article>
+<article class="slip"><div class="slip-tag"><span>Layaway Receipt</span><span class="n">11</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+                LAYAWAY RECEIPT
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+ ----------------------------------------------
+               NOT A TAX INVOICE
+                LAYAWAY RECEIPT
+ ----------------------------------------------
+ LAY: LAY-2026-00021
+ 01 Sep 2026
+ Cust: Aisha Rahman
+ Tel: +971 50 123 4567
+ ----------------------------------------------
+ Samsung 55in QLED TV x1           AED 2,890.00
+ Wall Mount Bracket Heavy Duty x1    AED 149.00
+ ----------------------------------------------
+ Sale Total                        AED 3,039.00
+ Deposit (Cash)                    AED 1,000.00
+ BALANCE DUE                       AED 2,039.00
+ ----------------------------------------------
+ Due Date: 30 Sep 2026
+ Note: Customer to collect in store
+ ----------------------------------------------
+         Items reserved until due date.
+      Balance must be paid on collection.
+             [ configured footer ]
+</pre><div class="slip-note">The best-behaved of the secondary documents: it declares <b>NOT A TAX INVOICE</b>, states the terms, and wraps long item names instead of truncating. Two cracks: the document title prints <b>twice</b> &mdash; once from the shared branded header and again from the body block (the body is passed <code>omitHeader</code> for the company block but still emits its own title lines). And the date falls back to <i>today</i> when <code>createdAt</code> is missing, so a reprint can re-date the layaway.</div></article>
+<article class="slip"><div class="slip-tag"><span>Sales Return / Refund receipt</span><span class="n">12</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre> ----------------------------------------------
+ Sales Return
+ ----------------------------------------------
+ Return No                        SR-2026-00034
+ Date                                2026-09-01
+ Original Invoice               INV-2026-000771
+ Receipt No                          RCP-000771
+ Customer                          Aisha Rahman
+ Mobile                        +971 50 123 4567
+ Terminal                                POS-01
+ Cashier                            john.mathew
+ ----------------------------------------------
+ Almarai Fresh Milk 1L
+   2 x 6.50                               13.00
+   Discount                               -1.30
+   VAT                                     0.56
+   Condition: RESALEABLE
+ ----------------------------------------------
+ Returned Items                           11.70
+ VAT Reversal (incl.)                      0.56
+ Total Refund                             11.70
+ ----------------------------------------------
+ Refund Method                   Credit Voucher
+ Voucher No                       CV-2026-00019
+ Voucher Code                     CV-19-8842-KQ
+ Expiry Date                         2027-03-01
+ Approved By                       supervisor01
+</pre><div class="slip-note"><b>There is no company header on this document.</b> The Return screen never passes a header object, so the shared branded header receives an empty bag and emits <b>only that first divider</b> &mdash; no logo, no company name, no address, no telephone, no TRN, and no bold document title (F1). A refund is a credit-note-class document; issuing one with no issuer identity and no TRN is a tax-compliance exposure, not a cosmetic gap. Also: no QR, no currency symbols anywhere, and no cut-clearance concern only because the shared document builder handles the cut.</div></article>
+<article class="slip"><div class="slip-tag"><span>Credit Voucher</span><span class="n">13</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre> ----------------------------------------------
+ Credit Voucher
+ ----------------------------------------------
+ Voucher No                       CV-2026-00019
+ Voucher Code                     CV-19-8842-KQ
+ ----------------------------------------------
+ Original Value                           11.70
+ Current Balance                          11.70
+ Status                                  Active
+ ----------------------------------------------
+ Issue Date                          2026-09-01
+ Expiry Date                         2027-03-01
+ Customer                          Aisha Rahman
+ Original Invoice               INV-2026-000771
+ Return No                        SR-2026-00034
+ ----------------------------------------------
+ Redeemable at any BillBull outlet.
+ Not exchangeable for cash.
+ Valid until the expiry date shown above.
+
+       [ CODE 39 BARCODE, 90 dots high ]
+                   CV198842KQ
+</pre><div class="slip-note">The one document with a <b>native Code&nbsp;39 barcode</b> placed correctly &mdash; last, directly above the tear-off, with the human-readable value beneath it so a faded voucher can still be keyed in. Value and balance are printed separately and always from persisted data, so a reprint after partial redemption shows what is genuinely left. But it shares #12&rsquo;s fatal gap: <b>no company header</b>. A bearer instrument redeemable for money, printed with no issuer name, no outlet, and no TRN (F1).</div></article>
+<article class="slip"><div class="slip-tag"><span>X-Report / Session Close Report</span><span class="n">14</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+        X-REPORT / SESSION CLOSE REPORT
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+            Report No: XR-000000117
+              Cashier: John Mathew
+              Session: SESS-000117
+                Date: 2026-09-01
+ ----------------------------------------------
+ Opening Cash                        AED 500.00
+ Total Sales                       AED 8,412.75
+ Cash Sales                        AED 3,190.00
+ Card Sales                        AED 4,522.75
+ Credit Sales                        AED 700.00
+ Online / Bank Transfer                AED 0.00
+ Returns                             AED 118.50
+ Discounts                           AED 264.10
+ Expected Cash                     AED 3,540.00
+ Actual Cash                       AED 3,520.00
+ Cash Variance                       AED -20.00
+ ----------------------------------------------
+ 0. SESSION INFORMATION
+ Session No.: SESS-000117
+ Branch: Main Branch - Dubai Mall
+ Terminal: POS-01
+ Counter: Counter 1
+ Cashier: John Mathew
+ Opened At: 01/09/2026 08:02
+ Closed At: 01/09/2026 22:14
+ Duration: 14h 12m
+ ----------------------------------------------
+ 1. DENOMINATION COUNT
+ AED 1000                     0        AED 0.00
+ AED 500                       4    AED 2000.00
+ AED 200                       6    AED 1200.00
+ AED 100                      2      AED 200.00
+ AED 50                       2      AED 100.00
+ AED 20                       1       AED 20.00
+ ----------------------------------------------
+ Total Cash Counted                AED 3,520.00
+ ----------------------------------------------
+ 2. CASH DRAWER SUMMARY
+ Opening Cash / Float                AED 500.00
+ Cash Sales                        AED 3,190.00
+ Cash Drop In                          AED 0.00
+ Cash Drop Out                       AED 150.00
+ Expected Cash in Drawer           AED 3,540.00
+ Actual Cash Counted               AED 3,520.00
+ ----------------------------------------------
+ Cash Variance (Counted)             AED -20.00
+ ----------------------------------------------
+ 2A. CASH CONTEXT - BACK-OFFICE / NON-DRAWE
+ Customer Receipts (Cas Not available in X-Repo
+ Customer Advances (Cas Not available in X-Repo
+ ----------------------------------------------
+ 3. PAYMENT / TENDER SUMMARY
+ Cash (14)                         AED 3,190.00
+ Card (19)                         AED 4,522.75
+ Credit (2)                          AED 700.00
+ ----------------------------------------------
+ Total Collected (35)              AED 8,412.75
+ ----------------------------------------------
+ 6. VAT / TAX SUMMARY
+ VAT 5% (AED 8,012.14/AED 400.61)  AED 8,412.75
+ ----------------------------------------------
+ 10. VOIDED ITEMS (POSTED THEN VOIDED)
+ INV-2026-000798 (Barakat Orang 01/09/2026 19:2
+ ----------------------------------------------
+ 12. CASHIER ATTRIBUTION
+ John Mathew                       AED 8,412.75
+ ----------------------------------------------
+         Generated 01/09/2026, 22:16:03
+          By: john.mathew@billbull.io
+             *** END OF REPORT ***
+</pre><div class="slip-note">The strongest report in the system on <i>content</i> &mdash; Expected Cash and variance are backend-authoritative with no client fallback formula, and NOT-COUNTED is deliberately kept distinct from counted-zero. Its <i>layout</i> is where it fails. Sections 6, 10 and 11 are 4-, 8- and 5-column tables collapsed into <code>label (col2/col3/&hellip;) value</code> and then <b>hard-truncated at 46 columns</b>: the VAT row buries taxable and tax amounts inside a parenthesis, and a voided-item row loses quantity, unit price, line total, reason and who voided it (F15). Nothing here is marked as a reprint, and the &ldquo;Generated&rdquo; line changes on every print (F17).</div></article>
+<article class="slip"><div class="slip-tag"><span>Z-Report / End-of-Day Closing Report</span><span class="n">15</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>  [ LOGO RASTER 331 x N dots, padded to 576 ]
+
+      Z-REPORT / END-OF-DAY CLOSING REPORT
+            Main Branch - Dubai Mall
+              BILLBULL TRADING LLC
+      Shop 12, Dubai Mall, Downtown Dubai
+              Tel: +971 4 123 4567
+              TRN: 100123456700003
+            Report No: ZR-000000117
+           Business Date: 2026-09-01
+                  Sessions: 3
+ ----------------------------------------------
+ Opening Cash                      AED 1,500.00
+ Total Sales                      AED 24,880.40
+ Expected Cash                     AED 9,320.00
+ Actual Cash                       AED 9,286.00
+ Cash Variance                       AED -34.00
+ ----------------------------------------------
+ 0. SESSION INFORMATION
+ SESS-000115 (John Mathew/01/09 08 AED 3,110.00
+ SESS-000116 (Fatima Noor/01/09 14 AED 2,656.00
+ SESS-000117 (John Mathew/01/09 16 AED 3,520.00
+ ----------------------------------------------
+ 1. DENOMINATION COUNT
+ AED 500                       11   AED 5500.00
+ AED 200                       14   AED 2800.00
+ ----------------------------------------------
+ Total Cash Counted                AED 9,286.00
+ ----------------------------------------------
+ 2. SALES SUMMARY
+ Gross Sales                      AED 24,880.40
+ Total Discount                    (AED 642.10)
+ Net Sales Before VAT             AED 23,695.62
+ VAT Amount (5%)                   AED 1,184.78
+ Net Sales Including VAT          AED 24,880.40
+ ----------------------------------------------
+ 2. INVOICE / TRANSACTION SUMMARY
+ Total Sales Invoices (98)        AED 24,880.40
+ ----------------------------------------------
+ 4. CASH DRAWER SUMMARY
+ Opening Cash / Float              AED 1,500.00
+ Cash Sales                        AED 8,970.00
+ Expected Cash in Drawer           AED 9,320.00
+ ----------------------------------------------
+ 4A. CONSOLIDATED CASH POSITION (INFORMATIO
+ Customer Receipts (Cash)            AED 700.00
+ Customer Advances (Cash)          AED 1,500.00
+ ----------------------------------------------
+ 5. CARD / BANK SETTLEMENT SUMMARY
+ Total Card Sales                 AED 14,210.40
+ Net Card Settlement Expected     AED 14,210.40
+ ----------------------------------------------
+ 12. OPENING &amp; CLOSING INVOICE NUMBERS
+ Sales Invoice (INV-2026-000744 INV-2026-000841
+ ----------------------------------------------
+ 13. FINAL DAY CLOSE SUMMARY
+ Total Net Sales Inc. VAT         AED 24,880.40
+ Total Collection                 AED 24,880.40
+ Expected Cash in Drawer           AED 9,320.00
+ ----------------------------------------------
+         Generated 01/09/2026, 22:31:47
+             *** END OF REPORT ***
+</pre><div class="slip-note">Diverges from the X-Report in ways that matter at reconciliation. <b>Two sections are both numbered &ldquo;2&rdquo;.</b> §4 Cash Drawer Summary <b>omits Actual Cash Counted and Cash Variance</b>, which the X-Report prints &mdash; so the day&rsquo;s drawer slip shows an expectation with nothing to compare it to. §5 reports <b>Net Card Settlement Expected as gross card sales</b> while the X-Report nets card refunds out, giving two different &ldquo;net settlement&rdquo; figures for the same day (F16). The denomination total is re-summed client-side from parsed JSON while the Actual Cash headline comes from the backend &mdash; two sources for one number. §12 opening/closing numbers are derived by <b>string-sorting invoice numbers</b>, not by sequence.</div></article>
+<article class="slip"><div class="slip-tag"><span>Printer Test Receipt</span><span class="n">17</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>              BILLBULL TRADING LLC
+                POS PRINTER TEST
+ ----------------------------------------------
+ Branch: Main Branch - Dubai Mall
+ Terminal: POS-01
+ Counter: Counter 1
+ Printer: EPSON TM-T20III Receipt
+ Paper: 80mm
+ Currency: AED
+ ----------------------------------------------
+ Normal text - abcdefgh 0123456789
+ Bold text - abcdefgh
+ Big text
+ ----------------------------------------------
+              01/09/2026, 22:34:11
+         If you can read this clearly,
+       the configured printer is working.
+
+ -- feed 3 lines, partial cut (no clearance) --
+</pre><div class="slip-note">Deliberately minimal and that is fine &mdash; but it is built to the <b>full 48 columns with no gutter</b> while every real document uses 46, so it is not a valid width test for the documents it is meant to validate. It also ends with a bare <code>GS V 1</code> after three line-feeds, re-introducing the exact tail-clipping the sale receipt fixed with feed-then-cut: the technician&rsquo;s test slip can lose its own last line (F22).</div></article>
+<article class="slip"><div class="slip-tag"><span>Text / GDI compatibility receipt</span><span class="n">19</span></div><div class="ruler"> ....|....1....|....2....|....3....|....4....|.</div><pre>              BILLBULL TRADING LLC
+              TRN: 100123456700003
+            Main Branch - Dubai Mall
+ ----------------------------------------------
+                  TAX INVOICE
+ Invoice                        INV-2026-000841
+ Date                      01/09/2026, 16:35:12
+ Cashier                            John Mathew
+ Terminal                                POS-01
+ Counter                              Counter 1
+ ----------------------------------------------
+ Customer: Aisha Rahman
+ Mobile: +971 50 123 4567
+ Customer Code: CUST-00412
+ ----------------------------------------------
+ 2x Almarai Fresh Milk 1L
+ Price @ AED 6.50                     AED 13.00
+ Discount (10.00%)                   - AED 1.30
+ Net @ AED 5.85                       AED 11.70
+ SKU: 6281007021234
+ ----------------------------------------------
+ Subtotal                             AED 31.00
+ Discount                              AED 1.30
+ Taxable Amount                       AED 28.29
+ VAT (incl.)                           AED 1.41
+ ----------------------------------------------
+ TOTAL                                AED 29.70
+ Payment Mode                              Cash
+ Cash Received                        AED 50.00
+ Change Returned                      AED 20.30
+ ----------------------------------------------
+             [ configured footer ]
+</pre><div class="slip-note">This prints whenever a v4 or WSD-class driver refuses raw ESC/POS &mdash; and it is <b>a different document, not a degraded one</b> (F6). Built to <b>42 columns</b> rather than 46. <b>No logo. No QR. No stamp. No CREDIT ACCOUNT block. No payment-allocation rows. No per-line VAT. No COPY/REPRINT marker</b> &mdash; the builder has no <code>isReprint</code> parameter at all, so a reprint that falls back to text loses its duplicate marking entirely. The CUSTOMER block sits <i>above</i> the items here and <i>below</i> the payment block in the ESC/POS version. This same text is also stored as the print-job audit payload for <b>every</b> ESC/POS print, so the audit trail records a document that was never the one printed.</div></article>
+  </div>
+</section>
+
+<section id="mapping">
+  <div class="sec-head"><span class="sec-id">C</span><h2>Implementation mapping</h2></div>
+  <p class="sec-sub">The full path for each document: which screen fires it, which builder shapes the bytes, and which transport carries them to the head.</p>
+
+  <div class="callout">
+    <p><b>The transport is the same for all nineteen.</b> <code>sendEscPosReceiptToConfiguredPrinter</code> resolves a printer by device type, branch and terminal. Network/IP printers are relayed through the backend, which opens a raw socket to the printer&rsquo;s LAN address — so they work from any device with no agent installed, but they get <b>no text fallback and no SHA-256 integrity check</b>. USB, Bluetooth and Windows-queue printers go through the local agent at <code>127.0.0.1:19777</code>, which does verify integrity and does fall back to text/GDI on driver rejection.</p>
+  </div>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Document</th><th>Screen / trigger</th><th>Body builder</th><th>Wrapper</th><th>Backend touched</th></tr></thead>
+    <tbody>
+      <tr><td>Sale receipt T1</td><td class="mono">POSSales.jsx &rarr; buildThermalReceiptArtifacts</td><td class="mono">escPosReceipt.buildEscPosReceipt</td><td class="mono">(self-contained)</td><td class="mono">POST /api/pos/checkout</td></tr>
+      <tr><td>Sale receipt T2</td><td class="mono">POSSales.jsx, template = billbull-ar</td><td class="mono">bilingualReceiptCanvas.renderBilingual&hellip;</td><td class="mono">buildEscPosDocumentFromCanvas</td><td class="mono">POST /api/pos/checkout</td></tr>
+      <tr><td>Sale reprint (panel)</td><td class="mono">POSSales.jsx Reprint tab</td><td class="mono">buildEscPosReceipt</td><td class="mono">&mdash;</td><td class="mono">reprintPosReceipt &rarr; audit + reprintCount</td></tr>
+      <tr><td>Sale reprint (dialog)</td><td class="mono">POSSales.jsx Last Receipt dialog</td><td class="mono">buildEscPosReceipt</td><td class="mono">&mdash;</td><td class="mono">reprintPosReceipt</td></tr>
+      <tr><td>Delivery Order</td><td class="mono">POSSales.jsx Out&nbsp;for&nbsp;Delivery</td><td class="mono">buildEscPosReceipt (credit block off)</td><td class="mono">&mdash;</td><td class="mono">POST /api/pos/checkout</td></tr>
+      <tr><td>Delivery Settlement</td><td class="mono">POSSales.jsx Delivery Settlement modal</td><td class="mono">buildEscPosReceipt (credit block on)</td><td class="mono">&mdash;</td><td class="mono">recordPayment, posCreditBalance</td></tr>
+      <tr><td>Payment / Advance / Applied</td><td class="mono">POS/CustomerView.jsx</td><td class="mono">posPrintUtils.buildReceiptVoucherThermalText</td><td class="mono">buildEscPosDocument</td><td class="mono">payment &amp; advance endpoints</td></tr>
+      <tr><td>Customer Statement</td><td class="mono">POS/CustomerView.jsx Statement tab</td><td class="mono">posPrintUtils.buildStatementThermalText</td><td class="mono">buildEscPosDocument</td><td class="mono">financials statement endpoint</td></tr>
+      <tr><td>Layaway</td><td class="mono">POSSales.jsx layaway save</td><td class="mono">posPrintUtils.buildLayawayReceiptText</td><td class="mono">buildEscPosDocument</td><td class="mono">pos/layaway</td></tr>
+      <tr><td>Sales Return</td><td class="mono">SalesReturn/SalesReturnScreen.jsx</td><td class="mono">salesReturnPrint.buildSalesReturnReceiptBody</td><td class="mono">buildEscPosDocument <b>(empty header)</b></td><td class="mono">sales return endpoint</td></tr>
+      <tr><td>Credit Voucher</td><td class="mono">SalesReturn/SalesReturnScreen.jsx</td><td class="mono">salesReturnPrint.buildCreditVoucherBody</td><td class="mono">buildEscPosDocument + Code 39</td><td class="mono">credit voucher endpoint</td></tr>
+      <tr><td>X-Report</td><td class="mono">POSSales.jsx handleXReportPrint</td><td class="mono">posReportViewModel.buildXReportViewModel &rarr; printGenerator.generateReportThermalText</td><td class="mono">buildEscPosDocument</td><td class="mono">GET /api/pos/sessions/x-report</td></tr>
+      <tr><td>Z-Report</td><td class="mono">POSSales.jsx handleZReportPrint</td><td class="mono">buildZReportViewModel &rarr; generateReportThermalText</td><td class="mono">buildEscPosDocument</td><td class="mono">GET /api/pos/sessions/z-report or PosDayClose.zReportJson</td></tr>
+      <tr><td>Test receipt</td><td class="mono">POS/POSConsole.jsx Devices</td><td class="mono">escPosReceipt.buildEscPosTestReceipt</td><td class="mono">(self-contained)</td><td class="mono">none</td></tr>
+      <tr><td>Back-office invoice</td><td class="mono">hooks/useInvoiceThermalPrint.js</td><td class="mono">buildEscPosReceipt</td><td class="mono">&mdash;</td><td class="mono">sales invoice fetch</td></tr>
+      <tr><td>Text/GDI fallback</td><td class="mono">automatic in localPrintAgent</td><td class="mono">posPrintUtils.buildThermalReceiptText</td><td class="mono">agent <code>/print/receipt</code></td><td class="mono">PosPrintJob payload</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="sources">
+  <div class="sec-head"><span class="sec-id">D</span><h2>Field-level source mapping</h2></div>
+  <p class="sec-sub">Where each printed value comes from — and which of them can differ from the ledger.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Printed field</th><th>Origin</th><th>Risk</th></tr></thead>
+    <tbody>
+      <tr><td>Logo</td><td class="mono">PosSettings.printTemplateConfig.logoDataUrl</td><td class="wrapy">Data-URL stored in a settings JSON blob. Upscaled to 331 dots wide regardless of natural size and with <b>no height cap</b> — a portrait logo produces a very tall single raster (F23).</td></tr>
+      <tr><td>Company name / address / phone</td><td class="mono">printTemplateConfig.outletName / outletAddress / outletPhone</td><td class="wrapy"><b>Falls back to hardcoded sample values</b> — &ldquo;BillBull Trading LLC&rdquo;, &ldquo;Shop 12, Dubai Mall, Downtown Dubai&rdquo;, &ldquo;+971 4 123 4567&rdquo; — when the tenant never saved a template (F4).</td></tr>
+      <tr><td>Company TRN</td><td class="mono">printTemplateConfig.outletTrn &rarr; active branch trnNumber &rarr; company.trn</td><td class="wrapy">Correctly chained. The only branding field with a real fallback to the company record.</td></tr>
+      <tr><td>Branch name (header line)</td><td class="mono">tplInvoiceHeader / tplReceiptHeader (free text)</td><td class="wrapy">A free-text template field, not the branch record — it can say anything and is not validated against the session&rsquo;s branch.</td></tr>
+      <tr><td>Invoice number</td><td class="mono">SalesInvoice.invoiceNumber, backend-assigned</td><td class="wrapy">Authoritative. Falls back to the raw <code>id</code> if blank.</td></tr>
+      <tr><td>Date / time</td><td class="mono">invoice.createdAt (real timestamp) else invoiceDate (date-only)</td><td class="wrapy">Handled carefully — the code refuses to synthesise a time from a date-only field. Rendered with <code>toLocaleString</code>, so it shows the <b>workstation&rsquo;s</b> locale and timezone, not the outlet&rsquo;s.</td></tr>
+      <tr><td>Cashier</td><td class="mono">live session display name; on reprint, invoice.createdBy</td><td class="wrapy">Reprints correctly attribute the original cashier rather than whoever pressed reprint.</td></tr>
+      <tr><td>Terminal / counter</td><td class="mono">invoice.posTerminalId / posCounterName, else currentTerminal</td><td class="wrapy">Falls through to the <i>current</i> terminal when the invoice carries none — a reprint on a different till can print that till&rsquo;s id.</td></tr>
+      <tr><td>Customer name</td><td class="mono">explicit override &rarr; invoice.customerName</td><td class="wrapy">The override exists because a blank round-tripped name printed as &ldquo;Walk-in Customer&rdquo;. Correct at checkout.</td></tr>
+      <tr><td>Customer phone / email / TRN / address</td><td class="mono">live customer object, else lookup in loaded customer list by code, else by unique name match</td><td class="wrapy">None of these are persisted on the invoice. A reprint resolves them from the <b>current</b> customer record, so a changed address reprints differently from the original.</td></tr>
+      <tr><td>Line discount</td><td class="mono">item.discountAmount &rarr; gross &times; discount% &rarr; gross &minus; net</td><td class="wrapy">Uses the same basis as the backend. The <code>gross &minus; net</code> shortcut is explicitly last-resort because it understates discount under exclusive VAT.</td></tr>
+      <tr><td>Subtotal / Discount / Taxable</td><td class="mono">reconstructed from line grossAmounts, VAT-mode aware</td><td class="wrapy">Persisted <code>subTotal</code> is already the taxable base, so gross subtotal and total discount are rebuilt on the print path. Correct, but it is a <b>second implementation</b> of a financial calculation living in the renderer.</td></tr>
+      <tr><td>VAT total</td><td class="mono">invoice.taxTotal</td><td class="wrapy">Taken as-is from the persisted invoice. Never re-derived. Correct.</td></tr>
+      <tr><td>TOTAL</td><td class="mono">invoice.invoiceTotal</td><td class="wrapy">Taken as-is. Correct.</td></tr>
+      <tr><td>Payment rows</td><td class="mono">paymentBlockRows(paymentBlock) from sale allocations</td><td class="wrapy">Correct at checkout. <b>Null on reprint from the Reprint panel</b>, so the breakdown vanishes (F7); the Delivery Settlement path bypasses it entirely and mislabels the tender (F10).</td></tr>
+      <tr><td>Credit account block</td><td class="mono">posCreditBalance snapshot at checkout</td><td class="wrapy">Deliberately suppressed on reprint because the snapshot was never persisted — a correct call.</td></tr>
+      <tr><td>QR payload</td><td class="mono">printGenerator.buildQrContent(buildPosPrintData(...))</td><td class="wrapy"><b>Multi-line plaintext listing every item.</b> The backend&rsquo;s real ZATCA TLV is generated at checkout and never printed (F2). Caption reads &ldquo;Scan to verify&rdquo;; nothing is verifiable.</td></tr>
+      <tr><td>Footer text</td><td class="mono">tplInvoiceFooter / tplReceiptFooter</td><td class="wrapy">Free text per sub-tab. Gated by a toggle labelled &ldquo;Show Terms&rdquo;.</td></tr>
+      <tr><td>Stamp image</td><td class="mono">printTemplateConfig.stampDataUrl</td><td class="wrapy">Printed <b>instead of</b> the QR, never alongside. Template 2 ignores it completely.</td></tr>
+      <tr><td>X/Z Expected Cash, Counted Cash, Variance</td><td class="mono">backend PosCashReconciliationService</td><td class="wrapy">Deliberately no client fallback — a missing figure prints as missing rather than as a plausible wrong number. This is the right design.</td></tr>
+      <tr><td>Z denomination total</td><td class="mono">client-side re-sum of parsed closingDenominationsJson</td><td class="wrapy">A <b>second source</b> for a figure the backend also supplies as <code>countedCash</code> (F16).</td></tr>
+      <tr><td>Report &ldquo;Generated&rdquo; timestamp</td><td class="mono">new Date() at print time</td><td class="wrapy">Changes on every print, and no reprint marker distinguishes the copies (F17).</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="matrix">
+  <div class="sec-head"><span class="sec-id">E</span><h2>Cross-document comparison</h2></div>
+  <p class="sec-sub">The same thirteen elements across every family of print. The pattern is clear: the sale-receipt family is rich and the everything-else family is thin, and the return family has no identity at all.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr>
+      <th>Element</th><th>Sale T1</th><th>Sale T2</th><th>Reprint</th><th>Delivery</th><th>Settlement</th>
+      <th>Payment / Advance</th><th>Statement</th><th>Layaway</th><th>Return</th><th>Voucher</th><th>X</th><th>Z</th><th>Text fallback</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>Logo</td>
+        <td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td>
+        <td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-miss">NONE</span></td></tr>
+      <tr><td>Store name / address</td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-part">NAME ONLY</span></td></tr>
+      <tr><td>TRN / tax registration</td>
+        <td><span class="p p-cond">IF TAX</span></td><td><span class="p p-cond">IF TAX</span></td><td><span class="p p-cond">IF TAX</span></td><td><span class="p p-cond">IF TAX</span></td><td><span class="p p-cond">IF TAX</span></td>
+        <td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cond">IF TAX</span></td></tr>
+      <tr><td>Document title</td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-bad">WRONG</span></td><td><span class="p p-bad">WRONG</span></td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-bad">DOUBLED</span></td><td><span class="p p-part">BODY ONLY</span></td><td><span class="p p-part">BODY ONLY</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td></tr>
+      <tr><td>Document number</td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-part">DERIVED</span></td><td><span class="p p-ok">YES</span></td></tr>
+      <tr><td>Business date</td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-bad">SALE DATE</span></td>
+        <td><span class="p p-part">FALLS&nbsp;BACK</span></td><td><span class="p p-part">PERIOD</span></td><td><span class="p p-part">FALLS&nbsp;BACK</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td></tr>
+      <tr><td>Cashier</td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td>
+        <td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td></tr>
+      <tr><td>Terminal / counter</td>
+        <td><span class="p p-ok">YES</span></td><td><span class="p p-part">TERM ONLY</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td>
+        <td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-part">ALL</span></td><td><span class="p p-ok">YES</span></td></tr>
+      <tr><td>Customer block</td>
+        <td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td>
+        <td><span class="p p-part">NAME+CODE</span></td><td><span class="p p-part">NAME+CODE</span></td><td><span class="p p-part">NAME+TEL</span></td><td><span class="p p-part">NAME+TEL</span></td><td><span class="p p-part">NAME</span></td><td class="p-na">n/a</td><td class="p-na">n/a</td><td><span class="p p-cfg">CFG</span></td></tr>
+      <tr><td>Item detail</td>
+        <td><span class="p p-ok">FULL</span></td><td><span class="p p-ok">FULL</span></td><td><span class="p p-ok">FULL</span></td><td><span class="p p-ok">FULL</span></td><td><span class="p p-ok">FULL</span></td>
+        <td class="p-na">n/a</td><td><span class="p p-part">LEDGER</span></td><td><span class="p p-part">NAME+QTY</span></td><td><span class="p p-ok">FULL</span></td><td class="p-na">n/a</td><td><span class="p p-part">TRUNC</span></td><td><span class="p p-part">TRUNC</span></td><td><span class="p p-part">NO VAT%</span></td></tr>
+      <tr><td>Payment / tender detail</td>
+        <td><span class="p p-ok">FULL</span></td><td><span class="p p-ok">FULL</span></td><td><span class="p p-bad">LOST</span></td><td><span class="p p-part">MODE</span></td><td><span class="p p-bad">MISLABELLED</span></td>
+        <td><span class="p p-part">MODE</span></td><td class="p-na">n/a</td><td><span class="p p-part">MODE</span></td><td><span class="p p-part">METHOD</span></td><td class="p-na">n/a</td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-part">MODE+CASH</span></td></tr>
+      <tr><td>QR</td>
+        <td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td>
+        <td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td></tr>
+      <tr><td>Barcode</td>
+        <td><span class="p p-miss">NONE</span></td><td><span class="p p-cfg">CODE128</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td>
+        <td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">CODE39</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td></tr>
+      <tr><td>Stamp / signature</td>
+        <td><span class="p p-cond">XOR QR</span></td><td><span class="p p-bad">IGNORED</span></td><td><span class="p p-cond">XOR QR</span></td><td><span class="p p-cond">XOR QR</span></td><td><span class="p p-cond">XOR QR</span></td>
+        <td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-part">APPROVER</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-part">BY: user</span></td><td><span class="p p-part">BY: user</span></td><td><span class="p p-miss">NONE</span></td></tr>
+      <tr><td>Footer text</td>
+        <td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td>
+        <td><span class="p p-cfg">CFG</span></td><td><span class="p p-cfg">CFG</span></td><td><span class="p p-ok">FIXED</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">TERMS</span></td><td><span class="p p-ok">FIXED</span></td><td><span class="p p-ok">FIXED</span></td><td><span class="p p-cfg">CFG</span></td></tr>
+      <tr><td>Reprint / COPY marker</td>
+        <td class="p-na">n/a</td><td class="p-na">n/a</td><td><span class="p p-ok">YES</span></td><td class="p-na">n/a</td><td class="p-na">n/a</td>
+        <td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-ok">YES</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-miss">NONE</span></td><td><span class="p p-bad">LOST</span></td></tr>
+      <tr><td>Feed-then-cut clearance</td>
+        <td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td>
+        <td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-ok">120dt</span></td><td><span class="p p-bad">DRIVER</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:.82rem;color:var(--text-3);max-width:70ch"><b>CFG</b> = printed only when the matching template toggle is on. <b>XOR QR</b> = a stamp image, when uploaded, replaces the QR rather than accompanying it. <b>n/a</b> = not applicable to that document class.</p>
+</section>
+
+<section id="findings">
+  <div class="sec-head"><span class="sec-id">F</span><h2>Findings</h2></div>
+  <p class="sec-sub">Twenty-eight defects, ordered by what they cost. Each was traced to the code that produces it; nothing here is inferred from a screenshot or a settings label.</p>
+
+  <p class="kicker">Critical &mdash; compliance, money, or a document that cannot do its job</p>
+  <div class="finds">
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F1</span><span class="f-t">Refund receipts and credit vouchers print with no company header at all</span><span class="p p-miss">MISSING</span></div>
+      <p>The Sales Return screen calls the print helpers without a <code>header</code> object. It defaults to <code>{}</code>, so the shared branded header receives empty strings for company name, address, phone, TRN and document title, and a null logo — and emits <b>nothing but its closing divider</b>.</p>
+      <p>Both documents affected are exactly the ones that must carry issuer identity: a refund receipt is a credit-note-class document, and a credit voucher is a bearer instrument redeemable for money. Neither names the business that issued it.</p>
+      <p class="src">SalesReturnScreen.jsx:265,279 &rarr; salesReturnPrint.js:253,281 &rarr; escPosReceipt.js emitEscPosBrandedHeader</p></div>
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F2</span><span class="f-t">The printed QR is not a ZATCA code &mdash; and the real one is generated then discarded</span><span class="p p-bad">INCORRECT</span></div>
+      <p>The receipt QR payload is <code>buildQrContent</code> output: a multi-line human-readable text blob listing type, doc number, date, company, customer, every line item, and totals. It carries no cryptographic or structural verification of any kind, and the caption printed under it reads <b>&ldquo;Scan to verify&rdquo;</b>.</p>
+      <p>Meanwhile <code>PosCheckoutController</code> builds a correct UAE FTA Phase-1 TLV via <code>ZatcaQrGenerator</code> on every checkout, and no print path consumes it. A frontend twin, <code>buildZatcaTlvBase64</code>, is imported into the POS screen and <b>never called</b>.</p>
+      <p class="src">POSSales.jsx:166 (dead import), :4996 &rarr; printGenerator.js:79 · PosCheckoutController.java:388,583,632 · posPrintUtils.js:242</p></div>
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F3</span><span class="f-t">Receipts can print a dummy company identity</span><span class="p p-bad">INCORRECT</span></div>
+      <p>Company name, address and phone come <b>only</b> from <code>PosSettings.printTemplateConfig</code>. When a tenant has never saved a print template, the React state defaults stand and every sale receipt prints &ldquo;BillBull Trading LLC&rdquo;, &ldquo;Shop 12, Dubai Mall, Downtown Dubai&rdquo;, &ldquo;+971 4 123 4567&rdquo;.</p>
+      <p>TRN, by contrast, correctly chains to the branch record and then the company profile — and the Customer&nbsp;View screen&rsquo;s own branding <i>does</i> fall back to the company profile. So one terminal can print a Payment Receipt with the real company name and a Sale Receipt with the sample one.</p>
+      <p class="src">POSSales.jsx:1203-1208 (defaults), :2295-2303 (only override) vs :1217 (TRN chain) and CustomerView.jsx:43-52</p></div>
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F4</span><span class="f-t">The Delivery Order slip contains no delivery information</span><span class="p p-bad">INCORRECT</span></div>
+      <p>Out-for-Delivery prints an ordinary sale receipt titled TAX INVOICE with the credit block forced off. Delivery address, driver, delivery date, time slot and special instructions are collected in the modal and concatenated into the invoice <code>notes</code> field — which no thermal builder reads. There is no recipient signature line and no delivery-order document number distinct from the invoice.</p>
+      <p class="src">POSSales.jsx:4240-4295; escPosReceipt.js buildEscPosReceipt has no notes or delivery section</p></div>
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F5</span><span class="f-t">Delivery Settlement prints &ldquo;Cash Received&rdquo; for card payments</span><span class="p p-bad">INCORRECT</span></div>
+      <p>The settlement passes the settled amount as <code>cashGiven</code> and supplies no payment block. The builder&rsquo;s fallback branch is reached and prints the row hardcoded as <b>Cash Received</b> regardless of the tender the cashier actually selected in the settlement dialog.</p>
+      <p class="src">POSSales.jsx:15417 &rarr; escPosReceipt.js:1052</p></div>
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F6</span><span class="f-t">The text/GDI fallback is a different document, and it is also the audit payload</span><span class="p p-bad">DIVERGENT</span></div>
+      <p><code>buildThermalReceiptText</code> substitutes for the ESC/POS receipt whenever a v4/WSD-class driver refuses raw output. It is built to <b>42 columns instead of 46</b>, and drops the logo, the QR, the stamp, the CREDIT ACCOUNT block, all payment-allocation rows, and per-line VAT. It puts the customer block <i>above</i> the items where the ESC/POS version puts it <i>below</i> the payment block. It has no <code>isReprint</code> parameter at all, so a reprint that falls back loses its COPY marking.</p>
+      <p>This same text is passed as <code>receiptText</code> on <b>every</b> ESC/POS print and stored as the <code>PosPrintJob</code> payload — so the print-job audit trail records a document that in most cases was never the one printed.</p>
+      <p class="src">posPrintUtils.js:723-891 · localPrintAgent.js sendEscPosReceiptToConfiguredPrinter (payload + fallback)</p></div>
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F7</span><span class="f-t">One invoice, two different reprints</span><span class="p p-bad">INCONSISTENT</span></div>
+      <p>The Reprint panel passes no payment block, no cash given and no change, so the reprint shows only a single &ldquo;Payment Mode&rdquo; row — the tender breakdown of the original sale is gone. The Last&nbsp;Receipt dialog reprints the <i>same invoice</i> and <i>does</i> pass cash given, change and the credit-account figures from in-memory checkout state.</p>
+      <p>Two reprints of one sale therefore differ in their payment section and in whether a CREDIT ACCOUNT block appears. Neither is wrong about the totals; they simply are not the same document.</p>
+      <p class="src">POSSales.jsx:5657-5680 vs :12093-12112</p></div>
+
+    <div class="f crit"><div class="f-top"><span class="f-id">F8</span><span class="f-t">The cash drawer never opens</span><span class="p p-miss">MISSING</span></div>
+      <p><code>openCashDrawer</code> dispatches a <code>pos:open-cash-drawer</code> DOM event. <b>No listener for that event exists anywhere in the codebase</b>, no ESC/POS drawer-kick pulse (<code>ESC p</code>) is emitted by any builder, and the print agent has no drawer endpoint. Every drawer trigger — receipt print, manual open, cash movement — is a no-op.</p>
+      <p class="src">POSSales.jsx:4754-4760; no match for <code>pos:open-cash-drawer</code> or <code>ESC p</code> in escPosReceipt.js, localPrintAgent.js, or the agent server</p></div>
+
+  </div>
+
+  <p class="kicker">High &mdash; correctness of what appears on the paper</p>
+  <div class="finds">
+
+    <div class="f high"><div class="f-top"><span class="f-id">F9</span><span class="f-t">Wide report tables are hard-truncated at 46 columns</span><span class="p p-bad">INCORRECT</span></div>
+      <p>The thermal report renderer folds any n-column row into <code>label (col2/col3/&hellip;) &nbsp; lastcol</code>, then truncates the label to fit. X §10 and Z §10b (Voided Items) are <b>8-column</b> tables: quantity, unit price, line total, reason and who voided are all lost, leaving an invoice number and a timestamp. Z §0 Session Information (6 cols), Z §10 Cashier-Wise Summary (6 cols), X/Z §6 VAT Summary (4 cols) and the cart-removal sections degrade the same way.</p>
+      <p class="src">printGenerator.js:1087-1106 (fold) and :917-928 (padThermalRow truncation)</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F10</span><span class="f-t">X and Z disagree on net card settlement</span><span class="p p-bad">INCONSISTENT</span></div>
+      <p>The X-Report computes Net Card Settlement as card sales minus card refunds. The Z-Report prints &ldquo;Net Card Settlement Expected&rdquo; as <b>gross card sales</b>, with no refund deduction. A day whose sessions each show a netted figure rolls up to a day-level figure that does not net — the two will not reconcile against the acquirer batch.</p>
+      <p class="src">posReportViewModel.js:281-287 (X) vs :566-573 (Z)</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F11</span><span class="f-t">The Z-Report&rsquo;s cash drawer section has no counted cash and no variance</span><span class="p p-part">PARTIAL</span></div>
+      <p>Z §4 Cash Drawer Summary prints Opening Float, Cash Sales and Expected Cash — and stops. The X-Report&rsquo;s equivalent section prints Actual Cash Counted and a Cash Variance footer. The day-close document, which is the one an auditor reads, shows an expectation with nothing to compare it against. The figures exist: they are in the KPI block at the top of the same report.</p>
+      <p class="src">posReportViewModel.js:530-539 (Z §4) vs :229-241 (X §2)</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F12</span><span class="f-t">Z-Report counted cash has two sources</span><span class="p p-bad">INCONSISTENT</span></div>
+      <p>The &ldquo;Actual Cash&rdquo; headline reads the backend&rsquo;s authoritative <code>countedCash</code>. The §1 Denomination Count footer instead re-sums denominations parsed client-side out of each session&rsquo;s <code>closingDenominationsJson</code>. A session whose JSON is absent or unparseable contributes zero to the second figure and the report prints two different &ldquo;total cash counted&rdquo; numbers on one slip. This is precisely the drift the X-Report&rsquo;s no-client-fallback rule was written to prevent.</p>
+      <p class="src">posReportViewModel.js:433-443, :492-495 vs :426</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F13</span><span class="f-t">Templates 1 and 2 are materially different documents</span><span class="p p-bad">INCONSISTENT</span></div>
+      <p>Switching the saved receipt template changes what the customer is told, not just how it looks. Template&nbsp;2 has a Code&nbsp;128 barcode, a delivery-address block, loyalty points, a VAT standard/zero-rated split, and Arabic throughout. Template&nbsp;1 has none of those. Template&nbsp;1 supports a stamp image; Template&nbsp;2 <b>silently ignores</b> <code>stampDataUrl</code> entirely, so the Show&nbsp;Stamp toggle does nothing there. Template&nbsp;2 also hardcodes &ldquo;BillBull Retail OS &middot; geebu.io&rdquo; and &ldquo;Served by &hellip;&rdquo; onto every customer receipt.</p>
+      <p class="src">escPosReceipt.js:743-1155 vs bilingualReceiptCanvas.js:75-640 (:625-627 hardcoded branding)</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F14</span><span class="f-t">Template 2 crops long receipts</span><span class="p p-part">RISK</span></div>
+      <p>The canvas height is estimated <i>before</i> drawing as <code>2600 + items&times;200 + 500</code> scaled, plus 800 dots. The final crop is <code>min(cursor, estimate)</code>. A basket with many wrapped product names, long customer details and a large QR can push the cursor past the estimate, and everything beyond it — barcode, QR, footer, brand line — is silently discarded with no error.</p>
+      <p class="src">bilingualReceiptCanvas.js:127, :631-637</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F15</span><span class="f-t">Paper size is taken from the Tax Invoice template even for non-tax receipts</span><span class="p p-bad">INCORRECT</span></div>
+      <p>Header, footer, TRN, VAT summary, logo, company details, customer block, QR and every Template&nbsp;2 toggle all switch between the Tax&nbsp;Invoice and POS&nbsp;Receipt sub-tabs based on whether the sale has tax. <b>Paper size does not</b> — the builder is always called with <code>tplInvoicePaper</code>, while the on-screen preview uses the tax-aware choice. A no-tax receipt configured as 58&nbsp;mm previews at 58 and prints at 80.</p>
+      <p class="src">POSSales.jsx:5095, :5119 vs :1661</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F16</span><span class="f-t">Template toggles control the wrong sections</span><span class="p p-bad">INCORRECT</span></div>
+      <p>Three switches are wired to sections their labels do not describe: the <b>Discount column</b> toggle gates the entire <b>payment details</b> block; the <b>Notes</b> toggle gates <b>loyalty points</b>; the <b>Bank Details</b> toggle gates the <b>CREDIT ACCOUNT</b> block. An operator turning off &ldquo;Discount column&rdquo; loses every tender line from their receipts.</p>
+      <p class="src">POSSales.jsx:4975-4976, :4952-4954</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F17</span><span class="f-t">X/Z reports carry no reprint marker and re-stamp themselves on every print</span><span class="p p-part">PARTIAL</span></div>
+      <p>The report meta &ldquo;Date &amp; Time&rdquo; and the body&rsquo;s &ldquo;Generated &hellip;&rdquo; line are both <code>new Date()</code> at print time. Nothing marks a second print as a copy. Two physically different Z-report slips for the same business day are indistinguishable except by a timestamp that looks like report content rather than a print stamp — and no reprint counter is kept for reports at all.</p>
+      <p class="src">posReportViewModel.js:186, :454 · printGenerator.js:1121-1124</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F18</span><span class="f-t">There is no mid-shift X-Report</span><span class="p p-part">BY DESIGN?</span></div>
+      <p>Both X-Report Print buttons are disabled unless the session is already closed. The document is titled &ldquo;X-Report / Session Close Report&rdquo; and functions purely as a session-close report. The conventional purpose of an X-read — a mid-shift snapshot taken without closing the drawer — is not available anywhere in the POS.</p>
+      <p class="src">POSSales.jsx:8805, :9411 (<code>disabled={!isSessionClosed}</code>)</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F19</span><span class="f-t">VAT percentage prints with a currency prefix</span><span class="p p-bad">INCORRECT</span></div>
+      <p>The per-line VAT rate is passed through the money formatter, so the receipt line reads <code>VAT: AED 5.00%</code>. Present on every taxed line of every Template&nbsp;1 receipt, reprint, delivery slip and settlement.</p>
+      <p class="src">escPosReceipt.js:918</p></div>
+
+    <div class="f high"><div class="f-top"><span class="f-id">F20</span><span class="f-t">Header centring and footer centring use opposite mechanisms</span><span class="p p-bad">INCONSISTENT</span></div>
+      <p>The header block is centred in <b>software</b> with space padding, deliberately, because the code documents that the client&rsquo;s POS-80C ignores the <code>ESC a 1</code> alignment register for both text and rasters. The footer text, the &ldquo;Scan to verify&rdquo; caption and the QR block in the same builder still rely on <code>ESC a 1</code>. On that hardware the top of the receipt is centred and the bottom is flush left.</p>
+      <p class="src">escPosReceipt.js:578-600 (software) vs :1128-1135, :1104-1110 (native)</p></div>
+
+  </div>
+
+  <p class="kicker">Medium &mdash; consistency, auditability, and physical output</p>
+  <div class="finds">
+
+    <div class="f med"><div class="f-top"><span class="f-id">F21</span><span class="f-t">Statement amounts print without a currency</span><span class="p p-part">PARTIAL</span></div>
+      <p>Every debit, credit, running balance, total invoiced and total paid on the Customer Statement prints as a bare number. Only the closing balance carries a currency prefix. On a multi-currency ledger the statement is ambiguous.</p>
+      <p class="src">posPrintUtils.js:1313 (bare <code>fmt</code>) vs :1360</p></div>
+
+    <div class="f med"><div class="f-top"><span class="f-id">F22</span><span class="f-t">Two cut paths still risk clipping the last line</span><span class="p p-part">RISK</span></div>
+      <p>Every real document ends with feed-then-cut (<code>GS V 66 n</code>) with a 120-dot head-to-cutter clearance — the fix for the tail landing on the next slip. The <b>printer test receipt</b> and the agent&rsquo;s <b>IP text-job tail</b> both still end with a bare <code>GS V 1</code> after a short feed, reproducing the original bug on exactly the two paths a technician uses to validate a printer.</p>
+      <p class="src">escPosReceipt.js:1197-1198 · tools/pos-print-agent/server.js:259</p></div>
+
+    <div class="f med"><div class="f-top"><span class="f-id">F23</span><span class="f-t">Logos are upscaled and uncapped in height</span><span class="p p-part">RISK</span></div>
+      <p>The rasteriser always renders the logo at exactly the target width, so a small logo is <b>upscaled</b> and dithers to visible blocking. There is <b>no height cap</b>: a portrait logo at 331 dots wide produces a proportionally tall single raster — a 1:3 logo becomes roughly 993 rows, about 12&nbsp;cm of paper, in one <code>GS v 0</code> command. The agent&rsquo;s own printer-probe notes identify tall rasters as the discriminating failure case on clone controllers. Template&nbsp;2 caps logo height at 180 dots; Template&nbsp;1 does not.</p>
+      <p class="src">escPosReceipt.js:309-312 (no cap, tautological width clamp), :648 vs bilingualReceiptCanvas.js:253</p></div>
+
+    <div class="f med"><div class="f-top"><span class="f-id">F24</span><span class="f-t">QR payload size can push the symbol below scannable density</span><span class="p p-part">RISK</span></div>
+      <p>The QR content includes one line per basket item. The emitter shrinks module size until the symbol fits the paper, with a floor of 2 dots per module. A large basket therefore prints a high-version symbol at 2&ndash;3 dots per module on a 203&nbsp;dpi head with error correction M — marginal for a phone camera on thermal paper, and the failure is silent.</p>
+      <p class="src">escPosReceipt.js:492-509 · printGenerator.js:79-150</p></div>
+
+    <div class="f med"><div class="f-top"><span class="f-id">F25</span><span class="f-t">Secondary documents hardcode 80 mm and omit operator context</span><span class="p p-part">PARTIAL</span></div>
+      <p>Payment Receipt, Advance Receipt, Advance Applied and Customer Statement are all called with the literal string <code>'80mm'</code>, ignoring the configured paper size. None of them print a cashier, terminal, counter, time of day, QR, barcode or reprint marker — so a deliberate reprint is indistinguishable from the original, and a cash receipt cannot be tied back to a till.</p>
+      <p class="src">CustomerView.jsx:257, :280, :718</p></div>
+
+    <div class="f med"><div class="f-top"><span class="f-id">F26</span><span class="f-t">Voucher and layaway dates fall back to today</span><span class="p p-part">RISK</span></div>
+      <p>When <code>paymentDate</code> or <code>createdAt</code> is absent, both builders substitute <code>new Date()</code> rather than printing the field as unknown. A reprint of a document whose date field is missing prints the reprint&rsquo;s date as though it were the transaction date. The advance-receipt call site additionally supplies <code>new Date()</code> as the payment date at creation, so an advance is always dated by the moment of saving rather than by a business date.</p>
+      <p class="src">posPrintUtils.js:1239-1241, :1008-1010 · CustomerView.jsx:509</p></div>
+
+    <div class="f med"><div class="f-top"><span class="f-id">F27</span><span class="f-t">Every print is logged as jobType RECEIPT</span><span class="p p-part">PARTIAL</span></div>
+      <p><code>sendEscPosReceiptToConfiguredPrinter</code> hardcodes <code>jobType: "RECEIPT"</code>, so a Z-report, a customer statement and a credit voucher are indistinguishable in the print-job trail. <code>PrintJobType</code> has no REPORT, VOUCHER, RETURN or STATEMENT member. Server-side reprint counting exists <b>only</b> for POS sale invoices; vouchers, statements, returns and X/Z reports have no reprint counter and no reprint audit entry.</p>
+      <p class="src">localPrintAgent.js (beginPrintJobTracking) · PrintJobType.java</p></div>
+
+    <div class="f med"><div class="f-top"><span class="f-id">F28</span><span class="f-t">Comments assert a hardware margin that was removed</span><span class="p p-part">DRIFT</span></div>
+      <p>Three plain-text builders and the report renderer document their 46-column width as compensating for a <code>GS L</code> / <code>GS W</code> hardware inset &ldquo;applied by <code>buildEscPosDocument</code>&rdquo;. Those commands were deliberately removed — they leaked their width payload as a stray glyph on a POS-80C — and replaced by a software gutter. The widths happen to still agree at 46, so nothing prints wrong today; the next change to the gutter constant will silently break every plain-text body with no comment pointing at them.</p>
+      <p class="src">printGenerator.js:911-915 · posPrintUtils.js:1229-1231, :1300-1302, :990-991 vs escPosReceipt.js MARGIN_COLS note</p></div>
+
+  </div>
+</section>
+
+<section id="physical">
+  <div class="sec-head"><span class="sec-id">G</span><h2>Physical 80&nbsp;mm assessment</h2></div>
+  <p class="sec-sub">What would actually come out of an Epson TM-class head, as opposed to what looks fine in a browser preview.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Aspect</th><th>Implementation</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td>Printable width</td><td class="wrapy">576 dots / 48 Font-A columns, one-column software gutter each side, 46 usable. Canonical ESC/POS geometry, identical on Epson and clones.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Margins</td><td class="wrapy">Software space-prefix, not <code>GS L</code>/<code>GS W</code> — deliberately, after a clone printed the width payload as a stray glyph. Printer-independent.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Item-name wrapping</td><td class="wrapy">Word-wrapped across as many lines as needed with a three-space continuation indent; price rows are emitted separately so wrapping never displaces a column.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Numeric alignment</td><td class="wrapy"><code>buildFixedWidthLine</code> trims the <b>left label only</b>, so a long value can never clip. Long labels are truncated instead — pre-wrapped in the payment block, silently cut everywhere else.</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>Long addresses</td><td class="wrapy">Wrapped before centring in the header and under an <code>Address:</code> label in the customer block. An earlier version sliced them; that is fixed.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Report table columns</td><td class="wrapy">Wide tables collapse to a parenthesised label and hard-truncate (F9).</td><td><span class="p p-bad">CLIPS</span></td></tr>
+      <tr><td>TOTAL emphasis</td><td class="wrapy"><code>GS ! </code> doubles <b>height only</b>, so character pitch is unchanged and the amount still right-aligns with the rows above. Formatting to half-width would have left TOTAL ending mid-paper; it does not.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Vertical rhythm</td><td class="wrapy">One <code>ESC 3</code> pitch of 34/203&Prime; for receipts, 36 for reports, with small <code>ESC J</code> dot-feeds layered at section boundaries so the pitch itself never changes.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Density / heat</td><td class="wrapy"><code>ESC 7</code> at the documented maximum-darkness preset, chosen over the Epson-only <code>GS ( E</code> because clones do not implement it reliably.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Code page</td><td class="wrapy">WPC1252 with NFKD decomposition, CP1252 punctuation mapping, and canvas rasterisation for anything outside Latin-1 (Arabic, CJK) rather than degrading to <code>?</code>.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Logo raster</td><td class="wrapy">Floyd&ndash;Steinberg dithered, white-flattened, full-width-padded so centring does not depend on the alignment register. But upscaled from small sources and uncapped in height (F23).</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>Barcode</td><td class="wrapy">Native <code>GS k</code> rather than a rastered bitmap — exact dot boundaries, far better scannability, fewer bytes. Module width 3 on 80&nbsp;mm, 2 on 58&nbsp;mm. Human-readable value always printed beneath. Only the Credit Voucher uses it.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>QR</td><td class="wrapy">Native <code>GS ( k</code> with automatic module shrink to fit. Density risk from payload size (F24).</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>Cut position</td><td class="wrapy">Feed-then-cut with 120-dot (80&nbsp;mm) / 100-dot (58&nbsp;mm) head-to-cutter clearance, preceded by a two-line buffer flush. Correct on every document — except the test receipt and the agent&rsquo;s IP text tail (F22).</td><td><span class="p p-part">PARTIAL</span></td></tr>
+      <tr><td>Raster-first workaround</td><td class="wrapy">A blank text line is flushed before the first raster because some clones garble a raster as the very first printable content. Applied consistently for logo and stamp.</td><td><span class="p p-ok">CORRECT</span></td></tr>
+      <tr><td>Alignment after rasters</td><td class="wrapy">Alignment state is invalidated after each raster so the next <code>ESC a</code> is always re-sent — but the whole mechanism is moot given F20.</td><td><span class="p p-part">PARTIAL</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="config">
+  <div class="sec-head"><span class="sec-id">H</span><h2>What configuration changes</h2></div>
+  <p class="sec-sub">Almost all receipt variability comes from a single JSON blob. Everything else is either a hardcoded constant or a per-device record.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>Setting</th><th>Stored in</th><th>Sections it controls</th></tr></thead>
+    <tbody>
+      <tr><td>Company identity, logo, stamp</td><td class="mono">PosSettings.printTemplateConfig</td><td class="wrapy">Header block and the stamp/QR slot on every document except returns and vouchers (F1) and the text fallback (F6). No fallback to the company record (F3).</td></tr>
+      <tr><td>Receipt template choice</td><td class="mono">printTemplateConfig (native / billbull-ar)</td><td class="wrapy">Selects Template 1 or Template 2 — which changes the document&rsquo;s content, not only its styling (F13).</td></tr>
+      <tr><td>Tax Invoice vs POS Receipt sub-tab</td><td class="mono">printTemplateConfig, chosen at print time by whether the sale has tax</td><td class="wrapy">Header, footer, TRN, VAT summary, logo, company details, customer block, QR, credit block. <b>Not</b> paper size (F15).</td></tr>
+      <tr><td>Show Logo / Company Details / TRN / Customer / QR / Terms</td><td class="mono">printTemplateConfig booleans</td><td class="wrapy">The corresponding header, customer, QR and footer sections. Three of them are mislabelled relative to what they gate (F16).</td></tr>
+      <tr><td>QR placement (before / after footer)</td><td class="mono">printTemplateConfig.qrPlacement</td><td class="wrapy">Whether the QR or stamp prints above or below the footer text. Honoured identically by the HTML preview and ESC/POS.</td></tr>
+      <tr><td>Paper size</td><td class="mono">printTemplateConfig per sub-tab; also <code>PosPrinter.paperSize</code></td><td class="wrapy">Column width, dot width, QR module size, barcode module width, cut clearance. Two independent sources that are never reconciled — the receipt is built from the template, the text fallback from the device record.</td></tr>
+      <tr><td>Drawer trigger rules</td><td class="mono">POS settings</td><td class="wrapy">Which events attempt to kick the drawer. Inert regardless (F8).</td></tr>
+      <tr><td>Printer connection type</td><td class="mono">PosPrinter.connectionType</td><td class="wrapy">Network/IP bypasses the agent entirely — no text fallback, no integrity check. USB/Bluetooth/Windows-queue get both.</td></tr>
+      <tr><td>Report paper mode</td><td class="mono">component state (A4 / 80&nbsp;mm / 58&nbsp;mm)</td><td class="wrapy">Renderer selection for X/Z. Auto-print on close <b>always forces 80&nbsp;mm</b> regardless of this choice.</td></tr>
+      <tr><td>Tax presence on the sale</td><td class="mono">derived from the invoice</td><td class="wrapy">Document title (TAX INVOICE vs SALES INVOICE), TRN line, Taxable Amount row, VAT rows, per-line VAT.</td></tr>
+      <tr><td><code>VITE_USE_NEW_POS_PRINT_TEMPLATE</code></td><td class="mono">build-time env flag</td><td class="wrapy">A4 stamp behaviour only — no effect on 80&nbsp;mm output.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="standard">
+  <div class="sec-head"><span class="sec-id">I</span><h2>Recommended standard 80&nbsp;mm layout</h2></div>
+  <p class="sec-sub">One skeleton for every document, with a single shared header emitter that <i>cannot</i> be called with an empty bag. Nine bands; which are mandatory depends on the document class, not on the call site that happened to build it.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Band</th><th>Contents</th><th>Rule</th></tr></thead>
+    <tbody>
+      <tr><td>1 &middot; Header</td><td class="wrapy">Logo (height-capped, never upscaled) &middot; company name &middot; branch &middot; address &middot; telephone &middot; TRN</td><td><span class="p p-ok">MANDATORY on every document</span> — the header builder should reject an empty company name rather than emit a bare divider.</td></tr>
+      <tr><td>2 &middot; Document identity</td><td class="wrapy">Bold document title &middot; document number &middot; business date &middot; time &middot; terminal &middot; counter &middot; cashier &middot; COPY/REPRINT marker with sequence number</td><td><span class="p p-ok">MANDATORY</span> — every document, including vouchers, statements and reports. Reprint marking must survive the text/GDI fallback.</td></tr>
+      <tr><td>3 &middot; Counterparty / order</td><td class="wrapy">Customer name, code, mobile, TRN, address &middot; for delivery: address, driver, date, time slot, instructions</td><td><span class="p p-cond">DOCUMENT-SPECIFIC</span> — mandatory on any credit, delivery or settlement document; optional on a walk-in cash sale.</td></tr>
+      <tr><td>4 &middot; Detail lines</td><td class="wrapy">Item block, ledger entries, denomination rows or report sections, depending on class</td><td><span class="p p-cond">DOCUMENT-SPECIFIC</span> — must be wrappable, never column-collapsed and truncated.</td></tr>
+      <tr><td>5 &middot; Financial summary</td><td class="wrapy">Subtotal &middot; discount &middot; taxable &middot; VAT &middot; charges &middot; voided disclosure &middot; TOTAL at double height</td><td><span class="p p-ok">MANDATORY</span> on any document carrying an amount. Every figure sourced from the persisted record, never re-derived.</td></tr>
+      <tr><td>6 &middot; Payment / settlement</td><td class="wrapy">One row per tender, from the persisted allocations &middot; change &middot; rounding &middot; deposit &middot; balance due &middot; credit account movement</td><td><span class="p p-ok">MANDATORY</span> where money moved — and must be reconstructible on reprint, not dependent on in-memory checkout state.</td></tr>
+      <tr><td>7 &middot; Audit information</td><td class="wrapy">Session number &middot; approver for overridden actions &middot; print sequence &middot; generated-at, labelled as a print stamp not as content</td><td><span class="p p-cond">MANDATORY on financial documents</span>, optional on a plain cash sale.</td></tr>
+      <tr><td>8 &middot; Machine-readable</td><td class="wrapy">ZATCA TLV QR for tax invoices &middot; Code 39/128 barcode of the document number &middot; both, not one instead of the other</td><td><span class="p p-cond">MANDATORY on tax invoices</span>; barcode recommended on every document a cashier may need to recall.</td></tr>
+      <tr><td>9 &middot; Footer</td><td class="wrapy">Thank-you &middot; return policy &middot; configured footer text &middot; stamp or signature line &middot; feed-then-cut with head-to-cutter clearance</td><td><span class="p p-ok">MANDATORY</span> — stamp should <i>accompany</i> the QR, not replace it, and the cut must always clear the blade.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="kicker">The three structural changes that close most of the findings</p>
+  <ul class="tight">
+    <li><b>Make the branded header non-optional.</b> A single required company-profile argument, resolved once from branch &rarr; company with no sample defaults, would close F1, F3 and half of F25 at once.</li>
+    <li><b>Persist the print payload, not the screen state.</b> Payment allocations, credit-account figures and delivery details should be reconstructible from the record so a reprint is byte-identical apart from its COPY marker — closing F4, F5, F7 and the reprint half of F26.</li>
+    <li><b>Give the text/GDI fallback the same body.</b> One builder emitting either ESC/POS bytes or plain text from a single layout description, at one width, would close F6 and remove the audit-payload mismatch behind it.</li>
+  </ul>
+</section>
+
+<hr class="soft">
+<p style="font-size:.8rem;color:var(--text-3);max-width:70ch">Audit performed against the working tree of <span class="mono">feature/posclient</span> on 2026-09-01. Line references are to that tree. Sample values in the mockups are illustrative of layout only and are not observed printer output. Where a behaviour could not be confirmed from the code it is stated as unverified rather than assumed.</p>
+
+</div>
+</body>
+</html>

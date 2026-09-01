@@ -271,19 +271,29 @@ public class ReceiptVoucherService {
         syncOpeningInvoice(linkedOpeningInvoiceId);
     }
 
+    /**
+     * Next voucher id for the current year, e.g. {@code RV-2026-001}, {@code RV-2026-1000}.
+     *
+     * <p>The sequence comes from a NUMERIC max ({@code findMaxVoucherSequenceByPrefix}), never a
+     * string one — see that query's note. Padding stays at three digits so every existing id is
+     * left untouched; ids simply widen naturally once the year passes 999.
+     *
+     * <p>The retry loop mirrors {@code JournalEntryService}: it steps past any id already taken,
+     * so a gap-filling or hand-entered row cannot wedge the generator the way the string-max
+     * overflow did. The unique index remains the final arbiter under concurrency.
+     */
     public String generateNextVoucherId() {
         String year = java.time.Year.now().toString();
         String prefix = "RV-" + year + "-";
-        String lastId = repository.findMaxVoucherIdByPrefix(prefix);
-        int next = 1;
-        if (lastId != null && lastId.startsWith(prefix)) {
-            try {
-                next = Integer.parseInt(lastId.substring(prefix.length())) + 1;
-            } catch (NumberFormatException ignored) {
-                next = 1;
-            }
+        Integer maxSequence = repository.findMaxVoucherSequenceByPrefix(prefix);
+        int next = maxSequence != null ? maxSequence + 1 : 1;
+
+        String candidate = String.format("%s%03d", prefix, next);
+        while (repository.existsByVoucherId(candidate)) {
+            next++;
+            candidate = String.format("%s%03d", prefix, next);
         }
-        return String.format("%s%03d", prefix, next);
+        return candidate;
     }
 
     private void storeFile(MultipartFile file, ReceiptVoucher receipt) {
