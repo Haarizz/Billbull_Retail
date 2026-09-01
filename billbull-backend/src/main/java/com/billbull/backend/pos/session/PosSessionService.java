@@ -2864,6 +2864,10 @@ public class PosSessionService {
         s.put("walletSales", tender.byBucket.getOrDefault("wallet", BigDecimal.ZERO));
         s.put("walletInvoiceCount", tender.countByBucket.getOrDefault("wallet", 0L));
         s.put("voucherSales", tender.byBucket.getOrDefault("voucher", BigDecimal.ZERO));
+        // BNPL is money the store has been paid — by the provider, not the customer — so it
+        // belongs with the collected tenders, never with credit. It also flows into
+        // "otherSales" below, which is what keeps cash+card+credit+other summing to totalPaid.
+        s.put("bnplSales", tender.byBucket.getOrDefault("bnpl", BigDecimal.ZERO));
         // "Other" combines every bucket besides cash/card/credit (bank transfer, wallet,
         // voucher, cheque, loyalty, store credit, other) so cash+card+credit+other sums to
         // totalPaid/totalTenderCount exactly — used for the Payment/Tender Summary footer.

@@ -30,8 +30,14 @@ export const METHOD_SHORT_LABELS = Object.freeze({
   [PAYMENT_TYPES.ONLINE]: 'Online',
   [PAYMENT_TYPES.CREDIT]: 'Credit',
   [PAYMENT_TYPES.VOUCHER]: 'Voucher',
+  [PAYMENT_TYPES.BNPL]: 'BNPL',
 });
 
+// BNPL is deliberately absent from NEXT_METHOD_PRIORITY for the same reason as VOUCHER below:
+// financing is the customer's decision, made before the till is involved, so nudging a cashier
+// into it would be pushing credit at someone who did not ask for it. It still chains away from
+// itself, so a partially financed basket suggests Cash next.
+//
 // VOUCHER is deliberately absent from NEXT_METHOD_PRIORITY above: the till should never nudge a
 // cashier toward a voucher, because the customer either produced one or did not. It still
 // chains correctly *away* from itself — a voucher that leaves a balance suggests Cash next,

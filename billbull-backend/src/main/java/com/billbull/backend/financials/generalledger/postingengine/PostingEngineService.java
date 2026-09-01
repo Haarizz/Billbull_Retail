@@ -2383,9 +2383,16 @@ public class PostingEngineService {
                 return switch (mode) {
                         case "CASH" -> new AccountSelection("Cash", ACC_CASH);
                         case "CARD", "CREDIT_CARD" -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                        // Buy Now Pay Later: the provider owes the store the sale proceeds until
+                        // it pays out, which is exactly what Merchant Clearing holds for a card
+                        // acquirer. Cash never moved, so it must not land in Cash or Bank.
+                        case "BNPL" -> new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
                         default -> {
                                 // POS sends card network names (Visa, Mastercard, Amex, etc.).
                                 // Any mode containing a card-related keyword routes to Merchant Clearing.
+                                if (mode.contains("BNPL")) {
+                                        yield new AccountSelection("Merchant Clearing", ACC_MERCHANT_CLEARING);
+                                }
                                 if (mode.contains("CARD") || mode.contains("VISA")
                                         || mode.contains("MASTER") || mode.contains("AMEX")
                                         || mode.contains("AMERICAN_EXPRESS") || mode.contains("DISCOVER")) {

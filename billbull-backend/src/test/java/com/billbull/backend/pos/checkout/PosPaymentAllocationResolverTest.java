@@ -319,6 +319,39 @@ class PosPaymentAllocationResolverTest {
     }
 
     @Test
+    void bnplSettlesTheSaleAndRecordsItsProvider() {
+        PosPaymentPlan plan = resolver.resolveAllocations(List.of(
+                allocation("BNPL", "Tabby", 93.45, "BNPL-79109320", null)), 93.45, null, "Cash");
+
+        // The provider settles the sale, so it is money received — not a receivable.
+        assertEquals(93.45, plan.getSettledAmount(), 0.001);
+        assertEquals(0.0, plan.getCreditAmount(), 0.001);
+        assertTrue(plan.getAllocations().get(0).isReceipt());
+        // "BNPL Tabby", not "Tabby": the prefix is what every report buckets on.
+        assertEquals("BNPL Tabby", plan.getAllocations().get(0).getModeLabel());
+        // Summarised by rail, the same way Visa and Mastercard both read as "Card".
+        assertEquals("BNPL", plan.getCombinedPaymentMode());
+    }
+
+    @Test
+    void bnplCannotExceedTheInvoiceTotal() {
+        // A provider settles what it financed and hands back nothing, so an over-allocation
+        // would be money the store has to refund through a separate channel.
+        assertThrows(ResponseStatusException.class, () -> resolver.resolveAllocations(List.of(
+                allocation("BNPL", "Tabby", 150.0, "BNPL-1", null)), 100.0, null, "Cash"));
+    }
+
+    @Test
+    void bnplSplitsWithOtherTenders() {
+        PosPaymentPlan plan = resolver.resolveAllocations(List.of(
+                allocation("BNPL", "Tamara", 60.0, "BNPL-2", null),
+                allocation("CASH", null, 40.0, null, null)), 100.0, null, "Cash");
+
+        assertEquals(100.0, plan.getSettledAmount(), 0.001);
+        assertEquals("BNPL + Cash", plan.getCombinedPaymentMode());
+    }
+
+    @Test
     void settlementRejectsTheWordMixedAsALabel() {
         PosPaymentPlan plan = resolver.resolveAllocations(List.of(
                 allocation("CASH", null, 60.0, null, null),

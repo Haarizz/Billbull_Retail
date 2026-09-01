@@ -30,6 +30,15 @@ export const PAYMENT_TYPES = Object.freeze({
    * line here reserves nothing.
    */
   VOUCHER: 'VOUCHER',
+  /**
+   * Buy Now, Pay Later — a third-party provider (Tabby, Tamara, ...) finances the sale,
+   * settles the full amount to the store and collects the installments from the customer.
+   *
+   * Money, not credit: the store is paid, so it settles the invoice like a card. The provider
+   * travels in `paymentSubtype` and its approval reference in `reference`, which is what the
+   * later payout is reconciled against.
+   */
+  BNPL: 'BNPL',
 });
 
 /**
@@ -42,6 +51,7 @@ export const PAYMENT_TYPE_LABELS = Object.freeze({
   [PAYMENT_TYPES.ONLINE]: 'Online',
   [PAYMENT_TYPES.CREDIT]: 'Credit',
   [PAYMENT_TYPES.VOUCHER]: 'Voucher',
+  [PAYMENT_TYPES.BNPL]: 'BNPL',
 });
 
 /** Currency comparison tolerance — half a fils, so 2-dp rounding never flips a check. */
@@ -98,6 +108,9 @@ export function lineLabel(line) {
   if (line.paymentType === PAYMENT_TYPES.CARD && line.paymentSubtype) {
     return line.paymentSubtype;
   }
+  // Grouped by rail, not by provider: a sale financed by Tabby summarises as "BNPL", the same
+  // way Visa and Mastercard both summarise as "Card". The provider is named on the detail row.
+  if (line.paymentType === PAYMENT_TYPES.BNPL) return 'BNPL';
   return PAYMENT_TYPE_LABELS[line.paymentType] || 'Cash';
 }
 
@@ -119,6 +132,12 @@ export function validateLine(line) {
       // The code is what the backend redeems against; without it the allocation is unbacked
       // and checkout would post a payment line with no voucher behind it.
       return line.reference ? null : 'Scan or enter a voucher code.';
+    case PAYMENT_TYPES.BNPL:
+      if (!line.paymentSubtype) return 'Select a BNPL provider.';
+      // The approval reference is the only link between this tender and the provider's
+      // payout. Without it the leg cannot be reconciled when the money arrives, so it is
+      // required rather than optional — the cashier reads it off the approved order.
+      return line.reference ? null : 'Enter the provider approval reference.';
     default:
       return null;
   }

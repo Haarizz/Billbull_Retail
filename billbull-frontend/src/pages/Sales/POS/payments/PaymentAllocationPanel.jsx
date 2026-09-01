@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Banknote, CreditCard, Gift, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
+import { AlertTriangle, Banknote, CalendarClock, CreditCard, Gift, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
 
 import { PAYMENT_TYPES } from './paymentModel';
 import { remainingAfterAllocation, suggestedNextMethod } from './paymentFlow';
@@ -11,15 +11,27 @@ import CardPaymentModal from './modals/CardPaymentModal';
 import OnlinePaymentModal from './modals/OnlinePaymentModal';
 import CreditPaymentModal from './modals/CreditPaymentModal';
 import VoucherPaymentModal from './modals/VoucherPaymentModal';
+import BnplPaymentModal from './modals/BnplPaymentModal';
 
-/** Hotkeys are the first letter of each method, which is also what the badge shows. */
+/**
+ * Hotkeys are the first letter of each method, which is also what the badge shows.
+ *
+ * `hidden` takes a tender off the method bar without removing it from the system: the modal,
+ * the model, the selectors and the backend all still handle it, so an allocation already on a
+ * sale stays editable and the tender can be brought back by deleting one flag. Deleting the
+ * entry instead would strand any line of that type with no way to open it.
+ */
 const METHODS = [
   { type: PAYMENT_TYPES.CASH, label: 'Cash', hotkey: 'c', icon: Banknote, accent: '#16a34a' },
   { type: PAYMENT_TYPES.CARD, label: 'Card', hotkey: 'd', icon: CreditCard, accent: '#2563eb' },
   { type: PAYMENT_TYPES.ONLINE, label: 'Online', hotkey: 'o', icon: Landmark, accent: '#0891b2' },
   { type: PAYMENT_TYPES.CREDIT, label: 'Credit', hotkey: 'r', icon: Users, accent: '#9333ea' },
   // 'v' is free; 'c' and 'd' are already Cash and Card.
-  { type: PAYMENT_TYPES.VOUCHER, label: 'Voucher', hotkey: 'v', icon: Gift, accent: '#8B5CF6' },
+  // Temporarily hidden — Credit Voucher redemption is not being offered at the till for now.
+  { type: PAYMENT_TYPES.VOUCHER, label: 'Voucher', hotkey: 'v', icon: Gift, accent: '#8B5CF6', hidden: true },
+  // Buy Now Pay Later — a third-party provider settles the sale and bills the customer in
+  // installments. 'b' is free.
+  { type: PAYMENT_TYPES.BNPL, label: 'BNPL', hotkey: 'b', icon: CalendarClock, accent: '#D97706' },
 ];
 
 /**
@@ -39,7 +51,7 @@ const METHODS = [
  *
  * @param methods  restricts the offered tenders (e.g. a delivery balance cannot be settled
  *                 by putting it back on account, so CREDIT is excluded there). Defaults to
- *                 all four.
+ *                 every tender.
  * @param compact  denser layout for the smaller settlement dialogs.
  */
 export default function PaymentAllocationPanel({
@@ -77,10 +89,10 @@ export default function PaymentAllocationPanel({
     requestAnimationFrame(() => methodBarRef.current?.querySelector('button')?.focus());
   }, []);
 
-  const offeredMethods = useMemo(
-    () => (methods ? METHODS.filter((m) => methods.includes(m.type)) : METHODS),
-    [methods],
-  );
+  const offeredMethods = useMemo(() => {
+    const visible = METHODS.filter((m) => !m.hidden);
+    return methods ? visible.filter((m) => methods.includes(m.type)) : visible;
+  }, [methods]);
   const offeredTypes = useMemo(() => offeredMethods.map((m) => m.type), [offeredMethods]);
 
   /**
@@ -169,9 +181,11 @@ export default function PaymentAllocationPanel({
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Add Payment</p>
           <p className="text-[10px] text-gray-400">Press the highlighted key</p>
         </div>
-        <div ref={methodBarRef} className={`grid gap-2 ${
-          offeredMethods.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'
-        }`}>
+        {/* One row, whatever the tender count: the cashier's eye and hand learn fixed
+            positions, and a method that wraps to a second row on one screen and not another
+            is the thing that gets mis-pressed under pressure. */}
+        <div ref={methodBarRef} className="grid gap-2"
+          style={{ gridTemplateColumns: `repeat(${Math.max(1, offeredMethods.length)}, minmax(0, 1fr))` }}>
           {offeredMethods.map(({ type, label, hotkey, icon: Icon, accent }) => (
             // Hover/press feedback is drawn from the method's own accent so the tile that
             // lifts is unmistakably the one about to be charged. `group` drives the icon.
@@ -263,6 +277,12 @@ export default function PaymentAllocationPanel({
           onCustomerCreated={onCustomerCreated} />
       )}
       {activeModal?.type === PAYMENT_TYPES.VOUCHER && <VoucherPaymentModal {...modalProps} />}
+      {activeModal?.type === PAYMENT_TYPES.BNPL && (
+        // The provider verifies a named customer before it will finance, so the BNPL wizard
+        // needs the same customer list — and the same quick-create path — as a credit sale.
+        <BnplPaymentModal {...modalProps} customers={customers} selectedCustomerId={selectedCustomerId}
+          onCustomerCreated={onCustomerCreated} />
+      )}
 
     </div>
   );

@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { AlertCircle, Banknote, CreditCard, Gift, Landmark, Pencil, Users, X } from 'lucide-react';
+import { AlertCircle, Banknote, CalendarClock, CreditCard, Gift, Landmark, Pencil, Users, X } from 'lucide-react';
 
 import { PAYMENT_TYPES } from './paymentModel';
 import { CurrencyAmount } from '../POSCurrency';
@@ -12,6 +12,7 @@ const TYPE_STYLE = {
   // reading a settled-looking bill as paid when part of it is still owed.
   [PAYMENT_TYPES.CREDIT]: { icon: Users, accent: '#9333ea', label: 'Transferred to Accounts Receivable' },
   [PAYMENT_TYPES.VOUCHER]: { icon: Gift, accent: '#8B5CF6', label: 'Credit Voucher' },
+  [PAYMENT_TYPES.BNPL]: { icon: CalendarClock, accent: '#D97706', label: 'BNPL' },
 };
 
 /**
@@ -26,6 +27,9 @@ function PaymentAllocationRow({ line, error, onEdit, onRemove }) {
   const detail = [
     line.paymentSubtype,
     line.customerName,
+    // The plan is what the customer will be billed on; a cashier correcting a BNPL leg needs
+    // to see which one was recorded without reopening the dialog.
+    line.metadata?.bnplPlanLabel,
     line.reference && `Ref ${line.reference}`,
   ].filter(Boolean).join(' · ');
 
