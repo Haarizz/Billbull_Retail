@@ -131,11 +131,9 @@ export const cachePosProduct = (cache, product) => {
     .forEach(key => cache.set(String(key).toLowerCase(), product));
 };
 
-export const calculateDenominationTotal = (denom) => {
-  return Object.entries(denom).reduce((total, [note, count]) => {
-    return total + (parseFloat(note) * count);
-  }, 0);
-};
+// calculateDenominationTotal was removed here: it was one of three copies of the same sum.
+// Counted Cash is now computed by the backend; the single remaining display-only helper
+// lives in utils/posReportViewModel.js.
 
 /**
  * Tax Enabled / Tax Mode / Branch Default VAT Rate live in BranchTaxConfiguration,

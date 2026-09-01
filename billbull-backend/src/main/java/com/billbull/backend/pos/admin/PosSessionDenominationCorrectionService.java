@@ -2,6 +2,8 @@ package com.billbull.backend.pos.admin;
 
 import com.billbull.backend.financials.audit.FinancialAuditService;
 import com.billbull.backend.pos.session.PosSession;
+import com.billbull.backend.pos.session.denomination.PosDenominationCount;
+import com.billbull.backend.pos.session.denomination.PosDenominationCountService;
 import com.billbull.backend.pos.session.PosSessionRepository;
 import com.billbull.backend.pos.session.PosSessionStatus;
 import com.billbull.backend.util.PageResponse;
@@ -17,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +49,12 @@ public class PosSessionDenominationCorrectionService {
     private final FinancialAuditService auditService;
     private final ObjectMapper objectMapper;
     private final CorrectionOverlayRepository overlayRepository;
+    private final PosDenominationCountService denominationCountService;
+    private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngine;
+    private final com.billbull.backend.settings.branch.BranchRepository branchRepository;
+
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(PosSessionDenominationCorrectionService.class);
 
     public PosSessionDenominationCorrectionService(PosSessionDenominationCorrectionRepository repo,
                                                     CorrectionRequestRepository correctionRequestRepo,
@@ -53,7 +62,10 @@ public class PosSessionDenominationCorrectionService {
                                                     PosSessionRepository posSessionRepository,
                                                     FinancialAuditService auditService,
                                                     ObjectMapper objectMapper,
-                                                    CorrectionOverlayRepository overlayRepository) {
+                                                    CorrectionOverlayRepository overlayRepository,
+                                                    PosDenominationCountService denominationCountService,
+                                                    com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngine,
+                                                    com.billbull.backend.settings.branch.BranchRepository branchRepository) {
         this.repo = repo;
         this.correctionRequestRepo = correctionRequestRepo;
         this.correctionRequestService = correctionRequestService;
@@ -61,6 +73,9 @@ public class PosSessionDenominationCorrectionService {
         this.auditService = auditService;
         this.objectMapper = objectMapper;
         this.overlayRepository = overlayRepository;
+        this.denominationCountService = denominationCountService;
+        this.postingEngine = postingEngine;
+        this.branchRepository = branchRepository;
     }
 
     private String currentUser() {
@@ -72,6 +87,62 @@ public class PosSessionDenominationCorrectionService {
     // terminal's close-session dialog already sends as closingDenominations, e.g. {"500": 2}) ──
 
     @SuppressWarnings("unchecked")
+    /**
+     * Posts the adjustment entry for an applied correction, or records why it could not.
+     *
+     * <p>Never rewrites {@code SCL-{sessionId}}. Idempotent on the versioned reference, so a
+     * retried apply resolves to the same entry rather than double-posting.
+     */
+    private void postAdjustmentJournal(PosSessionDenominationCorrection correction, int version) {
+        PosSession session = posSessionRepository.findById(correction.getSessionId()).orElse(null);
+        if (session == null) return;
+
+        String reference = "SCLADJ-" + correction.getSessionId() + "-v" + version;
+        try {
+            com.billbull.backend.settings.branch.Branch branch = correction.getBranchId() != null
+                    ? branchRepository.findById(correction.getBranchId()).orElse(null) : null;
+
+            postingEngine.createAdjustmentJournalFromSessionCorrection(
+                    correction.getSessionId(), version,
+                    correction.getOriginalTotal(), correction.getCorrectedTotal(),
+                    session.getExpectedCash(),
+                    session.getTradingDate() != null ? session.getTradingDate() : session.getSessionDate(),
+                    branch);
+
+            correction.setAdjustmentJournalReference(reference);
+            correction.setAdjustmentPostedAt(LocalDateTime.now());
+            correction.setAdjustmentPostingError(null);
+            repo.save(correction);
+        } catch (Exception e) {
+            // Visible and retryable, never silent: a correction whose accounting did not land
+            // leaves reports and ledger disagreeing, which is exactly the condition this method
+            // exists to prevent.
+            log.error("[PosSessionDenominationCorrection] Correction {} applied for session {} but its "
+                            + "adjustment journal FAILED to post (counted {} -> {}). The overlay is "
+                            + "effective; the ledger is not.",
+                    correction.getId(), correction.getSessionId(),
+                    correction.getOriginalTotal(), correction.getCorrectedTotal(), e);
+            correction.setAdjustmentJournalReference(reference);
+            correction.setAdjustmentPostingError(
+                    e.getMessage() == null ? "unknown" : e.getMessage().substring(0, Math.min(1000, e.getMessage().length())));
+            repo.save(correction);
+        }
+    }
+
+    /**
+     * Marks the session's original variance approval as superseded, preserving every detail of
+     * it. The approver, reason and timestamp stay exactly as recorded — an approval is a
+     * statement someone made about a specific figure, and rewriting it would falsify the record.
+     */
+    private void supersedeVarianceApproval(PosSessionDenominationCorrection correction) {
+        PosSession session = posSessionRepository.findById(correction.getSessionId()).orElse(null);
+        if (session == null) return;
+        if (!"APPROVED".equals(session.getVarianceApprovalStatus())) return;
+
+        session.setVarianceApprovalStatus("SUPERSEDED_BY_CORRECTION");
+        posSessionRepository.save(session);
+    }
+
     private Map<String, Integer> parseDenominations(String json) {
         if (json == null || json.isBlank()) return new LinkedHashMap<>();
         try {
@@ -84,22 +155,20 @@ public class PosSessionDenominationCorrectionService {
         }
     }
 
+    /**
+     * Delegates to the one implementation of denomination arithmetic.
+     *
+     * <p>This used to multiply the keys itself, which meant a corrected count was totalled by
+     * different rules than the original: no ladder, so any key that parsed as a number was
+     * accepted. A correction could therefore restate a drawer using denominations that are not
+     * legal tender, and the corrected total would disagree with how the same snapshot totals
+     * anywhere else. Routing through the count service makes a correction obey exactly the
+     * validation a first count does.
+     */
     private BigDecimal total(Map<String, Integer> denominations) {
-        BigDecimal sum = BigDecimal.ZERO;
-        for (Map.Entry<String, Integer> e : denominations.entrySet()) {
-            BigDecimal value;
-            try {
-                value = new BigDecimal(e.getKey());
-            } catch (NumberFormatException ex) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid denomination value: " + e.getKey());
-            }
-            int count = e.getValue() == null ? 0 : e.getValue();
-            if (count < 0) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Denomination count cannot be negative: " + e.getKey());
-            }
-            sum = sum.add(value.multiply(BigDecimal.valueOf(count)));
-        }
-        return sum;
+        Map<String, Object> raw = new LinkedHashMap<>(denominations);
+        PosDenominationCount counted = denominationCountService.count(raw, null);
+        return counted == null ? BigDecimal.ZERO : counted.countedCash();
     }
 
     private String toJson(Map<String, Integer> map) {
@@ -301,9 +370,32 @@ public class PosSessionDenominationCorrectionService {
         overlay.setStatus(CorrectionRequestStatus.APPLIED);
         overlayRepository.save(overlay);
 
+        // ── The accounting the correction implies ────────────────────────────────────────
+        //
+        // This used to change nothing outside its own table. That stopped being true once the
+        // reconciliation service began reading the overlay: the correction moves effective
+        // counted cash, and therefore effective variance, while the posted close journal still
+        // described the original count. Reports and ledger drifted apart with nothing recording
+        // that they had.
+        //
+        // The original SCL entry is left exactly as posted -- it is the record of what was
+        // counted and approved at the time. A separate adjustment entry reverses it and reposts
+        // the corrected state, so the net of the two is the truth and both remain auditable.
+        postAdjustmentJournal(saved, version);
+
+        // The original variance approval authorized the ORIGINAL count. It stays on the session
+        // as history -- overwriting it would erase who approved what -- but it no longer
+        // describes the state being reported, so it is marked superseded. The correction's own
+        // approval is the authorization for the corrected figure; there is deliberately no
+        // second variance-approval mechanism.
+        supersedeVarianceApproval(saved);
+
         auditService.logEvent(ENTITY_TYPE, applied.getRequestNumber(), "APPLIED", saved.getAppliedBy(),
                 "Denomination correction applied — now the effective overlay for session " + saved.getSessionId()
-                        + ". No sales, payment, cash movement, journal, or inventory record was changed.");
+                        + ". Counted cash " + saved.getOriginalTotal() + " -> " + saved.getCorrectedTotal()
+                        + ". Original close journal SCL-" + saved.getSessionId() + " is unchanged; adjustment "
+                        + "journal " + saved.getAdjustmentJournalReference() + " reverses it and reposts the "
+                        + "corrected state. No sales, payment, cash movement or inventory record was changed.");
         return toResponse(saved);
     }
 

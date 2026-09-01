@@ -1,34 +1,52 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Info, Loader2, Plus, Search, Users } from 'lucide-react';
+import {
+  Banknote, CheckCircle2, CreditCard, Info, Landmark, Loader2, Plus, Search, Users,
+} from 'lucide-react';
 
-import { PAYMENT_TYPES, toAmount } from '../paymentModel';
+import { AMOUNT_TOLERANCE, PAYMENT_TYPES, toAmount } from '../paymentModel';
 import { allocationTarget } from '../paymentSelectors';
-import { confirmActionLabel, remainingAfterAllocation } from '../paymentFlow';
 import { DirhamSymbol } from '../../POSCurrency';
-import PaymentModalShell, { PaymentModalFrame, applyAmountKey } from './PaymentModalShell';
+import { PaymentModalFrame } from './PaymentModalShell';
 import { createCustomer } from '../../../../../api/customerledgerApi';
 
 const ACCENT = '#9333ea';
+
+/** The tenders that can collect the received-now part of a credit sale. */
+const MODES = [
+  { type: PAYMENT_TYPES.CASH, label: 'Cash', icon: Banknote },
+  { type: PAYMENT_TYPES.CARD, label: 'Card', icon: CreditCard },
+  { type: PAYMENT_TYPES.ONLINE, label: 'Online Transfer', icon: Landmark },
+];
+
+const CARD_BRANDS = ['Visa', 'Mastercard', 'Amex', 'JCB', 'Apple Pay', 'Google Pay', 'Samsung Pay', 'Other'];
 
 /** A customer row may arrive from either the POS mapper or a raw create response. */
 const customerPhone = (c) => c?.phone || c?.mobile || '';
 const customerBalance = (c) => Number(c?.balance ?? c?.outstanding ?? 0) || 0;
 
 /**
- * Puts part (or all) of the bill on the customer's account.
+ * Settles a bill part in money, part on the customer's account.
  *
- * Unlike the other tenders this collects no money — it records what the customer still
- * owes, so it requires a named account customer and nothing else. A walk-in cannot carry a
- * balance, which is why the picker excludes them.
+ * The cashier keys what the customer *handed over*; the receivable is whatever the invoice
+ * leaves after it. That is the opposite of asking for the credit amount directly, and it is
+ * the right way round: the received figure is the one the cashier actually knows at the
+ * counter, and deriving the other from it means the two can never be keyed inconsistently.
+ *
+ * One confirmation therefore commits up to two allocations — the tender that collected the
+ * money and the balance posted to A/R — so a part-paid credit sale takes one dialog instead
+ * of two, and the credit line always closes the bill.
  *
  * Two steps, because the two questions are unrelated: *whose* account is this going on, and
  * *how much* of the bill goes there. Answering them in one crowded dialog is what made the
  * old version easy to mis-key — the cashier could confirm an amount with no customer picked
  * and only find out from the error line. Step one now has to be answered before step two
  * exists.
+ *
+ * A walk-in cannot carry a balance, which is why the picker excludes them.
  */
 export default function CreditPaymentModal({
-  remaining, editingLine, offeredTypes, customers, defaultCustomerId,
+  remaining, editingLine, customers, defaultCustomerId,
+  bankAccounts = [], bankAccountsLoading = false,
   onCustomerCreated = null, onConfirm, onCancel,
 }) {
   const target = allocationTarget(remaining, editingLine);
@@ -54,11 +72,6 @@ export default function CreditPaymentModal({
     return null;
   });
 
-  const [amount, setAmount] = useState(
-    editingLine ? String(editingLine.amount) : (target > 0 ? target.toFixed(2) : ''),
-  );
-  const [remarks, setRemarks] = useState(editingLine?.metadata?.remarks || '');
-
   if (!selected) {
     return (
       <CustomerStep
@@ -72,14 +85,14 @@ export default function CreditPaymentModal({
 
   return (
     <ConfirmStep
+      // Remounts on a customer change so the amount and tender fields start clean rather
+      // than carrying the previous customer's half-filled entry.
+      key={selected.id || selected.code}
       selected={selected}
       target={target}
-      amount={amount}
-      setAmount={setAmount}
-      remarks={remarks}
-      setRemarks={setRemarks}
       editingLine={editingLine}
-      offeredTypes={offeredTypes}
+      bankAccounts={bankAccounts}
+      bankAccountsLoading={bankAccountsLoading}
       onChangeCustomer={() => setSelected(null)}
       onConfirm={onConfirm}
       onCancel={onCancel}
@@ -108,6 +121,7 @@ function CustomerStep({ customers, onSelect, onCustomerCreated, onCancel }) {
       subtitle="Select or create a customer"
       icon={Users}
       accent={ACCENT}
+      steps={{ current: 1, total: 2 }}
       onCancel={onCancel}
       dialogRef={dialogRef}
       onKeyDown={handleKeyDown}
@@ -298,34 +312,108 @@ function Field({ label, required = false, hint = null, children }) {
   );
 }
 
-/* ── Step 2 — how much goes on the account ───────────────────────────────── */
+/* ── Step 2 — what was received now, and what goes on the account ────────── */
 
+/**
+ * The amount tiles, the tender that collected the received part, and the balance the account
+ * carries.
+ *
+ * A received amount is money, so it needs a tender of its own — cash, card or transfer, with
+ * the same bank / card-type detail those tenders collect anywhere else. It is committed as an
+ * ordinary allocation of that type; "Advance" is only what the entry row calls it, marking
+ * where it was keyed. Nothing here touches the customer-advance ledger (see `paymentModel`),
+ * which stays a Customer-module workflow.
+ */
 function ConfirmStep({
-  selected, target, amount, setAmount, remarks, setRemarks,
-  editingLine, offeredTypes, onChangeCustomer, onConfirm, onCancel,
+  selected, target, editingLine, bankAccounts, bankAccountsLoading,
+  onChangeCustomer, onConfirm, onCancel,
 }) {
-  const [isEditingAmount, setIsEditingAmount] = useState(false);
-  
-  const numeric = toAmount(amount);
-  const exceedsRemaining = numeric > target + 0.005;
-  const balance = Math.max(0, target - Math.min(numeric, target));
+  const dialogRef = useRef(null);
+
+  // Editing an existing credit line reopens with the money already collected against it, so
+  // "received" starts at whatever the target leaves rather than at zero.
+  const [received, setReceived] = useState(
+    editingLine ? trimAmount(Math.max(0, round2(target - editingLine.amount))) : '',
+  );
+  const [mode, setMode] = useState(null);
+  const [cardBrand, setCardBrand] = useState('');
+  const [cardBankId, setCardBankId] = useState('');
+  const [reference, setReference] = useState('');
+  const [onlineBankId, setOnlineBankId] = useState('');
+  const [remarks, setRemarks] = useState(editingLine?.metadata?.remarks || '');
+
+  useEffect(() => { dialogRef.current?.focus(); }, []);
+
+  const receivedAmount = toAmount(received);
+  const exceedsTotal = receivedAmount > target + AMOUNT_TOLERANCE;
+  const balance = Math.max(0, round2(target - Math.min(receivedAmount, target)));
   const existingReceivable = customerBalance(selected);
-  const confirmDisabled = numeric <= 0 || exceedsRemaining;
-  const confirmLabel = confirmActionLabel({
-    currentType: PAYMENT_TYPES.CREDIT,
-    remainingAfter: remainingAfterAllocation(target, numeric),
-    offeredTypes,
-    editing: Boolean(editingLine),
-  });
+  const postsToAr = balance > AMOUNT_TOLERANCE;
+
+  const bankOption = (id) => bankAccounts.find((a) => String(a.id) === String(id)) || null;
+  // "{code} - {name}" is what the backend resolves the receiving CoA row from.
+  const bankLabel = (acc) => (acc ? `${acc.code || acc.accountCode || ''} - ${acc.name}`.trim() : null);
+
+  const error = (() => {
+    if (exceedsTotal) return `Received cannot exceed the invoice total ${target.toFixed(2)}.`;
+    if (receivedAmount <= 0) return null;
+    if (!mode) return 'Select how the received amount was paid.';
+    if (mode === PAYMENT_TYPES.CARD && !cardBrand) return 'Select a card type.';
+    if (mode === PAYMENT_TYPES.ONLINE && !onlineBankId) return 'Select the receiving bank account.';
+    return null;
+  })();
+
+  // Nothing to commit when the bill is neither collected nor put on account.
+  const confirmDisabled = Boolean(error) || (receivedAmount <= 0 && !postsToAr);
 
   const handleConfirm = () => {
-    onConfirm({
-      paymentType: PAYMENT_TYPES.CREDIT,
-      amount: numeric,
-      customerCode: selected.code || selected.id,
-      customerName: selected.name,
-      metadata: remarks.trim() ? { remarks: remarks.trim() } : null,
-    });
+    if (confirmDisabled) return;
+    const note = remarks.trim() || null;
+    const drafts = [];
+
+    if (receivedAmount > 0) {
+      // An ordinary tender of the chosen type, flagged so the entry row can show where it was
+      // taken ("Advance · Card") without inventing a payment type for it.
+      const base = {
+        amount: receivedAmount,
+        metadata: { creditAdvance: true, ...(note ? { remarks: note } : {}) },
+      };
+      if (mode === PAYMENT_TYPES.CASH) {
+        drafts.push({ ...base, paymentType: PAYMENT_TYPES.CASH });
+      } else if (mode === PAYMENT_TYPES.CARD) {
+        const acc = bankOption(cardBankId);
+        drafts.push({
+          ...base,
+          paymentType: PAYMENT_TYPES.CARD,
+          paymentSubtype: cardBrand,
+          reference: reference.trim() || null,
+          bankAccountId: acc ? cardBankId : null,
+          bankAccountName: bankLabel(acc),
+        });
+      } else {
+        const acc = bankOption(onlineBankId);
+        drafts.push({
+          ...base,
+          paymentType: PAYMENT_TYPES.ONLINE,
+          paymentSubtype: acc?.name || null,
+          reference: reference.trim() || null,
+          bankAccountId: onlineBankId,
+          bankAccountName: bankLabel(acc),
+        });
+      }
+    }
+
+    if (postsToAr) {
+      drafts.push({
+        paymentType: PAYMENT_TYPES.CREDIT,
+        amount: balance,
+        customerCode: selected.code || selected.id,
+        customerName: selected.name,
+        metadata: note ? { remarks: note } : null,
+      });
+    }
+
+    onConfirm(drafts);
   };
 
   const handleKeyDown = (event) => {
@@ -335,106 +423,12 @@ function ConfirmStep({
       return;
     }
     if (event.key === 'Enter') {
+      // Enter picks an option inside a <select>; everywhere else it commits.
       if (event.target.tagName === 'SELECT') return;
       event.preventDefault();
-      if (!confirmDisabled) handleConfirm();
-      return;
+      handleConfirm();
     }
   };
-
-  const CustomerCard = (
-    <div className="rounded-xl border-2 border-gray-100 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Customer Information</span>
-        <button type="button" onClick={onChangeCustomer}
-          className="text-xs font-bold text-[#9333ea] hover:underline">Change</button>
-      </div>
-      <div className="flex items-center gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#9333ea]/10 text-sm font-black text-[#9333ea]">
-          {(selected.name || '?').charAt(0).toUpperCase()}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-black text-[#1E293B]">{selected.name}</span>
-          <span className="block truncate text-[11px] text-gray-400">
-            {[selected.code, customerPhone(selected)].filter(Boolean).join(' · ') || '—'}
-          </span>
-        </span>
-      </div>
-    </div>
-  );
-
-  const PrimaryAmountBox = (
-    <div className="flex items-center justify-between rounded-xl border-2 px-4 py-3 bg-[#9333ea]/5" style={{ borderColor: ACCENT }}>
-      <div>
-        <div className="text-[10px] font-bold uppercase tracking-wide text-[#9333ea]">Posted to Receivable</div>
-        <div className="mt-0.5 text-2xl font-black text-[#1E293B]">
-          <DirhamSymbol /> {amount || '0'}
-        </div>
-      </div>
-      {!isEditingAmount && (
-        <button type="button" onClick={() => setIsEditingAmount(true)}
-          className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#9333ea] shadow-sm border border-[#9333ea]/20 hover:bg-[#9333ea]/10 transition-colors">
-          <span className="text-[14px]">✏️</span> Edit
-        </button>
-      )}
-    </div>
-  );
-
-  const ReferencesList = (
-    <div className="space-y-1.5 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2.5">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-gray-500">Invoice Total</span>
-        <span className="text-xs font-bold text-[#1E293B]"><DirhamSymbol /> {target.toFixed(2)}</span>
-      </div>
-      {balance > 0 && (
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-gray-500">Unpaid Balance</span>
-          <span className="text-xs font-bold text-amber-600"><DirhamSymbol /> {balance.toFixed(2)}</span>
-        </div>
-      )}
-      {existingReceivable > 0 && (
-        <div className="flex items-center justify-between border-t border-gray-200/60 pt-1.5 mt-1.5">
-          <span className="text-xs font-semibold text-gray-500">Existing A/R</span>
-          <span className="text-xs font-bold text-red-500"><DirhamSymbol /> {existingReceivable.toFixed(2)}</span>
-        </div>
-      )}
-    </div>
-  );
-
-  const RemarksInput = (
-    <div>
-      <label className="text-[10px] font-bold uppercase text-gray-400">Remarks (optional)</label>
-      <input type="text" autoComplete="off" value={remarks} placeholder="Reference or note…"
-        onChange={(e) => setRemarks(e.target.value)}
-        className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-[#9333ea]" />
-    </div>
-  );
-
-  if (isEditingAmount) {
-    return (
-      <PaymentModalShell
-        title="Credit Sale"
-        subtitle={`Invoice ${target.toFixed(2)} · ${selected.name}`}
-        icon={Users}
-        accent={ACCENT}
-        amount={amount}
-        amountLabel="Posted to Receivable"
-        onAmountKey={(k) => setAmount((cur) => applyAmountKey(cur, k))}
-        onAmountSet={setAmount}
-        error={exceedsRemaining ? `Credit cannot exceed the remaining ${target.toFixed(2)}.` : null}
-        confirmLabel={confirmLabel}
-        confirmDisabled={confirmDisabled}
-        onConfirm={handleConfirm}
-        onCancel={onCancel}
-      >
-        <div className="space-y-3 pt-2">
-          {CustomerCard}
-          {ReferencesList}
-          {RemarksInput}
-        </div>
-      </PaymentModalShell>
-    );
-  }
 
   return (
     <PaymentModalFrame
@@ -442,34 +436,207 @@ function ConfirmStep({
       subtitle={`Invoice ${target.toFixed(2)} · ${selected.name}`}
       icon={Users}
       accent={ACCENT}
+      steps={{ current: 2, total: 2 }}
       onCancel={onCancel}
+      dialogRef={dialogRef}
       onKeyDown={handleKeyDown}
+      hint="Enter to confirm · Esc to cancel"
       footer={(
-        <>
+        <div className="w-full space-y-2">
+          <button type="button" onClick={handleConfirm} disabled={confirmDisabled}
+            className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-black text-white transition-all disabled:cursor-not-allowed disabled:bg-gray-300"
+            style={confirmDisabled ? undefined : { backgroundColor: ACCENT }}>
+            <CheckCircle2 className="h-4 w-4" />
+            {editingLine ? 'Save Credit' : 'Save & Continue'}
+          </button>
           <button type="button" onClick={onCancel}
-            className="rounded-xl border-2 border-gray-200 px-5 py-3 text-sm font-bold text-gray-600 hover:bg-gray-50">
+            className="w-full rounded-xl border-2 border-gray-200 px-5 py-3 text-sm font-bold text-gray-600 hover:bg-gray-50">
             Cancel
           </button>
-          <button type="button" onClick={handleConfirm} disabled={confirmDisabled}
-            className="flex-1 rounded-xl py-3 text-sm font-black text-white transition-all disabled:cursor-not-allowed disabled:bg-gray-300"
-            style={confirmDisabled ? undefined : { backgroundColor: ACCENT }}>
-            {confirmLabel}
-          </button>
-        </>
+        </div>
       )}
     >
       <div className="space-y-3 p-4">
-        {CustomerCard}
-        {PrimaryAmountBox}
-        {ReferencesList}
-        {RemarksInput}
+        {/* Who carries the balance, and what they already owe — the existing A/R sits beside
+            the name because it is the one fact that decides whether more credit is wise. */}
+        <div className="rounded-xl border-2 border-gray-100 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Customer Information</span>
+            <button type="button" onClick={onChangeCustomer}
+              className="text-xs font-bold text-[#9333ea] hover:underline">Change</button>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#9333ea]/10 text-sm font-black text-[#9333ea]">
+              {(selected.name || '?').charAt(0).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-black text-[#1E293B]">{selected.name}</span>
+              <span className="block truncate text-[11px] text-gray-400">
+                {[selected.code, customerPhone(selected)].filter(Boolean).join(' · ') || '—'}
+              </span>
+            </span>
+            {existingReceivable > 0 && (
+              <span className="shrink-0 text-right">
+                <span className="block text-[9px] font-bold uppercase tracking-widest text-gray-400">Existing A/R</span>
+                <span className="block text-sm font-black text-red-500">
+                  <DirhamSymbol /> {existingReceivable.toFixed(2)}
+                </span>
+              </span>
+            )}
+          </div>
+        </div>
 
-        {exceedsRemaining && (
+        <div className="rounded-xl border-2 border-gray-100 p-3">
+          <p className="mb-2.5 text-[10px] font-bold uppercase tracking-widest text-gray-400">Advance Payment</p>
+
+          <div className="grid grid-cols-3 gap-2">
+            <AmountTile label="Invoice Total" value={target.toFixed(2)} />
+            <div className="rounded-xl border-2 px-3 py-2 focus-within:border-[#9333ea]"
+              style={{ borderColor: `${ACCENT}55` }}>
+              <label htmlFor="credit-received"
+                className="block text-center text-[9px] font-bold uppercase tracking-widest text-gray-400">
+                Received
+              </label>
+              <input id="credit-received" type="text" inputMode="decimal" autoComplete="off" autoFocus
+                value={received} placeholder="0.00"
+                // Digits and one decimal point only: a stray letter would silently read as
+                // zero and put the whole bill on account.
+                onChange={(e) => setReceived(sanitizeAmountInput(e.target.value))}
+                className="mt-0.5 w-full bg-transparent text-center text-lg font-black text-[#1E293B] outline-none" />
+            </div>
+            <AmountTile label="Balance" value={balance.toFixed(2)} tone="amber" />
+          </div>
+
+          <div className="mt-2.5 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+            <p className="text-[11px] font-semibold text-amber-800">
+              {postsToAr
+                ? `AED ${balance.toFixed(2)} will be posted to Customer Receivables (A/R) for ${selected.name}.`
+                : 'Nothing goes to A/R — the invoice is fully received.'}
+            </p>
+          </div>
+
+          {/* The tender selector only appears once money is involved: a pure credit sale has
+              no payment mode to pick, and three dead tiles would only invite a stray click. */}
+          {receivedAmount > 0 && (
+            <div className="mt-3 space-y-2.5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Payment Mode</p>
+              <div className="grid grid-cols-3 gap-2">
+                {MODES.map(({ type, label, icon: Icon }) => (
+                  <button key={type} type="button" onClick={() => setMode(type)}
+                    className={`flex flex-col items-center gap-1 rounded-xl border-2 py-2.5 text-[11px] font-bold transition-all ${
+                      mode === type
+                        ? 'border-transparent bg-[#9333ea] text-white'
+                        : 'border-gray-200 text-gray-600 hover:border-[#9333ea]/50'
+                    }`}>
+                    <Icon className="h-4 w-4" />{label}
+                  </button>
+                ))}
+              </div>
+
+              {mode === PAYMENT_TYPES.CARD && (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <BankSelect label="Bank" hint="(opt)" value={cardBankId} onChange={setCardBankId}
+                      accounts={bankAccounts} loading={bankAccountsLoading} placeholder="— Select —" />
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-gray-400">Card Type</label>
+                      <select value={cardBrand} onChange={(e) => setCardBrand(e.target.value)} className={SELECT_CLASS}>
+                        <option value="">— Select —</option>
+                        {CARD_BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <ReferenceInput value={reference} onChange={setReference} placeholder="e.g. TXN-123456" />
+                </>
+              )}
+
+              {mode === PAYMENT_TYPES.ONLINE && (
+                <>
+                  <BankSelect label="Bank Account" value={onlineBankId} onChange={setOnlineBankId}
+                    accounts={bankAccounts} loading={bankAccountsLoading} placeholder="— Select receiving account —" />
+                  <ReferenceInput value={reference} onChange={setReference} placeholder="e.g. WIRE-2024-001" />
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label className="text-[10px] font-bold uppercase text-gray-400">Remarks (optional)</label>
+          <input type="text" autoComplete="off" value={remarks} placeholder="Reference or note…"
+            onChange={(e) => setRemarks(e.target.value)}
+            className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-[#9333ea]" />
+        </div>
+
+        {error && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
-            Credit cannot exceed the remaining {target.toFixed(2)}.
+            {error}
           </div>
         )}
       </div>
     </PaymentModalFrame>
   );
+}
+
+function AmountTile({ label, value, tone = 'plain' }) {
+  const amber = tone === 'amber';
+  return (
+    <div className={`rounded-xl border-2 px-3 py-2 text-center ${
+      amber ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'
+    }`}>
+      <span className="block text-[9px] font-bold uppercase tracking-widest text-gray-400">{label}</span>
+      <span className={`mt-0.5 block text-lg font-black ${amber ? 'text-amber-600' : 'text-[#1E293B]'}`}>
+        <DirhamSymbol /> {value}
+      </span>
+    </div>
+  );
+}
+
+function BankSelect({ label, hint = null, value, onChange, accounts, loading, placeholder }) {
+  return (
+    <div>
+      <label className="text-[10px] font-bold uppercase text-gray-400">
+        {label}
+        {hint && <span className="ml-1 font-semibold normal-case text-gray-300">{hint}</span>}
+      </label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLASS}>
+        <option value="">
+          {loading ? 'Loading bank accounts…' : accounts.length === 0 ? 'No bank accounts configured' : placeholder}
+        </option>
+        {accounts.map((acc) => (
+          <option key={acc.id} value={acc.id}>{acc.name} ({acc.code || acc.accountCode || '-'})</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function ReferenceInput({ value, onChange, placeholder }) {
+  return (
+    <div>
+      <label className="text-[10px] font-bold uppercase text-gray-400">Reference No. (optional)</label>
+      <input type="text" autoComplete="off" value={value} placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm outline-none focus:border-[#9333ea]" />
+    </div>
+  );
+}
+
+const SELECT_CLASS = 'mt-1 w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm outline-none focus:border-[#9333ea]';
+
+/** Keeps digits and at most one decimal point, so the field can never read as NaN. */
+function sanitizeAmountInput(raw) {
+  const cleaned = String(raw).replace(/[^\d.]/g, '');
+  const [whole, ...rest] = cleaned.split('.');
+  return rest.length > 0 ? `${whole}.${rest.join('')}` : whole;
+}
+
+function round2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** "20" rather than "20.00" for a whole amount, matching what a cashier would have keyed. */
+function trimAmount(n) {
+  return n > 0 ? String(Number(n.toFixed(2))) : '';
 }

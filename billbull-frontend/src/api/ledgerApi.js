@@ -8,8 +8,13 @@ export const getAccounts = async () => {
   return res.data;
 };
 
-export const getBankAccounts = async () => {
-  const res = await api.get("/api/ledger/accounts/bank-accounts");
+// Cash-and-bank settlement accounts. The default list includes Cash in Hand / Petty Cash,
+// because most callers are generic "which account did the money move through?" pickers where
+// settling in cash is valid. Pass { excludeCash: true } where the account must be a real bank
+// account (online / bank transfer receipts) — see AccountSelectionRules.isCashAccount.
+export const getBankAccounts = async ({ excludeCash = false } = {}) => {
+  const res = await api.get("/api/ledger/accounts/bank-accounts",
+    excludeCash ? { params: { excludeCash: true } } : undefined);
   return res.data;
 };
 

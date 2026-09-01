@@ -62,6 +62,24 @@ public class PosSessionDenominationCorrection extends BaseEntity {
     @Column(name = "reason", length = 1000, nullable = false)
     private String reason;
 
+    // ── The accounting this correction produced ──────────────────────────────────────
+    // Applying a correction moves effective counted cash, so it must move the ledger too.
+    // The original close journal is never rewritten; a separate adjustment entry reverses it
+    // and reposts the corrected state, and these columns are the link to it.
+
+    /** {@code SCLADJ-{sessionId}-v{version}}. Also the idempotency key: a retried apply
+     *  resolves to the same reference and posts once. */
+    @Column(name = "adjustment_journal_reference", length = 100)
+    private String adjustmentJournalReference;
+
+    @Column(name = "adjustment_posted_at")
+    private LocalDateTime adjustmentPostedAt;
+
+    /** Kept rather than swallowed, so a correction whose accounting did not land is visible
+     *  and retryable instead of leaving the ledger quietly stale. */
+    @Column(name = "adjustment_posting_error", length = 1000)
+    private String adjustmentPostingError;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20, nullable = false)
     private CorrectionRequestStatus status = CorrectionRequestStatus.REQUESTED;
@@ -116,6 +134,15 @@ public class PosSessionDenominationCorrection extends BaseEntity {
 
     public BigDecimal getDifference() { return difference; }
     public void setDifference(BigDecimal difference) { this.difference = difference; }
+
+    public String getAdjustmentJournalReference() { return adjustmentJournalReference; }
+    public void setAdjustmentJournalReference(String v) { this.adjustmentJournalReference = v; }
+
+    public LocalDateTime getAdjustmentPostedAt() { return adjustmentPostedAt; }
+    public void setAdjustmentPostedAt(LocalDateTime v) { this.adjustmentPostedAt = v; }
+
+    public String getAdjustmentPostingError() { return adjustmentPostingError; }
+    public void setAdjustmentPostingError(String v) { this.adjustmentPostingError = v; }
 
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }

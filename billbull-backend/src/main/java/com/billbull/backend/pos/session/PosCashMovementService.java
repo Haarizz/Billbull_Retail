@@ -113,8 +113,8 @@ public class PosCashMovementService {
         Page<PosCashMovement> result = repo.search(branchId, sessionId, status, movementType, fromDate, toDate,
                 performedBy, pageable);
         
-        List<PosCashMovement> contentEntities = result.getContent();
-        contentEntities.forEach(entityManager::detach);
+        List<PosCashMovement> contentEntities = result.getContent().stream()
+                .map(PosCashMovement::detachedCopy).toList();
         contentEntities = effectiveCorrectionViewService.resolveOverlays(
                 com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT, 
                 contentEntities, 
@@ -127,8 +127,7 @@ public class PosCashMovementService {
 
     @Transactional(readOnly = true)
     public PosCashMovementResponse getById(Long id) {
-        PosCashMovement entity = getEntity(id);
-        entityManager.detach(entity);
+        PosCashMovement entity = getEntity(id).detachedCopy();
         entity = effectiveCorrectionViewService.resolveOverlay(
                 com.billbull.backend.pos.admin.CorrectionTargetType.CASH_MOVEMENT,
                 entity.getId(),

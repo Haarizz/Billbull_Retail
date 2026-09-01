@@ -36,6 +36,10 @@ export function allocationLabel(line, { short = false } = {}) {
       return line.paymentSubtype ? `${line.paymentSubtype} Online` : 'Online';
     case PAYMENT_TYPES.CREDIT:
       return short ? AR_LABEL_SHORT : AR_LABEL;
+    case PAYMENT_TYPES.BNPL:
+      // The provider is what the customer will be billed by, so it must be named: a receipt
+      // that only says "BNPL" leaves them with no idea who takes the installments.
+      return line.paymentSubtype ? `BNPL · ${line.paymentSubtype}` : 'Buy Now Pay Later';
     case PAYMENT_TYPES.VOUCHER:
       // Naming the voucher on the receipt matters: the customer needs to see which of their
       // vouchers was spent, and the remaining balance sits on that specific one.
@@ -56,6 +60,8 @@ export function allocationLabelAr(line) {
       return 'تحويل بنكي';
     case PAYMENT_TYPES.CREDIT:
       return 'محول إلى الذمم المدينة';
+    case PAYMENT_TYPES.BNPL:
+      return line.paymentSubtype ? `اشترِ الآن وادفع لاحقاً · ${line.paymentSubtype}` : 'اشترِ الآن وادفع لاحقاً';
     case PAYMENT_TYPES.VOUCHER:
       return 'قسيمة رصيد';
     default:
@@ -222,14 +228,28 @@ export function buildPaymentBlockFromRecords(records, { invoiceTotal = 0, short 
   // same function the till and the printer use.
   const lines = rows.map((r) => ({
     paymentType: PAYMENT_TYPES[r.type] || PAYMENT_TYPES.CASH,
-    // A card row records its network as the mode ("Visa"); an online row records the bank
-    // separately. Either way the subtype is what makes the label customer-readable.
-    paymentSubtype: r.type === 'CARD' ? r.label : bankDisplayName(r.bankName),
+    // A card row records its network as the mode ("Visa"); a BNPL row records its provider
+    // as "BNPL Tabby"; an online row records the bank separately. Either way the subtype is
+    // what makes the label customer-readable.
+    paymentSubtype: r.type === 'CARD' ? r.label
+      : r.type === 'BNPL' ? bnplProviderFromMode(r.label)
+        : bankDisplayName(r.bankName),
     amount: Number(r.amount) || 0,
     reference: r.reference || null,
   }));
 
   return buildPaymentBlock(lines, { invoiceTotal, short });
+}
+
+/**
+ * "BNPL Tabby" is how a financed leg is recorded (the prefix is what every report buckets
+ * on); "Tabby" is the provider name a customer reads. Returns null for a leg recorded with
+ * no provider, so the label falls back to the generic wording.
+ */
+export function bnplProviderFromMode(mode) {
+  if (!mode) return null;
+  const stripped = String(mode).replace(/^\s*BNPL\b[\s·-]*/i, '').trim();
+  return stripped || null;
 }
 
 /**
@@ -288,11 +308,12 @@ const FILTER_TO_TYPE = {
   Card: PAYMENT_TYPES.CARD,
   Online: PAYMENT_TYPES.ONLINE,
   Credit: PAYMENT_TYPES.CREDIT,
+  BNPL: PAYMENT_TYPES.BNPL,
 };
 
 /** The tender filters offered by back-office screens, in a stable order. 'Advance' and 'Mixed'
  *  are historical-only — no new sale produces either. */
-export const PAYMENT_FILTERS = ['All', 'Cash', 'Card', 'Online', 'Credit', 'Advance', 'Mixed'];
+export const PAYMENT_FILTERS = ['All', 'Cash', 'Card', 'Online', 'Credit', 'BNPL', 'Advance', 'Mixed'];
 
 /**
  * A single-cell payment summary for spreadsheet/CSV export: "Cash 80.00 | Visa 10.00".

@@ -28,6 +28,7 @@ public final class TenderBucket {
     public static final String BANK_TRANSFER = "bankTransfer";
     public static final String WALLET = "wallet";
     public static final String VOUCHER = "voucher";
+    public static final String BNPL = "bnpl";
     public static final String CHEQUE = "cheque";
     public static final String LOYALTY = "loyalty";
     public static final String STORE_CREDIT = "storeCredit";
@@ -41,6 +42,12 @@ public final class TenderBucket {
      */
     public static String of(String mode) {
         String m = mode == null ? "" : mode.toLowerCase();
+        // First: a BNPL leg records its mode as "BNPL <provider>", and some providers'
+        // names would otherwise be swept up by a later test. Provider names are matched too
+        // so a leg recorded by an integration that wrote the bare brand still buckets right.
+        if (m.contains("bnpl") || m.contains("buy now") || m.contains("tabby")
+                || m.contains("tamara") || m.contains("postpay") || m.contains("spotii")
+                || m.contains("cashew")) return BNPL;
         if (m.contains("card") || m.contains("visa") || m.contains("master")
                 || m.contains("amex") || m.contains("mada")) return CARD;
         if (m.contains("cash")) return CASH;
@@ -64,6 +71,7 @@ public final class TenderBucket {
             case BANK_TRANSFER -> "Online";
             case WALLET -> "Wallet";
             case VOUCHER -> "Voucher";
+            case BNPL -> "BNPL";
             case CHEQUE -> "Cheque";
             case LOYALTY -> "Loyalty";
             case STORE_CREDIT -> "Store Credit";

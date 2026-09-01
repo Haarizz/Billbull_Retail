@@ -16,7 +16,6 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.Lob;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
@@ -106,8 +105,13 @@ public class Customer {
     // =========================
     // MEDIA
     // =========================
-    @Lob
-    @Column
+    // NOTE: deliberately NOT @Lob (see the same note on PrintTemplate). On PostgreSQL,
+    // @Lob on a String makes Hibernate store/read the value through the Large Object API
+    // (an OID into pg_largeobject) instead of inline TEXT. Reading it then needs an open
+    // transaction, so any load outside one — e.g. the customer lookup behind
+    // GET /api/pos/checkout/deliveries — failed with "Unable to access lob stream" /
+    // "Large Objects may not be used in auto-commit mode". V88 converts existing data.
+    @Column(columnDefinition = "TEXT")
     private String avatar;
 
     // =========================

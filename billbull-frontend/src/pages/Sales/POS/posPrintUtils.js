@@ -1503,7 +1503,7 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
     html += `<div style="text-align:center;font-size:9px">Shop 12, Dubai Mall, Downtown Dubai, UAE</div>`;
     html += `<div style="text-align:center;font-size:9px">Tel: +971 4 123 4567</div>`;
   }
-  if (showTrn) html += `<div style="text-align:center;font-size:9px">TRN: ${esc(trn || '100123456700003')}</div>`;
+  if (showTrn) html += `<div style="text-align:center;font-size:9px">TRN: ${esc(trn || '')}</div>`;
   html += D;
   html += srow('Invoice No:', invNo);
   html += srow('Date:', '24-Jun-2026 03:15 PM');

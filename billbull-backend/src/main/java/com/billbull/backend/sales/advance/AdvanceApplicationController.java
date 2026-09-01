@@ -7,6 +7,8 @@ import java.util.Map;
 
 import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -82,7 +84,22 @@ public class AdvanceApplicationController {
         Long advanceReceiptId = Long.valueOf(body.get("advanceReceiptId").toString());
         BigDecimal amount     = new BigDecimal(body.get("amount").toString());
         String paymentMode    = body.getOrDefault("paymentMode", "Bank").toString();
-        return ResponseEntity.ok(service.refund(advanceReceiptId, amount, paymentMode));
+        rejectLegacyTerminalId(body, "refunding an advance");
+        // Stated by the caller, validated server-side, never inferred. Required for a cash
+        // refund from a till; ignored for non-cash modes, which move no drawer cash.
+        Long posSessionId = body.get("posSessionId") != null
+                ? Long.valueOf(body.get("posSessionId").toString()) : null;
+        // Where the notes come from: a POS till, or the office safe. Declared, not derived from
+        // whether a session happens to be present -- see AdvanceRefundCashSource.
+        Object rawSource = body.get("cashSource");
+        AdvanceRefundCashSource cashSource = AdvanceRefundCashSource.parse(
+                rawSource != null ? rawSource.toString() : null);
+        if (rawSource != null && cashSource == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Unknown cashSource \"" + rawSource + "\". Use POS_DRAWER or BACK_OFFICE.");
+        }
+        return ResponseEntity.ok(
+                service.refund(advanceReceiptId, amount, paymentMode, posSessionId, cashSource));
     }
 
     @PostMapping("/receive")
@@ -92,7 +109,42 @@ public class AdvanceApplicationController {
         BigDecimal amount = new BigDecimal(body.get("amount").toString());
         String paymentMode = body.getOrDefault("paymentMode", "Cash").toString();
         String reference = body.containsKey("reference") ? body.get("reference").toString() : null;
-        String terminalId = body.containsKey("terminalId") ? body.get("terminalId").toString() : null;
-        return ResponseEntity.ok(service.receiveAdvance(customerCode, amount, paymentMode, reference, terminalId));
+        rejectLegacyTerminalId(body, "receiving an advance");
+        // The drawer session is stated by the caller and validated server-side; it is never
+        // resolved from a terminal id or from "whatever session is currently open".
+        Long posSessionId = body.get("posSessionId") != null
+                ? Long.valueOf(body.get("posSessionId").toString()) : null;
+        String memberName = body.get("memberName") != null ? body.get("memberName").toString() : null;
+        String notes = body.get("notes") != null ? body.get("notes").toString() : null;
+        return ResponseEntity.ok(service.receiveAdvance(
+                customerCode, amount, paymentMode, reference, posSessionId, memberName, notes));
+    }
+
+    /**
+     * Refuses a request still carrying the retired {@code terminalId} field.
+     *
+     * <p>{@code terminalId} used to be resolved into a drawer session with
+     * {@code getActiveSession(terminalId)} -- i.e. "whichever session is open at that terminal
+     * right now". That is session inference, and it failed in both directions: it could attribute
+     * cash to a session the caller never named, and its {@code ifPresent} form silently produced
+     * an unattributed voucher when nothing was open, while the money moved regardless.
+     *
+     * <p>Translating it here would reintroduce exactly that lookup, so the field is rejected
+     * instead of honoured or ignored. Ignoring it would be worse than either: a stale client
+     * would appear to succeed while creating a sessionless POS cash advance -- precisely the
+     * defect this release exists to remove.
+     *
+     * <p>Same stance, and the same shape of message, as
+     * {@code PosPaymentAllocationResolver#rejectLegacyAdvanceScalar} takes for the retired
+     * {@code advanceAmount} scalar.
+     */
+    private void rejectLegacyTerminalId(Map<String, Object> body, String operation) {
+        Object legacy = body.get("terminalId");
+        if (legacy == null || legacy.toString().isBlank()) return;
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "This POS terminal is running an outdated version. Reload the page and try again. "
+                        + "(terminalId is no longer accepted when " + operation + "; the collecting POS "
+                        + "session must be stated explicitly as posSessionId, because a terminal id "
+                        + "cannot identify which drawer is accountable for the cash.)");
     }
 }

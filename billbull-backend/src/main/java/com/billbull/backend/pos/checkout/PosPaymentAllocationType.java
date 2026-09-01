@@ -37,7 +37,23 @@ public enum PosPaymentAllocationType {
      * tender it may not exceed the balance due — a voucher worth more than the sale keeps its
      * remainder rather than paying out change.
      */
-    VOUCHER;
+    VOUCHER,
+
+    /**
+     * Buy Now, Pay Later — the sale is financed by a third-party provider (Tabby, Tamara,
+     * Postpay, ...) which settles the full amount to the merchant and collects the
+     * installments from the customer itself.
+     *
+     * <p>Money, not credit: the merchant is paid, so it counts toward the invoice's settled
+     * amount and creates a Payment row, exactly like a card. It is <em>not</em> {@link #CREDIT},
+     * which would leave the balance on the customer's A/R ledger — with BNPL nothing is owed to
+     * the store, the receivable belongs to the provider.
+     *
+     * <p>{@code subtype} carries the provider name and {@code reference} the provider's approval
+     * reference, which is what a later payout is reconciled against. Like every non-cash tender
+     * it may not exceed the balance due — a provider never hands back change.
+     */
+    BNPL;
 
     /**
      * Lenient parse of the wire value. Accepts the enum names plus the aliases the existing
@@ -50,6 +66,10 @@ public enum PosPaymentAllocationType {
         if (raw == null) return null;
         String v = raw.trim().toUpperCase().replace(' ', '_').replace('-', '_');
         if (v.isEmpty()) return null;
+        // A BNPL leg is recorded as "BNPL <provider>" ("BNPL Tabby"), so the recorded mode has
+        // to parse back to BNPL — otherwise every back-office screen that re-types a recorded
+        // payment would read a financed sale as a card.
+        if (v.equals("BNPL") || v.startsWith("BNPL_")) return BNPL;
         switch (v) {
             case "CASH":
                 return CASH;
@@ -66,6 +86,11 @@ public enum PosPaymentAllocationType {
             case "AR":
             case "ACCOUNTS_RECEIVABLE":
                 return CREDIT;
+            case "BNPL":
+            case "BUY_NOW_PAY_LATER":
+            case "INSTALLMENT":
+            case "INSTALMENT":
+                return BNPL;
             case "VOUCHER":
             case "CREDIT_VOUCHER":
             case "GIFT_VOUCHER":

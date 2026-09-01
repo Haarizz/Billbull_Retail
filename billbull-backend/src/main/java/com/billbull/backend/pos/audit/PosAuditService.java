@@ -95,6 +95,27 @@ public class PosAuditService {
                 "POS session closed. Cash variance: " + variance, null, null);
     }
 
+    /**
+     * A structured session event with its financial detail carried as a parseable payload.
+     *
+     * <p>Cash variance events need their figures machine-readable — an auditor asking "which
+     * sessions closed short above threshold last month" cannot get an answer out of a free-text
+     * sentence. {@code detail} is written as {@code key=value} pairs for that reason.
+     */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logSessionEvent(Long sessionId, String terminalId, Long branchId,
+                                 String action, String detail) {
+        PosAuditAction resolved;
+        try {
+            resolved = PosAuditAction.valueOf(action);
+        } catch (IllegalArgumentException e) {
+            resolved = PosAuditAction.SUPERVISOR_OVERRIDE;
+        }
+        save(sessionId, terminalId, branchId,
+                resolved, "SESSION", String.valueOf(sessionId), detail, null, null);
+    }
+
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logCashMovement(Long sessionId, String terminalId, Long branchId,

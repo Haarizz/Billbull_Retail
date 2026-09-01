@@ -44,6 +44,32 @@ public class GlobalExceptionHandler {
      * (cash/card/credit/online/returns/rounding) so the frontend can show the exact
      * cause instead of a bare variance number.
      */
+    /**
+     * A close refused for want of supervisor authorization.
+     *
+     * <p>422 with a machine-readable {@code code} so the approval UI can react to the condition
+     * rather than string-matching a message, and with the figures attached so it can display the
+     * exact state being refused without recomputing any of it.
+     */
+    @ExceptionHandler(VarianceApprovalRequiredException.class)
+    public ResponseEntity<Map<String, Object>> handleVarianceApprovalRequired(
+            VarianceApprovalRequiredException ex) {
+        log.warn("VarianceApprovalRequired session={} variance={} threshold={} requestId={}",
+                ex.getSessionId(), ex.getCashDifference(), ex.getThreshold(), requestId());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("code", "VARIANCE_APPROVAL_REQUIRED");
+        body.put("message", ex.getMessage());
+        body.put("sessionId", ex.getSessionId());
+        body.put("expectedCash", ex.getExpectedCash());
+        body.put("countedCash", ex.getCountedCash());
+        body.put("cashDifference", ex.getCashDifference());
+        body.put("varianceAmount", ex.getCashDifference() != null ? ex.getCashDifference().abs() : null);
+        body.put("varianceDirection", ex.getVarianceDirection());
+        body.put("threshold", ex.getThreshold());
+        body.put("requestId", requestId());
+        return ResponseEntity.unprocessableEntity().body(body);
+    }
+
     @ExceptionHandler(ReconciliationException.class)
     public ResponseEntity<Map<String, Object>> handleReconciliation(ReconciliationException ex) {
         log.warn("ReconciliationException [{}] requestId={}: {}", ex.getStage(), requestId(), ex.getMessage());

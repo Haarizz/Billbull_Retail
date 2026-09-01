@@ -132,7 +132,9 @@ describe('allocation-aware filtering', () => {
   });
 
   it('offers a stable, allocation-shaped filter list', () => {
-    expect(PAYMENT_FILTERS).toEqual(['All', 'Cash', 'Card', 'Online', 'Credit', 'Advance', 'Mixed']);
+    expect(PAYMENT_FILTERS).toEqual(
+      ['All', 'Cash', 'Card', 'Online', 'Credit', 'BNPL', 'Advance', 'Mixed'],
+    );
   });
 });
 

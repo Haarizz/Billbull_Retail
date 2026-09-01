@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Banknote, CreditCard, Gift, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
+import { AlertTriangle, Banknote, CalendarClock, CreditCard, Gift, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
 
 import { PAYMENT_TYPES } from './paymentModel';
 import { remainingAfterAllocation, suggestedNextMethod } from './paymentFlow';
@@ -11,15 +11,27 @@ import CardPaymentModal from './modals/CardPaymentModal';
 import OnlinePaymentModal from './modals/OnlinePaymentModal';
 import CreditPaymentModal from './modals/CreditPaymentModal';
 import VoucherPaymentModal from './modals/VoucherPaymentModal';
+import BnplPaymentModal from './modals/BnplPaymentModal';
 
-/** Hotkeys are the first letter of each method, which is also what the badge shows. */
+/**
+ * Hotkeys are the first letter of each method, which is also what the badge shows.
+ *
+ * `hidden` takes a tender off the method bar without removing it from the system: the modal,
+ * the model, the selectors and the backend all still handle it, so an allocation already on a
+ * sale stays editable and the tender can be brought back by deleting one flag. Deleting the
+ * entry instead would strand any line of that type with no way to open it.
+ */
 const METHODS = [
   { type: PAYMENT_TYPES.CASH, label: 'Cash', hotkey: 'c', icon: Banknote, accent: '#16a34a' },
   { type: PAYMENT_TYPES.CARD, label: 'Card', hotkey: 'd', icon: CreditCard, accent: '#2563eb' },
   { type: PAYMENT_TYPES.ONLINE, label: 'Online', hotkey: 'o', icon: Landmark, accent: '#0891b2' },
   { type: PAYMENT_TYPES.CREDIT, label: 'Credit', hotkey: 'r', icon: Users, accent: '#9333ea' },
   // 'v' is free; 'c' and 'd' are already Cash and Card.
-  { type: PAYMENT_TYPES.VOUCHER, label: 'Voucher', hotkey: 'v', icon: Gift, accent: '#8B5CF6' },
+  // Temporarily hidden — Credit Voucher redemption is not being offered at the till for now.
+  { type: PAYMENT_TYPES.VOUCHER, label: 'Voucher', hotkey: 'v', icon: Gift, accent: '#8B5CF6', hidden: true },
+  // Buy Now Pay Later — a third-party provider settles the sale and bills the customer in
+  // installments. 'b' is free.
+  { type: PAYMENT_TYPES.BNPL, label: 'BNPL', hotkey: 'b', icon: CalendarClock, accent: '#D97706' },
 ];
 
 /**
@@ -39,7 +51,7 @@ const METHODS = [
  *
  * @param methods  restricts the offered tenders (e.g. a delivery balance cannot be settled
  *                 by putting it back on account, so CREDIT is excluded there). Defaults to
- *                 all four.
+ *                 every tender.
  * @param compact  denser layout for the smaller settlement dialogs.
  */
 export default function PaymentAllocationPanel({
@@ -77,10 +89,10 @@ export default function PaymentAllocationPanel({
     requestAnimationFrame(() => methodBarRef.current?.querySelector('button')?.focus());
   }, []);
 
-  const offeredMethods = useMemo(
-    () => (methods ? METHODS.filter((m) => methods.includes(m.type)) : METHODS),
-    [methods],
-  );
+  const offeredMethods = useMemo(() => {
+    const visible = METHODS.filter((m) => !m.hidden);
+    return methods ? visible.filter((m) => methods.includes(m.type)) : visible;
+  }, [methods]);
   const offeredTypes = useMemo(() => offeredMethods.map((m) => m.type), [offeredMethods]);
 
   /**
@@ -88,26 +100,45 @@ export default function PaymentAllocationPanel({
    * and therefore its position in the entry order the receipt prints — is preserved;
    * only a genuinely new tender is appended.
    *
-   * When the draft leaves a balance still owed, the next tender's modal opens straight away
+   * A modal may return several drafts from one confirmation: a credit sale settles the money
+   * received now *and* the balance put on account, and those are two tenders even though the
+   * cashier answered for them once. They are committed in the order the modal listed them,
+   * which is the order they print.
+   *
+   * When the drafts leave a balance still owed, the next tender's modal opens straight away
    * instead of dropping the cashier back on the panel to pick it. Splitting a bill is the
    * normal case, not an exception, so it should not cost an extra keystroke — and the
    * previous allocations stay exactly as they were, because the line list is the only state.
    * Editing never chains: the cashier came back to fix one line, not to add another.
    */
   const handleConfirm = useCallback((draft) => {
+    const drafts = (Array.isArray(draft) ? draft : [draft]).filter(Boolean);
+    if (drafts.length === 0) {
+      closeModal();
+      return;
+    }
     const editing = activeModal?.line;
-    if (editing) updateLine(editing.id, draft);
-    else addLine(draft);
+
+    // The draft matching the edited line's own type replaces it in place; the rest append.
+    // A modal that returns no draft of that type — a credit sale re-keyed as fully received —
+    // drops the line rather than leaving a stale zero-value tender behind.
+    const replacement = editing ? drafts.find((d) => d.paymentType === editing.paymentType) : null;
+    if (editing) {
+      if (replacement) updateLine(editing.id, replacement);
+      else removeLine(editing.id);
+    }
+    drafts.filter((d) => d !== replacement).forEach(addLine);
 
     const target = allocationTarget(remainingBalance, editing);
+    const allocated = drafts.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
     const next = editing ? null : suggestedNextMethod(
-      draft.paymentType,
-      remainingAfterAllocation(target, draft.amount),
+      drafts[drafts.length - 1].paymentType,
+      remainingAfterAllocation(target, allocated),
       offeredTypes,
     );
     if (next) setActiveModal({ type: next, line: null });
     else closeModal();
-  }, [activeModal, updateLine, addLine, closeModal, remainingBalance, offeredTypes]);
+  }, [activeModal, updateLine, addLine, removeLine, closeModal, remainingBalance, offeredTypes]);
 
   // Method hotkeys, live whenever no modal is open and the cashier isn't typing in a field.
   useEffect(() => {
@@ -150,9 +181,11 @@ export default function PaymentAllocationPanel({
           <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Add Payment</p>
           <p className="text-[10px] text-gray-400">Press the highlighted key</p>
         </div>
-        <div ref={methodBarRef} className={`grid gap-2 ${
-          offeredMethods.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'
-        }`}>
+        {/* One row, whatever the tender count: the cashier's eye and hand learn fixed
+            positions, and a method that wraps to a second row on one screen and not another
+            is the thing that gets mis-pressed under pressure. */}
+        <div ref={methodBarRef} className="grid gap-2"
+          style={{ gridTemplateColumns: `repeat(${Math.max(1, offeredMethods.length)}, minmax(0, 1fr))` }}>
           {offeredMethods.map(({ type, label, hotkey, icon: Icon, accent }) => (
             // Hover/press feedback is drawn from the method's own accent so the tile that
             // lifts is unmistakably the one about to be charged. `group` drives the icon.
@@ -240,9 +273,16 @@ export default function PaymentAllocationPanel({
       )}
       {activeModal?.type === PAYMENT_TYPES.CREDIT && (
         <CreditPaymentModal {...modalProps} customers={customers} defaultCustomerId={selectedCustomerId}
+          bankAccounts={bankAccounts} bankAccountsLoading={bankAccountsLoading}
           onCustomerCreated={onCustomerCreated} />
       )}
       {activeModal?.type === PAYMENT_TYPES.VOUCHER && <VoucherPaymentModal {...modalProps} />}
+      {activeModal?.type === PAYMENT_TYPES.BNPL && (
+        // The provider verifies a named customer before it will finance, so the BNPL wizard
+        // needs the same customer list — and the same quick-create path — as a credit sale.
+        <BnplPaymentModal {...modalProps} customers={customers} selectedCustomerId={selectedCustomerId}
+          onCustomerCreated={onCustomerCreated} />
+      )}
 
     </div>
   );

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -66,6 +67,9 @@ class PaymentServiceTest {
     @Mock
     private com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService invoiceHistoryService;
 
+    @Mock
+    private com.billbull.backend.pos.session.PosDrawerSessionValidator drawerSessionValidator;
+
     private PaymentService paymentService;
 
     @BeforeEach
@@ -84,6 +88,106 @@ class PaymentServiceTest {
         ReflectionTestUtils.setField(paymentService, "notifPublisher", notifPublisher);
         ReflectionTestUtils.setField(paymentService, "advanceApplicationService", advanceApplicationService);
         ReflectionTestUtils.setField(paymentService, "invoiceHistoryService", invoiceHistoryService);
+        ReflectionTestUtils.setField(paymentService, "drawerSessionValidator", drawerSessionValidator);
+    }
+
+    // ── POS drawer attribution (Cross-module cash reconciliation, release 1 item 1) ────────
+    //
+    // A customer credit receipt taken at a till is physical cash entering that drawer, so it
+    // must reach the collecting session's Expected Cash. Before this path existed, the POS
+    // Customer view posted through this same service with no way to say which drawer took the
+    // money -- Payment.posSessionId is READ_ONLY to Jackson -- so the cash was invisible to
+    // reconciliation and every such receipt produced a false shortage at close.
+
+    /** A helper Payment shaped like the POS Customer view's cash receipt. */
+    private Payment posCashReceipt() {
+        Payment payment = new Payment();
+        payment.setPaymentNumber("PAY-2026-0900");
+        payment.setPaymentDate(LocalDate.of(2026, 8, 31));
+        payment.setPaymentType(PaymentType.RECEIVED);
+        payment.setCustomerCode("CUST-900");
+        payment.setCustomerName("Walk-in Credit Customer");
+        payment.setAmount(new java.math.BigDecimal("250.00"));
+        payment.setPaymentMode("Cash");
+        payment.setStatus(PaymentStatus.COMPLETED);
+        return payment;
+    }
+
+    private void stubBareSave(String number) {
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(numberingService.resolveNumberForCreate(SalesDocumentType.SALES_PAYMENT, number)).thenReturn(number);
+        when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any())).thenReturn(null);
+    }
+
+    @Test
+    void declaredPosSessionIsValidatedAndStampedOnTheTender() {
+        Payment payment = posCashReceipt();
+        stubBareSave("PAY-2026-0900");
+
+        com.billbull.backend.pos.session.PosSession session = new com.billbull.backend.pos.session.PosSession();
+        ReflectionTestUtils.setField(session, "id", 4242L);
+        when(drawerSessionValidator.requireOpenDrawerSession(eq(4242L), any())).thenReturn(session);
+
+        Payment saved = paymentService.savePayment(payment, 4242L);
+
+        assertEquals(4242L, saved.getPosSessionId(),
+                "cash collected at a till must carry the collecting drawer session");
+        verify(drawerSessionValidator).requireOpenDrawerSession(eq(4242L), any());
+    }
+
+    @Test
+    void backOfficeReceiptWithNoDeclaredSessionIsNeverAttributedToADrawer() {
+        Payment payment = posCashReceipt();
+        stubBareSave("PAY-2026-0900");
+
+        Payment saved = paymentService.savePayment(payment, null);
+
+        assertNull(saved.getPosSessionId(),
+                "a receipt with no declared drawer must stay out of POS reconciliation");
+        // The critical half: no session is discovered from terminal, branch, cashier or
+        // "whatever is currently open". The validator is not consulted at all.
+        verify(drawerSessionValidator, never()).requireOpenDrawerSession(any(), any());
+    }
+
+    @Test
+    void editingAPaymentPreservesItsOriginalDrawerAttribution() {
+        // The entity arriving from client JSON always has posSessionId == null (READ_ONLY), so
+        // without carrying the stored value forward an ordinary edit would erase the drawer
+        // attribution and move the amount out of that session's Expected Cash.
+        Payment edited = posCashReceipt();
+        edited.setId(55L);
+
+        Payment stored = posCashReceipt();
+        stored.setId(55L);
+        stored.setPosSessionId(4242L);
+
+        when(paymentRepository.findById(55L)).thenReturn(Optional.of(stored));
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(numberingService.resolveNumberForUpdate(SalesDocumentType.SALES_PAYMENT, "PAY-2026-0900", "PAY-2026-0900"))
+                .thenReturn("PAY-2026-0900");
+        when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any())).thenReturn(null);
+
+        Payment saved = paymentService.savePayment(edited, null);
+
+        assertEquals(4242L, saved.getPosSessionId());
+    }
+
+    @Test
+    void reattributingCollectedCashToADifferentDrawerIsRefused() {
+        Payment edited = posCashReceipt();
+        edited.setId(55L);
+
+        Payment stored = posCashReceipt();
+        stored.setId(55L);
+        stored.setPosSessionId(4242L);
+
+        when(paymentRepository.findById(55L)).thenReturn(Optional.of(stored));
+
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> paymentService.savePayment(edited, 9999L));
+
+        assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+        verify(paymentRepository, never()).save(any(Payment.class));
     }
 
     @Test

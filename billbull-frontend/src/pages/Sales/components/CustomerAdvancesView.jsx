@@ -356,7 +356,16 @@ const RefundAdvanceModal = ({ isOpen, onClose, onSuccess, receiptData, currency 
             // Note: In reality, we need advanceReceiptId which is the database ID, not the voucher number.
             // Wait, receiptData.reference is the voucher number? Let's check history response.
             // We'll need to update history response to include the `id` of the receipt!
-            await refundAdvance({ advanceReceiptId: receiptData.id, amount: Number(amount), paymentMode });
+            // Back-office refund: the cash comes out of the office safe, not a POS till, so it
+            // books no drawer movement and takes no part in POS cash reconciliation. Declared
+            // explicitly rather than implied by the absence of a session — see
+            // AdvanceRefundCashSource.
+            await refundAdvance({
+                advanceReceiptId: receiptData.id,
+                amount: Number(amount),
+                paymentMode,
+                cashSource: 'BACK_OFFICE',
+            });
             onSuccess();
         } catch (error) {
             toast.error(error?.response?.data?.message || "Failed to refund advance");

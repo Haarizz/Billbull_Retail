@@ -37,6 +37,11 @@ public class PosLayawayService {
     /** Permission module whose delete flag gates layaway cancellation (supervisor). */
     private static final String CANCEL_MODULE = "sales";
 
+    /** Books the drawer cash-in/out for layaway cash. Field-injected rather than added to this
+     *  class's already-long constructor. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private PosLayawayCashMovementService cashMovementService;
+
     private final PosLayawayRepository repo;
     private final PosLayawayPaymentRepository paymentRepo;
     private final ProductRepository productRepository;
@@ -305,6 +310,14 @@ public class PosLayawayService {
                 saved.setDepositJournalId(depositJournal.getId());
                 saved = repo.save(saved);
             }
+
+            // Drawer cash-in for a cash deposit. The collecting session is the one this request
+            // was made in (req.getSessionId(), already stored on the layaway) — the deposit is
+            // taken in the same breath as the layaway is created, so that IS the collection
+            // session, not a historical one.
+            cashMovementService.recordDeposit(
+                    saved.getId(), saved.getLayawayNumber(), saved.getDepositAmount(),
+                    saved.getDepositPaymentMode(), saved.getPosSessionId());
         }
 
         auditService.logLayawayCreated(
@@ -338,6 +351,16 @@ public class PosLayawayService {
     }
 
     public PosLayaway cancel(Long id) {
+        return cancel(id, null);
+    }
+
+    /**
+     * @param posSessionId the drawer session physically returning the deposit. Required when the
+     *      deposit was taken in cash. Never defaulted to the layaway's originating session — the
+     *      refund is paid out of whichever till is open now.
+     */
+    @Transactional
+    public PosLayaway cancel(Long id, Long posSessionId) {
         if (!permissionService.currentUserCanDelete(CANCEL_MODULE)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Supervisor permission is required to cancel a layaway");
@@ -361,6 +384,11 @@ public class PosLayawayService {
                     layaway.getDepositPaymentMode(),
                     layawayBusinessDate(layaway),
                     branch);
+
+            // Drawer cash-out for a cash deposit being returned.
+            cashMovementService.recordCancellationRefund(
+                    layaway.getId(), layaway.getLayawayNumber(), layaway.getDepositAmount(),
+                    layaway.getDepositPaymentMode(), posSessionId);
         }
 
         layaway.setStatus(PosLayawayStatus.CANCELLED);
@@ -400,6 +428,19 @@ public class PosLayawayService {
      */
     public PosLayawayPayment recordPayment(Long layawayId, BigDecimal amount,
                                             String paymentMode, String referenceNumber, String notes) {
+        return recordPayment(layawayId, amount, paymentMode, referenceNumber, notes, null);
+    }
+
+    /**
+     * @param posSessionId the drawer session collecting this instalment. Required for a cash
+     *      instalment. Deliberately NOT defaulted to {@code layaway.getPosSessionId()}: that is
+     *      the session the layaway was created in, which for an instalment taken days later is
+     *      a different — very likely already closed and counted — drawer.
+     */
+    @Transactional
+    public PosLayawayPayment recordPayment(Long layawayId, BigDecimal amount,
+                                            String paymentMode, String referenceNumber, String notes,
+                                            Long posSessionId) {
         PosLayaway layaway = getById(layawayId);
         if (!layaway.isOpen()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -439,6 +480,11 @@ public class PosLayawayService {
         } catch (Exception ignored) {
             // GL failure must not roll back the instalment record.
         }
+
+        // Drawer cash-in for a cash instalment, attributed to the collecting session.
+        cashMovementService.recordInstalment(
+                saved.getId(), layaway.getId(), layaway.getLayawayNumber(),
+                applied, paymentMode, posSessionId);
 
         return saved;
     }

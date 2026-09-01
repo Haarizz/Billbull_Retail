@@ -1,6 +1,7 @@
 package com.billbull.backend.sales.advance;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -39,6 +40,8 @@ class AdvanceApplicationServiceTest {
     @Mock private PostingEngineService postingEngine;
     @Mock private com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService receiptVoucherService;
     @Mock private com.billbull.backend.pos.session.PosSessionService posSessionService;
+    @Mock private com.billbull.backend.pos.session.PosDrawerSessionValidator drawerSessionValidator;
+    @Mock private AdvanceCashRefundService cashRefundService;
     @Mock private jakarta.persistence.EntityManager entityManager;
     @Mock private com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
 
@@ -46,7 +49,7 @@ class AdvanceApplicationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService, entityManager, effectiveCorrectionViewService);
+        service = new AdvanceApplicationService(applicationRepo, receiptRepo, salesInvoiceRepo, postingEngine, receiptVoucherService, posSessionService, drawerSessionValidator, cashRefundService, entityManager, effectiveCorrectionViewService);
 
         org.mockito.Mockito.lenient().when(effectiveCorrectionViewService.resolveOverlays(
                 org.mockito.ArgumentMatchers.any(),
@@ -297,4 +300,123 @@ class AdvanceApplicationServiceTest {
         org.mockito.Mockito.verify(applicationRepo, org.mockito.Mockito.times(2)).save(any());
     }
 
+    // ── Drawer attribution on advance receipt (release 1 item 2) ──────────────────────────
+    //
+    // aggregateTender reads ADVANCE_RECEIVED vouchers by posSessionId as part of Cash Tender
+    // Collected, so a cash advance taken at a till must carry the collecting session or the
+    // drawer closes over by that amount. The previous terminalId form inferred the session and
+    // silently produced an unattributed voucher when none was open.
+
+    @Test
+    void cashAdvanceStampsTheDeclaredDrawerSessionOnTheVoucher() {
+        com.billbull.backend.pos.session.PosSession session = new com.billbull.backend.pos.session.PosSession();
+        org.springframework.test.util.ReflectionTestUtils.setField(session, "id", 77L);
+        session.setTerminalId("POS-01");
+        session.setCounterName("Counter 1");
+        session.setBranchId(3L);
+        session.setSessionDate(LocalDate.of(2026, 8, 31));
+
+        when(drawerSessionValidator.validateOptionalDrawerSession(eq(77L), any())).thenReturn(session);
+        when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        service.receiveAdvance("CUST-1", new BigDecimal("200.00"), "Cash", null, 77L, "Acme", "note");
+
+        org.mockito.ArgumentCaptor<ReceiptVoucher> captor =
+                org.mockito.ArgumentCaptor.forClass(ReceiptVoucher.class);
+        org.mockito.Mockito.verify(receiptVoucherService).createReceipt(captor.capture(), any());
+        ReceiptVoucher saved = captor.getValue();
+
+        assertEquals(77L, saved.getPosSessionId());
+        assertEquals("POS-01", saved.getPosTerminalId());
+        assertEquals("Counter 1", saved.getPosCounterName());
+        // Dated into the session's business day, not today's calendar date.
+        assertEquals(LocalDate.of(2026, 8, 31), saved.getDate());
+        // Detail the POS screen used to set directly must survive the reroute.
+        assertEquals("Acme", saved.getMemberName());
+        assertEquals("note", saved.getNotes());
+    }
+
+    @Test
+    void backOfficeAdvanceWithNoDeclaredSessionIsNeverAttributedToADrawer() {
+        when(drawerSessionValidator.validateOptionalDrawerSession(eq(null), any())).thenReturn(null);
+        when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any()))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        service.receiveAdvance("CUST-1", new BigDecimal("200.00"), "Cash", null, null);
+
+        org.mockito.ArgumentCaptor<ReceiptVoucher> captor =
+                org.mockito.ArgumentCaptor.forClass(ReceiptVoucher.class);
+        org.mockito.Mockito.verify(receiptVoucherService).createReceipt(captor.capture(), any());
+        assertNull(captor.getValue().getPosSessionId());
+        // No session is discovered from a terminal, and none is invented.
+        org.mockito.Mockito.verifyNoInteractions(posSessionService);
+    }
+
+    // ── Advance cash refund books the drawer cash-out (release 1 item 3) ───────────────────
+
+    @Test
+    void cashRefundBooksTheDrawerMovementAndStillPostsTheOriginalJournal() {
+        ReceiptVoucher rv = advance(5L, "CUST-1", new BigDecimal("500.00"));
+        rv.setVoucherId("RV-0005");
+        when(receiptRepo.findById(5L)).thenReturn(Optional.of(rv));
+        when(applicationRepo.sumAppliedByReceiptId(5L)).thenReturn(BigDecimal.ZERO);
+        when(applicationRepo.save(any())).thenAnswer(inv -> {
+            AdvanceApplication a = inv.getArgument(0);
+            org.springframework.test.util.ReflectionTestUtils.setField(a, "id", 55L);
+            return a;
+        });
+
+        service.refund(5L, new BigDecimal("100.00"), "Cash", 9L, AdvanceRefundCashSource.POS_DRAWER);
+
+        // Drawer ledger gains the cash-out, keyed to the declared session.
+        org.mockito.Mockito.verify(cashRefundService)
+                .recordCashRefund(eq(55L), eq(new BigDecimal("100.00")), eq("Cash"), eq(9L),
+                        eq(AdvanceRefundCashSource.POS_DRAWER), eq("RV-0005"));
+        // Accounting semantics are untouched: the advance-refund journal still posts exactly
+        // as before, and it is the only journal for this refund.
+        org.mockito.Mockito.verify(postingEngine)
+                .createJournalFromAdvanceRefund(eq(5L), eq(new BigDecimal("100.00")), eq("Cash"));
+    }
+
+    @Test
+    void nonCashRefundPassesThroughWithNoDrawerSession() {
+        ReceiptVoucher rv = advance(5L, "CUST-1", new BigDecimal("500.00"));
+        when(receiptRepo.findById(5L)).thenReturn(Optional.of(rv));
+        when(applicationRepo.sumAppliedByReceiptId(5L)).thenReturn(BigDecimal.ZERO);
+        when(applicationRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.refund(5L, new BigDecimal("100.00"), "Bank");
+
+        // The service is still consulted; it is the one place that decides cash vs non-cash.
+        org.mockito.Mockito.verify(cashRefundService)
+                .recordCashRefund(any(), eq(new BigDecimal("100.00")), eq("Bank"), eq(null), any(), any());
+    }
+
+    @Test
+    void backOfficeCashRefundStillWorksWithNoPosSession() {
+        // Regression guard for the back-office path: it must keep working without a till, and
+        // must not reach the drawer ledger.
+        ReceiptVoucher rv = advance(5L, "CUST-1", new BigDecimal("500.00"));
+        rv.setVoucherId("RV-0005");
+        when(receiptRepo.findById(5L)).thenReturn(Optional.of(rv));
+        when(applicationRepo.sumAppliedByReceiptId(5L)).thenReturn(BigDecimal.ZERO);
+        when(applicationRepo.save(any())).thenAnswer(inv -> {
+            AdvanceApplication a = inv.getArgument(0);
+            org.springframework.test.util.ReflectionTestUtils.setField(a, "id", 56L);
+            return a;
+        });
+
+        AdvanceApplication saved = service.refund(
+                5L, new BigDecimal("100.00"), "Cash", null, AdvanceRefundCashSource.BACK_OFFICE);
+
+        assertEquals("REFUNDED", saved.getStatus());
+        // Accounting behaviour preserved exactly: the same journal, unchanged.
+        org.mockito.Mockito.verify(postingEngine)
+                .createJournalFromAdvanceRefund(eq(5L), eq(new BigDecimal("100.00")), eq("Cash"));
+        // Routed with the BACK_OFFICE source and no session; the service books no movement.
+        org.mockito.Mockito.verify(cashRefundService).recordCashRefund(
+                eq(56L), eq(new BigDecimal("100.00")), eq("Cash"), eq(null),
+                eq(AdvanceRefundCashSource.BACK_OFFICE), eq("RV-0005"));
+    }
 }

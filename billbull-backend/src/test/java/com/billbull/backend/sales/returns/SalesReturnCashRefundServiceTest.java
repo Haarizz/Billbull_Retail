@@ -69,7 +69,7 @@ class SalesReturnCashRefundServiceTest {
         verify(posSessionService).addCashMovement(eq(SESSION_ID), type.capture(), amount.capture(),
                 anyString(), reference.capture(), eq(CATEGORY_ID));
 
-        // DROP_OUT is what reduces expected cash in computeExpectedCash().
+        // DROP_OUT is what reduces expected cash in PosCashReconciliationService.
         assertEquals(PosCashMovementType.DROP_OUT.name(), type.getValue());
         assertEquals(0, new BigDecimal("125.50").compareTo(amount.getValue()));
         // The return number is the traceable link back, and the key the duplicate guard reads.

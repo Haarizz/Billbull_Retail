@@ -154,9 +154,18 @@ public class PaymentController {
         return paymentService.getPaymentStats();
     }
 
+    /**
+     * @param posSessionId the POS drawer session that physically collected this tender, when
+     *      the caller is a till. Supplied as a query parameter rather than a body field on
+     *      purpose: {@code Payment.posSessionId} is {@code READ_ONLY} to Jackson, so a body
+     *      value is dropped and cannot be forged — this parameter is validated server-side
+     *      before it is stamped. Omitted by back-office callers, whose receipts never pass
+     *      through a drawer and therefore take no part in POS cash reconciliation.
+     */
     @PostMapping
     @PreAuthorize("isAuthenticated()")
-    public Payment savePayment(@RequestBody Payment payment) {
+    public Payment savePayment(@RequestBody Payment payment,
+                               @RequestParam(required = false) Long posSessionId) {
         modulePermissionService.requireCanCreate(MODULE);
         String mode = payment.getPaymentMode();
         if (mode != null && !mode.equalsIgnoreCase("Cash")) {
@@ -164,7 +173,7 @@ public class PaymentController {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Bank account is required for non-cash payments.");
             }
         }
-        return paymentService.savePayment(payment);
+        return paymentService.savePayment(payment, posSessionId);
     }
 
     @PutMapping("/{id}/status")

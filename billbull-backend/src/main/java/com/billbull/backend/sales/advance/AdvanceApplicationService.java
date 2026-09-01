@@ -31,6 +31,8 @@ public class AdvanceApplicationService {
     private final PostingEngineService postingEngine;
     private final ReceiptVoucherService receiptVoucherService;
     private final com.billbull.backend.pos.session.PosSessionService posSessionService;
+    private final com.billbull.backend.pos.session.PosDrawerSessionValidator drawerSessionValidator;
+    private final AdvanceCashRefundService cashRefundService;
     private final EntityManager entityManager;
     private final EffectiveCorrectionViewService effectiveCorrectionViewService;
 
@@ -41,6 +43,8 @@ public class AdvanceApplicationService {
             PostingEngineService postingEngine,
             ReceiptVoucherService receiptVoucherService,
             com.billbull.backend.pos.session.PosSessionService posSessionService,
+            com.billbull.backend.pos.session.PosDrawerSessionValidator drawerSessionValidator,
+            AdvanceCashRefundService cashRefundService,
             EntityManager entityManager,
             EffectiveCorrectionViewService effectiveCorrectionViewService) {
         this.applicationRepo = applicationRepo;
@@ -49,6 +53,8 @@ public class AdvanceApplicationService {
         this.postingEngine   = postingEngine;
         this.receiptVoucherService = receiptVoucherService;
         this.posSessionService = posSessionService;
+        this.drawerSessionValidator = drawerSessionValidator;
+        this.cashRefundService = cashRefundService;
         this.entityManager = entityManager;
         this.effectiveCorrectionViewService = effectiveCorrectionViewService;
     }
@@ -77,11 +83,42 @@ public class AdvanceApplicationService {
     }
 
     /**
-     * Receives an advance payment, creating a ReceiptVoucher.
-     * Optionally links to a POS Session if terminalId is provided.
+     * Receives a customer advance, creating an {@code ADVANCE_RECEIVED} ReceiptVoucher.
+     *
+     * <p>A cash advance taken at a till is physical cash entering that drawer, and
+     * {@code aggregateTender} reads exactly these vouchers (by {@code posSessionId}) as part of
+     * Cash Tender Collected. So the drawer must be attributed, or the session closes over.
+     *
+     * <h3>Why this takes a session and not a terminal</h3>
+     * This method previously accepted a {@code terminalId} and resolved the drawer with
+     * {@code posSessionService.getActiveSession(terminalId)}. That is session <em>inference</em>,
+     * which the cash-reconciliation model forbids: it attributes physical cash to whichever
+     * session happened to be open rather than to the one the caller is accountable for, and its
+     * {@code ifPresent} form silently produced an unattributed voucher when nothing was open --
+     * the money moved either way. The caller now states the drawer and
+     * {@link PosDrawerSessionValidator} decides whether that statement is acceptable.
+     *
+     * @param posSessionId the drawer session that physically took the money, or {@code null} for
+     *      a genuine back-office advance that never passed through a till. Never defaulted or
+     *      discovered when null.
      */
     @Transactional
-    public ReceiptVoucher receiveAdvance(String customerCode, BigDecimal amount, String paymentMode, String reference, String terminalId) {
+    public ReceiptVoucher receiveAdvance(String customerCode, BigDecimal amount, String paymentMode,
+                                         String reference, Long posSessionId) {
+        return receiveAdvance(customerCode, amount, paymentMode, reference, posSessionId, null, null);
+    }
+
+    /**
+     * @param memberName display name for the voucher, as the POS Customer view already supplied
+     *      when it posted advances directly to the receipt-voucher endpoint. Carried here so
+     *      routing that screen through this method loses none of its existing detail --
+     *      {@code memberName} is what the Z-Report's Customer Advances rows show.
+     * @param notes free-text note, likewise preserved from the previous direct-post payload.
+     */
+    @Transactional
+    public ReceiptVoucher receiveAdvance(String customerCode, BigDecimal amount, String paymentMode,
+                                         String reference, Long posSessionId,
+                                         String memberName, String notes) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Advance amount must be greater than zero");
         }
@@ -93,16 +130,19 @@ public class AdvanceApplicationService {
         receipt.setReference(reference);
         receipt.setDate(LocalDate.now());
         receipt.setPurpose(ReceiptPurpose.ADVANCE_RECEIVED);
+        if (memberName != null && !memberName.isBlank()) receipt.setMemberName(memberName);
+        if (notes != null && !notes.isBlank()) receipt.setNotes(notes);
 
-        if (terminalId != null && !terminalId.isBlank()) {
-            posSessionService.getActiveSession(terminalId).ifPresent(session -> {
-                receipt.setPosSessionId(session.getId());
-                receipt.setPosTerminalId(session.getTerminalId());
-                receipt.setPosCounterName(session.getCounterName());
-                receipt.setBranchEntityId(session.getBranchId());
-                // The receipt date can be set to the session business date if needed
-                receipt.setDate(session.getSessionDate());
-            });
+        com.billbull.backend.pos.session.PosSession session =
+                drawerSessionValidator.validateOptionalDrawerSession(posSessionId, "Receiving a customer advance");
+        if (session != null) {
+            receipt.setPosSessionId(session.getId());
+            receipt.setPosTerminalId(session.getTerminalId());
+            receipt.setPosCounterName(session.getCounterName());
+            receipt.setBranchEntityId(session.getBranchId());
+            // Dated into the session's Business Day, not the calendar day, so an overnight
+            // window books the advance on the day the drawer actually took it.
+            receipt.setDate(session.getSessionDate());
         }
 
         return receiptVoucherService.createReceipt(receipt, null);
@@ -191,6 +231,22 @@ public class AdvanceApplicationService {
      */
     @Transactional
     public AdvanceApplication refund(Long advanceReceiptId, BigDecimal amount, String paymentMode) {
+        return refund(advanceReceiptId, amount, paymentMode, null, null);
+    }
+
+    /**
+     * @param posSessionId the drawer session physically paying the cash out. Required when
+     *      {@code cashSource} is {@code POS_DRAWER} — a till refund reduces the notes in that
+     *      drawer, so its Expected Cash has to fall by the same amount or the session can never
+     *      balance. Must be absent for {@code BACK_OFFICE}. Ignored for non-cash modes, which
+     *      move no drawer cash. Never defaulted or discovered when null.
+     * @param cashSource whether the notes come from a POS till or the office safe. Required for
+     *      a cash refund; see {@link AdvanceRefundCashSource} for why it is declared rather than
+     *      inferred from whether a session was supplied.
+     */
+    @Transactional
+    public AdvanceApplication refund(Long advanceReceiptId, BigDecimal amount, String paymentMode,
+                                     Long posSessionId, AdvanceRefundCashSource cashSource) {
         ReceiptVoucher rv = receiptRepo.findById(advanceReceiptId)
                 .orElseThrow(() -> new RuntimeException("Advance receipt not found: " + advanceReceiptId));
 
@@ -209,6 +265,14 @@ public class AdvanceApplicationService {
         app.setAppliedDate(LocalDate.now());
         app.setStatus("REFUNDED");
         AdvanceApplication saved = applicationRepo.save(app);
+
+        // The drawer cash-out, when the refund is paid in notes from a till. Booked before the
+        // journal and inside this same transaction, so a till refund is never recorded without
+        // its matching drawer movement — the guarantee SalesReturnService already makes for
+        // return refunds. A declared BACK_OFFICE refund books no movement and reconciles
+        // against nothing in POS; an undeclared cash refund is refused rather than guessed.
+        cashRefundService.recordCashRefund(
+                saved.getId(), amount, paymentMode, posSessionId, cashSource, rv.getVoucherId());
 
         postingEngine.createJournalFromAdvanceRefund(advanceReceiptId, amount, paymentMode);
         log.info("[AdvanceApplication] Refunded {} of advance {}", amount, rv.getVoucherId());

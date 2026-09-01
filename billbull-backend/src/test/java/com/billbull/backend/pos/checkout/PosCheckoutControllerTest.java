@@ -550,7 +550,9 @@ class PosCheckoutControllerTest {
         // VOUCHER is how a terminal discovers that Credit Voucher redemption is available as a
         // tender. It is a payment instrument that draws down the store-credit liability, never a
         // coupon/discount — see CreditVoucherService.
-        assertEquals(java.util.List.of("CASH", "CARD", "ONLINE", "CREDIT", "VOUCHER"),
+        // BNPL likewise: the terminal only offers Buy Now Pay Later once the server has said it
+        // understands the tender, because a server that ignored it would post the sale unpaid.
+        assertEquals(java.util.List.of("CASH", "CARD", "ONLINE", "CREDIT", "VOUCHER", "BNPL"),
                 caps.getSupportedAllocationTypes());
         // Customer Advance is a customer-ledger operation, not a checkout tender — a terminal
         // must not discover it here and offer it as a payment button.

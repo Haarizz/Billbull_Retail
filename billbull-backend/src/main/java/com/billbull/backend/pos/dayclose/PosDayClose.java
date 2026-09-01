@@ -78,6 +78,39 @@ public class PosDayClose {
     @Column(name = "expected_cash", precision = 19, scale = 4)
     private BigDecimal expectedCash = BigDecimal.ZERO;
 
+    // ── Physical drawer reconciliation for the day ───────────────────────────────────────
+    // Summed from the frozen per-session snapshots, never re-derived from the day's
+    // transactions -- a day-level re-derivation would be a second cash model competing with
+    // the one each drawer was actually closed against.
+
+    /** Σ counted cash over the COUNTED sessions only. Null when none were counted: zero would
+     *  assert that drawers were checked and found empty. */
+    @Column(name = "counted_cash", precision = 19, scale = 4)
+    private BigDecimal countedCash;
+
+    /** countedCash − expectedCash, and null unless EVERY session was counted. A partly counted
+     *  day states no day variance, because subtracting all drawers' expected from some drawers'
+     *  counted reports the uncounted tills as a huge shortage that is purely an artifact. */
+    @Column(name = "cash_variance", precision = 19, scale = 4)
+    private BigDecimal cashVariance;
+
+    /** NOT_COUNTED / BALANCED / OVER / SHORT. A day with any uncounted drawer is NOT_COUNTED. */
+    @Column(name = "variance_status", length = 20)
+    private String varianceStatus;
+
+    /** How many counted drawers did not balance. */
+    @Column(name = "sessions_with_variance")
+    private Integer sessionsWithVariance;
+
+    /** How many drawers were never counted — the gap stays visible rather than folded away. */
+    @Column(name = "uncounted_session_count")
+    private Integer uncountedSessionCount;
+
+    /** GENERATED / REVIEWED / FINALIZED. Carries no approval meaning. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", length = 20)
+    private PosDayCloseStatus status = PosDayCloseStatus.GENERATED;
+
     @Column(name = "total_invoices")
     private Integer totalInvoices = 0;
 
@@ -280,6 +313,24 @@ public class PosDayClose {
     public void setOtherSales(BigDecimal otherSales) {
         this.otherSales = otherSales;
     }
+
+    public BigDecimal getCountedCash() { return countedCash; }
+    public void setCountedCash(BigDecimal countedCash) { this.countedCash = countedCash; }
+
+    public BigDecimal getCashVariance() { return cashVariance; }
+    public void setCashVariance(BigDecimal cashVariance) { this.cashVariance = cashVariance; }
+
+    public String getVarianceStatus() { return varianceStatus; }
+    public void setVarianceStatus(String varianceStatus) { this.varianceStatus = varianceStatus; }
+
+    public Integer getSessionsWithVariance() { return sessionsWithVariance; }
+    public void setSessionsWithVariance(Integer sessionsWithVariance) { this.sessionsWithVariance = sessionsWithVariance; }
+
+    public Integer getUncountedSessionCount() { return uncountedSessionCount; }
+    public void setUncountedSessionCount(Integer uncountedSessionCount) { this.uncountedSessionCount = uncountedSessionCount; }
+
+    public PosDayCloseStatus getStatus() { return status; }
+    public void setStatus(PosDayCloseStatus status) { this.status = status; }
 
     public BigDecimal getExpectedCash() {
         return expectedCash;

@@ -229,6 +229,58 @@ public class PosSession extends BaseEntity {
     @Column(name = "closing_denominations_json", columnDefinition = "TEXT")
     private String closingDenominationsJson;
 
+    /** When the drawer was physically counted. Distinct from {@link #closedAt}: that is when the
+     *  session ended, this is when someone counted the notes. It is what separates "not counted"
+     *  from "counted and found empty" — a distinction {@code closingCash == 0} cannot make.
+     *  Null on sessions closed before server-side counting existed; readers fall back to
+     *  {@code closedAt} when a denomination snapshot is present. */
+    @Column(name = "counted_at")
+    private LocalDateTime countedAt;
+
+    /** The currency the count was validated against, so the snapshot is self-describing — a
+     *  "500" key means different money in different currencies. */
+    @Column(name = "counted_currency_code", length = 3)
+    private String countedCurrencyCode;
+
+    // ── Variance approval ────────────────────────────────────────────────────────────────
+    // Who authorized this discrepancy, and on what basis. Previously the gate was a client
+    // boolean with no identity attached, so an approved variance left no record of approval.
+
+    /** NOT_REQUIRED / REQUIRED / APPROVED. Null on sessions closed before this existed. */
+    @Column(name = "variance_approval_status", length = 20)
+    private String varianceApprovalStatus;
+
+    /** Resolved server-side from verified credentials — never a name sent by the client. */
+    @Column(name = "variance_approved_by", length = 100)
+    private String varianceApprovedBy;
+
+    @Column(name = "variance_approved_by_user_id")
+    private Long varianceApprovedByUserId;
+
+    @Column(name = "variance_approved_at")
+    private LocalDateTime varianceApprovedAt;
+
+    @Column(name = "variance_approval_reason", length = 500)
+    private String varianceApprovalReason;
+
+    // ── Accounting posting state ─────────────────────────────────────────────────────────
+    // The close journal used to be wrapped in an empty catch, so a session could report itself
+    // reconciled while no entry existed. These make that state visible and recoverable.
+
+    /** PENDING / POSTED / FAILED / NOT_REQUIRED. */
+    @Column(name = "gl_posting_status", length = 20)
+    private String glPostingStatus;
+
+    /** The journal reference, so a close is traceable to its entry without parsing anything. */
+    @Column(name = "gl_posting_reference", length = 100)
+    private String glPostingReference;
+
+    @Column(name = "gl_posting_error", length = 1000)
+    private String glPostingError;
+
+    @Column(name = "gl_posted_at")
+    private LocalDateTime glPostedAt;
+
     @Column(name = "card_batch_no")
     private String cardBatchNo;
 
@@ -400,6 +452,39 @@ public class PosSession extends BaseEntity {
 
     public String getZReportJson() { return zReportJson; }
     public void setZReportJson(String zReportJson) { this.zReportJson = zReportJson; }
+
+    public String getVarianceApprovalStatus() { return varianceApprovalStatus; }
+    public void setVarianceApprovalStatus(String varianceApprovalStatus) { this.varianceApprovalStatus = varianceApprovalStatus; }
+
+    public String getVarianceApprovedBy() { return varianceApprovedBy; }
+    public void setVarianceApprovedBy(String varianceApprovedBy) { this.varianceApprovedBy = varianceApprovedBy; }
+
+    public Long getVarianceApprovedByUserId() { return varianceApprovedByUserId; }
+    public void setVarianceApprovedByUserId(Long varianceApprovedByUserId) { this.varianceApprovedByUserId = varianceApprovedByUserId; }
+
+    public LocalDateTime getVarianceApprovedAt() { return varianceApprovedAt; }
+    public void setVarianceApprovedAt(LocalDateTime varianceApprovedAt) { this.varianceApprovedAt = varianceApprovedAt; }
+
+    public String getVarianceApprovalReason() { return varianceApprovalReason; }
+    public void setVarianceApprovalReason(String varianceApprovalReason) { this.varianceApprovalReason = varianceApprovalReason; }
+
+    public String getGlPostingStatus() { return glPostingStatus; }
+    public void setGlPostingStatus(String glPostingStatus) { this.glPostingStatus = glPostingStatus; }
+
+    public String getGlPostingReference() { return glPostingReference; }
+    public void setGlPostingReference(String glPostingReference) { this.glPostingReference = glPostingReference; }
+
+    public String getGlPostingError() { return glPostingError; }
+    public void setGlPostingError(String glPostingError) { this.glPostingError = glPostingError; }
+
+    public LocalDateTime getGlPostedAt() { return glPostedAt; }
+    public void setGlPostedAt(LocalDateTime glPostedAt) { this.glPostedAt = glPostedAt; }
+
+    public LocalDateTime getCountedAt() { return countedAt; }
+    public void setCountedAt(LocalDateTime countedAt) { this.countedAt = countedAt; }
+
+    public String getCountedCurrencyCode() { return countedCurrencyCode; }
+    public void setCountedCurrencyCode(String countedCurrencyCode) { this.countedCurrencyCode = countedCurrencyCode; }
 
     public String getClosingDenominationsJson() { return closingDenominationsJson; }
     public void setClosingDenominationsJson(String closingDenominationsJson) { this.closingDenominationsJson = closingDenominationsJson; }
