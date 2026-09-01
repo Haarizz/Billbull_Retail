@@ -33,11 +33,11 @@ import {
   Clock,
   Activity,
 } from "lucide-react";
-import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDashboard, getTaxReconciliation, getARAgingReport, getAPAgingReport, getLedgerStatement } from "../../api/financialReportsBackendApi";
+import { getProfitLoss, getBalanceSheet, getTrialBalance, getCashFlow, getTaxDashboard, getTaxReconciliation, getARAgingReport, getAPAgingReport, getLedgerStatement, getCostCentreOptions } from "../../api/financialReportsBackendApi";
 import { exportToExcel } from "../../utils/exportUtils";
 import { generateReportA4Html, printHtml, downloadPdf } from "../../utils/printGenerator";
 import { getCompanyProfile } from "../../api/companyProfileApi";
-import { getAccounts, getCostCenters } from "../../api/ledgerApi";
+import { getAccounts } from "../../api/ledgerApi";
 import ExportDropdown from "../../components/common/ExportDropdown";
 import { useBranch } from "../../context/BranchContext";
 import { CurrencySymbol } from "../../components/CurrencyAmount";
@@ -50,7 +50,7 @@ interface TBRow { code: string; name: string; debit: number; credit: number }
 interface CFData { ops: { name: string; amount: number }[]; inv: { name: string; amount: number }[]; fin: { name: string; amount: number }[]; totalOperating: number; totalInvesting: number; totalFinancing: number; netCashFlow: number; openingCash?: number; closingCash?: number }
 interface AgingRow { customer?: string; vendor?: string; current: number; d30: number; d60: number; d90: number; d90plus: number; total: number }
 interface VatDashboard { outputTax?: number; inputTax?: number; netTaxPayable?: number; taxableSalesBase?: number; taxablePurchaseBase?: number; trn?: string }
-interface VatLine { documentNumber?: string; accountName?: string; baseAmount?: number; taxAmount?: number }
+interface VatLine { documentNumber?: string; date?: string; type?: string; accountName?: string; baseAmount?: number; taxAmount?: number }
 interface LedgerStatementRow { date: string; ref: string; narration: string; debit: number; credit: number; balance: number }
 
 interface ReportStore {
@@ -68,6 +68,21 @@ interface ReportStore {
   // display context passed from filter state
   period: string;
   branchLabel: string;
+}
+
+// The register DTO field names do not match the export column keys, so map them here —
+// exporting the raw lines produced a sheet of empty cells.
+function vatExportRows(lines: VatLine[] | null) {
+  return (lines || []).map((l) => ({
+    invoiceNo: l.documentNumber || "",
+    date: l.date || "",
+    customer: l.accountName || "",
+    vendor: l.accountName || "",
+    taxableAmt: Number(l.baseAmount || 0),
+    vatRate: vatRateLabel(l),
+    vatAmt: Number(l.taxAmount || 0),
+    totalAmt: Number(l.baseAmount || 0) + Number(l.taxAmount || 0),
+  }));
 }
 
 function buildReportStore(): ReportStore {
@@ -308,7 +323,7 @@ function getFinancialExportData(reportId: ReportId, store: ReportStore): { title
           { header: "VAT (AED)", key: "vatAmt", width: 16 },
           { header: "Total (AED)", key: "totalAmt", width: 16 },
         ],
-        rows: store.vatOutputLines || [],
+        rows: vatExportRows(store.vatOutputLines),
       };
     }
     case "vat_input_register": {
@@ -323,7 +338,7 @@ function getFinancialExportData(reportId: ReportId, store: ReportStore): { title
           { header: "VAT (AED)", key: "vatAmt", width: 16 },
           { header: "Total (AED)", key: "totalAmt", width: 16 },
         ],
-        rows: store.vatInputLines || [],
+        rows: vatExportRows(store.vatInputLines),
       };
     }
     default:
@@ -780,6 +795,16 @@ function statusBadge(status: "Paid" | "Overdue" | "Partial" | "Pending" | string
 
 function aed(n: number) {
   return <><CurrencySymbol /> {n.toLocaleString("en-AE", { minimumFractionDigits: 0 })}</>;
+}
+
+// The effective rate on a register line, read back from the posted amounts rather than
+// assumed to be 5% — a voucher can carry a mixed-rate or legacy-rate basket.
+function vatRateLabel(line: { baseAmount?: number; taxAmount?: number }) {
+  const base = Number(line.baseAmount || 0);
+  const tax = Number(line.taxAmount || 0);
+  if (!base) return "—";
+  const pct = (tax / base) * 100;
+  return `${Math.round(pct * 10) / 10}%`;
 }
 
 // ─── Mini Bar Chart ───────────────────────────────────────────────────────────
@@ -1774,11 +1799,11 @@ function VATReturnSummaryReport({ store, companyProfile }: { store: ReportStore;
   const salesBase = vd ? Number(vd.taxableSalesBase || 0) : 0;
   const purchaseBase = vd ? Number(vd.taxablePurchaseBase || 0) : 0;
   const boxes = [
-    { box: "1", label: "Standard rated supplies (5%)", taxable: salesBase, vat: outputTax },
+    { box: "1", label: "Standard rated supplies", taxable: salesBase, vat: outputTax },
     { box: "2", label: "Zero-rated supplies (0%)", taxable: 0, vat: 0 },
     { box: "3", label: "Exempt supplies", taxable: 0, vat: 0 },
     { box: "4", label: "Total supplies (Box 1+2+3)", taxable: salesBase, vat: outputTax },
-    { box: "5", label: "Taxable expenses (5% input VAT)", taxable: purchaseBase, vat: inputTax },
+    { box: "5", label: "Taxable expenses (input VAT)", taxable: purchaseBase, vat: inputTax },
     { box: "6", label: "Input VAT recoverable (Box 5 VAT)", taxable: null, vat: inputTax },
     { box: "7", label: "VAT payable / (refundable) (Box 4–6)", taxable: null, vat: netPayable },
   ];
@@ -1842,11 +1867,11 @@ function VATOutputRegisterReport({ store }: { store: ReportStore }) {
   const liveRows = store.vatOutputLines;
   const rows = liveRows?.length
     ? liveRows.map((l: any) => ({
-        date: "—",
+        date: l.date || "—",
         inv: l.documentNumber || "—",
         customer: l.accountName || "—",
         taxable: Number(l.baseAmount || 0),
-        vatRate: "5%",
+        vatRate: vatRateLabel(l),
         vat: Number(l.taxAmount || 0),
         total: Number(l.baseAmount || 0) + Number(l.taxAmount || 0),
       }))
@@ -1904,7 +1929,7 @@ function VATInputRegisterReport({ store }: { store: ReportStore }) {
   const liveRows = store.vatInputLines;
   const rows = liveRows?.length
     ? liveRows.map((l: any) => ({
-        date: "—",
+        date: l.date || "—",
         inv: l.documentNumber || "—",
         vendor: l.accountName || "—",
         taxable: Number(l.baseAmount || 0),
@@ -3397,31 +3422,59 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [companyProfile, setCompanyProfile] = useState<any>(null);
-  const [glAccountOptions, setGlAccountOptions] = useState<{ value: string; label: string }[]>([]);
-  const [costCentreOptions, setCostCentreOptions] = useState<{ value: string; label: string }[]>([]);
+  const [glAccountOptions, setGlAccountOptions] = useState<{ value: string; label: string; hasData?: boolean }[]>([]);
+  const [costCentreOptions, setCostCentreOptions] = useState<{ value: string; label: string; hasData?: boolean }[]>([]);
   // Combined for backward compatibility with appliedFilters label lookup
   const accountOptions = advancedFilterMode === "costcentre" ? costCentreOptions : glAccountOptions;
 
+  // What the picker is actually choosing between, so its wording matches its contents.
+  const pickerNoun = advancedFilterMode === "costcentre" ? "cost centre" : "account";
+  const allOptionLabel = advancedFilterMode === "costcentre" ? "All cost centres" : "All accounts";
+  const selectedOption = accountOptions.find((o) => o.value === selectedAccount);
+
   useEffect(() => {
     getCompanyProfile().then((res) => setCompanyProfile(res.data)).catch(() => {});
-    Promise.all([getAccounts(), getCostCenters()])
-      .then(([accs, ccs]: [any[], any[]]) => {
-        const accOpts = (accs || [])
+    getAccounts()
+      .then((accs: any[]) => {
+        setGlAccountOptions((accs || [])
           .filter((a: any) => !a.archived && !a.isGroup)
-          .map((a: any) => ({ value: a.code, label: `${a.code} – ${a.name}` }));
-        const ccOpts = (ccs || [])
-          .filter((c: any) => c.status !== "archived")
-          .map((c: any) => ({ value: c.code, label: `${c.code} – ${c.name}` }));
-        setGlAccountOptions(accOpts);
-        setCostCentreOptions(ccOpts);
+          .map((a: any) => ({ value: a.code, label: `${a.code} – ${a.name}` })));
       })
       .catch(() => {});
   }, []);
+
+  // The picker feeds two different parameters depending on the report — a GL account code for
+  // the ledger, a cost-centre code for the P&L family. Carrying a selection across that switch
+  // sends a cost centre where an account is expected, so drop it whenever the mode changes.
+  useEffect(() => {
+    setSelectedAccount("All");
+    setAccountSearch("");
+    setAccountOpen(false);
+  }, [advancedFilterMode]);
 
   const reportBranchId = useMemo(
     () => (isAllBranches || !activeBranchId || activeBranchId === "ALL" ? "All" : String(activeBranchId)),
     [activeBranchId, isAllBranches]
   );
+
+  // Cost centres come from the reports endpoint rather than the master list, because that
+  // endpoint also reports which ones the period's ledger entries actually carry. Re-read when
+  // the period or branch changes — "has data" is only meaningful for the range being reported.
+  useEffect(() => {
+    if (branchLoading) return;
+    let cancelled = false;
+    getCostCentreOptions(dateFrom, dateTo, reportBranchId)
+      .then((ccs: any[]) => {
+        if (cancelled) return;
+        setCostCentreOptions((ccs || []).map((c: any) => ({
+          value: c.code,
+          label: `${c.code} – ${c.name}`,
+          hasData: c.hasData,
+        })));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo, reportBranchId, branchLoading]);
 
   const activeBranchLabel = useMemo(() => {
     if (reportBranchId === "All") return "All Branches";
@@ -3556,7 +3609,14 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
       { label: "Date From", value: dateFrom },
       { label: "Date To", value: dateTo },
       { label: "Branch", value: branchMetaLabel },
-      { label: "Account", value: selectedAccount !== "All" ? accountOptions.find((a: any) => a.value === selectedAccount)?.label || selectedAccount : "All" }
+      {
+        label: advancedFilterMode === "costcentre" ? "Cost Centre" : "Account",
+        // Hidden entirely on reports with no picker — otherwise a stale selection shows as an
+        // applied filter that nothing in the report actually honours.
+        value: advancedFilterMode && selectedAccount !== "All"
+          ? accountOptions.find((a: any) => a.value === selectedAccount)?.label || selectedAccount
+          : "All",
+      }
     ].filter((f) => f.value && f.value !== "All");
   }
 
@@ -3979,7 +4039,7 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                           : selectedAccount === "All"
                             ? ""
                             : accountOptions.find(o => o.value === selectedAccount)?.label || selectedAccount}
-                        placeholder="All accounts"
+                        placeholder={allOptionLabel}
                         onFocus={() => { setAccountOpen(true); setAccountSearch(""); }}
                         onChange={(e) => { setAccountSearch(e.target.value); setAccountOpen(true); }}
                         onBlur={() => setTimeout(() => setAccountOpen(false), 150)}
@@ -3988,24 +4048,36 @@ export default function FinancialReports({ onNavigate }: { onNavigate?: (s: stri
                       <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-slate-400 pointer-events-none" />
                       {accountOpen && (
                         <div className="absolute z-50 top-full left-0 right-0 mt-0.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-                          {[{ value: "All", label: "All accounts" }, ...accountOptions]
+                          {[{ value: "All", label: allOptionLabel }, ...accountOptions]
                             .filter(o => !accountSearch || o.label.toLowerCase().includes(accountSearch.toLowerCase()))
-                            .map(o => (
+                            .map((o: any) => (
                               <button
                                 key={o.value}
                                 type="button"
                                 onMouseDown={() => { setSelectedAccount(o.value); setAccountSearch(""); setAccountOpen(false); }}
-                                className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] ${selectedAccount === o.value ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
+                                className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[#FFF6D8] flex items-center justify-between gap-2 ${selectedAccount === o.value ? "bg-[#FFF6D8] font-semibold text-slate-900" : "text-slate-700"}`}
                               >
-                                {o.label}
+                                <span className="truncate">{o.label}</span>
+                                {o.hasData === false && (
+                                  <span className="text-[9px] text-slate-400 shrink-0">no entries</span>
+                                )}
                               </button>
                             ))}
-                          {[{ value: "All", label: "All accounts" }, ...accountOptions].filter(o => !accountSearch || o.label.toLowerCase().includes(accountSearch.toLowerCase())).length === 0 && (
+                          {[{ value: "All", label: allOptionLabel }, ...accountOptions].filter(o => !accountSearch || o.label.toLowerCase().includes(accountSearch.toLowerCase())).length === 0 && (
                             <div className="px-3 py-2 text-[11px] text-slate-400">No matches for "{accountSearch}"</div>
                           )}
                         </div>
                       )}
                     </div>
+                    {selectedOption?.hasData === false ? (
+                      <p className="text-[10px] text-amber-700 leading-4">
+                        No ledger entries in this period carry {pickerNoun} {selectedAccount} \— the report will come back empty.
+                      </p>
+                    ) : (
+                      <p className="text-[9px] text-slate-400">
+                        Press Generate to apply the {pickerNoun} filter.
+                      </p>
+                    )}
                   </div>
                 )}
 

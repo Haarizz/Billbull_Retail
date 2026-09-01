@@ -2,6 +2,7 @@ package com.billbull.backend.financials.reports;
 
 import com.billbull.backend.security.ModulePermissionService;
 import java.time.LocalDate;
+import java.util.List;
 
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,6 +38,19 @@ public class FinancialReportController {
             @RequestParam(required = false) Long branchId) {
         modulePermissionService.requireCanView(MODULE);
         return reportService.generateTrialBalance(startDate, endDate, branchId);
+    }
+
+    /**
+      * Cost centers for the report filter, each flagged with whether the period holds any
+      * ledger entry tagged with it.
+      */
+    @GetMapping("/cost-centres")
+    public List<CostCenterOptionDTO> getCostCentreOptions(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
+        return reportService.getCostCenterOptions(startDate, endDate, branchId);
     }
 
     @GetMapping("/profit-loss")

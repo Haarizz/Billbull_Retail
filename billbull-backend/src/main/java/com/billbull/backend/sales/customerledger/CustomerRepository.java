@@ -29,6 +29,20 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
         "c.trn LIKE CONCAT('%', :q, '%')")
     List<Customer> searchAllFields(@org.springframework.data.repository.query.Param("q") String q);
 
+    /**
+     * Lightweight typeahead projection (code, name, mobile) for the Sales Reports
+     * "Customer / Item" filter. Returns columns rather than entities so a keystroke
+     * never hydrates full Customer rows (encrypted columns, address collections).
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT c.code, c.name, c.mobile FROM Customer c " +
+        "WHERE (" +
+        "LOWER(c.code) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+        "LOWER(c.name) LIKE LOWER(CONCAT('%', :q, '%')) OR " +
+        "c.mobile LIKE CONCAT('%', :q, '%')) " +
+        "ORDER BY c.name ASC")
+    List<Object[]> findReportFilterSuggestions(@org.springframework.data.repository.query.Param("q") String q,
+                                               org.springframework.data.domain.Pageable pageable);
+
     @org.springframework.data.jpa.repository.Query("SELECT c FROM Customer c WHERE " +
         "(:name <> '' AND LOWER(c.name) = LOWER(:name)) OR " +
         "(:mobile <> '' AND c.mobile = :mobile) OR " +

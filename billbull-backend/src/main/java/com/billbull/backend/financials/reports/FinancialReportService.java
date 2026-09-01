@@ -3,7 +3,9 @@ package com.billbull.backend.financials.reports;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -23,6 +25,8 @@ import com.billbull.backend.sales.customerledger.OpeningInvoice;
 import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.financials.chartofaccounts.Account;
 import com.billbull.backend.financials.chartofaccounts.AccountRepository;
+import com.billbull.backend.financials.chartofaccounts.CostCenter;
+import com.billbull.backend.financials.chartofaccounts.CostCenterRepository;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
 import com.billbull.backend.purchase.lpo.Lpo;
@@ -47,6 +51,7 @@ public class FinancialReportService {
     private final OpeningInvoiceRepository openingInvoiceRepository;
     private final CustomerRepository customerRepository;
     private final LpoRepository lpoRepository;
+    private final CostCenterRepository costCenterRepository;
     private final BranchAccessService branchAccessService;
 
     public FinancialReportService(
@@ -58,6 +63,7 @@ public class FinancialReportService {
             OpeningInvoiceRepository openingInvoiceRepository,
             CustomerRepository customerRepository,
             LpoRepository lpoRepository,
+            CostCenterRepository costCenterRepository,
             BranchAccessService branchAccessService) {
         this.accountRepository = accountRepository;
         this.ledgerEntryRepository = ledgerEntryRepository;
@@ -67,6 +73,7 @@ public class FinancialReportService {
         this.openingInvoiceRepository = openingInvoiceRepository;
         this.customerRepository = customerRepository;
         this.lpoRepository = lpoRepository;
+        this.costCenterRepository = costCenterRepository;
         this.branchAccessService = branchAccessService;
     }
 
@@ -177,6 +184,38 @@ public class FinancialReportService {
         return generateProfitLoss(startDate, endDate, null, null);
     }
 
+    /**
+     * Cost centers offered by the report filter, each flagged with whether any ledger entry in
+     * the period actually carries it.
+     *
+     * <p>Combines the cost-center master with the labels the posting engine stamped on ledger
+     * lines, because the two drift: auto-postings often leave the dimension blank, and some
+     * write a label that was never a cost center at all. Surfacing {@code hasData} is what
+     * stops a filter selection from silently producing an empty statement.
+     */
+    public List<CostCenterOptionDTO> getCostCenterOptions(LocalDate startDate, LocalDate endDate, Long branchId) {
+        if (startDate == null) startDate = LocalDate.now().withDayOfMonth(1);
+        if (endDate == null) endDate = LocalDate.now();
+
+        Set<String> used = new HashSet<>();
+        for (String label : ledgerEntryRepository.findUsedCostCenters(branchId, startDate, endDate)) {
+            if (label != null && !label.isBlank()) used.add(label.trim().toLowerCase());
+        }
+
+        List<CostCenterOptionDTO> options = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (CostCenter cc : costCenterRepository.findAll()) {
+            if (cc.getCode() == null || "archived".equalsIgnoreCase(cc.getStatus())) continue;
+            String code = cc.getCode().trim();
+            if (!seen.add(code.toLowerCase())) continue;
+            boolean hasData = used.contains(code.toLowerCase())
+                    || (cc.getName() != null && used.contains(cc.getName().trim().toLowerCase()));
+            options.add(new CostCenterOptionDTO(code, cc.getName(), hasData));
+        }
+        options.sort(Comparator.comparing(CostCenterOptionDTO::getCode, String.CASE_INSENSITIVE_ORDER));
+        return options;
+    }
+
     public ProfitLossDTO generateProfitLoss(LocalDate startDate, LocalDate endDate, Long branchId) {
         return generateProfitLoss(startDate, endDate, branchId, null);
     }
@@ -190,8 +229,16 @@ public class FinancialReportService {
         // ARCHFIX §4.1: SQL-side per-account aggregation (with optional cost-center filter) instead
         // of loading every ledger entry and folding in Java.
         boolean byCostCenter = costCenter != null && !costCenter.isBlank();
+        // Ledger lines carry the cost center as free text, so a filter on "CC-001" must also
+        // match lines stamped with that cost center's name (and vice versa).
+        String costCenterName = null;
+        if (byCostCenter) {
+            CostCenter cc = costCenterRepository.findByCode(costCenter.trim());
+            costCenterName = cc != null ? cc.getName() : null;
+        }
         List<LedgerEntryRepository.AccountAggregate> aggregates = byCostCenter
-                ? ledgerEntryRepository.aggregateByAccountCodeAndCostCenter(branchId, startDate, endDate, costCenter)
+                ? ledgerEntryRepository.aggregateByAccountCodeAndCostCenter(
+                        branchId, startDate, endDate, costCenter.trim(), costCenterName)
                 : ledgerEntryRepository.aggregateByAccountCode(branchId, startDate, endDate);
 
         Map<String, BigDecimal> accountBalances = new LinkedHashMap<>();
@@ -533,6 +580,138 @@ public class FinancialReportService {
 
     // ==================== TAX DASHBOARD ====================
 
+    private static final String ACC_VAT_OUTPUT = "2100";
+    private static final String ACC_VAT_INPUT = "1310";
+    private static final String ACC_DEFERRED_REVENUE = "2051";
+
+    private static final String ROLE_OUTPUT_TAX = "OUTPUT_TAX";
+    private static final String ROLE_INPUT_TAX = "INPUT_TAX";
+    private static final String ROLE_TAXABLE_SALES = "TAXABLE_SALES";
+    private static final String ROLE_TAXABLE_PURCHASE = "TAXABLE_PURCHASE";
+
+    /**
+     * Account code to VAT role.
+     *
+     * {@code Account.taxRole} is honoured when a tenant has populated it, but nothing in
+     * the application ever writes that column - no seeder, no migration, no controller -
+     * so it is null on every live database and the VAT dashboard/registers computed from
+     * it rendered as all-zero. The fallback classifies from the seeded Chart of Accounts
+     * instead: the two VAT control accounts by code, and the base accounts by account /
+     * report group so tenant-created revenue and expense accounts are picked up too.
+     */
+    private Map<String, String> buildTaxRoleMap() {
+        Map<String, String> map = new HashMap<>();
+        for (Account a : accountRepository.findAll()) {
+            if (a.getCode() == null)
+                continue;
+            String explicit = a.getTaxRole();
+            String role = (explicit != null && !explicit.isBlank()) ? explicit.trim() : deriveTaxRole(a);
+            if (role != null)
+                map.putIfAbsent(a.getCode(), role);
+        }
+        return map;
+    }
+
+    private String deriveTaxRole(Account a) {
+        String code = a.getCode();
+        if (ACC_VAT_OUTPUT.equals(code))
+            return ROLE_OUTPUT_TAX;
+        if (ACC_VAT_INPUT.equals(code))
+            return ROLE_INPUT_TAX;
+        // 2101 VAT Payable (Net) is deliberately absent: it carries the net of a filed
+        // return, not tax charged on individual supplies.
+
+        // A sales invoice credits Deferred Revenue, not Sales Revenue - the delivery note
+        // recognises it into 4001 later. Treating it as a taxable-sales account is what
+        // gives the invoice voucher a base to sit against its VAT Output line.
+        if (ACC_DEFERRED_REVENUE.equals(code))
+            return ROLE_TAXABLE_SALES;
+
+        if ("Income".equalsIgnoreCase(a.getAccountGroup()))
+            return ROLE_TAXABLE_SALES;
+        if ("Expenses".equalsIgnoreCase(a.getAccountGroup()))
+            return ROLE_TAXABLE_PURCHASE;
+        // Goods purchases debit Inventory, not COGS, until they are sold.
+        if ("INVENTORY".equals(a.getReportGroup()))
+            return ROLE_TAXABLE_PURCHASE;
+        return null;
+    }
+
+    /**
+     * One register line per voucher per side. A voucher is only reported when it actually
+     * moves VAT, so non-taxable vouchers (payroll, transfers, revenue recognition) stay
+     * out of the return, and the dashboard totals are exactly the sum of the register
+     * lines the user sees underneath them.
+     */
+    private List<TaxReconciliationDTO.TaxAuditLine> collectVatLines(List<LedgerEntry> entries,
+            Map<String, String> taxRoleMap) {
+
+        Map<String, List<LedgerEntry>> groupedByRef = entries.stream()
+                .filter(e -> e.getVoucherNo() != null)
+                .collect(Collectors.groupingBy(LedgerEntry::getVoucherNo, LinkedHashMap::new, Collectors.toList()));
+
+        List<TaxReconciliationDTO.TaxAuditLine> lines = new ArrayList<>();
+
+        for (Map.Entry<String, List<LedgerEntry>> voucher : groupedByRef.entrySet()) {
+            BigDecimal outputTax = BigDecimal.ZERO;
+            BigDecimal inputTax = BigDecimal.ZERO;
+            BigDecimal salesBase = BigDecimal.ZERO;
+            BigDecimal purchaseBase = BigDecimal.ZERO;
+            String salesName = null;
+            String purchaseName = null;
+            String counterparty = null;
+            LocalDate date = null;
+
+            // Signed by the account's natural side, so a reversing line subtracts instead of
+            // adding: sales/output VAT are credit-side, purchases/input VAT are debit-side.
+            for (LedgerEntry line : voucher.getValue()) {
+                LocalDate lineDate = line.getTransactionDate();
+                if (lineDate != null && (date == null || lineDate.isBefore(date)))
+                    date = lineDate;
+
+                String role = taxRoleMap.get(line.getAccountCode());
+                if (role == null) {
+                    if (counterparty == null)
+                        counterparty = partyName(line);
+                    continue;
+                }
+                if (ROLE_OUTPUT_TAX.equals(role)) {
+                    outputTax = outputTax.add(creditLessDebit(line));
+                } else if (ROLE_INPUT_TAX.equals(role)) {
+                    inputTax = inputTax.add(debitLessCredit(line));
+                } else if (ROLE_TAXABLE_SALES.equals(role)) {
+                    salesBase = salesBase.add(creditLessDebit(line));
+                    if (salesName == null)
+                        salesName = line.getAccountName();
+                } else if (ROLE_TAXABLE_PURCHASE.equals(role)) {
+                    purchaseBase = purchaseBase.add(debitLessCredit(line));
+                    if (purchaseName == null)
+                        purchaseName = line.getAccountName();
+                }
+            }
+
+            String dateText = date != null ? date.toString() : null;
+            if (outputTax.signum() != 0) {
+                lines.add(new TaxReconciliationDTO.TaxAuditLine(voucher.getKey(), dateText, "SALES",
+                        salesBase, outputTax, counterparty != null ? counterparty : salesName));
+            }
+            if (inputTax.signum() != 0) {
+                lines.add(new TaxReconciliationDTO.TaxAuditLine(voucher.getKey(), dateText, "PURCHASE",
+                        purchaseBase, inputTax, counterparty != null ? counterparty : purchaseName));
+            }
+        }
+        return lines;
+    }
+
+    /** "Accounts Payable - ACME Trading" yields "ACME Trading"; plain control names give nothing. */
+    private String partyName(LedgerEntry line) {
+        String name = line.getAccountName();
+        if (name == null)
+            return null;
+        int sep = name.indexOf(" - ");
+        return sep > 0 && sep + 3 < name.length() ? name.substring(sep + 3).trim() : null;
+    }
+
     public TaxDashboardDTO generateTaxDashboard(LocalDate startDate, LocalDate endDate) {
         return generateTaxDashboard(startDate, endDate, null);
     }
@@ -543,30 +722,21 @@ public class FinancialReportService {
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
+        List<TaxReconciliationDTO.TaxAuditLine> lines =
+                collectVatLines(fetchEntries(branchId, startDate, endDate), buildTaxRoleMap());
 
         BigDecimal outputTax = BigDecimal.ZERO;
         BigDecimal inputTax = BigDecimal.ZERO;
         BigDecimal taxableSalesBase = BigDecimal.ZERO;
         BigDecimal taxablePurchaseBase = BigDecimal.ZERO;
 
-        List<Account> allAccounts = accountRepository.findAll();
-        Map<String, String> taxRoleMap = allAccounts.stream()
-                .filter(a -> a.getTaxRole() != null)
-                .collect(Collectors.toMap(Account::getCode, Account::getTaxRole, (v1, v2) -> v1));
-
-        for (LedgerEntry entry : entries) {
-            String role = taxRoleMap.get(entry.getAccountCode());
-            if ("OUTPUT_TAX".equals(role)) {
-                outputTax = outputTax.add(safe(entry.getCreditAmount()));
-            } else if ("INPUT_TAX".equals(role)) {
-                inputTax = inputTax.add(safe(entry.getDebitAmount()));
-            } else if ("TAXABLE_SALES".equals(role)) {
-                taxableSalesBase = taxableSalesBase
-                        .add(safe(entry.getCreditAmount()));
-            } else if ("TAXABLE_PURCHASE".equals(role)) {
-                taxablePurchaseBase = taxablePurchaseBase
-                        .add(safe(entry.getDebitAmount()));
+        for (TaxReconciliationDTO.TaxAuditLine line : lines) {
+            if ("SALES".equals(line.getType())) {
+                outputTax = outputTax.add(line.getTaxAmount());
+                taxableSalesBase = taxableSalesBase.add(line.getBaseAmount());
+            } else {
+                inputTax = inputTax.add(line.getTaxAmount());
+                taxablePurchaseBase = taxablePurchaseBase.add(line.getBaseAmount());
             }
         }
 
@@ -581,6 +751,16 @@ public class FinancialReportService {
         return dto;
     }
 
+    /** Net credit movement on a credit-side account (sales revenue, output VAT). */
+    private BigDecimal creditLessDebit(LedgerEntry entry) {
+        return safe(entry.getCreditAmount()).subtract(safe(entry.getDebitAmount()));
+    }
+
+    /** Net debit movement on a debit-side account (purchases, input VAT). */
+    private BigDecimal debitLessCredit(LedgerEntry entry) {
+        return safe(entry.getDebitAmount()).subtract(safe(entry.getCreditAmount()));
+    }
+
     public TaxReconciliationDTO generateTaxReconciliation(LocalDate startDate, LocalDate endDate) {
         return generateTaxReconciliation(startDate, endDate, null);
     }
@@ -591,51 +771,9 @@ public class FinancialReportService {
         if (endDate == null)
             endDate = LocalDate.now();
 
-        List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
-        List<Account> allAccounts = accountRepository.findAll();
-        Map<String, String> taxRoleMap = allAccounts.stream()
-                .filter(a -> a.getTaxRole() != null)
-                .collect(Collectors.toMap(Account::getCode, Account::getTaxRole, (v1, v2) -> v1));
-
-        Map<String, List<LedgerEntry>> groupedByRef = entries.stream()
-                .collect(Collectors.groupingBy(LedgerEntry::getVoucherNo));
-        List<TaxReconciliationDTO.TaxAuditLine> auditLines = new ArrayList<>();
-
-        for (Map.Entry<String, List<LedgerEntry>> entrySet : groupedByRef.entrySet()) {
-            BigDecimal jvBase = BigDecimal.ZERO;
-            BigDecimal jvTax = BigDecimal.ZERO;
-            String mode = "NONE";
-            String accName = "";
-
-            for (LedgerEntry line : entrySet.getValue()) {
-                String role = taxRoleMap.get(line.getAccountCode());
-                if (role == null)
-                    continue;
-
-                if (role.contains("TAXABLE")) {
-                    jvBase = jvBase
-                            .add(safe(line.getCreditAmount()).compareTo(BigDecimal.ZERO) > 0
-                                    ? safe(line.getCreditAmount())
-                                    : safe(line.getDebitAmount()));
-                    mode = role.contains("SALES") ? "SALES" : "PURCHASE";
-                    accName = line.getAccountName();
-                } else if (role.contains("TAX")) {
-                    jvTax = jvTax
-                            .add(safe(line.getCreditAmount()).compareTo(BigDecimal.ZERO) > 0
-                                    ? safe(line.getCreditAmount())
-                                    : safe(line.getDebitAmount()));
-                }
-            }
-
-            if (jvBase.compareTo(BigDecimal.ZERO) != 0 || jvTax.compareTo(BigDecimal.ZERO) != 0) {
-                auditLines.add(new TaxReconciliationDTO.TaxAuditLine(entrySet.getKey(), mode, jvBase.abs(), jvTax.abs(),
-                        accName));
-            }
-        }
-
         TaxReconciliationDTO dto = new TaxReconciliationDTO();
         dto.setPeriod(startDate.toString() + " to " + endDate.toString());
-        dto.setLines(auditLines);
+        dto.setLines(collectVatLines(fetchEntries(branchId, startDate, endDate), buildTaxRoleMap()));
         return dto;
     }
 

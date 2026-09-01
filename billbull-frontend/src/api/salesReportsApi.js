@@ -14,6 +14,28 @@ export const getSalesReportSalespersons = async () => {
     return res.data;
 };
 
+/**
+ * Typeahead source for the Sales Reports "Customer / Item" filter.
+ * Returns [{ id, type: 'CUSTOMER' | 'ITEM', code, name, subtitle }].
+ */
+export const getSalesReportFilterSuggestions = async (query, abortSignal, limit = 8) => {
+    const q = (query || '').trim();
+    if (!q) return [];
+    try {
+        const res = await api.get('/api/sales/reports/filter-suggestions', {
+            params: { q, limit },
+            signal: abortSignal
+        });
+        return Array.isArray(res.data) ? res.data : [];
+    } catch (error) {
+        if (error.name === 'AbortError' || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+            return [];
+        }
+        console.warn('Failed to fetch sales report filter suggestions', error);
+        return [];
+    }
+};
+
 export const getSalesReportData = async (reportId, filters = {}, abortSignal) => {
     try {
         const params = {};
@@ -26,6 +48,10 @@ export const getSalesReportData = async (reportId, filters = {}, abortSignal) =>
         if (filters.salesperson && filters.salesperson !== 'All') params.salesperson = filters.salesperson;
         if (filters.valuationMethod) params.valuationMethod = filters.valuationMethod;
         if (filters.searchQuery) params.search = filters.searchQuery;
+        // Set only when the user picked an entry from the filter typeahead — an exact
+        // code filter, as opposed to the free-text `search` above.
+        if (filters.customerCode) params.customerCode = filters.customerCode;
+        if (filters.itemCode) params.itemCode = filters.itemCode;
 
         const res = await api.get(`/api/sales/reports/data/${reportId}`, {
             params,

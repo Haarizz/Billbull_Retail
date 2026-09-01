@@ -13,6 +13,21 @@ export const getTrialBalance = async (startDate, endDate, branchId) => {
     return res.data;
 };
 
+/**
+ * Cost centres for the report filter. Each entry carries `hasData`, telling the picker whether
+ * any ledger entry in the period is actually tagged with that cost centre — selecting one
+ * without data yields an empty statement, so the filter marks it rather than looking broken.
+ * Returns [{ code, name, hasData }].
+ */
+export const getCostCentreOptions = async (startDate, endDate, branchId) => {
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    if (branchId && branchId !== "All") params.branchId = branchId;
+    const res = await api.get("/api/financials/reports/cost-centres", { params });
+    return Array.isArray(res.data) ? res.data : [];
+};
+
 export const getProfitLoss = async (startDate, endDate, branchId, costCenter) => {
     const params = {};
     if (startDate) params.startDate = startDate;

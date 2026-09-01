@@ -65,8 +65,15 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
             @org.springframework.data.repository.query.Param("start") java.time.LocalDate start,
             @org.springframework.data.repository.query.Param("end") java.time.LocalDate end);
 
-    /** Same as {@link #aggregateByAccountCode} but additionally filtered to a single cost center
-     *  (used by the P&L cost-center drill-down). */
+    /**
+      * Same as {@link #aggregateByAccountCode} but additionally filtered to a single cost center
+      * (used by the P&L cost-center drill-down).
+      *
+      * <p>Matches the code <em>or</em> the name, case- and whitespace-insensitively: nothing
+      * constrains what callers write into {@code LedgerEntry.costCenter}, so postings in the
+      * wild carry a mix of "CC-001" and "General / Head Office" for the same cost center. An
+      * equality test on the code alone silently returned an empty P&L for the other half.
+      */
     @Query("""
             SELECT le.accountCode                  AS accountCode,
                    MAX(le.accountName)             AS accountName,
@@ -76,14 +83,37 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
             WHERE le.accountCode IS NOT NULL
               AND le.transactionDate BETWEEN :start AND :end
               AND (:branchId IS NULL OR le.branch.id = :branchId)
-              AND le.costCenter = :costCenter
+              AND (LOWER(TRIM(le.costCenter)) = LOWER(TRIM(:costCenter))
+                   OR (:costCenterName IS NOT NULL
+                       AND LOWER(TRIM(le.costCenter)) = LOWER(TRIM(:costCenterName))))
             GROUP BY le.accountCode
             """)
     List<AccountAggregate> aggregateByAccountCodeAndCostCenter(
             @org.springframework.data.repository.query.Param("branchId") Long branchId,
             @org.springframework.data.repository.query.Param("start") java.time.LocalDate start,
             @org.springframework.data.repository.query.Param("end") java.time.LocalDate end,
-            @org.springframework.data.repository.query.Param("costCenter") String costCenter);
+            @org.springframework.data.repository.query.Param("costCenter") String costCenter,
+            @org.springframework.data.repository.query.Param("costCenterName") String costCenterName);
+
+    /**
+     * The distinct cost-center labels that actually appear on ledger entries in a period.
+     *
+     * <p>Drives the report filter's "has data" marker: the cost-center master and what the
+     * posting engine stamps on a line are not the same list, and offering a cost center that
+     * cannot match anything is what makes the filter look broken.
+     */
+    @Query("""
+            SELECT DISTINCT TRIM(le.costCenter)
+            FROM LedgerEntry le
+            WHERE le.costCenter IS NOT NULL
+              AND TRIM(le.costCenter) <> ''
+              AND le.transactionDate BETWEEN :start AND :end
+              AND (:branchId IS NULL OR le.branch.id = :branchId)
+            """)
+    List<String> findUsedCostCenters(
+            @org.springframework.data.repository.query.Param("branchId") Long branchId,
+            @org.springframework.data.repository.query.Param("start") java.time.LocalDate start,
+            @org.springframework.data.repository.query.Param("end") java.time.LocalDate end);
 
     /** One row per account: summed debits/credits for all entries STRICTLY BEFORE {@code before}
      *  (used by the balance sheet as-of-date cumulative balance). Optional branch filter. */

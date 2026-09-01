@@ -23,6 +23,8 @@ import com.billbull.backend.sales.salesorder.SalesOrder;
 import com.billbull.backend.sales.salesorder.SalesOrderItem;
 import com.billbull.backend.sales.salesorder.SalesOrderRepository;
 import com.billbull.backend.sales.salesorder.SalesOrderStatus;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -76,6 +78,50 @@ public class SalesReportDataService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Typeahead entries for the "Customer / Item" filter: customers matching by code,
+     * name or mobile, then items matching by code, SKU, name or barcode.
+     *
+     * <p>Both halves are capped in SQL, so a keystroke costs two indexed LIKE queries
+     * over projections — never a full customer/product load. A blank query returns
+     * nothing rather than the whole catalogue.
+     */
+    @Transactional(readOnly = true)
+    public List<SalesReportFilterSuggestion> getFilterSuggestions(String query, int limit) {
+        String q = safe(query);
+        if (q.isEmpty()) return List.of();
+
+        int perType = Math.max(1, Math.min(limit, 50));
+        Pageable page = PageRequest.of(0, perType);
+        List<SalesReportFilterSuggestion> out = new ArrayList<>();
+
+        for (Object[] row : customerRepository.findReportFilterSuggestions(q, page)) {
+            String code = (String) row[0];
+            String name = (String) row[1];
+            if (isAll(code) && isAll(name)) continue;
+            out.add(new SalesReportFilterSuggestion(
+                    SalesReportFilterSuggestion.Type.CUSTOMER,
+                    fallback(code, name),
+                    fallback(name, code),
+                    safe((String) row[2])));
+        }
+        for (Object[] row : productRepository.findReportFilterSuggestions(q, page)) {
+            String code = (String) row[0];
+            String name = (String) row[1];
+            if (isAll(code) && isAll(name)) continue;
+            String sku = safe((String) row[2]);
+            String category = safe((String) row[3]);
+            String subtitle = sku.isEmpty() ? category
+                    : (category.isEmpty() ? "SKU " + sku : "SKU " + sku + " · " + category);
+            out.add(new SalesReportFilterSuggestion(
+                    SalesReportFilterSuggestion.Type.ITEM,
+                    fallback(code, sku),
+                    fallback(name, code),
+                    subtitle));
+        }
+        return out;
+    }
+
     @Transactional(readOnly = true)
     public SalesReportDataResponse getReport(
             String reportId,
@@ -85,8 +131,11 @@ public class SalesReportDataService {
             String salesChannel,
             String salesperson,
             String valuationMethod,
-            String search) {
-        SalesDataset data = loadDataset(dateFrom, dateTo, branchId, salesChannel, salesperson, valuationMethod, search);
+            String search,
+            String customerCode,
+            String itemCode) {
+        SalesDataset data = loadDataset(dateFrom, dateTo, branchId, salesChannel, salesperson, valuationMethod,
+                search, customerCode, itemCode);
         String id = safe(reportId).toLowerCase();
 
         return switch (id) {
@@ -135,11 +184,14 @@ public class SalesReportDataService {
             String salesChannel,
             String salesperson,
             String valuationMethod,
-            String search) {
+            String search,
+            String customerCode,
+            String itemCode) {
         SalesDataset data = new SalesDataset();
         data.dateFrom = dateFrom;
         data.dateTo = dateTo;
         data.valuationMethod = valuationMethod;
+        data.itemCodeFilter = isAll(itemCode) ? null : safe(itemCode);
         // Product lookup via a lightweight projection (code, name, category, dept,
         // brand) — avoids hydrating 12k Product entities + their eager dept/brand
         // associations on every report.
@@ -154,6 +206,7 @@ public class SalesReportDataService {
             data.products.put(code, new ProductInfo(name, deptName, category, brandName));
         }
         data.customers = customerRepository.findAll().stream()
+                .filter(customer -> matchesCustomerCode(customer.getCode(), customerCode))
                 .filter(customer -> matchesSearch(search,
                         customer.getCode(),
                         customer.getName(),
@@ -170,19 +223,26 @@ public class SalesReportDataService {
                 .filter(invoice -> matchesBranch(invoice, branchId))
                 .filter(invoice -> matchesChannel(invoice, salesChannel))
                 .filter(invoice -> matchesSalesperson(effectiveSalesperson(invoice), salesperson))
+                .filter(invoice -> matchesCustomerCode(invoice.getCustomerCode(), customerCode))
+                .filter(invoice -> containsItem(items(invoice), data.itemCodeFilter))
                 .filter(invoice -> matchesInvoiceSearch(invoice, search))
                 .collect(Collectors.toList());
 
         data.returns = returnRepository.findForReports(dateFrom, dateTo).stream()
+                .filter(salesReturn -> matchesCustomerCode(salesReturn.getCustomerCode(), customerCode))
+                .filter(salesReturn -> salesReturn.getItems() == null
+                        || containsReturnItem(salesReturn.getItems(), data.itemCodeFilter))
                 .filter(salesReturn -> matchesReturnSearch(salesReturn, search))
                 .collect(Collectors.toList());
 
         data.orders = orderRepository.findForReports(dateFrom, dateTo).stream()
+                .filter(order -> matchesCustomerCode(order.getCustomerCode(), customerCode))
                 .filter(order -> matchesSearch(search, order.getSoNumber(), order.getCustomerName(), order.getCustomerCode()))
                 .collect(Collectors.toList());
 
         data.deliveries = deliveryNoteRepository.findForReports(dateFrom, dateTo).stream()
                 .filter(note -> branchId == null || Objects.equals(note.getBranchId(), branchId))
+                .filter(note -> matchesCustomerCode(note.getCustomerCode(), customerCode))
                 .filter(note -> matchesSearch(search, note.getDnNumber(), note.getCustomerName(), note.getCustomerCode(), note.getDriverName(), note.getVehicleNo()))
                 .collect(Collectors.toList());
 
@@ -1352,20 +1412,31 @@ public class SalesReportDataService {
     private SalesReportDataResponse taxSummary(SalesDataset data) {
         SalesReportDataResponse report = base("tax-summary", "Tax Summary Report",
                 "Taxable, exempt and VAT collected summary for sales invoices.");
-        double taxable = data.invoices.stream().filter(this::isRecognizedInvoice).mapToDouble(i -> n(i.getSubTotal())).sum();
-        double vat = data.invoices.stream().filter(this::isRecognizedInvoice).mapToDouble(i -> n(i.getTaxTotal())).sum();
-        double zero = data.invoices.stream().filter(this::isRecognizedInvoice).flatMap(i -> items(i).stream())
-                .filter(item -> n(item.getTaxRate()) <= 0).mapToDouble(item -> n(item.getNetAmount())).sum();
+        // Buckets are built from live invoice LINES, not invoice headers: the header
+        // subTotal is the pre-bill-discount base and lumps standard-rated and
+        // zero-rated value together, so using it both overstated the VAT basis and
+        // double-counted zero-rated sales in the "Zero-Rated" row below.
+        List<SalesInvoiceItem> lines = liveItems(data.invoices);
+        double taxable = lines.stream().filter(item -> n(item.getTaxRate()) > 0).mapToDouble(this::lineTaxable).sum();
+        double vat = lines.stream().mapToDouble(item -> n(item.getTaxAmount())).sum();
+        double zero = lines.stream().filter(item -> n(item.getTaxRate()) <= 0).mapToDouble(this::lineTaxable).sum();
+        double effectiveRate = taxable > 0 ? round2(vat / taxable * 100) : 0;
+        // Returns net off the VAT basis at their ex-VAT value; totalAmount is the
+        // gross refund (base + VAT) and does not belong in a taxable-amount column.
+        double returnBase = data.returns.stream().filter(this::isApprovedReturn)
+                .mapToDouble(r -> n(r.getSubTotal())).sum();
+        double returnVat = data.returns.stream().filter(this::isApprovedReturn)
+                .mapToDouble(r -> n(r.getTaxAmount())).sum();
         List<Map<String, Object>> rows = List.of(
-                row("name", "Taxable Sales", "taxableAmount", taxable, "vatAmount", vat, "rate", 5, "status", "Taxable"),
+                row("name", "Taxable Sales", "taxableAmount", taxable, "vatAmount", vat, "rate", effectiveRate, "status", "Taxable"),
                 row("name", "Zero-Rated Sales", "taxableAmount", zero, "vatAmount", 0, "rate", 0, "status", "Zero-Rated"),
-                row("name", "Adjustments / Returns", "taxableAmount", -sumReturns(data.returns), "vatAmount", -data.returns.stream().mapToDouble(r -> n(r.getTaxAmount())).sum(), "rate", 0, "status", "Adjustment")
+                row("name", "Adjustments / Returns", "taxableAmount", -returnBase, "vatAmount", -returnVat, "rate", 0, "status", "Adjustment")
         );
         report.setCards(List.of(
                 card("Taxable Sales", taxable, "currency", "VAT basis"),
                 card("VAT Collected", vat, "currency", "output VAT"),
                 card("Zero-Rated Sales", zero, "currency", "0% tax"),
-                card("Net VAT Payable", vat - data.returns.stream().mapToDouble(r -> n(r.getTaxAmount())).sum(), "currency", "after returns")
+                card("Net VAT Payable", vat - returnVat, "currency", "after returns")
         ));
         report.setCharts(List.of(chart("pie", "Tax Breakdown", rows.stream().map(r -> row("name", r.get("name"), "value", Math.abs(n(r.get("taxableAmount"))))).collect(Collectors.toList()), "value")));
         report.setColumns(List.of(
@@ -1386,15 +1457,21 @@ public class SalesReportDataService {
                 .filter(this::isRecognizedInvoice)
                 .map(invoice -> {
                     Customer customer = findCustomer(data, invoice.getCustomerName());
+                    // Taxable base comes from the lines (post bill-discount, the value VAT
+                    // was actually charged on) and Total is base + VAT, so the register
+                    // foots. The header subTotal/invoiceTotal carry pre-discount value,
+                    // delivery/shipping charges and round-off, none of which are VAT-bearing.
+                    double taxableAmount = invoiceTaxableBase(invoice);
+                    double vatAmount = invoiceVat(invoice);
                     return row(
                             "invoiceNo", invoice.getInvoiceNumber(),
                             "date", invoice.getInvoiceDate(),
                             "customer", invoice.getCustomerName(),
                             "trn", customer == null ? "" : customer.getTrn(),
-                            "taxableAmount", invoice.getSubTotal(),
+                            "taxableAmount", taxableAmount,
                             "vatRate", vatRate(invoice),
-                            "vatAmount", invoice.getTaxTotal(),
-                            "total", invoiceTotal(invoice));
+                            "vatAmount", vatAmount,
+                            "total", taxableAmount + vatAmount);
                 })
                 .collect(Collectors.toList());
         report.setCards(List.of(
@@ -1538,7 +1615,10 @@ public class SalesReportDataService {
                             "grossSales", gross,
                             "returns", returnTotal,
                             "discount", totalDiscount(invoices),
-                            "vat", invoices.stream().mapToDouble(i -> n(i.getTaxTotal())).sum(),
+                            // Output VAT for the day, net of the VAT reversed by that day's
+                            // approved returns - mirrors netSales, which is also net of returns.
+                            "vat", invoices.stream().mapToDouble(i -> n(i.getTaxTotal())).sum()
+                                    - returns.stream().mapToDouble(r -> n(r.getTaxAmount())).sum(),
                             "netSales", net,
                             "cogs", cost,
                             "grossProfit", net - cost,
@@ -1645,7 +1725,7 @@ public class SalesReportDataService {
         Map<String, SalesAgg> itemAgg = new LinkedHashMap<>();
         for (SalesInvoice invoice : data.invoices) {
             if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
-            for (SalesInvoiceItem item : items(invoice)) {
+            for (SalesInvoiceItem item : filteredItems(data, invoice)) {
                 String key = includeRoute ? itemName(item, data) + "::" + fallback(effectiveSalesperson(invoice), "All Routes") : itemName(item, data);
                 SalesAgg agg = itemAgg.computeIfAbsent(key, ignored -> new SalesAgg());
                 agg.item = itemName(item, data);
@@ -1660,7 +1740,7 @@ public class SalesReportDataService {
         }
         for (SalesReturn ret : data.returns) {
             if (!isApprovedReturn(ret) || !returnFilter.test(ret) || ret.getItems() == null) continue;
-            for (SalesReturnItem item : ret.getItems()) {
+            for (SalesReturnItem item : filteredReturnItems(data, ret)) {
                 String key = includeRoute ? item.getItemName() + "::All Routes" : item.getItemName();
                 SalesAgg agg = itemAgg.computeIfAbsent(key, ignored -> new SalesAgg());
                 agg.item = fallback(item.getItemName(), item.getItemCode());
@@ -1703,7 +1783,7 @@ public class SalesReportDataService {
         List<Map<String, Object>> rows = new ArrayList<>();
         for (SalesInvoice invoice : data.invoices) {
             if (!isRecognizedInvoice(invoice) || !invoiceFilter.test(invoice)) continue;
-            for (SalesInvoiceItem item : items(invoice)) {
+            for (SalesInvoiceItem item : filteredItems(data, invoice)) {
                 double sales = n(item.getNetAmount() != null ? item.getNetAmount() : item.getGrossAmount());
                 double cost = lineCost(item, data);
                 rows.add(row(
@@ -1807,6 +1887,53 @@ public class SalesReportDataService {
             return true;
         }
         return ret.getItems() != null && ret.getItems().stream().anyMatch(item -> matchesSearch(search, item.getItemCode(), item.getItemName()));
+    }
+
+    /**
+     * Exact (case-insensitive) customer-code match for a code picked from the filter
+     * typeahead. A blank/absent {@code wanted} matches everything, so free-text search
+     * is unaffected.
+     */
+    private boolean matchesCustomerCode(String actual, String wanted) {
+        if (isAll(wanted)) return true;
+        return normalize(actual).equals(normalize(wanted));
+    }
+
+    /** True when {@code itemCode} is unset, or at least one line carries that item code/SKU. */
+    private boolean containsItem(List<SalesInvoiceItem> items, String itemCode) {
+        if (isAll(itemCode)) return true;
+        return items.stream().anyMatch(item -> isItem(item.getItemCode(), item.getSku(), itemCode));
+    }
+
+    private boolean containsReturnItem(List<SalesReturnItem> items, String itemCode) {
+        if (isAll(itemCode)) return true;
+        return items.stream().anyMatch(item -> isItem(item.getItemCode(), null, itemCode));
+    }
+
+    private boolean isItem(String code, String sku, String wanted) {
+        String term = normalize(wanted);
+        return normalize(code).equals(term) || (sku != null && normalize(sku).equals(term));
+    }
+
+    /**
+     * The lines of an invoice as the current filter sees them — every line normally, or
+     * only the picked item's lines when an item filter is active.
+     */
+    private List<SalesInvoiceItem> filteredItems(SalesDataset data, SalesInvoice invoice) {
+        List<SalesInvoiceItem> all = items(invoice);
+        if (data.itemCodeFilter == null) return all;
+        return all.stream()
+                .filter(item -> isItem(item.getItemCode(), item.getSku(), data.itemCodeFilter))
+                .collect(Collectors.toList());
+    }
+
+    /** Return lines as the current filter sees them — see {@link #filteredItems}. */
+    private List<SalesReturnItem> filteredReturnItems(SalesDataset data, SalesReturn ret) {
+        List<SalesReturnItem> all = ret.getItems() == null ? List.of() : ret.getItems();
+        if (data.itemCodeFilter == null) return all;
+        return all.stream()
+                .filter(item -> isItem(item.getItemCode(), null, data.itemCodeFilter))
+                .collect(Collectors.toList());
     }
 
     private boolean matchesSearch(String search, Object... values) {
@@ -1940,12 +2067,59 @@ public class SalesReportDataService {
                 .orElse(null);
     }
 
+    /**
+     * Blended VAT rate actually charged on an invoice: VAT over taxable base. An
+     * unweighted mean of the line rates (the previous implementation) misreports
+     * mixed-rate invoices - one AED 10 standard-rated line beside an AED 10,000
+     * zero-rated one is not a 5% invoice.
+     */
     private double vatRate(SalesInvoice invoice) {
-        return items(invoice).stream()
+        double base = invoiceTaxableBase(invoice);
+        double vat = invoiceVat(invoice);
+        if (base > 0) return round2(vat / base * 100);
+        return liveItems(invoice).stream()
                 .mapToDouble(item -> n(item.getTaxRate()))
-                .filter(rate -> rate > 0)
-                .average()
-                .orElse(n(invoice.getTaxTotal()) > 0 ? 5 : 0);
+                .filter(r -> r > 0)
+                .max()
+                .orElse(0);
+    }
+
+    /** Live (non-voided) lines of a single invoice. */
+    private List<SalesInvoiceItem> liveItems(SalesInvoice invoice) {
+        return items(invoice).stream().filter(this::isLiveItem).collect(Collectors.toList());
+    }
+
+    /** Live lines across every recognized invoice in the dataset. */
+    private List<SalesInvoiceItem> liveItems(List<SalesInvoice> invoices) {
+        return invoices.stream().filter(this::isRecognizedInvoice)
+                .flatMap(i -> items(i).stream())
+                .filter(this::isLiveItem)
+                .collect(Collectors.toList());
+    }
+
+    private boolean isLiveItem(SalesInvoiceItem item) {
+        return item.getVoided() == null || !item.getVoided();
+    }
+
+    /**
+     * Ex-VAT taxable value of a line. {@code netAmount} is persisted VAT-inclusive
+     * (see {@link com.billbull.backend.sales.common.VatCalculator}), so the base is
+     * net minus the line tax in both inclusive and exclusive VAT modes.
+     */
+    private double lineTaxable(SalesInvoiceItem item) {
+        return n(item.getNetAmount()) - n(item.getTaxAmount());
+    }
+
+    private double invoiceTaxableBase(SalesInvoice invoice) {
+        return liveItems(invoice).stream().mapToDouble(this::lineTaxable).sum();
+    }
+
+    private double invoiceVat(SalesInvoice invoice) {
+        return liveItems(invoice).stream().mapToDouble(item -> n(item.getTaxAmount())).sum();
+    }
+
+    private double round2(double value) {
+        return Math.round(value * 100.0) / 100.0;
     }
 
     private String channelName(SalesInvoice invoice) {
@@ -2012,6 +2186,14 @@ public class SalesReportDataService {
         private List<DeliveryNote> deliveries = List.of();
         private List<Customer> customers = List.of();
         private Map<String, ProductInfo> products = Map.of();
+        /**
+         * Exact item code the user picked in the "Customer / Item" filter, or null.
+         * Invoices/returns are pre-filtered to those carrying the item; this field is
+         * what narrows the *lines* of those documents down to the item itself, so an
+         * item-level report shows only the picked item rather than every line that
+         * happened to share a bill with it.
+         */
+        private String itemCodeFilter;
         /**
          * Recorded tenders for {@link #invoices}, keyed by invoice number, oldest-first within
          * each invoice. This — not {@code SalesInvoice.paymentMode} — is what every payment
