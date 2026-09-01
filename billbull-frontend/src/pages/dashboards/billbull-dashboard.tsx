@@ -62,6 +62,9 @@ import {
   Banknote,
   ChevronRight,
   Info,
+  Clock,
+  MonitorSmartphone,
+  Undo2,
 } from "lucide-react";
 import {
   format,
@@ -646,6 +649,30 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
     },
   ];
 
+  // Live POS snapshot for today, derived from the bills already loaded
+  const posToday = React.useMemo(() => {
+    const bills = todayBills ?? [];
+    const sales = bills.filter((b) => b.status !== "Refund");
+    const refunds = bills.filter((b) => b.status === "Refund");
+    const net = bills.reduce(
+      (sum, b) =>
+        sum + (b.status === "Refund" ? -(b.totalAmount || 0) : b.totalAmount || 0),
+      0
+    );
+    const lastBillAt = bills.reduce<Date | null>((latest, b) => {
+      const d = safeDate(b.billTime);
+      if (!d) return latest;
+      return !latest || d > latest ? d : latest;
+    }, null);
+    return {
+      net,
+      billCount: sales.length,
+      refundCount: refunds.length,
+      avgBill: sales.length > 0 ? net / sales.length : 0,
+      lastBillLabel: lastBillAt ? format(lastBillAt, "HH:mm") : "—",
+    };
+  }, [todayBills]);
+
   const unreadNotifications = notifications.filter((n) => !n.isRead).length;
   const selectedPeriodLabel: Record<DateFilter, string> = {
     today: "Today",
@@ -873,6 +900,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
 
       {/* Global search + Quick actions */}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+        <div className="flex flex-col gap-4">
         {/* Global Search */}
         <div className="relative billbull-search-container">
           <div className="relative">
@@ -981,6 +1009,111 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
                 No results for <span className="font-medium text-slate-700">"{searchTerm}"</span>
               </div>
             )}
+        </div>
+
+        {/* Point of Sale — live counter snapshot + terminal launcher */}
+        <Card className="flex-1 border-0 bg-white shadow-[0_2px_12px_rgba(0,0,0,0.06)] hover:shadow-[0_4px_20px_rgba(0,0,0,0.09)] transition-shadow duration-200">
+          <CardContent className="flex h-full flex-col p-4">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#FFF4BF] text-[#786009]">
+                  <Store className="h-4 w-4" />
+                </span>
+                <div>
+                  <p className="text-sm font-medium text-slate-900">Point of Sale</p>
+                  <p className="text-[11px] text-slate-500">
+                    Today at {activeBranchLabel}
+                  </p>
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] text-slate-500 ring-1 ring-slate-100">
+                <Clock className="h-3 w-3" />
+                Last bill {posToday.lastBillLabel}
+              </span>
+            </div>
+
+            <Button
+              type="button"
+              onClick={() => onNavigate?.("pos")}
+              className="mt-3 h-11 w-full justify-between bg-[#F5C742] px-4 text-sm text-slate-900 shadow-sm hover:bg-[#E5B732]"
+            >
+              <span className="flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4" />
+                Open POS Terminal
+              </span>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {isLoading ? (
+                <>
+                  <Skeleton className="h-14 rounded-xl" />
+                  <Skeleton className="h-14 rounded-xl" />
+                  <Skeleton className="h-14 rounded-xl" />
+                </>
+              ) : (
+                <>
+                  <div className="rounded-xl bg-[#FFF8E7] px-3 py-2 ring-1 ring-[#FDE6A9]">
+                    <p className="text-[10px] uppercase tracking-wide text-[#786009]">
+                      Bills
+                    </p>
+                    <p className="mt-0.5 text-lg leading-tight tracking-tight text-slate-900">
+                      {posToday.billCount}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-100">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">
+                      Net Sales
+                    </p>
+                    <p className="mt-0.5 truncate text-lg leading-tight tracking-tight text-slate-900">
+                      {formatCurrency(Math.round(posToday.net))}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-100">
+                    <p className="text-[10px] uppercase tracking-wide text-slate-500">
+                      Avg Bill
+                    </p>
+                    <p className="mt-0.5 truncate text-lg leading-tight tracking-tight text-slate-900">
+                      {formatCurrency(Math.round(posToday.avgBill))}
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-3">
+              <button
+                type="button"
+                onClick={() => onNavigate?.("cash-movements")}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-600 transition-colors duration-150 hover:border-[#F5C742] hover:bg-[#FFF9DF]"
+              >
+                <Banknote className="h-3.5 w-3.5" />
+                Cash Movements
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate?.("pos-admin")}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-600 transition-colors duration-150 hover:border-[#F5C742] hover:bg-[#FFF9DF]"
+              >
+                <MonitorSmartphone className="h-3.5 w-3.5" />
+                Terminals
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate?.("sales-return")}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-[11px] text-slate-600 transition-colors duration-150 hover:border-[#F5C742] hover:bg-[#FFF9DF]"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+                Returns
+                {posToday.refundCount > 0 && (
+                  <span className="rounded-full bg-red-50 px-1.5 text-[10px] font-medium text-red-600">
+                    {posToday.refundCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          </CardContent>
+        </Card>
         </div>
 
         {/* Quick Actions */}

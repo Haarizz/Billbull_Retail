@@ -28,6 +28,10 @@ const Dashboard = () => {
             "customers-add": { path: "/sales/customers", state: { openCreate: true } },
             "customer-ledger": { path: "/sales/customers", state: { customerId: params.customerId } },
             "stock-transfer": { path: "/inventory/stock-transfer", state: { openCreate: true } },
+            pos: { path: "/sales/pos" },
+            "cash-movements": { path: "/sales/cash-movements" },
+            "pos-admin": { path: "/enterprise/pos-admin" },
+            "sales-return": { path: "/sales/return" },
             "financials-dashboard": { path: "/finance/reports" },
             notifications: { path: "/notifications" },
         };
