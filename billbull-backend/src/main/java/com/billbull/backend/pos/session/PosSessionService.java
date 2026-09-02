@@ -2057,6 +2057,17 @@ public class PosSessionService {
             return new ResolvedSessionRange(branchId, date, ascending, List.of(), null, null, List.of());
         }
 
+        // Force the lazy cashMovements bag open BEFORE detaching. Detaching severs the
+        // session from the persistence context, so any collection still a proxy at that
+        // point can never be initialized — and downstream reconciliation reads it:
+        // buildSessionInfo -> PosCashReconciliationService.frozen(), which for a session
+        // that is not CLOSED falls through to reconcile() -> effectiveMovements() ->
+        // cashMovements.isEmpty(). Every CLOSED session returns frozen snapshot columns
+        // and never touches the bag, which is why this only blew up on a date with an
+        // OPEN session in range — the Day Close screen's normal state mid-shift — and
+        // why the failure surfaced as a 500 that left the UI asserting "All Sessions
+        // Closed" against an empty summary.
+        ascending.forEach(s -> org.hibernate.Hibernate.initialize(s.getCashMovements()));
         ascending.forEach(entityManager::detach);
         ascending = effectiveCorrectionViewService.resolveOverlays(
                 com.billbull.backend.pos.admin.CorrectionTargetType.POS_SESSION, ascending, PosSession::getId);
@@ -2431,12 +2442,29 @@ public class PosSessionService {
         BigDecimal totalRefunds = (BigDecimal) summary.getOrDefault("totalRefunds", BigDecimal.ZERO);
         BigDecimal salesReturnTotal = (BigDecimal) summary.getOrDefault("salesReturnTotal", BigDecimal.ZERO);
 
-        BigDecimal computedTotalSales = cashSales.add(cardSales).add(creditSales).add(otherSales);
+        // Money collected through today's drawers that settles an invoice from an EARLIER
+        // business date, plus customer advances (which have no invoice at all). Both are real
+        // tender and stay in every reported figure and in the drawer's expected cash — they
+        // are excluded here only from the SALES identity, because the sale side of them was
+        // recognised on the day the goods left the shop. See buildSalesSummary for the split.
+        //
+        // Without this, the check asserted "everything collected today == everything sold
+        // today", which is only true for a shop that never gives credit: any customer paying
+        // off an old bill at the till blocked Day Close with a variance equal to what they
+        // paid. The identity below is the one that actually holds.
+        BigDecimal earlierInvoiceCollections = (BigDecimal) summary.getOrDefault("earlierInvoiceCollections", BigDecimal.ZERO);
+        BigDecimal advanceCollections = (BigDecimal) summary.getOrDefault("advanceCollections", BigDecimal.ZERO);
+        BigDecimal outOfPeriodCollections = earlierInvoiceCollections.add(advanceCollections);
+
+        BigDecimal computedTotalSales = cashSales.add(cardSales).add(creditSales).add(otherSales)
+                .subtract(outOfPeriodCollections);
         BigDecimal salesVariance = totalSales.subtract(computedTotalSales);
         if (salesVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
             Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
             breakdown.put("expectedTotalSales", totalSales);
             breakdown.put("computedTotalSales", computedTotalSales);
+            breakdown.put("earlierInvoiceCollections", earlierInvoiceCollections);
+            breakdown.put("advanceCollections", advanceCollections);
             breakdown.put("variance", salesVariance);
             breakdown.put("cash", cashSales);
             breakdown.put("card", cardSales);
@@ -3260,6 +3288,51 @@ public class PosSessionService {
                 .sum();
         s.put("otherSales", otherSales);
         s.put("otherInvoiceCount", otherInvoiceCount);
+
+        // ── Collections belonging to OTHER business dates ────────────────────────────────
+        // The tender above is keyed on the COLLECTION session (Payment.posSessionId), so it
+        // legitimately includes money taken today against an invoice rung up days ago — a
+        // credit customer settling an old bill at the till — plus customer advances, which
+        // have no invoice at all. `totalSales` counts only invoices SOLD in these sessions,
+        // because those older invoices were already recognised as sales on the day the goods
+        // left the shop; counting them again here would double-count revenue.
+        //
+        // That asymmetry is correct accrual accounting, but it means tender and sales cannot
+        // be equal on any day a credit customer pays. Isolating the difference here is what
+        // lets closeDay() reconcile the two without treating normal credit settlement as a
+        // variance — before this split, three August invoices settled at the till blocked a
+        // September Day Close with a bogus 609.00 "sales variance".
+        //
+        // The "credit" bucket is skipped: credit tender never enters the
+        // cash+card+credit+other identity in the first place (creditSales is sourced from
+        // invoice.balance above), so subtracting it downstream would double-count.
+        java.util.Set<String> soldInvoiceNumbers = invoices.stream()
+                .map(SalesInvoice::getInvoiceNumber)
+                .filter(n -> n != null && !n.isBlank())
+                .collect(java.util.stream.Collectors.toSet());
+        BigDecimal earlierInvoiceCollections = BigDecimal.ZERO;
+        long earlierInvoiceCollectionCount = 0;
+        BigDecimal advanceCollections = BigDecimal.ZERO;
+        long advanceCollectionCount = 0;
+        for (Map<String, Object> line : tender.lines) {
+            if (TenderBucket.CREDIT.equals(line.get("bucket"))) continue;
+            Object rawAmount = line.get("amount");
+            BigDecimal amount = rawAmount instanceof BigDecimal bd ? bd : BigDecimal.ZERO;
+            Object rawInvoice = line.get("invoiceNumber");
+            String invoiceNumber = rawInvoice == null ? null : rawInvoice.toString();
+            if ("ADVANCE".equals(invoiceNumber)) {
+                advanceCollections = advanceCollections.add(amount);
+                advanceCollectionCount++;
+            } else if (invoiceNumber == null || invoiceNumber.isBlank()
+                    || !soldInvoiceNumbers.contains(invoiceNumber)) {
+                earlierInvoiceCollections = earlierInvoiceCollections.add(amount);
+                earlierInvoiceCollectionCount++;
+            }
+        }
+        s.put("earlierInvoiceCollections", earlierInvoiceCollections);
+        s.put("earlierInvoiceCollectionCount", earlierInvoiceCollectionCount);
+        s.put("advanceCollections", advanceCollections);
+        s.put("advanceCollectionCount", advanceCollectionCount);
         s.put("totalPaid", tender.total);
         s.put("cashInvoiceCount", tender.countByBucket.getOrDefault("cash", 0L));
         s.put("cardInvoiceCount", tender.countByBucket.getOrDefault("card", 0L));
