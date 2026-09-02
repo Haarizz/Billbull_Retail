@@ -179,4 +179,62 @@ class ReceiptVoucherServiceTest {
         assertEquals(0, openingInvoice.getOutstanding().compareTo(BigDecimal.ZERO));
         assertEquals(0, customer.getBalance().compareTo(BigDecimal.ZERO));
     }
+
+    /**
+     * Regression: the generator used to read its high-water mark with a string MAX() while
+     * padding to three digits. Past 999 the suffix widens to four digits and lexicographic
+     * ordering ranks 'RV-2026-999' above 'RV-2026-1000', so MAX() froze at 999 and the
+     * generator re-proposed an id that already existed — every receipt, and every POS
+     * settlement behind it, then died on the voucher_id unique index.
+     */
+    @Test
+    void generateNextVoucherIdCrossesTheThousandBoundary() {
+        String prefix = "RV-" + java.time.Year.now() + "-";
+        when(repository.findMaxVoucherSequenceByPrefix(prefix)).thenReturn(999);
+        when(repository.existsByVoucherId(any())).thenReturn(false);
+
+        assertEquals(prefix + "1000", service.generateNextVoucherId());
+    }
+
+    /** Well past the boundary: four-digit ids must keep incrementing, not wrap or stall. */
+    @Test
+    void generateNextVoucherIdContinuesAboveOneThousand() {
+        String prefix = "RV-" + java.time.Year.now() + "-";
+        when(repository.findMaxVoucherSequenceByPrefix(prefix)).thenReturn(1000);
+        when(repository.existsByVoucherId(any())).thenReturn(false);
+
+        assertEquals(prefix + "1001", service.generateNextVoucherId());
+    }
+
+    /** Below the boundary the historical three-digit zero-padding is preserved. */
+    @Test
+    void generateNextVoucherIdKeepsThreeDigitPaddingBelowOneThousand() {
+        String prefix = "RV-" + java.time.Year.now() + "-";
+        when(repository.findMaxVoucherSequenceByPrefix(prefix)).thenReturn(41);
+        when(repository.existsByVoucherId(any())).thenReturn(false);
+
+        assertEquals(prefix + "042", service.generateNextVoucherId());
+    }
+
+    /** First voucher of a fresh year: no rows for the prefix yet. */
+    @Test
+    void generateNextVoucherIdStartsAtOneWhenNoneExist() {
+        String prefix = "RV-" + java.time.Year.now() + "-";
+        when(repository.findMaxVoucherSequenceByPrefix(prefix)).thenReturn(null);
+        when(repository.existsByVoucherId(any())).thenReturn(false);
+
+        assertEquals(prefix + "001", service.generateNextVoucherId());
+    }
+
+    /** The retry loop steps over ids already taken rather than wedging on a collision. */
+    @Test
+    void generateNextVoucherIdSkipsIdsAlreadyTaken() {
+        String prefix = "RV-" + java.time.Year.now() + "-";
+        when(repository.findMaxVoucherSequenceByPrefix(prefix)).thenReturn(999);
+        when(repository.existsByVoucherId(prefix + "1000")).thenReturn(true);
+        when(repository.existsByVoucherId(prefix + "1001")).thenReturn(true);
+        when(repository.existsByVoucherId(prefix + "1002")).thenReturn(false);
+
+        assertEquals(prefix + "1002", service.generateNextVoucherId());
+    }
 }

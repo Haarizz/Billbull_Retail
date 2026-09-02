@@ -8301,6 +8301,17 @@ export default function POSSales() {
               ...((zSummary.otherSales ?? 0) > 0
                 ? [['Online', zSummary.otherInvoiceCount ?? '—', <CurrencyAmount key="z3o" amount={zSummary.otherSales} />]]
                 : []),
+              /* Memo rows — a SUBSET of the tender rows above, not additional money. Tender is
+                 attributed to the drawer that collected it, so a credit customer settling an
+                 August invoice at a September till appears in Cash/Card/Online above while its
+                 sale was recognised in August. Surfacing the amount here is what explains the
+                 gap between Total Collected and the day's sales without it reading as an error. */
+              ...((zSummary.earlierInvoiceCollections ?? 0) > 0
+                ? [['of which: settling earlier invoices', zSummary.earlierInvoiceCollectionCount ?? '—', <CurrencyAmount key="z3e" amount={zSummary.earlierInvoiceCollections} />]]
+                : []),
+              ...((zSummary.advanceCollections ?? 0) > 0
+                ? [['of which: customer advances', zSummary.advanceCollectionCount ?? '—', <CurrencyAmount key="z3a" amount={zSummary.advanceCollections} />]]
+                : []),
             ]}
             footerRow={['Total Collected', String(zInvoiceCount), <span key="z3t" className="text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>]}
           />
