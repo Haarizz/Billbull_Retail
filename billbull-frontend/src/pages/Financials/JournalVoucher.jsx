@@ -273,6 +273,7 @@ const JournalVoucher = () => {
         }
     };
 
+    const [formErrors, setFormErrors] = useState({});
     const [formData, setFormData] = useState({
         id: null,
         jvNumber: '',
@@ -544,6 +545,7 @@ const JournalVoucher = () => {
         setJournalLines([
             { account: '', description: '', debit: 0, credit: 0, costCenter: '' }
         ]);
+        setFormErrors({});
         setViewMode('create');
     };
 
@@ -599,10 +601,37 @@ const JournalVoucher = () => {
 
         // Use actual lines from the backend
         setJournalLines(journal.lines || []);
+        setFormErrors({});
         setViewMode('create');
     };
 
+    // Returns an errors object keyed by field; empty means the journal may be saved.
+    const validateJournal = () => {
+        const errors = {};
+        if (!formData.date || !String(formData.date).trim()) {
+            errors.date = 'Journal date is required.';
+        } else if (Number.isNaN(new Date(formData.date).getTime())) {
+            errors.date = 'Enter a valid journal date.';
+        }
+        if (!formData.narration || !String(formData.narration).trim()) {
+            errors.narration = 'Narration is required.';
+        }
+        if (!formData.preparedBy || !String(formData.preparedBy).trim()) {
+            errors.preparedBy = 'Prepared By is required.';
+        }
+        if (Math.abs(lineTotals.difference) > 0.01) {
+            errors.lines = 'Debits and credits must balance before saving.';
+        }
+        return errors;
+    };
+
     const handleSave = async (targetStatus = 'Draft') => {
+        const errors = validateJournal();
+        setFormErrors(errors);
+        if (Object.keys(errors).length > 0) {
+            return;
+        }
+
         try {
             // Always save as Draft first to allow the specific 'post' endpoint to handle validation and state transition
             const payload = {
@@ -792,6 +821,7 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
             updatedAt: null
         });
         setJournalLines(journalLines.map(l => ({ ...l })));
+        setFormErrors({});
         setViewMode('create');
     };
 
@@ -850,12 +880,7 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                         {(formData.status === 'Draft' || formData.status === 'Rejected') && (
                             <button
                                 onClick={() => handleSave('Draft')}
-                                disabled={
-                                    Math.abs(lineTotals.difference) > 0.01 ||
-                                    !formData.date || !formData.narration || !formData.reference || !formData.preparedBy
-                                }
-                                className={`px-4 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 flex items-center gap-2 ${(Math.abs(lineTotals.difference) > 0.01 || !formData.date || !formData.narration || !formData.reference || !formData.preparedBy)
-                                    ? 'cursor-not-allowed opacity-50' : 'hover:bg-slate-50'}`}
+                                className="px-4 py-2 bg-white border border-slate-200 rounded text-xs font-bold text-slate-600 flex items-center gap-2 hover:bg-slate-50"
                             >
                                 <Save size={16} /> Save Changes
                             </button>
@@ -888,12 +913,7 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                         {!formData.id && (
                             <button
                                 onClick={() => handleSave('Submitted')}
-                                disabled={
-                                    Math.abs(lineTotals.difference) > 0.01 ||
-                                    !formData.date || !formData.narration || !formData.reference || !formData.preparedBy
-                                }
-                                className={`px-4 py-2 rounded text-xs font-bold shadow-sm flex items-center gap-2 ${(Math.abs(lineTotals.difference) > 0.01 || !formData.date || !formData.narration || !formData.reference || !formData.preparedBy)
-                                    ? 'bg-blue-300 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                className="px-4 py-2 rounded text-xs font-bold shadow-sm flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700"
                             >
                                 Save & Submit
                             </button>
@@ -1132,10 +1152,15 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                                             type="date"
                                             disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
                                             value={formData.date}
-                                            onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                                            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 disabled:bg-slate-50 disabled:text-slate-400"
+                                            onChange={(e) => {
+                                                setFormData({ ...formData, date: e.target.value });
+                                                setFormErrors(prev => ({ ...prev, date: undefined }));
+                                            }}
+                                            className={`w-full px-3 py-2 text-sm border rounded-md focus:outline-none text-slate-600 disabled:bg-slate-50 disabled:text-slate-400 ${formErrors.date ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-yellow-400'}`}
                                         />
-                                        <p className="text-[10px] text-slate-400 mt-1">dd-mm-yyyy</p>
+                                        {formErrors.date
+                                            ? <p className="text-[10px] font-medium text-red-600 mt-1">{formErrors.date}</p>
+                                            : <p className="text-[10px] text-slate-400 mt-1">dd-mm-yyyy</p>}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-bold text-slate-500 mb-1">Reference No.</label>
@@ -1156,20 +1181,29 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                                         rows="2"
                                         disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
                                         value={formData.narration}
-                                        onChange={(e) => setFormData({ ...formData, narration: e.target.value })}
+                                        onChange={(e) => {
+                                            setFormData({ ...formData, narration: e.target.value });
+                                            setFormErrors(prev => ({ ...prev, narration: undefined }));
+                                        }}
                                         placeholder="Describe the purpose of this journal entry..."
-                                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 resize-none disabled:bg-slate-50 disabled:text-slate-400"
+                                        className={`w-full px-3 py-2 text-sm border rounded-md focus:outline-none text-slate-600 resize-none disabled:bg-slate-50 disabled:text-slate-400 ${formErrors.narration ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-yellow-400'}`}
                                     />
+                                    {formErrors.narration && (
+                                        <p className="text-[10px] font-medium text-red-600 mt-1">{formErrors.narration}</p>
+                                    )}
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-6">
                                     <div>
-                                        <label className="block text-xs font-bold text-slate-500 mb-1">Prepared By</label>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">Prepared By <span className="text-red-500">*</span></label>
                                         <select
                                             disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
                                             value={formData.preparedBy}
-                                            onChange={(e) => setFormData({ ...formData, preparedBy: e.target.value })}
-                                            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md focus:outline-none focus:border-yellow-400 text-slate-600 disabled:bg-slate-50 disabled:text-slate-400 appearance-none bg-white"
+                                            onChange={(e) => {
+                                                setFormData({ ...formData, preparedBy: e.target.value });
+                                                setFormErrors(prev => ({ ...prev, preparedBy: undefined }));
+                                            }}
+                                            className={`w-full px-3 py-2 text-sm border rounded-md focus:outline-none text-slate-600 disabled:bg-slate-50 disabled:text-slate-400 appearance-none bg-white ${formErrors.preparedBy ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-yellow-400'}`}
                                         >
                                             <option value="" disabled>Select Employee</option>
 
@@ -1179,6 +1213,9 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                                                 </option>
                                             ))}
                                         </select>
+                                        {formErrors.preparedBy && (
+                                            <p className="text-[10px] font-medium text-red-600 mt-1">{formErrors.preparedBy}</p>
+                                        )}
                                     </div>
                                     <div>
                                         <label className="block text-xs font-bold text-slate-500 mb-1">Status</label>
@@ -1331,6 +1368,16 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
 
                             {(['Draft', 'Rejected'].includes(formData.status) || formData.id == null) && (
                                 <>
+                                    {Object.keys(formErrors).length > 0 && (
+                                        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2">
+                                            <p className="text-[11px] font-bold text-red-700 mb-1">Cannot save this journal yet:</p>
+                                            <ul className="list-disc list-inside space-y-0.5">
+                                                {Object.values(formErrors).filter(Boolean).map((message) => (
+                                                    <li key={message} className="text-[10px] font-medium text-red-600">{message}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
                                     <div className="text-[10px] text-slate-400 mb-4">
                                         You can only save or submit a journal when the entry is balanced and all required fields (*) are filled.
                                     </div>
