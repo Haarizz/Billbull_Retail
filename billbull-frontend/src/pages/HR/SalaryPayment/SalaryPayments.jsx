@@ -34,6 +34,7 @@ import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmou
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 import TableSkeleton from '../../../components/common/TableSkeleton';
+import toast from 'react-hot-toast';
 
 // --- Configuration ---
 
@@ -615,10 +616,24 @@ const SalaryPayments = () => {
     try {
       const savedRecord = await salaryPaymentApi.createPaymentRecord(newRecord);
       setEmployees([savedRecord, ...employees]);
+      toast.success('Salary record added.');
     } catch (error) {
       console.error("Error creating record", error);
+      toast.error(error.response?.data?.message || 'Could not create the salary record.');
     }
   };
+
+  /**
+   * True when some *other* row in the current period already shows this employee
+   * as Paid — the duplicate-row case the backend also rejects. Checked here so
+   * the Pay button is disabled rather than failing after the operator has filled
+   * in the payment modal.
+   */
+  const isEmployeeAlreadyPaid = (employee) => employees.some((row) => (
+    row.id !== employee.id
+    && row.employeeId === employee.employeeId
+    && row.status === 'Paid'
+  ));
 
   const handleOpenPayModal = (employee) => {
     setSelectedPaymentEmployee(employee);
@@ -626,6 +641,11 @@ const SalaryPayments = () => {
   };
 
   const handleConfirmPayment = async (employee, method, date) => {
+    if (employee.status === 'Paid' || isEmployeeAlreadyPaid(employee)) {
+      toast.error(`${employee.employeeName || employee.name} has already been paid for this period.`);
+      setIsPayModalOpen(false);
+      return;
+    }
     try {
       await salaryPaymentApi.processPayment({
         recordId: employee.id,
@@ -648,26 +668,45 @@ const SalaryPayments = () => {
         status: 'Paid'
       };
       setTransactions([newTx, ...transactions]);
+      setIsPayModalOpen(false);
+      toast.success(`Salary paid to ${employee.employeeName || employee.name}.`);
 
     } catch (error) {
       console.error("Payment failed", error);
+      toast.error(error.response?.data?.message || 'Payment failed.');
     }
   };
 
   const handleConfirmBulkPayment = async (method, date) => {
     try {
       const selectedRecordIds = selectedEmployees.map(String);
-      const recordsToPay = employees.filter(e => selectedRecordIds.includes(String(e.id)));
-      const employeeIdsToPay = recordsToPay.map(e => e.employeeId);
+      const recordsToPay = employees
+        .filter(e => selectedRecordIds.includes(String(e.id)))
+        .filter(e => e.status !== 'Paid' && !isEmployeeAlreadyPaid(e));
 
-      await salaryPaymentApi.processBulkPayment({
+      if (recordsToPay.length === 0) {
+        toast.error('Every selected employee has already been paid for this period.');
+        setIsBulkPayModalOpen(false);
+        setSelectedEmployees([]);
+        return;
+      }
+
+      const employeeIdsToPay = recordsToPay.map(e => e.employeeId);
+      const paidRecordIds = recordsToPay.map(e => String(e.id));
+
+      // The period must go with the request — without it the backend paid every
+      // outstanding month it could find for these employees.
+      const message = await salaryPaymentApi.processBulkPayment({
         employeeIds: employeeIdsToPay,
         paymentMethod: method,
-        date: date
+        date: date,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear()
       });
+      toast.success(typeof message === 'string' ? message : 'Bulk payment processed.');
 
       setEmployees(employees.map(emp =>
-        selectedRecordIds.includes(String(emp.id)) ? { ...emp, status: 'Paid' } : emp
+        paidRecordIds.includes(String(emp.id)) ? { ...emp, status: 'Paid' } : emp
       ));
 
       const newTxs = recordsToPay.map(emp => ({
@@ -685,6 +724,7 @@ const SalaryPayments = () => {
 
     } catch (error) {
       console.error("Bulk payment failed", error);
+      toast.error(error.response?.data?.message || 'Bulk payment failed.');
     }
   };
 
@@ -735,14 +775,17 @@ const SalaryPayments = () => {
             <StatCard
               label="Total Payable"
               value={<CurrencyAmount value={employees.reduce((acc, curr) => acc + parseCurrency(curr.net || curr.netPayable), 0)} />}
-              subValue="This month"
+              subValue="This month (paid + pending)"
               icon={DollarSign}
               color="bg-emerald-50 text-emerald-600"
             />
+            {/* The outstanding amount — not just the count — is what the Salary
+                Payable (2200) ledger balance should equal, so show it here where
+                the two can actually be compared. */}
             <StatCard
               label="Pending Payments"
-              value={employees.filter(e => e.status !== 'Paid').length}
-              subValue="To process"
+              value={<CurrencyAmount value={employees.filter(e => e.status !== 'Paid').reduce((acc, curr) => acc + parseCurrency(curr.net || curr.netPayable), 0)} />}
+              subValue={`${employees.filter(e => e.status !== 'Paid').length} to process`}
               icon={Clock}
               color="bg-red-50 text-red-600"
             />
@@ -849,12 +892,21 @@ const SalaryPayments = () => {
                             <td className="px-6 py-4"><StatusBadge status={emp.status} /></td>
                             <td className="px-6 py-4 text-right">
                               {emp.status !== 'Paid' ? (
-                                <button
-                                  onClick={() => handleOpenPayModal(emp)}
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 text-xs font-bold rounded-md transition-colors shadow-sm"
-                                >
-                                  <Send className="w-3.5 h-3.5" /> Pay
-                                </button>
+                                isEmployeeAlreadyPaid(emp) ? (
+                                  <span
+                                    className="text-xs text-amber-600 italic"
+                                    title="This employee is already marked Paid on another row for this period."
+                                  >
+                                    Already paid
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => handleOpenPayModal(emp)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 text-xs font-bold rounded-md transition-colors shadow-sm"
+                                  >
+                                    <Send className="w-3.5 h-3.5" /> Pay
+                                  </button>
+                                )
                               ) : (
                                 <span className="text-xs text-slate-400 italic">Paid</span>
                               )}
