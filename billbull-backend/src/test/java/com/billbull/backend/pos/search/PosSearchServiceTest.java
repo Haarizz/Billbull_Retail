@@ -26,6 +26,9 @@ import com.billbull.backend.inventory.product.ProductService;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.voucher.CreditVoucher;
+import com.billbull.backend.sales.voucher.CreditVoucherRepository;
+import com.billbull.backend.sales.voucher.CreditVoucherStatus;
 
 @ExtendWith(MockitoExtension.class)
 class PosSearchServiceTest {
@@ -35,13 +38,14 @@ class PosSearchServiceTest {
     @Mock private BatchMasterRepository batchMasterRepository;
     @Mock private SerialMasterRepository serialMasterRepository;
     @Mock private CustomerRepository customerRepository;
+    @Mock private CreditVoucherRepository creditVoucherRepository;
 
     private PosSearchService service;
 
     @BeforeEach
     void setUp() {
         service = new PosSearchService(productService, productRepository, batchMasterRepository,
-                serialMasterRepository, customerRepository);
+                serialMasterRepository, customerRepository, creditVoucherRepository);
     }
 
     @Test
@@ -173,5 +177,92 @@ class PosSearchServiceTest {
         PosResolveResponse res = service.resolve("ghost");
 
         assertEquals(PosResolveResponse.Type.NONE, res.getType());
+    }
+
+    // ── Credit Voucher resolution ────────────────────────────────────────────
+    //
+    // A voucher is a payment instrument. Resolving one must produce a VOUCHER hit, never a
+    // product and never a bare "no match" — the till has to be able to say what it found.
+
+    @Test
+    void voucherCodeResolvesToVoucherRatherThanNoMatch() {
+        stubNoProductMatch("EG56-RKDM-XV3K");
+        when(creditVoucherRepository.findByCodeOrBarcode("EG56-RKDM-XV3K"))
+                .thenReturn(Optional.of(voucher(new java.math.BigDecimal("100.00"), CreditVoucherStatus.ACTIVE)));
+
+        PosResolveResponse res = service.resolve("EG56-RKDM-XV3K");
+
+        assertEquals(PosResolveResponse.Type.VOUCHER, res.getType());
+        assertEquals("CV-2026-000007", res.getVoucher().voucherNumber);
+        assertEquals(0, new java.math.BigDecimal("100.00").compareTo(res.getVoucher().remainingAmount));
+        org.junit.jupiter.api.Assertions.assertTrue(res.getVoucher().redeemable);
+        // A voucher hit must not also look up a customer — it already resolved.
+        verify(customerRepository, never())
+                .findFirstByCodeIgnoreCaseOrMobileIgnoreCaseOrPhoneIgnoreCaseOrEmailIgnoreCase(
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void scannedBarcodePayloadResolvesTheSameVoucherAsTheTypedCode() {
+        // The printed barcode carries the code without its separators; both must land on the
+        // same voucher, or scanning and typing would disagree.
+        stubNoProductMatch("EG56RKDMXV3K");
+        when(creditVoucherRepository.findByCodeOrBarcode("EG56RKDMXV3K"))
+                .thenReturn(Optional.of(voucher(new java.math.BigDecimal("40.00"), CreditVoucherStatus.PARTIALLY_REDEEMED)));
+
+        PosResolveResponse res = service.resolve("EG56RKDMXV3K");
+
+        assertEquals(PosResolveResponse.Type.VOUCHER, res.getType());
+        assertEquals("CV-2026-000007", res.getVoucher().voucherNumber);
+    }
+
+    @Test
+    void cancelledVoucherStillResolvesAsAVoucherCarryingItsReason() {
+        // Returning NONE here would make the till say "no product found" about a voucher the
+        // customer is holding. The cashier needs the real reason.
+        stubNoProductMatch("EG56-RKDM-XV3K");
+        CreditVoucher cancelled = voucher(new java.math.BigDecimal("100.00"), CreditVoucherStatus.CANCELLED);
+        when(creditVoucherRepository.findByCodeOrBarcode("EG56-RKDM-XV3K")).thenReturn(Optional.of(cancelled));
+
+        PosResolveResponse res = service.resolve("EG56-RKDM-XV3K");
+
+        assertEquals(PosResolveResponse.Type.VOUCHER, res.getType());
+        org.junit.jupiter.api.Assertions.assertFalse(res.getVoucher().redeemable);
+        org.junit.jupiter.api.Assertions.assertNotNull(res.getVoucher().notRedeemableReason);
+    }
+
+    @Test
+    void productBarcodeIsNeverShadowedByTheVoucherLookup() {
+        ProductAggregateResponse product = new ProductAggregateResponse();
+        when(productService.searchProductsByBarcode("6009876543210")).thenReturn(List.of(product));
+
+        PosResolveResponse res = service.resolve("6009876543210");
+
+        assertEquals(PosResolveResponse.Type.PRODUCT, res.getType());
+        verify(creditVoucherRepository, never())
+                .findByCodeOrBarcode(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    /** Every product path misses, so resolution reaches the voucher lookup. */
+    private void stubNoProductMatch(String q) {
+        when(productService.searchProductsByBarcode(q)).thenReturn(List.of());
+        when(batchMasterRepository.findFirstByBatchNumberIgnoreCase(q)).thenReturn(Optional.empty());
+        when(serialMasterRepository.findFirstBySerialNumberIgnoreCase(q)).thenReturn(Optional.empty());
+        when(productService.resolveActiveByCodeOrSku(q)).thenReturn(Optional.empty());
+    }
+
+    private CreditVoucher voucher(java.math.BigDecimal remaining, CreditVoucherStatus status) {
+        CreditVoucher v = new CreditVoucher();
+        v.setVoucherNumber("CV-2026-000007");
+        v.setVoucherCode("EG56-RKDM-XV3K");
+        v.setBarcodeValue("EG56RKDMXV3K");
+        v.setOriginalAmount(new java.math.BigDecimal("100.00"));
+        v.setUsedAmount(new java.math.BigDecimal("100.00").subtract(remaining));
+        v.setRemainingAmount(remaining);
+        v.setIssueDate(java.time.LocalDate.now().minusDays(1));
+        v.setExpiryDate(java.time.LocalDate.now().plusYears(1));
+        v.setStatus(status);
+        return v;
     }
 }
