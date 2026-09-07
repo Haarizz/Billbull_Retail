@@ -23,12 +23,24 @@ public class PosSessionDenominationCorrectionController {
     private static final String MODULE_APPROVALS = "pos.admin.approvals";
 
     private final PosSessionDenominationCorrectionService service;
+    private final CorrectionTargetLookupService targetLookupService;
     private final ModulePermissionService modulePermissionService;
 
     public PosSessionDenominationCorrectionController(PosSessionDenominationCorrectionService service,
+                                                       CorrectionTargetLookupService targetLookupService,
                                                        ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.targetLookupService = targetLookupService;
         this.modulePermissionService = modulePermissionService;
+    }
+
+    /** Closed-session typeahead for the correction form. Blank {@code q} lists the latest closes. */
+    @GetMapping("/session-search")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.List<CorrectionSessionTargetResponse>> searchSessions(
+            @RequestParam(required = false) String q) {
+        modulePermissionService.requireCanView(MODULE_SESSION);
+        return ResponseEntity.ok(targetLookupService.searchClosedSessions(q));
     }
 
     @GetMapping

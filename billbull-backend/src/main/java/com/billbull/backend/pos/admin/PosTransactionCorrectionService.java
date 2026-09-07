@@ -15,6 +15,8 @@ import com.billbull.backend.pos.session.PosSessionStatus;
 import com.billbull.backend.sales.advance.AdvanceApplication;
 import com.billbull.backend.sales.advance.AdvanceApplicationRepository;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.util.PageResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.domain.Page;
@@ -76,6 +78,8 @@ public class PosTransactionCorrectionService {
     private final ObjectMapper objectMapper;
     private final CorrectionOverlayRepository overlayRepository;
     private final PosTransactionExecutionService executionService;
+    private final ModulePermissionService modulePermissionService;
+    private final SalesInvoiceRepository salesInvoiceRepository;
 
     public PosTransactionCorrectionService(PosTransactionCorrectionRepository repo,
                                             CorrectionRequestRepository correctionRequestRepo,
@@ -91,7 +95,9 @@ public class PosTransactionCorrectionService {
                                             FinancialAuditService auditService,
                                             ObjectMapper objectMapper,
                                             CorrectionOverlayRepository overlayRepository,
-                                            PosTransactionExecutionService executionService) {
+                                            PosTransactionExecutionService executionService,
+                                            ModulePermissionService modulePermissionService,
+                                            SalesInvoiceRepository salesInvoiceRepository) {
         this.repo = repo;
         this.correctionRequestRepo = correctionRequestRepo;
         this.correctionRequestService = correctionRequestService;
@@ -107,6 +113,8 @@ public class PosTransactionCorrectionService {
         this.objectMapper = objectMapper;
         this.overlayRepository = overlayRepository;
         this.executionService = executionService;
+        this.modulePermissionService = modulePermissionService;
+        this.salesInvoiceRepository = salesInvoiceRepository;
     }
 
     private String currentUser() {
@@ -409,6 +417,18 @@ public class PosTransactionCorrectionService {
 
     // ── Approval lifecycle (thin wrappers mirroring Phase 3 exactly) ─────────────────────
 
+    /**
+     * A supervisor — anyone holding approve rights on {@code pos.admin.approvals} — may decide
+     * their own correction request. The controller already gates approve/reject/apply behind that
+     * same permission, so this only ever relaxes the second-pair-of-eyes rule for users who are
+     * themselves the approving authority; everyone else still hits the self-approval block in
+     * {@link CorrectionRequestService}. Both actor stamps are recorded either way, so a
+     * self-approved correction is visibly self-approved in the audit timeline.
+     */
+    private boolean canSelfApprove() {
+        return modulePermissionService.canApprove("pos.admin.approvals");
+    }
+
     @Transactional
     public PosTransactionCorrectionResponse submitForApproval(Long id) {
         PosTransactionCorrection c = getEntity(id);
@@ -423,7 +443,7 @@ public class PosTransactionCorrectionService {
     @Transactional
     public PosTransactionCorrectionResponse approve(Long id, String notes) {
         PosTransactionCorrection c = getEntity(id);
-        var updated = correctionRequestService.approve(c.getCorrectionRequestId(), notes);
+        var updated = correctionRequestService.approve(c.getCorrectionRequestId(), notes, canSelfApprove());
         c.setStatus(updated.getStatus());
         c.setApprovedBy(updated.getApprovedBy());
         c.setApprovedAt(updated.getApprovedAt());
@@ -436,7 +456,7 @@ public class PosTransactionCorrectionService {
     @Transactional
     public PosTransactionCorrectionResponse reject(Long id, String reason) {
         PosTransactionCorrection c = getEntity(id);
-        var updated = correctionRequestService.reject(c.getCorrectionRequestId(), reason);
+        var updated = correctionRequestService.reject(c.getCorrectionRequestId(), reason, canSelfApprove());
         c.setStatus(updated.getStatus());
         c.setRejectedBy(updated.getRejectedBy());
         c.setRejectedAt(updated.getRejectedAt());
@@ -510,9 +530,74 @@ public class PosTransactionCorrectionService {
         overlay.setStatus(CorrectionRequestStatus.APPLIED);
         overlayRepository.save(overlay);
 
+        propagateToSalesInvoice(saved);
+
         auditService.logEvent(ENTITY_TYPE, applied.getRequestNumber(), "APPLIED", saved.getAppliedBy(),
                 "Transaction correction applied for " + saved.getTargetType() + " #" + saved.getTargetId()
                         + ". Original financial records were not modified — a new offsetting GL event was posted.");
         return toResponse(saved);
+    }
+
+    /**
+     * Mirrors an applied receipt correction onto the sales invoice the receipt settled, as a
+     * second read-only {@code SALES_INVOICE} overlay row.
+     *
+     * <p>Without this, correcting a POS sale's customer or payment mode changed the settlement
+     * record everywhere it is read (receipt list, customer ledger, session/day-close reports —
+     * all already overlay-resolved) while the Sales Invoice screen kept showing the wrong
+     * customer, which is exactly the inconsistency operators report as "the correction didn't
+     * apply". The invoice row itself is still never edited: {@code SalesInvoiceService} merges
+     * this overlay over a detached copy at read time, so the stored history and every posted
+     * journal stay untouched.
+     *
+     * <p>Best-effort by design — a receipt with no invoice behind it (back-office receipt,
+     * advance) simply has nothing to mirror, and an amount correction is deliberately excluded
+     * because invoice totals are driven by the invoice's own lines, not by what was tendered.
+     */
+    private void propagateToSalesInvoice(PosTransactionCorrection saved) {
+        if (saved.getTargetType() != CorrectionTargetType.RECEIPT_VOUCHER) return;
+        if (saved.getCorrectionType() != CorrectionType.CUSTOMER
+                && saved.getCorrectionType() != CorrectionType.PAYMENT_MODE) return;
+
+        ReceiptVoucher receipt = receiptVoucherRepository.findById(saved.getTargetId()).orElse(null);
+        if (receipt == null || receipt.getSalesInvoiceId() == null) return;
+        var invoice = salesInvoiceRepository.findById(receipt.getSalesInvoiceId()).orElse(null);
+        if (invoice == null) return;
+
+        Map<String, Object> corrected = parseJson(saved.getCorrectedSnapshotJson());
+        Map<String, Object> invoiceOriginal = new LinkedHashMap<>();
+        Map<String, Object> invoiceCorrected = new LinkedHashMap<>();
+
+        if (saved.getCorrectionType() == CorrectionType.CUSTOMER) {
+            String code = (String) corrected.get("customerCode");
+            invoiceOriginal.put("customerCode", invoice.getCustomerCode());
+            invoiceOriginal.put("customerName", invoice.getCustomerName());
+            invoiceCorrected.put("customerCode", code);
+            invoiceCorrected.put("customerName", resolveCustomerName(code));
+        } else {
+            invoiceOriginal.put("paymentMode", invoice.getPaymentMode());
+            invoiceCorrected.put("paymentMode", corrected.get("paymentMode"));
+        }
+
+        int version = overlayRepository
+                .findAppliedForTargetOrderByVersionDesc(CorrectionTargetType.SALES_INVOICE, invoice.getId())
+                .stream().findFirst().map(CorrectionOverlay::getVersion).orElse(0) + 1;
+
+        CorrectionOverlay invoiceOverlay = new CorrectionOverlay();
+        invoiceOverlay.setTargetType(CorrectionTargetType.SALES_INVOICE);
+        invoiceOverlay.setTargetId(invoice.getId());
+        invoiceOverlay.setOriginalSnapshotJson(toJson(invoiceOriginal));
+        invoiceOverlay.setCorrectedSnapshotJson(toJson(invoiceCorrected));
+        invoiceOverlay.setVersion(version);
+        invoiceOverlay.setStatus(CorrectionRequestStatus.APPLIED);
+        overlayRepository.save(invoiceOverlay);
+    }
+
+    /** Display name for a corrected customer code; blank/absent code means a walk-in sale. */
+    private String resolveCustomerName(String customerCode) {
+        if (customerCode == null || customerCode.isBlank()) return "Walk-In Customer";
+        return customerRepository.findByCode(customerCode)
+                .map(c -> c.getName() != null ? c.getName() : customerCode)
+                .orElse(customerCode);
     }
 }

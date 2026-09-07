@@ -23,12 +23,33 @@ public class PosTransactionCorrectionController {
     private static final String MODULE_APPROVALS = "pos.admin.approvals";
 
     private final PosTransactionCorrectionService service;
+    private final CorrectionTargetLookupService targetLookupService;
     private final ModulePermissionService modulePermissionService;
 
     public PosTransactionCorrectionController(PosTransactionCorrectionService service,
+                                               CorrectionTargetLookupService targetLookupService,
                                                ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.targetLookupService = targetLookupService;
         this.modulePermissionService = modulePermissionService;
+    }
+
+    /** Invoice-number typeahead: resolves each hit to the receipt voucher behind it. */
+    @GetMapping("/invoice-search")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.List<CorrectionInvoiceTargetResponse>> searchInvoices(@RequestParam String q) {
+        modulePermissionService.requireCanView(MODULE_TRANSACTION);
+        return ResponseEntity.ok(targetLookupService.searchInvoices(q));
+    }
+
+    /** Current invoice-numbering prefix (e.g. {@code INV-2026-}) pinned in front of the search box. */
+    @GetMapping("/invoice-prefix")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Map<String, Object>> invoicePrefix() {
+        modulePermissionService.requireCanView(MODULE_TRANSACTION);
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("prefix", targetLookupService.currentInvoicePrefix()); // null when no invoice exists yet
+        return ResponseEntity.ok(body);
     }
 
     @GetMapping

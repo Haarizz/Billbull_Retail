@@ -52,6 +52,7 @@ public class PosSessionDenominationCorrectionService {
     private final PosDenominationCountService denominationCountService;
     private final com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngine;
     private final com.billbull.backend.settings.branch.BranchRepository branchRepository;
+    private final com.billbull.backend.security.ModulePermissionService modulePermissionService;
 
     private static final org.slf4j.Logger log =
             org.slf4j.LoggerFactory.getLogger(PosSessionDenominationCorrectionService.class);
@@ -65,7 +66,8 @@ public class PosSessionDenominationCorrectionService {
                                                     CorrectionOverlayRepository overlayRepository,
                                                     PosDenominationCountService denominationCountService,
                                                     com.billbull.backend.financials.generalledger.postingengine.PostingEngineService postingEngine,
-                                                    com.billbull.backend.settings.branch.BranchRepository branchRepository) {
+                                                    com.billbull.backend.settings.branch.BranchRepository branchRepository,
+                                                    com.billbull.backend.security.ModulePermissionService modulePermissionService) {
         this.repo = repo;
         this.correctionRequestRepo = correctionRequestRepo;
         this.correctionRequestService = correctionRequestService;
@@ -76,6 +78,19 @@ public class PosSessionDenominationCorrectionService {
         this.denominationCountService = denominationCountService;
         this.postingEngine = postingEngine;
         this.branchRepository = branchRepository;
+        this.modulePermissionService = modulePermissionService;
+    }
+
+    /**
+     * A supervisor — anyone holding approve rights on {@code pos.admin.approvals} — may decide
+     * their own request. The controller already gates approve/reject behind that permission, so
+     * this only relaxes the second-pair-of-eyes rule for the approving authority itself; a cashier
+     * still cannot decide their own. Both actor stamps are recorded either way, so a self-approved
+     * correction reads as self-approved in the audit timeline. Mirrors
+     * {@code PosTransactionCorrectionService.canSelfApprove}.
+     */
+    private boolean canSelfApprove() {
+        return modulePermissionService.canApprove("pos.admin.approvals");
     }
 
     private String currentUser() {
@@ -169,6 +184,19 @@ public class PosSessionDenominationCorrectionService {
         Map<String, Object> raw = new LinkedHashMap<>(denominations);
         PosDenominationCount counted = denominationCountService.count(raw, null);
         return counted == null ? BigDecimal.ZERO : counted.countedCash();
+    }
+
+    /** Denomination maps are equal when every ladder slot holds the same count; a slot that is
+     *  absent on one side and zero on the other is the same drawer, not a change. */
+    private boolean sameCount(Map<String, Integer> original, Map<String, Integer> corrected) {
+        java.util.Set<String> keys = new java.util.LinkedHashSet<>(original.keySet());
+        keys.addAll(corrected.keySet());
+        for (String key : keys) {
+            int a = original.getOrDefault(key, 0) == null ? 0 : original.getOrDefault(key, 0);
+            int b = corrected.getOrDefault(key, 0) == null ? 0 : corrected.getOrDefault(key, 0);
+            if (a != b) return false;
+        }
+        return true;
     }
 
     private String toJson(Map<String, Integer> map) {
@@ -271,6 +299,15 @@ public class PosSessionDenominationCorrectionService {
         BigDecimal originalTotal = total(original);
         BigDecimal correctedTotal = total(correctedDenominations); // validates non-negative counts
 
+        // A correction that restates the drawer exactly as it was counted changes nothing, but it
+        // still consumes an approval, posts an adjustment journal of zero and supersedes the
+        // session's original variance approval. Refusing it here keeps the correction log meaning
+        // "something was actually restated".
+        if (sameCount(original, correctedDenominations)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "The corrected count is identical to the original — there is nothing to correct.");
+        }
+
         String originalJson = toJson(original);
         String correctedJson = toJson(correctedDenominations);
 
@@ -313,7 +350,7 @@ public class PosSessionDenominationCorrectionService {
     @Transactional
     public PosSessionDenominationCorrectionResponse approve(Long id, String notes) {
         PosSessionDenominationCorrection c = getEntity(id);
-        var updated = correctionRequestService.approve(c.getCorrectionRequestId(), notes);
+        var updated = correctionRequestService.approve(c.getCorrectionRequestId(), notes, canSelfApprove());
         c.setStatus(updated.getStatus());
         c.setApprovedBy(updated.getApprovedBy());
         c.setApprovedAt(updated.getApprovedAt());
@@ -326,7 +363,7 @@ public class PosSessionDenominationCorrectionService {
     @Transactional
     public PosSessionDenominationCorrectionResponse reject(Long id, String reason) {
         PosSessionDenominationCorrection c = getEntity(id);
-        var updated = correctionRequestService.reject(c.getCorrectionRequestId(), reason);
+        var updated = correctionRequestService.reject(c.getCorrectionRequestId(), reason, canSelfApprove());
         c.setStatus(updated.getStatus());
         c.setRejectedBy(updated.getRejectedBy());
         c.setRejectedAt(updated.getRejectedAt());

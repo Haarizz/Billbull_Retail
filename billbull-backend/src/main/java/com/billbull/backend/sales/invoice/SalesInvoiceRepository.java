@@ -132,6 +132,20 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         @Query("SELECT i.invoiceNumber FROM SalesInvoice i WHERE i.invoiceNumber LIKE CONCAT(:prefix, '%')")
         List<String> findInvoiceNumbersByPrefix(@Param("prefix") String prefix);
 
+        /**
+         * Invoice-number typeahead for POS Administration &gt; Transaction Corrections, where the
+         * operator types only the trailing sequence ("0211") rather than the full number. Matched
+         * as a contains so both "0211" and "INV-2026-0211" resolve, newest first, capped by the
+         * caller's {@link Pageable}.
+         */
+        @Query("SELECT s FROM SalesInvoice s WHERE LOWER(s.invoiceNumber) LIKE LOWER(CONCAT('%', :q, '%')) "
+                        + "ORDER BY s.invoiceDate DESC, s.id DESC")
+        List<SalesInvoice> searchByInvoiceNumberFragment(@Param("q") String q, Pageable pageable);
+
+        /** Newest invoice number overall — used to derive the current numbering prefix. */
+        @Query("SELECT s.invoiceNumber FROM SalesInvoice s ORDER BY s.id DESC")
+        List<String> findLatestInvoiceNumbers(Pageable pageable);
+
         @Query("SELECT SUM(i.quantity) FROM SalesInvoiceItem i WHERE i.itemCode = :itemCode AND i.salesInvoice.salesType = com.billbull.backend.sales.invoice.SalesType.DIRECT_SALE AND i.salesInvoice.status = com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT")
         java.math.BigDecimal sumDraftDirectSaleQuantity(
                         @org.springframework.data.repository.query.Param("itemCode") String itemCode);
@@ -274,6 +288,27 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
 
         @Query("SELECT si FROM SalesInvoice si WHERE (:branchId IS NULL OR si.branchId = :branchId) ORDER BY si.id DESC")
         List<SalesInvoice> findRecentForDashboard(@Param("branchId") Long branchId, Pageable pageable);
+
+        /**
+         * Point-of-Sale snapshot for one business day. Returns one row of
+         * {billCount, grossTotal, lastCreatedAt}, cancelled bills excluded.
+         *
+         * <p>POS origin is identified by {@code salesType = POS_SALE}, which
+         * {@code PosCheckoutController} stamps on every checkout. The POS-specific columns are
+         * not usable as the marker: {@code posCheckoutKey} is only written when the client
+         * supplies an idempotency key, and {@code posSessionId}/{@code posTerminalId} are also
+         * set by non-checkout flows (advances, credit vouchers).
+         *
+         * <p>{@code invoiceDate} on a POS invoice is the business date, not the calendar date,
+         * so callers must pass a business date here too — see {@code BusinessDayClock}.
+         */
+        @Query("SELECT COUNT(si), CAST(COALESCE(SUM(si.invoiceTotal), 0) AS double), MAX(si.createdAt) " +
+               "FROM SalesInvoice si " +
+               "WHERE si.salesType = com.billbull.backend.sales.invoice.SalesType.POS_SALE " +
+               "AND si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND si.invoiceDate = :date " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId)")
+        List<Object[]> findPosDaySnapshot(@Param("date") LocalDate date, @Param("branchId") Long branchId);
 
         @Query("SELECT CAST(COALESCE(SUM(si.taxTotal), 0) AS double) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +

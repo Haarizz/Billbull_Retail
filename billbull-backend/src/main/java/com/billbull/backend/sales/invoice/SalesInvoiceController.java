@@ -113,7 +113,9 @@ public class SalesInvoiceController {
         // Enriched with the customer's contact details so the POS "Last Receipt"
         // reprint — which loads the invoice through here — prints the same CUSTOMER
         // block (TRN / address included) as the original sale.
-        SalesInvoice invoice = service.getById(id);
+        // Applied POS Administration corrections are merged here rather than inside the service,
+        // so only this read path sees them — checkout/settlement keep the untouched managed row.
+        SalesInvoice invoice = service.withCorrections(service.getById(id));
         customerContactService.attach(invoice);
         return invoice;
     }

@@ -95,6 +95,14 @@ public class SalesInvoiceService {
     private final com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService;
     private final com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService historyService;
     private final com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService warehouseSourceResolutionService;
+    /**
+     * Read-time merge of applied POS Administration corrections. Deliberately the low-level
+     * {@code OverlayResolutionService} rather than {@code EffectiveCorrectionViewService}: it
+     * depends on nothing but the overlay table, so wiring it here cannot introduce a bean cycle
+     * through the POS session/correction services.
+     */
+    private final com.billbull.backend.pos.admin.OverlayResolutionService overlayResolutionService;
+    private final jakarta.persistence.EntityManager entityManager;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
@@ -125,7 +133,9 @@ public class SalesInvoiceService {
             PosDayCloseRepository dayCloseRepository,
             com.billbull.backend.sales.advance.AdvanceApplicationService advanceApplicationService,
             com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService historyService,
-            com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService warehouseSourceResolutionService) {
+            com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService warehouseSourceResolutionService,
+            com.billbull.backend.pos.admin.OverlayResolutionService overlayResolutionService,
+            jakarta.persistence.EntityManager entityManager) {
         this.warehouseSourceResolutionService = warehouseSourceResolutionService;
         this.historyService = historyService;
         this.invoiceRepo = invoiceRepo;
@@ -156,6 +166,35 @@ public class SalesInvoiceService {
         this.notifPublisher = notifPublisher;
         this.dayCloseRepository = dayCloseRepository;
         this.advanceApplicationService = advanceApplicationService;
+        this.overlayResolutionService = overlayResolutionService;
+        this.entityManager = entityManager;
+    }
+
+    /**
+     * Merges any applied {@code SALES_INVOICE} correction overlay over a detached copy of the
+     * invoice, so a POS Administration customer/payment-mode correction shows up on the Sales
+     * Invoice screens without the stored row ever being rewritten. Detaching first is what makes
+     * that safe — the merged values can never be dirty-checked back into the database.
+     *
+     * <p>Public and called from the read endpoint rather than from {@link #getById(Long)}, because
+     * {@code getById} is also used mid-transaction by POS checkout and delivery settlement:
+     * evicting the invoice there drops the settlement's own pending update and lets two
+     * concurrent settlements both post (caught by {@code PosDeliverySettlementConcurrencyIT}).
+     * Write flows therefore keep the managed entity; only the API read path merges the overlay.
+     */
+    public SalesInvoice withCorrections(SalesInvoice invoice) {
+        if (invoice == null) return null;
+        entityManager.detach(invoice);
+        return overlayResolutionService.resolveOverlay(
+                com.billbull.backend.pos.admin.CorrectionTargetType.SALES_INVOICE, invoice.getId(), invoice);
+    }
+
+    /** Bulk variant of {@link #withCorrections(SalesInvoice)} — one overlay query for the page. */
+    private List<SalesInvoice> withCorrections(List<SalesInvoice> invoices) {
+        if (invoices == null || invoices.isEmpty()) return invoices;
+        invoices.forEach(entityManager::detach);
+        return overlayResolutionService.resolveOverlays(
+                com.billbull.backend.pos.admin.CorrectionTargetType.SALES_INVOICE, invoices, SalesInvoice::getId);
     }
 
     // ----------------------------
@@ -927,9 +966,20 @@ public class SalesInvoiceService {
         java.time.YearMonth month = java.time.YearMonth.now();
         LocalDate monthStart = month.atDay(1);
         LocalDate monthEnd = month.atEndOfMonth();
+        List<SalesInvoice> allInvoices = invoiceRepo.findAll();
+        // Revenue/AR figures use the exact branch scope — a specific-branch view must not
+        // fold legacy null-branch rows into that branch's money.
         List<SalesInvoice> scopedInvoices = ownershipAccessService.filterOwned(
                 branchAccessService.filterExactBranchScoped(
-                        invoiceRepo.findAll(),
+                        allInvoices,
+                        SalesInvoice::getBranchId),
+                SalesInvoice::getCreatedByUserId);
+        // The document COUNT must instead describe exactly the population the list view
+        // shows (getAllByDateRange -> filterBranchScoped), which does include legacy
+        // null-branch rows; otherwise the KPI disagrees with the list's pagination total.
+        List<SalesInvoice> listScopedInvoices = ownershipAccessService.filterOwned(
+                branchAccessService.filterBranchScoped(
+                        allInvoices,
                         SalesInvoice::getBranchId),
                 SalesInvoice::getCreatedByUserId);
 
@@ -951,15 +1001,26 @@ public class SalesInvoiceService {
                 .filter(java.util.Objects::nonNull)
                 .mapToDouble(BigDecimal::doubleValue)
                 .sum();
+        // monthCount/todayCount are the sub-labels under the revenue cards, so they count
+        // exactly the invoices that fed those totals (CANCELLED and DRAFT excluded).
         long monthCount = scopedInvoices.stream()
                 .filter(invoice -> invoice.getInvoiceDate() != null
                         && !invoice.getInvoiceDate().isBefore(monthStart)
                         && !invoice.getInvoiceDate().isAfter(monthEnd))
-                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED)
+                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED
+                        && invoice.getStatus() != SalesInvoiceStatus.DRAFT)
                 .count();
         long todayCount = scopedInvoices.stream()
                 .filter(invoice -> invoice.getInvoiceDate() != null && invoice.getInvoiceDate().isEqual(today))
-                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED)
+                .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED
+                        && invoice.getStatus() != SalesInvoiceStatus.DRAFT)
+                .count();
+        // "Invoices This Month / Total issued" — every document the This Month list shows,
+        // all statuses included (a cancelled invoice still consumed an invoice number).
+        long monthInvoiceCount = listScopedInvoices.stream()
+                .filter(invoice -> invoice.getInvoiceDate() != null
+                        && !invoice.getInvoiceDate().isBefore(monthStart)
+                        && !invoice.getInvoiceDate().isAfter(monthEnd))
                 .count();
         double outstanding = scopedInvoices.stream()
                 .filter(invoice -> invoice.getStatus() != SalesInvoiceStatus.CANCELLED
@@ -974,6 +1035,7 @@ public class SalesInvoiceService {
         stats.put("todayCount", todayCount);
         stats.put("thisMonthRevenue", monthRevenue);
         stats.put("thisMonthCount", monthCount);
+        stats.put("thisMonthInvoiceCount", monthInvoiceCount);
         stats.put("outstandingBalance", outstanding);
         return stats;
     }
@@ -998,7 +1060,7 @@ public class SalesInvoiceService {
             applyBatchSelectionSummary(inv);
         });
 
-        return invoices;
+        return withCorrections(invoices);
     }
 
     @Transactional(readOnly = true)
@@ -1017,7 +1079,7 @@ public class SalesInvoiceService {
             enrichItems(inv.getItems());
             applyBatchSelectionSummary(inv);
         });
-        return invoices;
+        return withCorrections(invoices);
     }
 
     // ----------------------------

@@ -144,12 +144,26 @@ public class CorrectionRequestService {
 
     @Transactional
     public CorrectionRequestResponse approve(Long id, String notes) {
+        return approve(id, notes, false);
+    }
+
+    /**
+     * @param allowSelfApproval when true, a requester holding approval rights on the module may
+     *        decide their own request. Supervisors working a counter alone are the reason: they
+     *        are the approving authority, so forcing a second body would leave the correction
+     *        permanently un-actionable. The self-approval is still fully attributed — {@code
+     *        requestedBy} and {@code approvedBy} both record them, and every audit sink
+     *        (CorrectionAuditEntry + FinancialAuditService) sees the same actor on both events.
+     *        Callers pass the caller's own {@code canApprove} result, never a hardcoded true.
+     */
+    @Transactional
+    public CorrectionRequestResponse approve(Long id, String notes, boolean allowSelfApproval) {
         CorrectionRequest c = getEntity(id);
         if (c.getStatus() != CorrectionRequestStatus.PENDING_APPROVAL) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Only PENDING_APPROVAL correction requests can be approved. Current: " + c.getStatus());
         }
-        if (currentUser().equals(c.getRequestedBy())) {
+        if (!allowSelfApproval && currentUser().equals(c.getRequestedBy())) {
             throw new com.billbull.backend.exception.PermissionDeniedException("You cannot approve or reject your own correction request.");
         }
         c.setStatus(CorrectionRequestStatus.APPROVED);
@@ -166,6 +180,12 @@ public class CorrectionRequestService {
 
     @Transactional
     public CorrectionRequestResponse reject(Long id, String reason) {
+        return reject(id, reason, false);
+    }
+
+    /** @see #approve(Long, String, boolean) for the {@code allowSelfApproval} rationale. */
+    @Transactional
+    public CorrectionRequestResponse reject(Long id, String reason, boolean allowSelfApproval) {
         if (reason == null || reason.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A rejection reason is required.");
         }
@@ -174,7 +194,7 @@ public class CorrectionRequestService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Only PENDING_APPROVAL correction requests can be rejected. Current: " + c.getStatus());
         }
-        if (currentUser().equals(c.getRequestedBy())) {
+        if (!allowSelfApproval && currentUser().equals(c.getRequestedBy())) {
             throw new com.billbull.backend.exception.PermissionDeniedException("You cannot approve or reject your own correction request.");
         }
         c.setStatus(CorrectionRequestStatus.REJECTED);

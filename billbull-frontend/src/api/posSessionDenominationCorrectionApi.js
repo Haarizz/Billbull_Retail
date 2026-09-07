@@ -19,6 +19,16 @@ export const getDenominationCorrectionById = async (id) => {
   return res.data;
 };
 
+/**
+ * Closed-session typeahead for the correction form — matches session id, terminal, counter or
+ * closing cashier. A blank `q` returns the most recently closed sessions, so the picker is useful
+ * before anything is typed.
+ */
+export const searchCorrectableSessions = async (q) => {
+  const res = await api.get(`${BASE}/session-search`, { params: { q } });
+  return res.data;
+};
+
 /** Original / corrected (if applied) / effective denomination breakdown for a session. */
 export const getEffectiveDenomination = async (sessionId) => {
   const res = await api.get(`${BASE}/session/${sessionId}/effective`);
