@@ -314,6 +314,7 @@ public class PosTerminalService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
         if (counterId != null) {
             PosCounter counter = counterRepo.findById(counterId)
+                    .filter(PosCounter::isActive)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Counter not found: " + counterId));
             terminal.setCounterId(counter.getId());
             terminal.setCounterName(counter.getCounterName());

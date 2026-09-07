@@ -28,18 +28,22 @@ public class PosCounterService {
 
     @Transactional(readOnly = true)
     public List<PosCounter> listForBranch(Long branchId) {
-        return repo.findByBranchIdOrderByDisplayOrderAscCounterNameAsc(branchId);
+        return repo.findByBranchIdAndIsActiveTrueOrderByDisplayOrderAscCounterNameAsc(branchId);
     }
 
     @Transactional(readOnly = true)
     public List<PosCounter> listActiveForBranch(Long branchId) {
-        return repo.findByBranchIdAndStatusOrderByDisplayOrderAsc(branchId, PosCounterStatus.ACTIVE);
+        return repo.findByBranchIdAndStatusAndIsActiveTrueOrderByDisplayOrderAsc(branchId, PosCounterStatus.ACTIVE);
     }
 
     @Transactional(readOnly = true)
     public PosCounter getById(Long id) {
-        return repo.findById(id)
+        PosCounter counter = repo.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Counter not found: " + id));
+        if (!counter.isActive()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Counter not found: " + id);
+        }
+        return counter;
     }
 
     @Transactional
@@ -126,7 +130,7 @@ public class PosCounterService {
             int seq = Integer.parseInt(maxCode.replace("CTR-", ""));
             return String.format("CTR-%03d", seq + 1);
         } catch (NumberFormatException e) {
-            long count = repo.findByBranchIdOrderByDisplayOrderAscCounterNameAsc(branchId).size();
+            long count = repo.countByBranchId(branchId);
             return String.format("CTR-%03d", count + 1);
         }
     }

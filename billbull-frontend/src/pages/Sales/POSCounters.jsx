@@ -55,7 +55,7 @@ function CounterForm({ initial, onSave, onCancel, saving }) {
       </div>
       <div className="flex justify-end gap-2 pt-2">
         <button onClick={onCancel} className="px-5 py-2 text-sm border border-gray-200 rounded-xl hover:bg-gray-50 font-semibold text-gray-500 transition-colors">Cancel</button>
-        <button onClick={() => onSave(form)} disabled={saving || !form.counterName}
+        <button onClick={() => onSave(form)} disabled={saving || !form.counterName.trim()}
           className="px-5 py-2 text-sm bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold rounded-xl disabled:opacity-50 transition-colors">
           {saving ? "Saving…" : "Save"}
         </button>
@@ -88,14 +88,23 @@ export default function POSCounters({ onCounterChange }) {
   useEffect(() => { load(); }, [load]);
 
   const handleSave = async (form) => {
+    if (!form.counterName.trim()) {
+      setActionError("Counter name is required.");
+      return;
+    }
+    // Optional fields left untouched come through as "" — send them as null so the
+    // backend treats them as "not supplied" rather than an empty value to parse.
+    const payload = Object.fromEntries(
+      Object.entries(form).map(([k, v]) => [k, typeof v === "string" && v.trim() === "" ? null : v])
+    );
     setSaving(true);
     setActionError(null);
     try {
       if (editing) {
-        const updated = await updateCounter(editing.id, form);
+        const updated = await updateCounter(editing.id, payload);
         setCounters((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
       } else {
-        const created = await createCounter(form);
+        const created = await createCounter(payload);
         setCounters((prev) => [...prev, created]);
       }
       setShowForm(false);

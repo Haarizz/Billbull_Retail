@@ -79,6 +79,17 @@ public class PosCashMovementController {
         return ResponseEntity.ok(service.getById(id));
     }
 
+    /** Sessions the "Add New" form may aim a movement at — OPEN, on the current Business Day
+     *  and not mid-closure. Gated on {@code create} because it exists only to feed that form;
+     *  the create call re-checks every rule server-side regardless of what the picker offered. */
+    @GetMapping("/eligible-sessions")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<java.util.List<PosCashMovementSessionOption>> eligibleSessions(
+            @RequestParam(required = false) Long branchId) {
+        requireAction(PERM_CREATE);
+        return ResponseEntity.ok(service.listEligibleSessions(branchId));
+    }
+
     public static class CreateRequest {
         public Long sessionId;
         public String movementType;

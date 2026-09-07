@@ -1,9 +1,11 @@
 package com.billbull.backend.pos.counter;
 
 import com.billbull.backend.settings.branch.BranchAccessService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
@@ -45,12 +47,15 @@ public class PosCounterController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCounter> create(@RequestBody Map<String, Object> body) {
         var branch = branchAccessService.getRequiredCurrentUserBranch();
-        String counterCode = body.get("counterCode") != null ? body.get("counterCode").toString() : null;
-        String counterName = body.getOrDefault("counterName", "Counter").toString();
-        String description = body.get("description") != null ? body.get("description").toString() : null;
-        String cashDrawer = body.get("defaultCashDrawer") != null ? body.get("defaultCashDrawer").toString() : null;
-        String printer = body.get("defaultReceiptPrinter") != null ? body.get("defaultReceiptPrinter").toString() : null;
-        Integer displayOrder = body.get("displayOrder") != null ? Integer.parseInt(body.get("displayOrder").toString()) : null;
+        String counterCode = text(body, "counterCode");
+        String counterName = text(body, "counterName");
+        if (counterName == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Counter name is required.");
+        }
+        String description = text(body, "description");
+        String cashDrawer = text(body, "defaultCashDrawer");
+        String printer = text(body, "defaultReceiptPrinter");
+        Integer displayOrder = integer(body, "displayOrder", "Display order");
         return ResponseEntity.ok(service.create(branch.getId(), branch.getName(), counterCode, counterName,
                 description, cashDrawer, printer, displayOrder));
     }
@@ -58,11 +63,11 @@ public class PosCounterController {
     @PutMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosCounter> update(@PathVariable Long id, @RequestBody Map<String, Object> body) {
-        String counterName = body.get("counterName") != null ? body.get("counterName").toString() : null;
-        String description = body.get("description") != null ? body.get("description").toString() : null;
-        String cashDrawer = body.get("defaultCashDrawer") != null ? body.get("defaultCashDrawer").toString() : null;
-        String printer = body.get("defaultReceiptPrinter") != null ? body.get("defaultReceiptPrinter").toString() : null;
-        Integer displayOrder = body.get("displayOrder") != null ? Integer.parseInt(body.get("displayOrder").toString()) : null;
+        String counterName = text(body, "counterName");
+        String description = text(body, "description");
+        String cashDrawer = text(body, "defaultCashDrawer");
+        String printer = text(body, "defaultReceiptPrinter");
+        Integer displayOrder = integer(body, "displayOrder", "Display order");
         return ResponseEntity.ok(service.update(id, counterName, description, cashDrawer, printer, displayOrder));
     }
 
@@ -78,5 +83,25 @@ public class PosCounterController {
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         service.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /** Optional text field: absent, null, or blank all mean "not supplied". */
+    private static String text(Map<String, Object> body, String key) {
+        Object raw = body.get(key);
+        if (raw == null) return null;
+        String value = raw.toString().trim();
+        return value.isEmpty() ? null : value;
+    }
+
+    /** Optional whole-number field; a blank input is "not supplied", a non-numeric one is a 400. */
+    private static Integer integer(Map<String, Object> body, String key, String label) {
+        if (body.get(key) instanceof Number n) return n.intValue();
+        String value = text(body, key);
+        if (value == null) return null;
+        try {
+            return Integer.valueOf(value);
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " must be a whole number.");
+        }
     }
 }

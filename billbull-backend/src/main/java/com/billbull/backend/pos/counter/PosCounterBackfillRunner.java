@@ -48,8 +48,9 @@ public class PosCounterBackfillRunner implements ApplicationRunner {
             Long branchId = entry.getKey();
             List<PosTerminal> branchTerminals = entry.getValue();
 
-            // Skip if this branch already has counters (idempotent)
-            if (!counterRepo.findByBranchIdOrderByDisplayOrderAscCounterNameAsc(branchId).isEmpty()) continue;
+            // Skip if this branch already has counters (idempotent). Counts soft-deleted rows
+            // too, so a branch whose counters were deleted is not silently re-backfilled.
+            if (counterRepo.countByBranchId(branchId) > 0) continue;
 
             // Determine branch name from first terminal
             String branchName = branchTerminals.stream()

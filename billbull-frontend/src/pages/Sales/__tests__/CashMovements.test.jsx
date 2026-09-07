@@ -45,6 +45,16 @@ function mockPermissions({ create = true, viewAll = true, edit = true, voidPerm 
   });
 }
 
+const openSession = {
+  id: 1, branchId: 7, branchName: "Main Branch", counterName: "Main Counter",
+  terminalId: "T1", openedBy: "cashierA", businessDate: "2026-07-28",
+  openedAt: "2026-07-28T08:00:00",
+};
+
+function mockEligibleSessions(sessions) {
+  cashMovementApi.getCashMovementEligibleSessions.mockResolvedValue(sessions);
+}
+
 function mockListResponse(content) {
   cashMovementApi.getPosCashMovements.mockResolvedValue({
     content, page: 0, totalPages: 1, totalElements: content.length,
@@ -55,6 +65,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockPermissions();
   mockListResponse([baseRow]);
+  mockEligibleSessions([openSession]);
 });
 
 describe("CashMovements list page", () => {
@@ -136,29 +147,74 @@ describe("closed-business-day behaviour", () => {
 });
 
 describe("create dialog", () => {
-  it("validates session id and amount before submitting", async () => {
-    const user = userEvent.setup();
+  async function openCreateDialog(user) {
     render(<CashMovements />);
     await waitFor(() => expect(cashMovementApi.getPosCashMovements).toHaveBeenCalled());
-
     await user.click(screen.getByRole("button", { name: /add new/i }));
-    await user.click(screen.getByRole("button", { name: /^create$/i }));
+    return screen.getByRole("dialog", { name: /new cash drop \/ out/i });
+  }
 
-    expect(await screen.findByText(/session id and a positive amount are required/i)).toBeInTheDocument();
+  const sessionPicker = (dialog) =>
+    within(dialog).getAllByRole("combobox").find((c) => within(c).queryByText(/open session/i));
+
+  it("only offers sessions a cash movement may be added to", async () => {
+    const user = userEvent.setup();
+    // A closed session is simply absent from the eligible list the backend returns.
+    mockEligibleSessions([openSession]);
+    const dialog = await openCreateDialog(user);
+
+    await waitFor(() =>
+      expect(cashMovementApi.getCashMovementEligibleSessions).toHaveBeenCalledWith(7)
+    );
+    const picker = sessionPicker(dialog);
+    const options = within(picker).getAllByRole("option");
+    expect(options).toHaveLength(2); // placeholder + the one open session
+    expect(options[1]).toHaveTextContent("#1");
+    expect(within(picker).queryByRole("option", { name: /#2/ })).not.toBeInTheDocument();
+  });
+
+  it("disables the picker and Create when no session is eligible", async () => {
+    const user = userEvent.setup();
+    mockEligibleSessions([]);
+    const dialog = await openCreateDialog(user);
+
+    await waitFor(() => expect(sessionPicker(dialog)).toBeDisabled());
+    expect(within(dialog).getByRole("button", { name: /^create$/i })).toBeDisabled();
+    expect(within(dialog).getByText(/there are no open sessions/i)).toBeInTheDocument();
     expect(cashMovementApi.createPosCashMovement).not.toHaveBeenCalled();
   });
 
-  it("submits a create request with the entered fields", async () => {
+  it("keeps Create disabled until a session is picked when several are open", async () => {
+    const user = userEvent.setup();
+    mockEligibleSessions([openSession, { ...openSession, id: 2, counterName: "Counter 2" }]);
+    const dialog = await openCreateDialog(user);
+
+    await waitFor(() => expect(sessionPicker(dialog)).not.toBeDisabled());
+    expect(within(dialog).getByRole("button", { name: /^create$/i })).toBeDisabled();
+
+    await user.selectOptions(sessionPicker(dialog), "2");
+    expect(within(dialog).getByRole("button", { name: /^create$/i })).not.toBeDisabled();
+  });
+
+  it("validates the amount before submitting", async () => {
+    const user = userEvent.setup();
+    const dialog = await openCreateDialog(user);
+    await waitFor(() => expect(sessionPicker(dialog)).not.toBeDisabled());
+
+    await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
+
+    expect(await screen.findByText(/select an open session and enter a positive amount/i)).toBeInTheDocument();
+    expect(cashMovementApi.createPosCashMovement).not.toHaveBeenCalled();
+  });
+
+  it("submits a create request with the selected session and entered fields", async () => {
     const user = userEvent.setup();
     cashMovementApi.createPosCashMovement.mockResolvedValue({ ...baseRow, id: 11 });
-    render(<CashMovements />);
-    await waitFor(() => expect(cashMovementApi.getPosCashMovements).toHaveBeenCalled());
+    const dialog = await openCreateDialog(user);
+    // A single eligible session is preselected, so the operator only fills in the amount.
+    await waitFor(() => expect(sessionPicker(dialog)).toHaveValue("1"));
 
-    await user.click(screen.getByRole("button", { name: /add new/i }));
-    const dialog = screen.getByRole("dialog", { name: /new cash drop \/ out/i });
-    const [sessionIdInput, amountInput] = within(dialog).getAllByRole("spinbutton");
-    await user.type(sessionIdInput, "1");
-    await user.type(amountInput, "100");
+    await user.type(within(dialog).getByRole("spinbutton"), "100");
     await user.type(within(dialog).getAllByRole("textbox")[0], "Float top-up");
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
