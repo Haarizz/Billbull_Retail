@@ -415,6 +415,27 @@ const renderBarcodesInRoot = (root, options, template) => {
     });
 };
 
+// Flattens a ProductAggregateResponse into the shape the printer works with.
+// `pricing` and `inventory` are BaseEntity rows of their own, so spreading them over the
+// product overwrites `id`/`isActive`/audit fields with the pricing- or policy-row values.
+// Those identity fields are restored from the product afterwards: `id` keys the suggestion
+// list and the print-queue cart, and a pricing/policy id colliding with another product's id
+// silently dropped rows and blocked adds to the queue.
+const mapAggregateToProduct = (d) => ({
+    ...d.product,
+    ...d.pricing,
+    price: d.pricing?.retailPrice || 0,
+    ...d.inventory,
+    packings: d.inventory?.packings || [],
+    image: d.primaryImage,
+    id: d.product?.id,
+    isActive: d.product?.isActive,
+    createdAt: d.product?.createdAt,
+    createdBy: d.product?.createdBy,
+    updatedAt: d.product?.updatedAt,
+    updatedBy: d.product?.updatedBy
+});
+
 const BarcodePrinter = () => {
     const location = useLocation();
     const navigate = useNavigate();
@@ -620,21 +641,19 @@ const BarcodePrinter = () => {
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    // Fetch products based on search term
+    // Fetch products based on search term. Responses can land out of order, so only the
+    // newest request is allowed to replace the suggestion list — a late reply swapping the
+    // rows out from under the pointer used to swallow the click on a suggestion.
+    const searchRequestRef = useRef(0);
     const fetchSearchedProducts = async (term) => {
+        const requestId = ++searchRequestRef.current;
         try {
             setSearchLoading(true);
             const data = await searchExactProducts(term);
+            if (requestId !== searchRequestRef.current) return; // superseded
 
             // Map the standard DTO
-            const mapped = (data || []).map(d => ({
-                ...d.product,
-                ...d.pricing,
-                price: d.pricing?.retailPrice || 0,
-                ...d.inventory,
-                packings: d.inventory?.packings || [],
-                image: d.primaryImage
-            }));
+            const mapped = (data || []).map(mapAggregateToProduct);
 
             // Filter out items without barcodes to display in the dropdown
             const productsWithBarcodes = mapped.filter(p =>
@@ -646,7 +665,7 @@ const BarcodePrinter = () => {
         } catch (error) {
             console.error("Failed to load searched products", error);
         } finally {
-            setSearchLoading(false);
+            if (requestId === searchRequestRef.current) setSearchLoading(false);
         }
     };
 
@@ -655,6 +674,7 @@ const BarcodePrinter = () => {
             if (searchTerm.trim() !== '') {
                 fetchSearchedProducts(searchTerm);
             } else {
+                searchRequestRef.current++; // drop any in-flight reply for the cleared box
                 setFilteredProducts([]);
             }
         }, 400); // 400ms debounce
@@ -946,14 +966,7 @@ const BarcodePrinter = () => {
                     const exactMatch = (data || []).find(d => d.product && d.product.code === code);
 
                     if (exactMatch) {
-                        fetchedProducts.push({
-                            ...exactMatch.product,
-                            ...exactMatch.pricing,
-                            price: exactMatch.pricing?.retailPrice || 0,
-                            ...exactMatch.inventory,
-                            packings: exactMatch.inventory?.packings || [],
-                            image: exactMatch.primaryImage
-                        });
+                        fetchedProducts.push(mapAggregateToProduct(exactMatch));
                     }
                 } catch (e) {
                     console.error("Could not fetch product for PO item code: " + code, e);
@@ -1719,11 +1732,15 @@ const BarcodePrinter = () => {
                                             <div className="p-4 text-center text-sm text-slate-500">Searching...</div>
                                         ) : filteredProducts.length > 0 ? (
                                             <>
+                                                {/* Selection commits on mousedown, not click: a click only fires when
+                                                    mousedown and mouseup land on the same node, so a list re-render
+                                                    between them (a debounced search landing) would drop it entirely. */}
                                                 {filteredProducts.map(p => (
                                                     <div
                                                         key={p.id}
                                                         className="p-3 hover:bg-[#F5C742]/10 cursor-pointer border-b border-slate-50 last:border-0 flex items-center gap-3"
-                                                        onClick={() => {
+                                                        onMouseDown={(e) => {
+                                                            e.preventDefault();
                                                             // Check if search term matches a specific packing barcode
                                                             let matchedBarcode = null;
                                                             let matchedUnit = null;

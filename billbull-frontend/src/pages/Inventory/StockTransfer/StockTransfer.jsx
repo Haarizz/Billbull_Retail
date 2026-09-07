@@ -405,8 +405,24 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
     const { company } = useCompany();
     const LIST_PAGE_SIZE = 30;
     const [listPage, setListPage] = useState(0);
-    useEffect(() => { setListPage(0); }, [data.length]);
-    const pagedData = data.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    const filteredData = useMemo(() => {
+        const term = searchTerm.trim().toLowerCase();
+        if (!term) return data;
+        return data.filter((row) => [
+            row.transferNo,
+            row.referenceNo,
+            row.fromWarehouseName,
+            row.toWarehouseName,
+            row.status,
+            row.requestedBy,
+            formatDisplayDate(row.transferDate),
+        ].some((field) => String(field ?? '').toLowerCase().includes(term)));
+    }, [data, searchTerm]);
+
+    useEffect(() => { setListPage(0); }, [filteredData.length, searchTerm]);
+    const pagedData = filteredData.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE);
     return (
         <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -416,16 +432,32 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                 </div>
                 <div className="flex gap-2">
                     <ExportDropdown
-                        onExportExcel={() => exportToExcel(withListSerialNumbers(data, {
+                        onExportExcel={() => exportToExcel(withListSerialNumbers(filteredData, {
                             documentNumberSelector: (row) => row.transferNo,
                         }), STOCK_TRANSFER_COLUMNS, 'StockTransfers', { companyProfile: company, branch: activeBranch?.name || '' })}
-                        onExportPdf={() => exportToPDF(withListSerialNumbers(data, {
+                        onExportPdf={() => exportToPDF(withListSerialNumbers(filteredData, {
                             documentNumberSelector: (row) => row.transferNo,
                         }), STOCK_TRANSFER_COLUMNS, 'Stock Transfer Records', 'StockTransfers', { companyProfile: company, branch: activeBranch?.name || '' })}
                     />
                     <div className="relative">
-                        <input type="text" placeholder="Search transfers..." className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all" />
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="Search transfers..."
+                            className="h-9 w-64 bg-slate-50 border border-slate-200 rounded-lg px-9 text-xs outline-none focus:bg-white focus:ring-1 focus:ring-[#F5C742] transition-all"
+                        />
                         <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                        {searchTerm && (
+                            <button
+                                type="button"
+                                onClick={() => setSearchTerm('')}
+                                className="absolute right-2 top-2 p-1 text-slate-400 hover:text-slate-600"
+                                aria-label="Clear search"
+                            >
+                                <X size={12} />
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
@@ -451,7 +483,7 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                                         documentNumber: row.transferNo,
                                         page: listPage,
                                         size: LIST_PAGE_SIZE,
-                                        totalElements: data.length,
+                                        totalElements: filteredData.length,
                                     })}
                                 </td>
                                 <td className="px-6 py-4">
@@ -501,13 +533,20 @@ const TransferHistoryView = ({ data, warehouses, onView, onSend, onPrint }) => {
                                 </td>
                             </tr>
                         ))}
+                        {pagedData.length === 0 && (
+                            <tr>
+                                <td colSpan={7} className="px-6 py-10 text-center text-xs text-slate-400">
+                                    {searchTerm ? `No transfers match "${searchTerm}"` : 'No transfer records found'}
+                                </td>
+                            </tr>
+                        )}
                     </tbody>
                 </table>
                 <PaginationFooter
                     page={listPage}
                     size={LIST_PAGE_SIZE}
-                    totalElements={data.length}
-                    totalPages={Math.ceil(data.length / LIST_PAGE_SIZE)}
+                    totalElements={filteredData.length}
+                    totalPages={Math.ceil(filteredData.length / LIST_PAGE_SIZE)}
                     onPageChange={setListPage}
                 />
             </div>

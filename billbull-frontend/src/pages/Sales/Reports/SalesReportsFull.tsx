@@ -849,7 +849,11 @@ function groupBy(rows: ReportPayloadRow[], keyFn: (row: ReportPayloadRow) => str
   return grouped;
 }
 
-function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null) {
+/** Filter context of the request that produced `data` — reports whose header shows the
+ *  period (e.g. Daily Sales Z-Style) read it from here instead of assuming "today". */
+interface ReportDataMeta { dateFrom?: string; dateTo?: string; branchLabel?: string }
+
+function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null, meta: ReportDataMeta = {}) {
   if (!data) return;
   const rows = rowsOf(data);
 
@@ -920,11 +924,15 @@ function applyLiveReportData(reportId: ReportId, data: SalesReportPayload | null
             { mode: "Collected", amount: collected },
             { mode: "Outstanding", amount: outstanding },
           ];
-      const periodDate = new Date().toISOString().split("T")[0];
+      // Header period comes from the filters the data was fetched with — showing
+      // new Date() here made the report claim today regardless of the selected range.
+      const periodDate = meta.dateFrom && meta.dateTo
+        ? (meta.dateFrom === meta.dateTo ? meta.dateFrom : `${meta.dateFrom} → ${meta.dateTo}`)
+        : (meta.dateFrom || meta.dateTo || new Date().toISOString().split("T")[0]);
 
       mockDailySalesData = {
         date: periodDate,
-        branch: "All Branches",
+        branch: meta.branchLabel || "All Branches",
         preparedBy: "System",
         approvedBy: "",
         shift: "Selected period",
@@ -1626,6 +1634,10 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
   const _todayStr = _today.toISOString().split("T")[0];
   const [dateFrom, setDateFrom] = useState(_firstOfMonth);
   const [dateTo, setDateTo] = useState(_todayStr);
+  // Non-empty when the picked range is invalid. Blocks Generate and the auto-load
+  // effect so the backend is never queried with an inverted range.
+  const dateRangeError =
+    dateFrom && dateTo && dateFrom > dateTo ? "Date To cannot be before Date From." : "";
   const [channel, setChannel] = useState("All");
   const [cashier, setCashier] = useState("All");
   const [companyProfile, setCompanyProfile] = useState<any>(null);
@@ -1783,6 +1795,11 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     overrides: { cashier?: string; channel?: string; searchText?: string; pick?: FilterSuggestion | null } = {}
   ) {
     if (branchLoading) return;
+    if (dateRangeError) {
+      setIsLoading(false);
+      setLoadError(dateRangeError);
+      return;
+    }
     // POS Reports (X/Z historical browser) is a self-contained module with its own
     // paginated backend calls and its own filter set — it never goes through the
     // generic mock-data `/api/sales/reports/data/{reportId}` endpoint used by every
@@ -1812,7 +1829,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
       itemCode: effectivePick?.type === "ITEM" ? effectivePick.code : undefined,
     };
     if (clearFirst) {
-      applyLiveReportData(activeReport, { rows: [], charts: [] });
+      applyLiveReportData(activeReport, { rows: [], charts: [] }, { dateFrom, dateTo, branchLabel: effectiveBranchLabel });
       setDataRevision((value) => value + 1);
     }
     setIsLoading(true);
@@ -1829,7 +1846,7 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
     try {
       const data = await getSalesReportData(activeReport, filterSnapshot, signal);
       if (!data) return;
-      applyLiveReportData(activeReport, data);
+      applyLiveReportData(activeReport, data, { dateFrom, dateTo, branchLabel: effectiveBranchLabel });
       setDataRevision((value) => value + 1);
     } catch (error: any) {
       if (error?.name === "CanceledError" || error?.name === "AbortError") return;
@@ -2187,8 +2204,9 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                   <Input
                     type="date"
                     value={dateFrom}
+                    max={dateTo || undefined}
                     onChange={(e) => setDateFrom(e.target.value)}
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                    className={`h-8 text-[11px] bg-slate-50 ${dateRangeError ? "border-red-400" : "border-slate-200"}`}
                   />
                 </div>
 
@@ -2200,9 +2218,14 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                   <Input
                     type="date"
                     value={dateTo}
+                    min={dateFrom || undefined}
                     onChange={(e) => setDateTo(e.target.value)}
-                    className="h-8 text-[11px] bg-slate-50 border-slate-200"
+                    aria-invalid={dateRangeError ? true : undefined}
+                    className={`h-8 text-[11px] bg-slate-50 ${dateRangeError ? "border-red-400" : "border-slate-200"}`}
                   />
+                  {dateRangeError && (
+                    <p role="alert" className="text-[10px] text-red-600">{dateRangeError}</p>
+                  )}
                 </div>
 
                 <div className="space-y-1.5">
@@ -2396,7 +2419,15 @@ export function SalesReports({ onNavigate }: SalesReportsProps) {
                 <div className={`flex items-end gap-2 ${!showAdvanced ? "xl:col-start-4" : ""}`}>
                   <Button
                     onClick={() => loadReport()}
-                    className={`flex-1 h-8 text-[11px] text-slate-900 transition-colors ${hasUncommittedFilters ? "bg-[#e4b82e] ring-2 ring-[#F5C742] ring-offset-1 animate-pulse" : "bg-[#F5C742] hover:bg-[#e4b82e]"}`}
+                    disabled={!!dateRangeError}
+                    title={dateRangeError || undefined}
+                    className={`flex-1 h-8 text-[11px] text-slate-900 transition-colors ${
+                      dateRangeError
+                        ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                        : hasUncommittedFilters
+                          ? "bg-[#e4b82e] ring-2 ring-[#F5C742] ring-offset-1 animate-pulse"
+                          : "bg-[#F5C742] hover:bg-[#e4b82e]"
+                    }`}
                   >
                     {hasUncommittedFilters ? "Apply Filters" : "Generate"}
                   </Button>
@@ -4078,6 +4109,8 @@ function POSReportsBrowser({ reportType }: { reportType: "X" | "Z" }) {
 
   const [dateFrom, setDateFrom] = useState(firstOfMonth);
   const [dateTo, setDateTo] = useState(today);
+  const dateRangeError =
+    dateFrom && dateTo && dateFrom > dateTo ? "Business Date To cannot be before Business Date From." : "";
   const [reportNumber, setReportNumber] = useState("");
   const [generatedBy, setGeneratedBy] = useState("");
   const [terminalId, setTerminalId] = useState("");
@@ -4109,6 +4142,11 @@ function POSReportsBrowser({ reportType }: { reportType: "X" | "Z" }) {
   })();
 
   async function fetchPage(pageToLoad: number, filters: any) {
+    if (filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo) {
+      setLoading(false);
+      setError("Business Date To cannot be before Business Date From.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -4225,11 +4263,12 @@ function POSReportsBrowser({ reportType }: { reportType: "X" | "Z" }) {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             <div className="space-y-1.5">
               <label className="text-[11px] text-slate-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />Business Date From</label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+              <Input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className={`h-8 text-[11px] bg-slate-50 ${dateRangeError ? "border-red-400" : "border-slate-200"}`} />
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] text-slate-600 flex items-center gap-1"><Calendar className="h-3.5 w-3.5" />Business Date To</label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 text-[11px] bg-slate-50 border-slate-200" />
+              <Input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} aria-invalid={dateRangeError ? true : undefined} className={`h-8 text-[11px] bg-slate-50 ${dateRangeError ? "border-red-400" : "border-slate-200"}`} />
+              {dateRangeError && <p role="alert" className="text-[10px] text-red-600">{dateRangeError}</p>}
             </div>
             <div className="space-y-1.5">
               <label className="text-[11px] text-slate-600 flex items-center gap-1"><Store className="h-3.5 w-3.5" />Branch</label>
@@ -4256,7 +4295,7 @@ function POSReportsBrowser({ reportType }: { reportType: "X" | "Z" }) {
               </>
             )}
             <div className="flex items-end gap-2">
-              <Button onClick={handleSearch} className="flex-1 h-8 text-[11px] text-slate-900 bg-[#F5C742] hover:bg-[#e4b82e]">
+              <Button onClick={handleSearch} disabled={!!dateRangeError} title={dateRangeError || undefined} className={`flex-1 h-8 text-[11px] ${dateRangeError ? "bg-slate-200 text-slate-400 cursor-not-allowed" : "text-slate-900 bg-[#F5C742] hover:bg-[#e4b82e]"}`}>
                 <Search className="h-3.5 w-3.5 mr-1" />Search
               </Button>
               <Button variant="outline" onClick={handleClearFilters} className="h-8 text-[11px]">Clear Filters</Button>

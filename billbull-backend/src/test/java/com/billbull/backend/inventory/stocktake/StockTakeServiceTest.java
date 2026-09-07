@@ -2,6 +2,7 @@ package com.billbull.backend.inventory.stocktake;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -478,6 +479,32 @@ class StockTakeServiceTest {
     }
 
     // ---------- Phase 7: session list branch scoping ----------
+
+    @Test
+    void createSessionRejectsWarehouseWithNoBins() {
+        when(branchScopeResolver.shouldScope()).thenReturn(false);
+        when(binRepo.countByWarehouseId(9L)).thenReturn(0L);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> service.createSession("Warehouse D", 9L, "Inventory Counting", "Full Count",
+                        "tester", null, null));
+
+        assertTrue(ex.getMessage().contains("no bins"));
+        verify(sessionRepo, org.mockito.Mockito.never()).save(any());
+    }
+
+    @Test
+    void createSessionAllowsWarehouseThatHasBins() {
+        when(branchScopeResolver.shouldScope()).thenReturn(false);
+        when(binRepo.countByWarehouseId(9L)).thenReturn(3L);
+        when(sessionRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        StockTakeSession created = service.createSession("Warehouse D", 9L, "Opening Inventory",
+                "Full Count", "tester", null, null);
+
+        assertEquals(9L, created.getWarehouseId());
+        verify(sessionRepo).save(any());
+    }
 
     @Test
     void getAllSessionsToggleOffUsesUnscopedQuery() {

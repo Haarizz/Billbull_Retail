@@ -118,6 +118,17 @@ public class StockTakeService {
             branchAccessService.assertTransactionBranchAccessible(warehouseBranchId, "Stock-take warehouse");
         }
 
+        // A stock-take is bin-scoped end to end: counts are rejected for an item without a bin
+        // (see updateItemCount) and submitForApproval requires every item to carry one. A warehouse
+        // with no bins therefore yields a session that can never be counted or submitted, and the
+        // Bulk Assign Bin dialog has nothing to offer — so refuse it up front instead.
+        Long warehouseBinCount = warehouseId == null ? null : binRepo.countByWarehouseId(warehouseId);
+        if (warehouseBinCount != null && warehouseBinCount == 0L) {
+            throw new IllegalStateException(
+                    "This warehouse has no bins yet. Create at least one bin under Warehouses & Storages "
+                            + "before starting a stock take, otherwise counted items cannot be assigned a location.");
+        }
+
         // Validation for Opening Inventory
         if ("Opening Inventory".equalsIgnoreCase(type)) {
             boolean exists = sessionRepo.existsByWarehouseIdAndTypeAndIsActiveTrue(warehouseId, StockTakeSession.StockTakeType.OPENING_INVENTORY);

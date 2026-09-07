@@ -1120,7 +1120,11 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">Brand <span className="text-red-500">*</span></label>
                   <ClassificationDropdown
-                    options={brands.map(b => ({ value: b.id, label: b.name }))}
+                    /* Inactive brands cannot be picked for a product, but a product already on one
+                       must keep showing its brand while being edited. */
+                    options={brands
+                      .filter(b => b.active !== false || b.id == formData.brand)
+                      .map(b => ({ value: b.id, label: b.name }))}
                     value={formData.brand}
                     onChange={(val) => handleInputChange('brand', val)}
                     onCreateNew={(name) => handleInlineCreate('brand', name)}
