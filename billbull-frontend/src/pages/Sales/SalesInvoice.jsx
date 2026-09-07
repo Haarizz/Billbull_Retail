@@ -2237,6 +2237,7 @@ const SalesInvoice = () => {
             if (newStatus !== 'Draft') await verifyPickingNoteAfterSave(savedInvoice);
 
             await fetchInvoices();
+            fetchInvoiceStats();
             const hasBatchLines = Array.isArray(savedInvoice.items)
                 && savedInvoice.items.some(item => item.batchControlled);
             if (newStatus === 'Draft' && salesType === 'DIRECT_SALE' && hasBatchLines) {
@@ -2267,6 +2268,7 @@ const SalesInvoice = () => {
             );
             if (allBatchesDone) setBatchGuideStep(null);
             await fetchInvoices();
+            fetchInvoiceStats();
         }
     };
 
@@ -2397,6 +2399,7 @@ const SalesInvoice = () => {
                     ...(modalPaymentMode === 'Cheque' && modalChequeDate ? { chequeDate: modalChequeDate } : {})
                 });
                 await fetchInvoices();
+                fetchInvoiceStats();
                 alert("Payment recorded successfully!");
                 setIsPaymentModalOpen(false);
 
@@ -2472,6 +2475,7 @@ const SalesInvoice = () => {
                 });
             }
             await fetchInvoices();
+            fetchInvoiceStats();
 
             // Refresh settlementInvoice with the post-payment state so that
             // receipt prints show the correct outstanding/balance figures.
@@ -3070,24 +3074,11 @@ const SalesInvoice = () => {
                 // empty tax-invoice grid. Overlay templates are fixed-position PDFs
                 // and aren't column-driven, so they're left untouched.
                 const taxAwareTemplate = applyTaxAwareDisplayOptions(defaultTemplate, invoiceHasTax);
-                let html = isOverlayInvoiceTemplate(defaultTemplate)
+                const html = isOverlayInvoiceTemplate(defaultTemplate)
                     ? generateOverlayInvoiceHtml(defaultTemplate, printData, { companyProfile: branchProfile })
                     : forPdf
                     ? await generatePdfHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo })
                     : await generatePrintHtmlAsync(taxAwareTemplate, printData, { companyProfile: branchProfile, billBullLogo });
-                // TEMP DEBUG — remove after diagnosing the missing company TRN issue.
-                if (typeof html === 'string') {
-                    const matchedBranch = (availableBranches || []).find(b => Number(b?.id) === Number(invoiceBranchId));
-                    const debugBanner = `<div style="background:#fee2e2;color:#7f1d1d;border:2px solid red;padding:8px;font:12px monospace;white-space:pre-wrap;">DEBUG (remove me)
-invoiceBranchId=${JSON.stringify(invoiceBranchId)}
-matchedBranch.id=${JSON.stringify(matchedBranch?.id)} matchedBranch.name=${JSON.stringify(matchedBranch?.name)} matchedBranch.trnNumber=${JSON.stringify(matchedBranch?.trnNumber)}
-company.trn=${JSON.stringify(company?.trn)}
-branchProfile.trn=${JSON.stringify(branchProfile?.trn)}
-availableBranches.length=${(availableBranches || []).length}
-template.category=${JSON.stringify(defaultTemplate?.category)} isDesignerLayout=${JSON.stringify(!!(defaultTemplate?.salesDesignerSettings || defaultTemplate?.purchaseDesignerSettings || defaultTemplate?.displayOptions))}
-</div>`;
-                    html = html.replace('<body>', `<body>${debugBanner}`);
-                }
                 return html;
             }
         }
@@ -3560,7 +3551,10 @@ template.category=${JSON.stringify(defaultTemplate?.category)} isDesignerLayout=
                                 },
                                 {
                                     label: 'Invoices This Month',
-                                    value: invoiceStats?.thisMonthCount ?? '—',
+                                    // Every document in the month, all statuses — matches the
+                                    // "This Month" list's pagination total. thisMonthCount counts
+                                    // only the revenue-bearing ones and is the revenue sub-label.
+                                    value: invoiceStats?.thisMonthInvoiceCount ?? invoiceStats?.thisMonthCount ?? '—',
                                     sub: 'Total issued',
                                     icon: <Receipt size={18} />,
                                     iconBg: 'bg-blue-100',
@@ -5034,6 +5028,9 @@ template.category=${JSON.stringify(defaultTemplate?.category)} isDesignerLayout=
                     invoiceNo={invoiceNo}
                     documentTitle={getInvoiceDocumentTitle(invoiceSummary)}
                     getHtml={getPreviewHtml}
+                    payMode={paymentMode}
+                    onPayModeChange={setPaymentMode}
+                    hideCredit={isWalkInCustomer}
                     onClose={() => setPreviewMode(null)}
                     onConfirm={handlePreviewConfirm}
                     onPrint={() => handlePrintClick()}
@@ -5062,6 +5059,7 @@ template.category=${JSON.stringify(defaultTemplate?.category)} isDesignerLayout=
                     bankAccountOptions={bankAccountOptions}
                     isSaving={isSettlementSaving}
                     hideCredit={isWalkInCustomer}
+                    initialPayMode={settlementInvoice.paymentMode || ''}
                     onSkip={handleSettlementSkip}
                     onConfirm={handleSettlementConfirm}
                     onDone={handleSettlementDone}
