@@ -35,7 +35,10 @@ import com.billbull.backend.purchase.payment.PaymentMode;
 import com.billbull.backend.purchase.payment.PaymentStatus;
 import com.billbull.backend.purchase.payment.PaymentVoucher;
 import com.billbull.backend.purchase.payment.PaymentVoucherRepository;
+import com.billbull.backend.purchase.payment.PaymentVoucherService;
 import com.billbull.backend.purchase.lpo.workflow.*;
+import org.hibernate.Hibernate;
+
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.util.DocumentOrderingUtil;
@@ -62,6 +65,7 @@ public class LpoService {
     private final BranchAccessService branchAccessService;
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final PaymentVoucherRepository paymentVoucherRepository;
+    private final PaymentVoucherService paymentVoucherService;
 
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
@@ -87,6 +91,7 @@ public class LpoService {
             BranchAccessService branchAccessService,
             com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             PaymentVoucherRepository paymentVoucherRepository,
+            PaymentVoucherService paymentVoucherService,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService,
             com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService,
@@ -107,6 +112,7 @@ public class LpoService {
         this.branchAccessService = branchAccessService;
         this.ownershipAccessService = ownershipAccessService;
         this.paymentVoucherRepository = paymentVoucherRepository;
+        this.paymentVoucherService = paymentVoucherService;
         this.notifPublisher = notifPublisher;
         this.documentNumberingService = documentNumberingService;
         this.purchaseTaxResolutionService = purchaseTaxResolutionService;
@@ -744,12 +750,25 @@ public class LpoService {
             voucher.setChequeDate(java.time.LocalDate.parse(payload.get("chequeDate").toString()));
         }
 
-        voucher.setStatus(PaymentStatus.PENDING_APPROVAL);
-        voucher.setUnallocated(voucher.getAmount());
-
-        PaymentVoucher saved = paymentVoucherRepository.save(voucher);
-        saved.setVoucherNumber("PV-" + (10000 + saved.getId()));
-        return paymentVoucherRepository.save(saved);
+        // Route through the shared creation path rather than saving here. It stamps
+        // PENDING_APPROVAL and unallocated exactly as this method did, and it allocates the
+        // voucher number through PurchaseDocumentNumberingService, which skips any number
+        // already taken. The old "PV-" + (10000 + id) minted a number with no such check, so
+        // an advance could land on a number the numbering service had already issued to a
+        // normal voucher (its %04d format reaches PV-10001 once the sequence passes 10000).
+        // PostingEngineService.findDuplicate(ref) would then match that other voucher's
+        // journal on approval and return it, leaving the advance silently unposted.
+        //
+        // The branch is the LPO's, not the caller's: an advance against a branch-B LPO belongs
+        // to branch B even when someone who can see every branch records it while viewing
+        // branch A. Saving straight to the repository set no branch at all, so the advance and
+        // its journal carried a null branch and fell outside every branch-scoped report.
+        // Unproxied because Lpo.branch is LAZY while PaymentVoucher.branch is EAGER — handing
+        // on a detached proxy is what BranchAccessService.unproxy exists to prevent.
+        Branch lpoBranch = lpo.getBranch() == null
+                ? null
+                : (Branch) Hibernate.unproxy(lpo.getBranch());
+        return paymentVoucherService.createVoucher(voucher, lpoBranch);
     }
 
     public java.util.List<PaymentVoucher> getAdvancePayments(Long lpoId) {

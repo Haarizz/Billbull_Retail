@@ -5,6 +5,7 @@ import com.billbull.backend.purchase.invoice.InvoicePayment;
 import com.billbull.backend.purchase.invoice.InvoiceStatus;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository;
+import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -124,7 +125,22 @@ public class PaymentVoucherService {
 
     @Transactional
     public PaymentVoucher createVoucher(PaymentVoucher voucher) {
-        voucher.setBranch(branchAccessService.getRequiredCurrentUserBranch());
+        return createVoucher(voucher, null);
+    }
+
+    /**
+     * @param branchOverride the branch the voucher belongs to when the caller already knows it
+     *        from the source document. An LPO advance belongs to the branch that raised the LPO,
+     *        not to whichever branch the person recording it happens to be viewing, and the two
+     *        differ for any user who can see more than one branch. Null keeps the existing
+     *        behaviour (the current user's branch), which is what every screen-driven creation
+     *        wants and what the single-argument overload above still does.
+     */
+    @Transactional
+    public PaymentVoucher createVoucher(PaymentVoucher voucher, Branch branchOverride) {
+        voucher.setBranch(branchOverride != null
+                ? branchOverride
+                : branchAccessService.getRequiredCurrentUserBranch());
         voucher.setStatus(PaymentStatus.PENDING_APPROVAL);
         voucher.setUnallocated(voucher.getAmount());
         voucher.setVoucherNumber(documentNumberingService.resolveNumberForCreate(
