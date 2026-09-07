@@ -27,6 +27,7 @@ const InvoiceSettlementModal = ({
     bankAccountOptions = [],
     isSaving = false,
     hideCredit = false,
+    initialPayMode = '',
     onSkip,
     onConfirm,
     onDone,
@@ -44,13 +45,20 @@ const InvoiceSettlementModal = ({
     const alreadyPaid = Math.max(displayTotal - invoiceAmount, 0);
     const money = (v) => formatCurrencyDisplay(Number(v) || 0, currency);
 
+    // Pay mode chosen in the invoice preview (stamped on the invoice). It
+    // pre-selects the settlement mode here but stays fully changeable.
+    const presetMode = ENTRY_MODES.includes(initialPayMode) && !(hideCredit && initialPayMode === 'Credit')
+        ? initialPayMode
+        : null;
+
     const [phase, setPhase] = useState('input'); // 'input' | 'done'
     const [recorded, setRecorded] = useState([]);
     // Snapshot alreadyPaid at confirm time so parent re-fetch doesn't corrupt done-phase cards
     const [snapshotAlreadyPaid, setSnapshotAlreadyPaid] = useState(null);
     const [nextVoucherNo, setNextVoucherNo] = useState('—');
-    // No pre-selection — user must explicitly choose a pay mode
-    const [quickMode, setQuickMode] = useState(null);
+    // Pre-selected from the invoice's pay mode when one was chosen in the
+    // preview; otherwise the user must explicitly choose one.
+    const [quickMode, setQuickMode] = useState(presetMode);
     const [showModeError, setShowModeError] = useState(false);
 
     useEffect(() => {
@@ -59,9 +67,9 @@ const InvoiceSettlementModal = ({
             .catch(() => setNextVoucherNo('Auto-generated'));
     }, []);
 
-    // Start with no mode selected — amount pre-filled but mode is blank
+    // Amount pre-filled; mode comes from the preview selection when present
     const [entries, setEntries] = useState([
-        { mode: '', amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() },
+        { mode: presetMode || '', amount: invoiceAmount > 0 ? invoiceAmount.toFixed(2) : '0', reference: '', bankAccount: '', chequeDate: today() },
     ]);
 
     // Cash/Card/Bank/Cheque entries — the ones that actually move money

@@ -224,6 +224,12 @@ const SalesOrders = () => {
   const [isStatsLoading, setIsStatsLoading] = useState(false);
   const _todaySO = new Date().toISOString().slice(0, 10);
   const [dateRange, setDateRange] = useState({ fromDate: _todaySO, toDate: _todaySO });
+  // Server-side status filter for the list ('' = all statuses).
+  const [listStatusFilter, setListStatusFilter] = useState('');
+  // Server-side search for the list: the raw input value plus its debounced copy
+  // (the debounced one is what actually hits /api/sales/orders/page).
+  const [listSearch, setListSearch] = useState('');
+  const [listSearchQuery, setListSearchQuery] = useState('');
   const exportOrdersList = useMemo(() => ordersList.map((order) => ({
     ...order,
     orderTotal: formatCurrencyAmount(order.orderTotal, company),
@@ -568,7 +574,7 @@ const SalesOrders = () => {
   const fetchSalesOrders = async () => {
     setIsListLoading(true);
     try {
-      const data = await getSalesOrdersPage({ page: listPage, size: 30, fromDate: dateRange?.fromDate, toDate: dateRange?.toDate });
+      const data = await getSalesOrdersPage({ page: listPage, size: 30, search: listSearchQuery, status: listStatusFilter, fromDate: dateRange?.fromDate, toDate: dateRange?.toDate });
       const rows = Array.isArray(data?.content) ? data.content : [];
       setOrdersList(rows);
       setListPageMeta({
@@ -601,7 +607,16 @@ const SalesOrders = () => {
     if (activeTab !== 'list') return;
     fetchSalesOrders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, listPage, dateRange]);
+  }, [activeTab, listPage, dateRange, listStatusFilter, listSearchQuery]);
+
+  // Debounce the list search box so typing doesn't fire a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setListSearchQuery(listSearch);
+      setListPage(0);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [listSearch]);
 
   // Refetch when the global Branch Selector changes the active branch.
   useEffect(() => {
@@ -1320,9 +1335,20 @@ const SalesOrders = () => {
     try {
       const savedOrder = await saveSalesOrder(payload);
 
-      // Upload file AFTER save (needs Order ID)
+      // Upload file AFTER save (needs Order ID). The order is already committed at
+      // this point, so an upload failure must NOT be reported as a save failure —
+      // doing so left the user retrying and creating a duplicate order.
+      let attachmentError = null;
       if (attachmentFile && savedOrder?.id) {
-        await uploadSalesOrderAttachment(savedOrder.id, attachmentFile);
+        try {
+          await uploadSalesOrderAttachment(savedOrder.id, attachmentFile);
+        } catch (attErr) {
+          console.error("Attachment upload failed", attErr);
+          attachmentError = attErr?.response?.data?.message
+            || attErr?.response?.data
+            || attErr?.message
+            || "Unknown error";
+        }
       }
 
       // Refresh List & Update UI with BACKEND Status
@@ -1351,6 +1377,12 @@ const SalesOrders = () => {
       }
       setPendingPaymentSave(false);
       setAttachmentFile(null);
+
+      if (attachmentError) {
+        setAttachmentName('No file chosen');
+        const reason = typeof attachmentError === 'string' ? attachmentError : 'Unknown error';
+        alert(`Sales Order ${savedOrder.soNumber || ''} was saved, but the attachment could not be uploaded (${reason}). Open the order from the list and attach the file again.`);
+      }
     } catch (e) {
       console.error("Save failed", e);
       const msg = e?.response?.data?.message || e?.response?.data || e?.message || "Please check inputs.";
@@ -1958,14 +1990,29 @@ const SalesOrders = () => {
             <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
               <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
               <div className="relative w-full md:w-auto">
-                <input type="text" placeholder="Search by SO / customer / quotation" className="pl-3 pr-3 py-1.5 text-xs border border-slate-200 rounded-md w-full md:w-64 focus:outline-none focus:border-yellow-400" />
+                <input
+                  type="text"
+                  placeholder="Search by SO / customer / quotation"
+                  className="pl-3 pr-3 py-1.5 text-xs border border-slate-200 rounded-md w-full md:w-64 focus:outline-none focus:border-yellow-400"
+                  value={listSearch}
+                  onChange={(e) => setListSearch(e.target.value)}
+                />
               </div>
               <div className="flex gap-2 w-full md:w-auto">
-                <select className="py-1.5 px-2 text-xs border border-slate-200 rounded-md focus:outline-none bg-white flex-1 md:flex-none">
-                  <option>Status filter</option>
-                  <option>Draft</option>
-                  <option>Confirmed</option>
-                  <option>Partially Paid</option>
+                <select
+                  className="py-1.5 px-2 text-xs border border-slate-200 rounded-md focus:outline-none bg-white flex-1 md:flex-none"
+                  value={listStatusFilter}
+                  onChange={(e) => { setListStatusFilter(e.target.value); setListPage(0); }}
+                >
+                  <option value="">Status filter</option>
+                  <option value="DRAFT">Draft</option>
+                  <option value="CONFIRMED">Confirmed</option>
+                  <option value="PARTIALLY_PAID">Partially Paid</option>
+                  <option value="FULLY_PAID">Fully Paid</option>
+                  <option value="PARTIALLY_DELIVERED">Partially Delivered</option>
+                  <option value="DELIVERED">Delivered</option>
+                  <option value="DISPATCHED">Dispatched</option>
+                  <option value="INVOICED">Invoiced</option>
                 </select>
                 {canExport('sales.order') && (
                   <ExportDropdown

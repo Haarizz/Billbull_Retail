@@ -45,7 +45,7 @@ import billBullLogo from '../../assets/billBullLogo.png';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { formatDisplayDate, toLocalInputDate } from '../../utils/dateUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
@@ -102,7 +102,7 @@ const Payment = () => {
     const [openingInvoices, setOpeningInvoices] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('All Status');
-    const _todayPay = new Date().toISOString().slice(0, 10);
+    const _todayPay = toLocalInputDate();
     const [dateRange, setDateRange] = useState({ fromDate: _todayPay, toDate: _todayPay });
     const [salesSettings, setSalesSettings] = useState(null);
     const paymentAutoNumbering = isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT');
@@ -110,7 +110,7 @@ const Payment = () => {
     // --- FORM STATES ---
     const [paymentId, setPaymentId] = useState(null);
     const [paymentNo, setPaymentNo] = useState('');
-    const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+    const [paymentDate, setPaymentDate] = useState(toLocalInputDate());
     const [paymentType, setPaymentType] = useState('Received'); // Received or Made
     const [paymentMode, setPaymentMode] = useState('Cash');
     const [paymentStatus, setPaymentStatus] = useState('Completed');
@@ -457,7 +457,7 @@ const Payment = () => {
         } else {
             setPaymentNo('');
         }
-        setPaymentDate(new Date().toISOString().split('T')[0]);
+        setPaymentDate(toLocalInputDate());
         setPaymentType('Received');
         setPaymentMode('Cash');
         setPaymentStatus('Completed');
@@ -587,6 +587,7 @@ const Payment = () => {
 
     const handleSave = async () => {
         if (!selectedCustomer) { alert('Please select a customer'); return; }
+        if (!paymentDate) { alert('Receipt Date is required.'); return; }
         const selectedKeys = Object.keys(selectedInvoices).filter(k => selectedInvoices[k]);
         if (selectedKeys.length === 0) { alert('Please select at least one invoice to settle'); return; }
         if (!paymentAutoNumbering && !paymentNo.trim()) {
@@ -628,6 +629,12 @@ const Payment = () => {
                     chequeDate: paymentMode === 'Cheque' ? chequeDate : null,
                     status: status
                 });
+            }
+            // Every selected invoice settled for 0, so the loop saved nothing. Reporting
+            // success here is what made a failed save look like a completed one.
+            if (!lastSavedPayment) {
+                alert('Nothing to save: enter a settlement amount greater than zero.');
+                return;
             }
             if (lastSavedPayment?.paymentNumber) {
                 setPaymentNo(lastSavedPayment.paymentNumber);

@@ -1278,6 +1278,20 @@ public class DeliveryNoteService {
 
         for (DeliveryNoteItemRequest i : req.items) {
 
+            // QA: a Delivery Note dispatches stock out — a negative "To Deliver"
+            // (or FOC) quantity would post a stock movement *into* the warehouse
+            // and corrupt the ledger. Reject it before anything is persisted.
+            if (i.currentQty != null && i.currentQty < 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Delivery quantity cannot be negative for item: "
+                                + (i.itemCode != null ? i.itemCode : "-"));
+            }
+            if (i.foc != null && i.foc < 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "FOC quantity cannot be negative for item: "
+                                + (i.itemCode != null ? i.itemCode : "-"));
+            }
+
             Product product = productRepo.findByCodeAndIsActiveTrue(i.itemCode)
                     .orElseThrow(() -> new RuntimeException("Product not found: " + i.itemCode));
 

@@ -297,8 +297,10 @@ public class SalesOrderService {
                 }
             } catch (Exception ex) {
                 // Log and continue — receipt-voucher GL failure must not roll back the payment save.
+                // Full stack trace: without it the only trace of a lost advance receipt is a
+                // one-line message, and the SO still shows the advance as received.
                 org.slf4j.LoggerFactory.getLogger(getClass())
-                        .error("Failed to auto-create advance receipt for SO {}: {}", saved.getSoNumber(), ex.getMessage());
+                        .error("Failed to auto-create advance receipt for SO {}: {}", saved.getSoNumber(), ex.getMessage(), ex);
             }
         }
 

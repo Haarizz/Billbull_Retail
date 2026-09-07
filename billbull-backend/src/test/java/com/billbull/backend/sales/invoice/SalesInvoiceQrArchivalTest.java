@@ -75,6 +75,12 @@ class SalesInvoiceQrArchivalTest {
                 mock(com.billbull.backend.pos.dayclose.PosDayCloseRepository.class),
                 mock(com.billbull.backend.sales.advance.AdvanceApplicationService.class),
                 mock(com.billbull.backend.sales.invoice.history.SalesInvoiceHistoryService.class),
-                mock(com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService.class));
+                mock(com.billbull.backend.inventory.warehouse.WarehouseSourceResolutionService.class),
+                // Real overlay resolver over an empty overlay table: it passes invoices through
+                // untouched, which is what every test here asserts on.
+                new com.billbull.backend.pos.admin.OverlayResolutionService(
+                        mock(com.billbull.backend.pos.admin.CorrectionOverlayRepository.class),
+                        new com.fasterxml.jackson.databind.ObjectMapper()),
+                mock(jakarta.persistence.EntityManager.class));
     }
 }
