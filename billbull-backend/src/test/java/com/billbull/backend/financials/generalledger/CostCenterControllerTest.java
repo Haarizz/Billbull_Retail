@@ -1,0 +1,50 @@
+package com.billbull.backend.financials.generalledger;
+
+import com.billbull.backend.financials.chartofaccounts.CostCenter;
+import com.billbull.backend.financials.chartofaccounts.CostCenterRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.math.BigDecimal;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+public class CostCenterControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private CostCenterRepository costCenterRepository;
+
+    @Test
+    @WithMockUser(username = "admin", roles = {"ADMIN"})
+    public void testCreateCostCenter() throws Exception {
+        CostCenter cc = new CostCenter();
+        cc.setName("Test Controller CC");
+        cc.setManager("Manager");
+        cc.setBranch("All Branches");
+        cc.setBudget(BigDecimal.ZERO);
+        cc.setStatus("active");
+        cc.setCode(""); // simulate blank code
+
+        mockMvc.perform(post("/api/ledger/cost-centers")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(cc)))
+                .andDo(print())
+                .andExpect(status().isOk());
+    }
+}
