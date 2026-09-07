@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.inventory.batch.BatchMaster;
 import com.billbull.backend.inventory.batch.PurchaseBatchCreationService;
+import com.billbull.backend.purchase.batch.PurchaseBatchLotDraft;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductMediaRepository;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
@@ -71,6 +72,7 @@ public class PurchaseInvoiceService {
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
     private final PurchaseSerialService purchaseSerialService;
+    private final com.billbull.backend.purchase.batch.PurchaseBatchLotService purchaseBatchLotService;
     private final SerialMasterRepository serialMasterRepository;
     private final com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
     private final com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService;
@@ -89,6 +91,7 @@ public class PurchaseInvoiceService {
             ProductPackingRepository packingRepository,
             PurchaseBatchCreationService purchaseBatchCreationService,
             PurchaseSerialService purchaseSerialService,
+            com.billbull.backend.purchase.batch.PurchaseBatchLotService purchaseBatchLotService,
             SerialMasterRepository serialMasterRepository,
             com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService,
             com.billbull.backend.common.tax.PurchaseTaxResolutionService purchaseTaxResolutionService,
@@ -114,6 +117,7 @@ public class PurchaseInvoiceService {
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
         this.purchaseSerialService = purchaseSerialService;
+        this.purchaseBatchLotService = purchaseBatchLotService;
         this.serialMasterRepository = serialMasterRepository;
         this.documentNumberingService = documentNumberingService;
         this.purchaseTaxResolutionService = purchaseTaxResolutionService;
@@ -533,6 +537,9 @@ public class PurchaseInvoiceService {
         }
 
         if (!isAgainstGrn) {
+            // Strict batch/expiry validation runs before any batch identity is minted and before
+            // a single stock movement is written: after this point the identity is in the ledger.
+            validateBatchLotsForPosting(invoice);
             purchaseBatchCreationService.ensureForPurchaseInvoice(invoice);
         }
 
@@ -614,7 +621,7 @@ public class PurchaseInvoiceService {
                             invoice.getBranchCode()));
                 }
                 serialMasterRepository.saveAll(serialMasters);
-            } else if (!isAgainstGrn && product.isBatch()) {
+            } else if (!isAgainstGrn && purchaseBatchLotService.isLotTracked(product)) {
                 List<BatchMaster> batches = purchaseBatchCreationService
                         .findForPurchaseInvoiceLine(invoice.getId(), item.getId());
                 if (batches.size() != baseQty) {
@@ -952,6 +959,7 @@ public class PurchaseInvoiceService {
             item.setRemarks(i.getRemarks());
             item.setInvoice(invoice);
             syncItemSerials(item, i.getSerials(), documentSerials, invoice.getInvoiceNumber());
+            syncItemBatchLots(item, i.getBatchLots(), invoice.getInvoiceNumber());
             invoice.getItems().add(item);
         });
     }
@@ -1077,6 +1085,9 @@ public class PurchaseInvoiceService {
                             d.setDetailedDesc(product.getDetailedDesc());
                         }
                         d.setSerialEnabled(product.isSerial());
+                        d.setExpiryEnabled(product.isExpiryEnabled());
+                        d.setFefoEnabled(product.isFefoEnabled());
+                        d.setMinExpiryDaysForSale(product.getMinExpiryDaysForSale());
                         d.setSku(product.getSku());
                         d.setBrandName(product.getBrand() != null ? product.getBrand().getName() : null);
                         d.setShortDesc(product.getShortDesc());
@@ -1087,7 +1098,10 @@ public class PurchaseInvoiceService {
                 d.setSerials(serials);
                 List<BatchMaster> batches = findBatchesForResponse(invoice, i);
                 d.setBatches(batches.stream().map(this::toBatchDraft).toList());
-                d.setBatchEnabled(!batches.isEmpty());
+                d.setBatchLots(findBatchLotsForResponse(invoice, i));
+                d.setBatchEnabled(!batches.isEmpty()
+                        || !d.getBatchLots().isEmpty()
+                        || Boolean.TRUE.equals(d.getExpiryEnabled()));
                 return d;
             }).toList());
         }
@@ -1115,6 +1129,26 @@ public class PurchaseInvoiceService {
                         .sorted(java.util.Comparator.comparing(
                                 BatchMaster::getUnitIndex,
                                 java.util.Comparator.nullsLast(Integer::compareTo)))
+                        .toList())
+                .orElse(List.of());
+    }
+
+    /**
+     * Lot-level view for the UI. An AGAINST_GRN invoice never captures its own lots — the goods
+     * were already received and identified on the GRN — so it shows the GRN's lots read-only.
+     */
+    private List<PurchaseBatchLotDraft> findBatchLotsForResponse(PurchaseInvoice invoice, PurchaseInvoiceItem item) {
+        List<PurchaseBatchLotDraft> own = toBatchLotDrafts(item);
+        if (!own.isEmpty() || invoice == null || invoice.getGrnId() == null) {
+            return own;
+        }
+        return grnRepo.findById(invoice.getGrnId())
+                .map(grn -> grn.getItems().stream()
+                        .filter(grnItem -> java.util.Objects.equals(grnItem.getProductCode(), item.getItemCode()))
+                        .flatMap(grnItem -> grnItem.getBatchLots().stream())
+                        .map(lot -> purchaseBatchLotService.toDraft(
+                                lot.getId(), lot.getBatchNumber(), lot.getManufacturingDate(),
+                                lot.getExpiryDate(), lot.getQuantity()))
                         .toList())
                 .orElse(List.of());
     }
@@ -1192,6 +1226,84 @@ public class PurchaseInvoiceService {
             entity.setExpiryDate(serial.getExpiryDate());
             item.getSerials().add(entity);
         }
+    }
+
+    /**
+     * Persist the batch/expiry lots captured on a line. Validation here is the save-time (lenient)
+     * pass — a draft may be saved with lots still incomplete; approve() runs the strict pass before
+     * any stock is posted.
+     */
+    private void syncItemBatchLots(
+            PurchaseInvoiceItem item,
+            List<PurchaseBatchLotDraft> requestLots,
+            String invoiceNumber) {
+        item.getBatchLots().clear();
+
+        List<PurchaseBatchLotDraft> normalized = purchaseBatchLotService.normalizeDrafts(requestLots);
+        if (normalized.isEmpty()) {
+            return;
+        }
+
+        Product product = productRepository.findByCodeAndIsActiveTrue(item.getItemCode())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Product not found for code '" + item.getItemCode()
+                                + "'. Cannot record batch/expiry lots for invoice " + invoiceNumber));
+
+        int baseQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty())
+                + resolveBaseQty(product.getId(), item.getFocUnit(), item.getFocQty());
+        purchaseBatchLotService.validateForCapture(
+                product, normalized, baseQty,
+                "purchase invoice " + invoiceNumber + " line " + item.getItemCode());
+
+        for (PurchaseBatchLotDraft lot : normalized) {
+            PurchaseInvoiceItemBatch entity = new PurchaseInvoiceItemBatch();
+            entity.setInvoiceItem(item);
+            entity.setBatchNumber(lot.getBatchNumber());
+            entity.setManufacturingDate(lot.getManufacturingDate());
+            entity.setExpiryDate(lot.getExpiryDate());
+            entity.setQuantity(lot.getQuantity());
+            item.getBatchLots().add(entity);
+        }
+    }
+
+    /**
+     * Post-time gate: every line of a lot-tracked product must carry complete, non-expired lot
+     * information before stock is posted. Uses the same rules as GRN receiving so a product
+     * behaves identically whichever door it enters inventory through.
+     */
+    private void validateBatchLotsForPosting(PurchaseInvoice invoice) {
+        if (invoice.getItems() == null) {
+            return;
+        }
+        LocalDate receiptDate = invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : LocalDate.now();
+        for (PurchaseInvoiceItem item : invoice.getItems()) {
+            Product product = productRepository.findByCodeAndIsActiveTrue(item.getItemCode()).orElse(null);
+            if (product == null || product.isSerial() || !purchaseBatchLotService.isLotTracked(product)) {
+                continue;
+            }
+            int baseQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty())
+                    + resolveBaseQty(product.getId(), item.getFocUnit(), item.getFocQty());
+            purchaseBatchLotService.validateForPosting(
+                    product,
+                    toBatchLotDrafts(item),
+                    baseQty,
+                    receiptDate,
+                    "purchase invoice " + invoice.getInvoiceNumber() + " line " + item.getItemCode());
+        }
+    }
+
+    private List<PurchaseBatchLotDraft> toBatchLotDrafts(PurchaseInvoiceItem item) {
+        if (item == null || item.getBatchLots() == null || item.getBatchLots().isEmpty()) {
+            return List.of();
+        }
+        return item.getBatchLots().stream()
+                .sorted(java.util.Comparator.comparing(
+                        PurchaseInvoiceItemBatch::getId,
+                        java.util.Comparator.nullsLast(Long::compareTo)))
+                .map(lot -> purchaseBatchLotService.toDraft(
+                        lot.getId(), lot.getBatchNumber(), lot.getManufacturingDate(),
+                        lot.getExpiryDate(), lot.getQuantity()))
+                .toList();
     }
 
     private java.util.Map<String, String> buildPrimaryImageMap(List<String> itemCodes) {

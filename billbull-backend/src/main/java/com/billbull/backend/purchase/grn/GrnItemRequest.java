@@ -3,6 +3,7 @@ package com.billbull.backend.purchase.grn;
 import java.math.BigDecimal;
 import java.util.List;
 
+import com.billbull.backend.purchase.batch.PurchaseBatchLotDraft;
 import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
 
 public record GrnItemRequest(
@@ -25,5 +26,6 @@ public record GrnItemRequest(
                 Integer focQty,
                 String focUnit,
                 String remarks,
-                List<PurchaseSerialDraft> serials) {
+                List<PurchaseSerialDraft> serials,
+                List<PurchaseBatchLotDraft> batchLots) {
 }
