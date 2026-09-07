@@ -62,7 +62,7 @@ public class ModulePermissionService {
 
     /** Vertical: can the current user APPROVE in this module? */
     public void requireCanApprove(String module) {
-        if (!hasPermission(module, RolePermission::isCanApprove)) {
+        if (!hasPermission(module, RolePermission::isCanApprove, approvalIsInheritable(module))) {
             deny(module, "approve");
         }
     }
@@ -95,7 +95,9 @@ public class ModulePermissionService {
     public boolean canCreate(String module)  { return hasPermission(module, RolePermission::isCanCreate); }
     public boolean canEdit(String module)    { return hasPermission(module, RolePermission::isCanEdit); }
     public boolean canDelete(String module)  { return hasPermission(module, RolePermission::isCanDelete); }
-    public boolean canApprove(String module) { return hasPermission(module, RolePermission::isCanApprove); }
+    public boolean canApprove(String module) {
+        return hasPermission(module, RolePermission::isCanApprove, approvalIsInheritable(module));
+    }
     public boolean canExport(String module)  { return hasPermission(module, RolePermission::isCanExport); }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -108,11 +110,20 @@ public class ModulePermissionService {
      * Loads all permissions for all roles in a single query.
      */
     private boolean hasPermission(String module, Function<RolePermission, Boolean> flag) {
+        return hasPermission(module, flag, true);
+    }
+
+    /**
+     * @param inheritable whether an absent row may fall back to the top-level parent module.
+     *        Always true except for POS Administration approvals — see {@link
+     *        #approvalIsInheritable(String)}.
+     */
+    private boolean hasPermission(String module, Function<RolePermission, Boolean> flag, boolean inheritable) {
         List<String> roleNames = getCurrentUserRoleNames();
         if (roleNames.isEmpty()) return false;
 
         String target = module.toLowerCase();
-        String parent = target.contains(".") ? target.split("\\.")[0] : null;
+        String parent = inheritable && target.contains(".") ? target.split("\\.")[0] : null;
 
         List<RolePermission> allPerms = rolePermissionRepository.findByRole_NameIn(roleNames);
 
@@ -135,6 +146,20 @@ public class ModulePermissionService {
         }
 
         return false;
+    }
+
+    /**
+     * Whether an approve check on this module may be satisfied by a parent-module grant.
+     *
+     * <p>False for every {@code pos.admin*} module. POS Administration is post-transaction
+     * financial governance, not operational POS: deciding a correction must be granted
+     * explicitly, never inherited from the operational {@code pos} row that every till user
+     * holds (supervisor overrides at the counter set canApprove there). That inheritance is what
+     * let a cashier approve and apply the very correction they had just raised. Viewing and
+     * raising a correction still inherit normally, so a cashier keeps the request form.
+     */
+    static boolean approvalIsInheritable(String module) {
+        return module == null || !module.toLowerCase().startsWith("pos.admin");
     }
 
     /** Extracts role names from the current Spring Security context. */

@@ -109,6 +109,51 @@ class ModulePermissionServiceTest {
         assertTrue(service.canApprove("finance.voucher"));
     }
 
+    /**
+     * POS Administration is financial governance, not operational POS. A cashier holding the
+     * operational {@code pos} module with approve rights (supervisor overrides at the till) must
+     * not inherit approval over corrections — that leak let a cashier approve and apply their own
+     * correction request from the Enterprise Console.
+     */
+    @Test
+    void posAdminNeverInheritsFromTheOperationalPosModule() {
+        authenticateAs("SALES");
+        when(rolePermissionRepository.findByRole_NameIn(anyCollection()))
+                .thenReturn(List.of(
+                        permission("SALES", "pos", true, true),
+                        permission("SALES", "pos.admin", true, false),
+                        permission("SALES", "pos.admin.transaction", true, false)));
+        assertFalse(service.canApprove("pos.admin.approvals"), "cashier must not approve corrections");
+        assertTrue(service.canView("pos.admin.transaction"), "raising a correction stays allowed");
+    }
+
+    /**
+     * The real-world cashier: no pos.admin.* rows at all, just the operational pos module with a
+     * counter-override approve flag. They must keep the correction screens (inherited view) and
+     * still be unable to decide anything.
+     */
+    @Test
+    void cashierWithOnlyOperationalPosKeepsViewButNeverApproves() {
+        authenticateAs("SALES");
+        when(rolePermissionRepository.findByRole_NameIn(anyCollection()))
+                .thenReturn(List.of(permission("SALES", "pos", true, true)));
+        assertTrue(service.canView("pos.admin.transaction"), "the request screen stays reachable");
+        assertFalse(service.canApprove("pos.admin.approvals"), "approve is never inherited");
+        assertFalse(service.canApprove("pos.admin"), "nor on the module root");
+        assertThrows(AccessDeniedException.class, () -> service.requireCanApprove("pos.admin.approvals"));
+    }
+
+    /** A supervisor's explicit approvals row is what grants the decision. */
+    @Test
+    void posAdminApprovalsHonoursAnExplicitGrant() {
+        authenticateAs("SUPERVISOR");
+        when(rolePermissionRepository.findByRole_NameIn(anyCollection()))
+                .thenReturn(List.of(
+                        permission("SUPERVISOR", "pos.admin", true, false),
+                        permission("SUPERVISOR", "pos.admin.approvals", true, true)));
+        assertTrue(service.canApprove("pos.admin.approvals"));
+    }
+
     @Test
     void moduleMatchingIsCaseInsensitive() {
         authenticateAs("ADMIN");

@@ -316,9 +316,10 @@ public class RolePermissionInitializer implements ApplicationRunner {
         // Role mapping: there is no literal Cashier/Finance/Branch Manager role seeded in this
         // system, so the review's hierarchy (§8/§12) is mapped onto the closest existing roles —
         // ADMIN=Enterprise Admin, BRANCH_ADMIN=Branch Manager, ACCOUNTANT=Finance,
-        // SUPERVISOR=Supervisor (request-only, no approve). Cashier-equivalent roles (SALES,
-        // INVENTORY_MANAGER, HR, DELIVERY_PERSON, MANAGER) get no pos.admin.* access — this
-        // module is Enterprise Governance, not operational POS (§2 of the review).
+        // SUPERVISOR=Supervisor (raises AND approves — the on-floor approving authority),
+        // SALES=cashier (raises transaction corrections only, never approves). The remaining
+        // roles (INVENTORY_MANAGER, HR, DELIVERY_PERSON, MANAGER) get no pos.admin.* access —
+        // this module is Enterprise Governance, not operational POS (§2 of the review).
         for (String fullAccessRole : new String[]{"ADMIN", "BRANCH_ADMIN"}) {
             roleRepository.findByName(fullAccessRole).ifPresent(role -> {
                 seedIfAbsent(role, "pos.admin",                      true, false, false, false, false);
@@ -329,10 +330,24 @@ public class RolePermissionInitializer implements ApplicationRunner {
                 seedIfAbsent(role, "pos.admin.audit",                true, false, false, false, false);
             });
         }
+        // Supervisors are the approving authority on the floor: a cashier raises a correction and
+        // a supervisor decides it. Without the approvals row here, a supervisor-raised correction
+        // had nobody on site who could act on it, and the only users who could approve were the
+        // back-office roles below.
         roleRepository.findByName("SUPERVISOR").ifPresent(role -> {
             seedIfAbsent(role, "pos.admin",             true, false, false, false, false);
             seedIfAbsent(role, "pos.admin.session",     true, true,  false, false, false);
             seedIfAbsent(role, "pos.admin.transaction", true, true,  false, false, false);
+            seedIfAbsent(role, "pos.admin.approvals",   true, false, false, true,  false);
+            seedIfAbsent(role, "pos.admin.audit",       true, false, false, false, false);
+        });
+        // Till operators RAISE corrections and never decide them. The transaction row grants the
+        // request form; the all-false approvals row is the explicit deny that makes "cashier can
+        // never approve" true of the data as well as of ModulePermissionService's inheritance rule.
+        roleRepository.findByName("SALES").ifPresent(role -> {
+            seedIfAbsent(role, "pos.admin",             true,  false, false, false, false);
+            seedIfAbsent(role, "pos.admin.transaction", true,  true,  false, false, false);
+            seedIfAbsent(role, "pos.admin.approvals",   false, false, false, false, false);
         });
         roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
             seedIfAbsent(role, "pos.admin",                       true, false, false, false, false);
