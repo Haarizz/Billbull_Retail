@@ -305,6 +305,45 @@ class FinancialReportServiceTest {
     }
 
     /**
+     * The VAT report classifies ledger lines by account code, and the posting engine
+     * decides which codes VAT is actually posted to. If the two ever disagree, no
+     * line matches a VAT role and the dashboard reports zero across the board with
+     * no error anywhere — the failure mode this report has already had once. This
+     * pins them together so a renumbering breaks the build instead of the return.
+     */
+    @Test
+    void vatAccountCodesTrackThePostingEngine() {
+        assertEquals(
+                com.billbull.backend.financials.generalledger.postingengine.PostingEngineService.ACC_VAT_OUTPUT,
+                "2100");
+        assertEquals(
+                com.billbull.backend.financials.generalledger.postingengine.PostingEngineService.ACC_VAT_INPUT,
+                "1310");
+        assertEquals(
+                com.billbull.backend.financials.generalledger.postingengine.PostingEngineService.ACC_DEFERRED_REVENUE,
+                "2051");
+
+        // And the dashboard must classify exactly those codes.
+        when(accountRepository.findAll()).thenReturn(List.of(
+                coaAccount("2100", "VAT Output Tax", "Liabilities", "TAX_LIABILITIES"),
+                coaAccount("1310", "VAT Input Tax", "Assets", "TAX_ASSETS")));
+
+        LocalDate start = LocalDate.of(2026, 8, 1);
+        LocalDate end = LocalDate.of(2026, 8, 29);
+        when(ledgerEntryRepository.findByTransactionDateBetweenOrderByTransactionDateAsc(start, end))
+                .thenReturn(List.of(
+                        ledgerEntry("INV-9", "2100", "VAT Output", "0.00", "2529.00"),
+                        ledgerEntry("CN-9", "2100", "VAT Output", "310.94", "0.00"),
+                        ledgerEntry("PI-9", "1310", "VAT Input", "281.30", "0.00")));
+
+        TaxDashboardDTO dto = service.generateTaxDashboard(start, end, null);
+
+        assertEquals(0, new BigDecimal("2218.06").compareTo(dto.getOutputTax()));
+        assertEquals(0, new BigDecimal("281.30").compareTo(dto.getInputTax()));
+        assertEquals(0, new BigDecimal("1936.76").compareTo(dto.getNetTaxPayable()));
+    }
+
+    /**
      * The registers only list vouchers that actually moved VAT, and each carries the
      * voucher date plus the counterparty taken from the AR/AP line name.
      */

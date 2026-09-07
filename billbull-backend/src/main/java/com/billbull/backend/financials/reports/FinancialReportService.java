@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.billbull.backend.financials.expense.ExpenseRepository;
 import com.billbull.backend.financials.generalledger.LedgerEntry;
+import com.billbull.backend.financials.generalledger.postingengine.PostingEngineService;
 import com.billbull.backend.financials.generalledger.LedgerEntryRepository;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
@@ -580,9 +581,13 @@ public class FinancialReportService {
 
     // ==================== TAX DASHBOARD ====================
 
-    private static final String ACC_VAT_OUTPUT = "2100";
-    private static final String ACC_VAT_INPUT = "1310";
-    private static final String ACC_DEFERRED_REVENUE = "2051";
+    // Bound to the posting engine's own constants rather than re-typed. These must
+    // track whatever the engine actually posts VAT to: if the two drift, every VAT
+    // line falls outside the role map and the whole return silently reports zero,
+    // which is exactly how this report has failed before.
+    private static final String ACC_VAT_OUTPUT = PostingEngineService.ACC_VAT_OUTPUT;
+    private static final String ACC_VAT_INPUT = PostingEngineService.ACC_VAT_INPUT;
+    private static final String ACC_DEFERRED_REVENUE = PostingEngineService.ACC_DEFERRED_REVENUE;
 
     private static final String ROLE_OUTPUT_TAX = "OUTPUT_TAX";
     private static final String ROLE_INPUT_TAX = "INPUT_TAX";
@@ -1033,7 +1038,7 @@ public class FinancialReportService {
 
     /**
      * Generates a VAT Return summary for the given period by summing debit/credit
-     * movements on the VAT Output (2102) and VAT Input (1130) accounts from ledger entries.
+     * movements on the VAT Output (2100) and VAT Input (1310) accounts from ledger entries.
      *
      * PDF §07 / RPTGAP-008.
      */
@@ -1044,17 +1049,17 @@ public class FinancialReportService {
 
         List<LedgerEntry> entries = fetchEntries(branchId, startDate, endDate);
 
-        BigDecimal outputTax  = BigDecimal.ZERO; // VAT charged on sales (2102 Cr movements)
-        BigDecimal inputTax   = BigDecimal.ZERO; // VAT paid on purchases (1130 Dr movements)
-        BigDecimal outputAdj  = BigDecimal.ZERO; // Dr movements on 2102 (credit notes, discounts)
-        BigDecimal inputAdj   = BigDecimal.ZERO; // Cr movements on 1130 (purchase returns)
+        BigDecimal outputTax  = BigDecimal.ZERO; // VAT charged on sales (2100 Cr movements)
+        BigDecimal inputTax   = BigDecimal.ZERO; // VAT paid on purchases (1310 Dr movements)
+        BigDecimal outputAdj  = BigDecimal.ZERO; // Dr movements on 2100 (credit notes, discounts)
+        BigDecimal inputAdj   = BigDecimal.ZERO; // Cr movements on 1310 (purchase returns)
 
         for (LedgerEntry e : entries) {
             String code = e.getAccountCode();
-            if ("2100".equals(code)) {
+            if (ACC_VAT_OUTPUT.equals(code)) {
                 outputTax = outputTax.add(safe(e.getCreditAmount()));
                 outputAdj = outputAdj.add(safe(e.getDebitAmount()));
-            } else if ("1310".equals(code)) {
+            } else if (ACC_VAT_INPUT.equals(code)) {
                 inputTax = inputTax.add(safe(e.getDebitAmount()));
                 inputAdj = inputAdj.add(safe(e.getCreditAmount()));
             }

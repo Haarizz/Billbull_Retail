@@ -27,6 +27,14 @@ public interface AccountingPeriodRepository extends JpaRepository<AccountingPeri
     @Query("SELECT p FROM AccountingPeriod p WHERE :date BETWEEN p.startDate AND p.endDate ORDER BY p.startDate DESC")
     List<AccountingPeriod> findCoveringPeriods(@Param("date") LocalDate date);
 
+    /**
+     * Existing periods whose range intersects [start, end]. Two ranges overlap unless one
+     * ends before the other begins, so the test is start <= p.endDate AND end >= p.startDate.
+     */
+    @Query("SELECT p FROM AccountingPeriod p WHERE p.startDate <= :end AND p.endDate >= :start "
+            + "ORDER BY p.startDate ASC")
+    List<AccountingPeriod> findOverlapping(@Param("start") LocalDate start, @Param("end") LocalDate end);
+
     List<AccountingPeriod> findByFiscalYearIdAndStatus(Long fiscalYearId, String status);
 
     List<AccountingPeriod> findByFiscalYearIdIsNull();
