@@ -135,7 +135,13 @@ public class PaymentVoucherController {
     public ResponseEntity<?> updateStatus(
             @PathVariable Long id,
             @RequestParam String status) {
-        modulePermissionService.requireCanEdit(MODULE);
+        // Approve, not edit. Every transition this endpoint actually serves is an approval
+        // decision: POSTED applies the payment to the invoice and posts the journal, REJECTED
+        // declines it. Gating on canEdit inverted the seeded role model — MANAGER holds
+        // approve on purchases but not edit, so the designated approver was refused, while
+        // INVENTORY_MANAGER holds edit but not approve and could post payments to the ledger.
+        // Matches PurchaseInvoiceController.approve, which already gates on purchases.invoice.
+        modulePermissionService.requireCanApprove(MODULE);
         try {
             PaymentStatus newStatus = PaymentStatus.valueOf(status.toUpperCase());
             PaymentVoucher updated = service.updateStatus(id, newStatus);

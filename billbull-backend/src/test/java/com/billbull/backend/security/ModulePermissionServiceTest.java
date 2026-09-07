@@ -183,6 +183,37 @@ class ModulePermissionServiceTest {
         assertDoesNotThrow(() -> service.requireCanView("finance"));
     }
 
+    /**
+     * The seeded MANAGER row is purchases view+approve, edit=false. Posting or rejecting a
+     * payment voucher must therefore be reachable for them: gating that endpoint on canEdit
+     * refused the very role the role model designates as the purchase approver.
+     */
+    @Test
+    void purchasePaymentApprovalFollowsTheSeededManagerRow() {
+        authenticateAs("MANAGER");
+        when(rolePermissionRepository.findByRole_NameIn(anyCollection()))
+                .thenReturn(List.of(permission("MANAGER", "purchases", true, false, true)));
+        assertTrue(service.canApprove("purchases.payment"), "the seeded approver must approve");
+        assertDoesNotThrow(() -> service.requireCanApprove("purchases.payment"));
+        assertFalse(service.canEdit("purchases.payment"), "and still holds no edit right");
+    }
+
+    /**
+     * The seeded INVENTORY_MANAGER row is purchases view+create+edit, approve=false. They record
+     * purchases but are not an approving authority, so they must not be able to post a payment
+     * voucher to the ledger — which canEdit gating allowed.
+     */
+    @Test
+    void purchasePaymentApprovalIsDeniedToEditOnlyRoles() {
+        authenticateAs("INVENTORY_MANAGER");
+        when(rolePermissionRepository.findByRole_NameIn(anyCollection()))
+                .thenReturn(List.of(permission("INVENTORY_MANAGER", "purchases", true, true, false)));
+        assertTrue(service.canEdit("purchases.payment"), "editing a voucher stays allowed");
+        assertFalse(service.canApprove("purchases.payment"), "but deciding it does not");
+        assertThrows(AccessDeniedException.class,
+                () -> service.requireCanApprove("purchases.payment"));
+    }
+
     // ── Fixtures ────────────────────────────────────────────────────────────
 
     private void authenticateAs(String... roles) {
@@ -195,12 +226,18 @@ class ModulePermissionServiceTest {
     }
 
     private RolePermission permission(String roleName, String module, boolean view, boolean approve) {
+        return permission(roleName, module, view, false, approve);
+    }
+
+    private RolePermission permission(
+            String roleName, String module, boolean view, boolean edit, boolean approve) {
         Role role = new Role();
         role.setName(roleName);
         RolePermission rp = new RolePermission();
         rp.setRole(role);
         rp.setModule(module);
         rp.setCanView(view);
+        rp.setCanEdit(edit);
         rp.setCanApprove(approve);
         return rp;
     }
