@@ -63,6 +63,13 @@ const Units = () => {
       return;
     }
 
+    // A conversion rate is a multiplier, so zero/negative is never valid. Backend enforces the
+    // same rule; this just saves the round-trip.
+    if (formData.conversionRate !== "" && !(Number(formData.conversionRate) > 0)) {
+      alert("Conversion Rate must be greater than 0");
+      return;
+    }
+
     const payload = {
       name: formData.name,
       symbol: formData.symbol.toUpperCase(),
@@ -395,6 +402,7 @@ const Units = () => {
                     <input
                       type="number"
                       step="0.0001"
+                      min="0"
                       name="conversionRate"
                       value={formData.conversionRate}
                       onChange={handleInputChange}

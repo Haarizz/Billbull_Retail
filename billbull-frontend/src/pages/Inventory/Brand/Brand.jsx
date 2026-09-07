@@ -25,6 +25,10 @@ import {
   withFallbackOption
 } from "../../../utils/countryCurrencyOptions";
 
+const LOGO_EXTENSIONS = [".jpg", ".jpeg", ".png", ".svg"];
+const LOGO_MIME_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/svg+xml"];
+const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
 const EMPTY_BRAND_VALUE = "—";
 const PLACEHOLDER_BRAND_VALUES = new Set([EMPTY_BRAND_VALUE, "â€”", "Ã¢â‚¬â€"]);
 const isPlaceholderBrandValue = (value) => PLACEHOLDER_BRAND_VALUES.has(value);
@@ -39,6 +43,7 @@ const Brand = () => {
   const [brands, setBrands] = useState([]);
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
+  const [logoError, setLogoError] = useState("");
 
   // --- FILTER STATE ---
   const [statusFilter, setStatusFilter] = useState("All Status");
@@ -211,14 +216,28 @@ const Brand = () => {
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const previewUrl = URL.createObjectURL(file);
-      setFormData(prev => ({
-        ...prev,
-        logo: file,
-        logoPreview: previewUrl
-      }));
+    e.target.value = ""; // let the same file be re-picked after a rejection
+    if (!file) return;
+
+    // `accept` is only a filter hint — the picker's "All files" option gets past it, so the
+    // format/size rules the guidelines promise are enforced here (and again in the backend).
+    const extension = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
+    if (!LOGO_EXTENSIONS.includes(extension) || (file.type && !LOGO_MIME_TYPES.includes(file.type))) {
+      setLogoError("Unsupported file format. Upload a JPG, PNG or SVG image.");
+      return;
     }
+    if (file.size > LOGO_MAX_BYTES) {
+      setLogoError("File is too large. The maximum logo size is 2MB.");
+      return;
+    }
+
+    setLogoError("");
+    const previewUrl = URL.createObjectURL(file);
+    setFormData(prev => ({
+      ...prev,
+      logo: file,
+      logoPreview: previewUrl
+    }));
   };
 
   const handleTagToggle = (tag) => {
@@ -232,12 +251,14 @@ const Brand = () => {
 
   const handleAddClick = () => {
     setEditingId(null);
+    setLogoError("");
     setFormData({ ...initialFormState, country: normalizeCountryValue(initialFormState.country) });
     setIsModalOpen(true);
   };
 
   const handleEditClick = (brand) => {
     setEditingId(brand.id);
+    setLogoError("");
     setFormData({
       name: brand.name,
       code: brand.code,
@@ -714,7 +735,7 @@ const Brand = () => {
                     type="file"
                     ref={fileInputRef}
                     className="hidden"
-                    accept="image/*"
+                    accept=".jpg,.jpeg,.png,.svg,image/jpeg,image/png,image/svg+xml"
                     onChange={handleFileChange}
                   />
                   <div
@@ -737,6 +758,9 @@ const Brand = () => {
                     <p>Square format recommended (1:1 ratio).</p>
                     <p>Maximum file size: 2MB.</p>
                     <p>Supported formats: JPG, PNG, SVG.</p>
+                    {logoError && (
+                      <p className="font-medium text-red-600">{logoError}</p>
+                    )}
                   </div>
                 </div>
               </div>
