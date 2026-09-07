@@ -695,8 +695,11 @@ function applyLiveReportData(reportId: ReportId, data: any) {
       break;
     case "price_audit":
       mockPriceAudit = rows.map(row => {
-        const oldPrice = n(row.oldPrice ?? row.retailPrice ?? row.newPrice);
-        const newPrice = n(row.newPrice ?? row.retailPrice);
+        // A row without an old price is a level being priced for the first time — there is no
+        // percentage to compute, so it is shown as a dash rather than a misleading 0.0%.
+        const hasOldPrice = row.oldPrice !== null && row.oldPrice !== undefined;
+        const oldPrice = n(row.oldPrice);
+        const newPrice = n(row.newPrice);
         return {
           date: dateOnly(row.date ?? row.updatedAt, "-"),
           item: asText(row.item, "N/A"),
@@ -704,7 +707,9 @@ function applyLiveReportData(reportId: ReportId, data: any) {
           priceLevel: asText(row.priceLevel, "Retail"),
           oldPrice,
           newPrice,
-          pct: asText(row.pct, percentChange(oldPrice, newPrice)),
+          // Always formatted here: the backend sends pct as a bare number, which would lose the
+          // sign prefix and "%" the up/down colouring keys off.
+          pct: hasOldPrice && oldPrice ? percentChange(oldPrice, newPrice) : "—",
           changedBy: asText(row.changedBy ?? row.updatedBy, "System"),
           approved: asText(row.approved, "Auto")
         };
