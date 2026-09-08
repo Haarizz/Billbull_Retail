@@ -50,8 +50,18 @@ export const getBranchTaxSummary = async (branchId) => {
 
 // ================= FILINGS =================
 
-export const getTaxFilings = async () => {
-    const res = await api.get("/api/financials/tax/filings");
+/**
+ * Tax filings for the dashboard. Each row carries both the declared `amount`
+ * and the live ledger position for its period (`ledgerOutputTax`,
+ * `ledgerInputTax`, `ledgerAmount`) so an unfiled return shows the VAT the GL
+ * actually holds instead of the seeded 0.00. Pass the active branch id to scope
+ * those ledger figures the same way the Financial Reports screen does; omit it
+ * for "All Branches".
+ */
+export const getTaxFilings = async (branchId) => {
+    const params = {};
+    if (branchId && branchId !== "All") params.branchId = branchId;
+    const res = await api.get("/api/financials/tax/filings", { params });
     return res.data;
 };
 

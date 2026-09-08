@@ -22,6 +22,17 @@ public class TaxFilingDTO {
     private String attachmentPath;
     private String attachmentName;
 
+    // --- Live ledger figures for the filing's period (see TaxService.getAllFilings).
+    // `amount` stays the recorded/declared figure; these are what the GL actually
+    // holds for the same period, so an untouched filing no longer reads as 0.00
+    // while the VAT reports show activity. Null for non-VAT tax types or when the
+    // period string cannot be resolved to a date range.
+    private String periodStart;
+    private String periodEnd;
+    private BigDecimal ledgerOutputTax;
+    private BigDecimal ledgerInputTax;
+    private BigDecimal ledgerAmount;
+
     public static TaxFilingDTO fromEntity(TaxFiling filing) {
         TaxFilingDTO dto = new TaxFilingDTO();
         dto.setId(filing.getId());
