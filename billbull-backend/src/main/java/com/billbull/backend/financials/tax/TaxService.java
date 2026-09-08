@@ -16,6 +16,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
@@ -30,6 +32,8 @@ import com.billbull.backend.financials.reports.FinancialReportService;
 
 @Service
 public class TaxService {
+
+    private static final Logger log = LoggerFactory.getLogger(TaxService.class);
 
     private static final Set<String> ALLOWED_FREQUENCIES = Set.of("Monthly", "Quarterly", "Annually");
     private static final Set<String> ALLOWED_CONFIG_STATUSES = Set.of("Active", "Inactive");
@@ -256,7 +260,7 @@ public class TaxService {
         } catch (RuntimeException ex) {
             // A ledger hiccup must never take the whole Tax Dashboard down; the
             // declared amount still renders.
-            System.err.println("Failed to compute ledger VAT for filing " + dto.getId() + ": " + ex.getMessage());
+            log.warn("[Tax] Failed to compute ledger VAT for filing {}: {}", dto.getId(), ex.getMessage(), ex);
         }
     }
 
