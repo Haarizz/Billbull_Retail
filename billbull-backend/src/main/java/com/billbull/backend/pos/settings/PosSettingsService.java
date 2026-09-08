@@ -5,6 +5,7 @@ import com.billbull.backend.pos.businessdate.BusinessDayPhase;
 import com.billbull.backend.pos.businessdate.BusinessDaySettings;
 import com.billbull.backend.pos.businessdate.PosOperatingHoursCalculator;
 import com.billbull.backend.pos.session.PosSession;
+import com.billbull.backend.pos.terminal.PosTerminalLimitPolicy;
 import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.sales.voucher.CreditVoucherExpiryResolver;
 import com.billbull.backend.security.AuditLogService;
@@ -34,12 +35,14 @@ public class PosSettingsService {
     private final PosSessionService posSessionService;
     private final PosCredentialVerificationService credentialVerificationService;
     private final BusinessDayClock businessDayClock;
+    private final PosTerminalLimitPolicy terminalLimitPolicy;
 
     public PosSettingsService(PosSettingsRepository repo, BranchAccessService branchAccessService,
                               PasswordEncoder passwordEncoder, UserRepository userRepository,
                               AuditLogService auditLogService, PosSessionService posSessionService,
                               PosCredentialVerificationService credentialVerificationService,
-                              BusinessDayClock businessDayClock) {
+                              BusinessDayClock businessDayClock,
+                              PosTerminalLimitPolicy terminalLimitPolicy) {
         this.repo = repo;
         this.branchAccessService = branchAccessService;
         this.passwordEncoder = passwordEncoder;
@@ -48,6 +51,7 @@ public class PosSettingsService {
         this.posSessionService = posSessionService;
         this.credentialVerificationService = credentialVerificationService;
         this.businessDayClock = businessDayClock;
+        this.terminalLimitPolicy = terminalLimitPolicy;
     }
 
     // ---- Credit voucher expiry policy (§9–§17) ---------------------------------------
@@ -111,7 +115,7 @@ public class PosSettingsService {
     @Transactional(readOnly = true)
     public PosSettings getForCurrentBranch() {
         Long branchId = branchAccessService.getActiveBranchId();
-        if (branchId == null) return defaultSettings();
+        if (branchId == null) return withTerminalLimitOverride(defaultSettings());
         return getForBranch(branchId);
     }
 
@@ -122,7 +126,17 @@ public class PosSettingsService {
             s.setBranchId(branchId);
             return s;
         });
-        return withBusinessDayScheduleLock(settings);
+        return withBusinessDayScheduleLock(withTerminalLimitOverride(settings));
+    }
+
+    /** Shows the console the cap the backend will actually enforce when this tenant declares
+     *  {@code pos.terminal.max-per-branch-override}, so the "N / max slots used" meter can never
+     *  disagree with {@code PosTerminalService}. Read-only: the transaction is
+     *  {@code readOnly = true} (flush disabled), so this never writes the override into the row. */
+    private PosSettings withTerminalLimitOverride(PosSettings settings) {
+        Integer override = terminalLimitPolicy.getOverride();
+        if (override != null) settings.setMaxTerminalsPerBranch(override);
+        return settings;
     }
 
     /** Stamps the read-only schedule-lock projection onto a settings view. Uses the same
@@ -422,7 +436,13 @@ public class PosSettingsService {
                                         existing.getCreditVoucherExpiryMonths(),
                                         existing.getCreditVoucherExpiryDate()));
                     }
-                    existing.setMaxTerminalsPerBranch(settings.getMaxTerminalsPerBranch());
+                    // With a tenant-wide override in force the console renders (and posts back)
+                    // the override value, not the branch's own cap — writing it through would
+                    // silently rewrite every branch's stored row. Enforcement uses the override
+                    // regardless, so the stored value is simply left as-is.
+                    if (terminalLimitPolicy.getOverride() == null) {
+                        existing.setMaxTerminalsPerBranch(settings.getMaxTerminalsPerBranch());
+                    }
                     existing.setRequireSupervisorForVoid(settings.getRequireSupervisorForVoid());
                     existing.setRequireSupervisorForDayClose(settings.getRequireSupervisorForDayClose());
                     existing.setRequireCashMovementCategory(settings.getRequireCashMovementCategory());
