@@ -463,6 +463,7 @@ const Quotations = () => {
 
     // --- QUOTATION MANAGEMENT STATES ---
     const [quotationsList, setQuotationsList] = useState([]);
+    const [customersLoaded, setCustomersLoaded] = useState(false);
     // Pagination state (server-driven via /api/sales/quotations/page)
     const [listPage, setListPage] = useState(0);
     const [listPageMeta, setListPageMeta] = useState({ page: 0, size: 30, totalElements: 0, totalPages: 0 });
@@ -471,6 +472,13 @@ const Quotations = () => {
     const [isStatsLoading, setIsStatsLoading] = useState(false);
 
     const [editingId, setEditingId] = useState(null);
+    // Identity of the document currently loaded in the editor. The list is
+    // server-paginated/filtered, so the open quotation can drop out of
+    // `quotationsList` (page change, status filter, a revision flipping it back
+    // to Draft). Without these, getQuotationNo() would fall back to the *next*
+    // number and the save would look like a brand-new quotation.
+    const [editingQtnNo, setEditingQtnNo] = useState('');
+    const [editingRevisions, setEditingRevisions] = useState([]);
     const [nextQtnNo, setNextQtnNo] = useState("QTN-NEW");
     const [sourceInquiry, setSourceInquiry] = useState(null);
 
@@ -854,8 +862,17 @@ const Quotations = () => {
     // ✅ HANDLE INCOMING INQUIRY FOR CONVERSION
     const location = useLocation();
 
+    // Guards the one-shot conversion below. `window.history.replaceState` does
+    // NOT clear react-router's in-memory location.state, so without this the
+    // effect re-fired on every refreshData() (which hands setCustomersList a new
+    // array), wiping editingId and reloading the inquiry payload — the next save
+    // then created a SECOND quotation instead of updating the open one.
+    const consumedInquiryRef = useRef(null);
+
     useEffect(() => {
-        if (location.state?.inquiry) {
+        if (location.state?.inquiry && !customersLoaded) return;
+        if (location.state?.inquiry && consumedInquiryRef.current !== location.state) {
+            consumedInquiryRef.current = location.state;
             const inquiry = location.state.inquiry;
             // Enriched items (with prices, codes, units) pre-built by ConvertToQuotationModal
             const enrichedItems = location.state.items;
@@ -942,10 +959,12 @@ const Quotations = () => {
                 setItems(mappedItems);
             }
 
-            // Clear state so it doesn't re-trigger on internal nav
-            window.history.replaceState({}, document.title);
+            // Clear router state (not just the browser history entry) so a
+            // reload or an internal nav doesn't replay the conversion.
+            navigate(location.pathname, { replace: true, state: null });
         }
-    }, [location.state, customersList]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [location.state, customersList, customersLoaded]);
 
 
     // ✅ FETCH REAL DATA ON MOUNT
@@ -1012,6 +1031,7 @@ const Quotations = () => {
             }
 
             setCustomersList(validCustomers);
+            setCustomersLoaded(true);
 
             // List uses paginated endpoint; see fetchQuotationsList + effect below.
             await fetchQuotationsList();
@@ -1032,6 +1052,9 @@ const Quotations = () => {
 
         } catch (error) {
             console.error("Error loading data:", error);
+            // Unblock the inquiry-conversion effect even if the customer master
+            // failed to load — it resolves against whatever list we have.
+            setCustomersLoaded(true);
         }
     };
 
@@ -1608,6 +1631,7 @@ const Quotations = () => {
             const savedQtn = await saveQuotation(payload);
 
             setEditingId(savedQtn.id);
+            setEditingQtnNo(savedQtn.qtnNo || getQuotationNo());
             setNextQtnNo(savedQtn.qtnNo || getQuotationNo());
             setStatus('Draft');
 
@@ -1697,6 +1721,7 @@ const Quotations = () => {
 
             // List will refresh via fetchQuotationsList when activeTab switches to 'list'.
             setEditingId(savedQtn.id);
+            setEditingQtnNo(savedQtn.qtnNo || getQuotationNo());
             setNextQtnNo(savedQtn.qtnNo || getQuotationNo());
             setStatus('Pending Approval');
             setEditorMode('edit');
@@ -1798,6 +1823,11 @@ const Quotations = () => {
                 const mapped = mapBackendToFrontend(currentQtn);
                 setStatus(mapped.status);
                 setEditorMode(canEditQuotation(mapped.status) ? 'edit' : 'view');
+                // A revision flips the quotation back to Draft, which can drop it
+                // out of a status-filtered list — keep our own copy of its number
+                // and revision history so the next save still targets this row.
+                setEditingQtnNo(mapped.qtnNo || '');
+                setEditingRevisions(mapped.revisions || []);
             }
 
             setRevisionNote('');
@@ -2016,6 +2046,8 @@ const Quotations = () => {
     const handleEditQuotation = (qtn, mode = 'edit') => {
         const allowEdit = mode === 'edit' && canEditQuotation(qtn.status);
         setEditingId(qtn.id);
+        setEditingQtnNo(qtn.qtnNo || '');
+        setEditingRevisions(qtn.revisions || []);
         setCustomer(qtn.customer);
         const matchedCustomer = resolveCustomer({
             customerCode: qtn.customerCode,
@@ -2513,6 +2545,8 @@ const Quotations = () => {
 
     const handleCreateNew = async () => {
         setEditingId(null);
+        setEditingQtnNo('');
+        setEditingRevisions([]);
         setEditorMode('edit');
         setQuotationBranch(createBranchSnapshot());
         setCustomer('');
@@ -2574,13 +2608,15 @@ const Quotations = () => {
     const getQuotationNo = () => {
         if (editingId) {
             const qtn = quotationsList.find(q => q.id === editingId);
-            return qtn ? qtn.qtnNo : nextQtnNo;
+            // Fall back to the number captured when the document was loaded —
+            // never to nextQtnNo, which would renumber the open quotation.
+            return qtn?.qtnNo || editingQtnNo || nextQtnNo;
         }
         return nextQtnNo;
     };
 
     const currentRevisions = editingId
-        ? (quotationsList.find(q => q.id === editingId)?.revisions || [])
+        ? (quotationsList.find(q => q.id === editingId)?.revisions || editingRevisions || [])
         : [];
 
     // =====================================================
