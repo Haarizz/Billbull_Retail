@@ -783,7 +783,11 @@ const Quotations = () => {
             notesToCustomer: data.notesToCustomer,
             internalNotes: data.internalNotes,
             attachments: data.attachments || [],
-            revisions: data.revisions ? data.revisions.map(r => ({
+            // Newest revision first (backend orders them too — this keeps the
+            // tree stable even for payloads that arrive unordered).
+            revisions: data.revisions ? [...data.revisions]
+                .sort((a, b) => (b.revisionNumber || 0) - (a.revisionNumber || 0))
+                .map(r => ({
                 revId: r.id,
                 revNumber: r.revisionNumber,
                 qtnNoDisplay: r.qtnNoDisplay,

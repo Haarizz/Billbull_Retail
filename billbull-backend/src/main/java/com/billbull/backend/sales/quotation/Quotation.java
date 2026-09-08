@@ -99,8 +99,12 @@ public class Quotation  implements com.billbull.backend.common.ownership.OwnedEn
     @OneToMany(mappedBy = "quotation", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<QuotationAttachment> attachments = new ArrayList<>();
 
+    /** Newest revision first — the list view renders them as a tree under the
+     *  current (latest) version, so the order must be deterministic across
+     *  reloads rather than whatever the DB returns. */
     @JsonManagedReference
     @OneToMany(mappedBy = "quotation", cascade = CascadeType.ALL)
+    @OrderBy("revisionNumber DESC")
     private List<QuotationRevision> revisions = new ArrayList<>();
 
     public Quotation() {}
