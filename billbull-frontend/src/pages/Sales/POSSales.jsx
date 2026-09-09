@@ -2047,12 +2047,14 @@ export default function POSSales() {
 
   useEffect(() => { currentInvoiceRef.current = currentInvoice; }, [currentInvoice]);
 
-  // Lazily load configured bank accounts the first time the cashier opens checkout —
-  // the Online allocation modal needs them to offer a receiving account. excludeCash drops
-  // Cash in Hand / Petty Cash: money arriving by bank transfer must not land on a cash
-  // account, or the session's drawer count expects notes that were never taken.
+  // Lazily load configured bank accounts the first time the cashier opens any flow that
+  // allocates payments — checkout, layaway deposit, or delivery settlement all render
+  // PaymentAllocationPanel, and its Online modal needs them to offer a receiving account.
+  // excludeCash drops Cash in Hand / Petty Cash: money arriving by bank transfer must not
+  // land on a cash account, or the session's drawer count expects notes that were never taken.
+  const needsBankAccounts = showPaymentDialog || showSaveLayaway || showDeliverySettleModal;
   useEffect(() => {
-    if (!showPaymentDialog) return;
+    if (!needsBankAccounts) return;
     if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;
     let cancelled = false;
     setCheckoutOnlineBankAccountsLoading(true);
@@ -2062,7 +2064,7 @@ export default function POSSales() {
       .finally(() => { if (!cancelled) setCheckoutOnlineBankAccountsLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPaymentDialog]);
+  }, [needsBankAccounts]);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300);
