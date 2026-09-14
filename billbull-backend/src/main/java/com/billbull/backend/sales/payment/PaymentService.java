@@ -205,6 +205,14 @@ public class PaymentService {
      */
     @Transactional
     public Payment savePayment(Payment payment, Long declaredPosSessionId) {
+        // A payment with no date is not a harmless blank field: the row saves, but every
+        // date-filtered list and both getPaymentStats() totals skip it (they null-check
+        // paymentDate), while upsertReceiptVoucher below still dates the voucher today and
+        // posts it to the GL. The result is an invisible tender row behind a real GL posting.
+        if (payment.getPaymentDate() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt Date is required.");
+        }
+
         Payment existingPayment = null;
         if (payment.getId() != null) {
             existingPayment = paymentRepository.findById(payment.getId()).orElse(null);

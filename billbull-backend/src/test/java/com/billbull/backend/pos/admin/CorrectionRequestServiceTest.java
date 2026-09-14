@@ -105,6 +105,49 @@ class CorrectionRequestServiceTest {
         verify(correctionAuditEntryRepository).save(any(CorrectionAuditEntry.class));
     }
 
+    /** A lone supervisor is the approving authority, so the maker-checker split must yield to an
+     *  explicit self-approval grant — the caller passes its own canApprove result. */
+    @Test
+    void testApprove_SupervisorMayApproveOwnRequestWhenSelfApprovalAllowed() {
+        mockUser("supervisor1");
+        CorrectionRequest request = new CorrectionRequest();
+        request.setStatus(CorrectionRequestStatus.PENDING_APPROVAL);
+        request.setRequestedBy("supervisor1");
+        request.setRequestNumber("REQ-002");
+        request.setTargetType(CorrectionTargetType.RECEIPT_VOUCHER);
+        request.setTargetId(212L);
+
+        when(repo.findById(2L)).thenReturn(Optional.of(request));
+        when(repo.save(any(CorrectionRequest.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CorrectionRequestResponse response = service.approve(2L, "Self-approved by supervisor", true);
+
+        assertEquals(CorrectionRequestStatus.APPROVED, response.getStatus());
+        // Both stamps name the same actor, so the audit trail shows the approval as self-made.
+        assertEquals("supervisor1", request.getRequestedBy());
+        assertEquals("supervisor1", request.getApprovedBy());
+    }
+
+    /** Self-approval stays blocked for a requester who does not hold approval rights. */
+    @Test
+    void testReject_SupervisorMayRejectOwnRequestWhenSelfApprovalAllowed() {
+        mockUser("supervisor1");
+        CorrectionRequest request = new CorrectionRequest();
+        request.setStatus(CorrectionRequestStatus.PENDING_APPROVAL);
+        request.setRequestedBy("supervisor1");
+        request.setRequestNumber("REQ-003");
+        request.setTargetType(CorrectionTargetType.RECEIPT_VOUCHER);
+        request.setTargetId(212L);
+
+        when(repo.findById(3L)).thenReturn(Optional.of(request));
+        when(repo.save(any(CorrectionRequest.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CorrectionRequestResponse response = service.reject(3L, "Raised against the wrong invoice", true);
+
+        assertEquals(CorrectionRequestStatus.REJECTED, response.getStatus());
+        assertEquals("supervisor1", request.getRejectedBy());
+    }
+
     @Test
     void testReject_MakerCannotRejectOwnRequest() {
         mockUser("makerUser");

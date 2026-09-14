@@ -42,7 +42,8 @@ class PosTerminalServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PosTerminalService(repo, settingsRepo, counterRepo, branchAccessService);
+        service = new PosTerminalService(repo, settingsRepo, counterRepo, branchAccessService,
+                new PosTerminalLimitPolicy(""));
         lenient().when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -260,5 +261,37 @@ class PosTerminalServiceTest {
         PosTerminal result = service.restore(1L);
 
         assertEquals(PosTerminalStatus.OFFLINE, result.getStatus());
+    }
+    @Test
+    void tenantOverrideLiftsTheStoredPerBranchTerminalCap() {
+        // The demo tenant sets pos.terminal.max-per-branch-override=999: a branch whose stored row
+        // still says 2 and already holds 2 terminals must register a third rather than 403.
+        PosTerminalService overridden = new PosTerminalService(repo, settingsRepo, counterRepo,
+                branchAccessService, new PosTerminalLimitPolicy("999"));
+        when(branchAccessService.getRequiredCurrentUserBranch()).thenReturn(branch(1L));
+        when(repo.findByDeviceFingerprintAndBranchId("new-device-fp", 1L)).thenReturn(Optional.empty());
+        PosSettings settings = new PosSettings();
+        settings.setMaxTerminalsPerBranch(2);
+        when(settingsRepo.findByBranchId(1L)).thenReturn(Optional.of(settings));
+        when(repo.countActiveLimitByBranchId(1L)).thenReturn(2L);
+
+        var result = overridden.registerOrRefresh(null, "new-device-fp", null, null, null, null, null, null);
+
+        assertEquals(Boolean.TRUE, result.get("isNew"));
+    }
+
+    @Test
+    void blankOverrideLeavesEveryOtherTenantOnItsStoredCap() {
+        assertNull(new PosTerminalLimitPolicy("").getOverride());
+        assertEquals(2, new PosTerminalLimitPolicy("").resolveLimit(settingsWithCap(2)));
+        // A cap above the T%03d terminal-ID width is clamped, not honoured verbatim.
+        assertEquals(PosTerminalLimitPolicy.MAX_SUPPORTED,
+                new PosTerminalLimitPolicy("100000").resolveLimit(settingsWithCap(2)));
+    }
+
+    private PosSettings settingsWithCap(int cap) {
+        PosSettings s = new PosSettings();
+        s.setMaxTerminalsPerBranch(cap);
+        return s;
     }
 }

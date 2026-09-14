@@ -84,7 +84,7 @@ export default function TaxCompliance() {
             setFetchError(null);
             const [configs, filings] = await Promise.all([
                 getTaxConfigs(),
-                getTaxFilings()
+                getTaxFilings(activeBranch?.id)
             ]);
             setTaxConfigs(Array.isArray(configs) ? configs : []);
             setFilingsData(Array.isArray(filings) ? filings : []);
@@ -102,7 +102,27 @@ export default function TaxCompliance() {
 
     useEffect(() => {
         fetchDashboardData();
-    }, []);
+        // Ledger figures on each filing are branch-scoped, so reload on branch change.
+    }, [activeBranch?.id]);
+
+    /**
+     * What a filing is actually worth on screen. `amount` is the declared figure
+     * and stays 0 until someone files the return, so an open filing falls back to
+     * the live ledger position (output VAT - input VAT for the same period) that
+     * the backend attaches. A filed return always shows what was declared.
+     */
+    const effectiveFilingAmount = (filing) => {
+        if (!filing) return 0;
+        const declared = Number(filing.amount || 0);
+        if (filing.status === 'Filed' || declared !== 0) return declared;
+        return Number(filing.ledgerAmount || 0);
+    };
+
+    const isLedgerDerived = (filing) =>
+        !!filing
+        && filing.status !== 'Filed'
+        && Number(filing.amount || 0) === 0
+        && filing.ledgerAmount != null;
 
     // --- 4. Dynamic KPI Calculations ---
     const kpiData = useMemo(() => {
@@ -119,7 +139,7 @@ export default function TaxCompliance() {
 
         filingsData.forEach(f => {
             if (f.status === 'Pending' || f.status === 'Overdue') {
-                pending += Number(f.amount || 0);
+                pending += effectiveFilingAmount(f);
             }
             if (f.status === 'Overdue') {
                 overdueCount++;
@@ -238,7 +258,7 @@ export default function TaxCompliance() {
         period: f.period || '',
         dueDate: f.dueDate || '',
         filedDate: f.filedDate || '',
-        amount: Number(f.amount || 0),
+        amount: effectiveFilingAmount(f),
         status: effectiveStatus(f),
         documents: Number(f.documents || 0),
         notes: f.notes || ''
@@ -371,7 +391,7 @@ export default function TaxCompliance() {
             period: filing.period,
             dueDate: toInputDate(filing.dueDate),
             dueDateDisplay: filing.dueDate || '',
-            amount: filing.amount === 0 ? '' : filing.amount,
+            amount: effectiveFilingAmount(filing) === 0 ? '' : effectiveFilingAmount(filing),
             status: filing.status,
             notes: filing.notes || '',
             documents: filing.documents,
@@ -547,8 +567,8 @@ export default function TaxCompliance() {
             setReportLoading(true);
             setReportError('');
             const [dashboard, reconciliation] = await Promise.all([
-                getTaxDashboard(reportStartDate, reportEndDate),
-                getTaxReconciliation(reportStartDate, reportEndDate)
+                getTaxDashboard(reportStartDate, reportEndDate, activeBranch?.id),
+                getTaxReconciliation(reportStartDate, reportEndDate, activeBranch?.id)
             ]);
             setTaxDashboardData(dashboard);
             setTaxReconciliationData(reconciliation);
@@ -817,8 +837,20 @@ export default function TaxCompliance() {
                                                 <div>
                                                     <div className="text-xs text-slate-500 mb-1">Amount Payable</div>
                                                     <div className="text-xl font-bold text-slate-800">
-                                                        <CurrencyAmount value={latestFiling?.amount || 0} />
+                                                        <CurrencyAmount value={effectiveFilingAmount(latestFiling)} />
                                                     </div>
+                                                    {isLedgerDerived(latestFiling) && (
+                                                        <div className="mt-1 text-[10px] text-slate-500 leading-relaxed">
+                                                            <span className="font-semibold text-slate-600">Live from ledger</span>
+                                                            {' — output '}
+                                                            <CurrencyAmount value={latestFiling.ledgerOutputTax || 0} />
+                                                            {' less input '}
+                                                            <CurrencyAmount value={latestFiling.ledgerInputTax || 0} />
+                                                            {latestFiling.periodStart && latestFiling.periodEnd && (
+                                                                <> {' ('}{latestFiling.periodStart} to {latestFiling.periodEnd}{')'}</>
+                                                            )}
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 <div>
@@ -959,7 +991,9 @@ export default function TaxCompliance() {
                         <>
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
                                 {taxConfigs.map((config) => {
-                                    const latestFiling = filingsData.find(f => Number(f.configId) === Number(config.id));
+                                    const configFilings = filingsData.filter(f => Number(f.configId) === Number(config.id));
+                                    // Same pick as the Overview cards: the open return first, else the newest row.
+                                    const latestFiling = configFilings.find(f => f.status !== 'Filed') || configFilings[0];
                                     return (
                                         <div key={config.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col h-full hover:border-yellow-300 transition-colors">
                                             <div className="flex items-center gap-2 mb-4">
@@ -980,7 +1014,12 @@ export default function TaxCompliance() {
 
                                             <div className="flex justify-between items-center text-sm mb-4 mt-auto bg-slate-50 p-3 rounded-lg">
                                                 <span className="font-bold text-slate-600">Total Payable</span>
-                                                <CurrencyAmount value={latestFiling?.amount || 0} className="font-bold text-yellow-700 text-base" />
+                                                <div className="text-right">
+                                                    <CurrencyAmount value={effectiveFilingAmount(latestFiling)} className="font-bold text-yellow-700 text-base" />
+                                                    {isLedgerDerived(latestFiling) && (
+                                                        <div className="text-[10px] text-slate-500 mt-0.5">Live from ledger</div>
+                                                    )}
+                                                </div>
                                             </div>
 
                                             <div className="flex gap-2">
@@ -1067,7 +1106,7 @@ export default function TaxCompliance() {
                                                         <td className="py-3 text-slate-600">{f.period}</td>
                                                         <td className="py-3 text-slate-500">{formatDisplayDate(f.dueDate)}</td>
                                                         <td className="py-3 text-slate-600 font-medium">{f.filedDate || '-'}</td>
-                                                        <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={f.amount} /></td>
+                                                        <td className="py-3 font-mono font-bold text-right text-slate-800"><CurrencyAmount value={effectiveFilingAmount(f)} /></td>
                                                         <td className="py-3 text-center flex justify-center">{getStatusBadge(effectiveStatus(f))}</td>
                                                         <td className="py-3 text-center">
                                                             <button
@@ -1210,7 +1249,7 @@ export default function TaxCompliance() {
 
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                                         <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Due Date</div><div className="text-xs font-medium text-slate-800">{formatDisplayDate(filing.dueDate)}</div></div>
-                                        <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Amount</div><CurrencyAmount value={filing.amount} className="text-xs font-bold text-yellow-700" /></div>
+                                        <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Amount</div><CurrencyAmount value={effectiveFilingAmount(filing)} className="text-xs font-bold text-yellow-700" /></div>
                                         <div><div className="text-[10px] text-slate-500 uppercase font-bold mb-1">Documents</div><div className="text-xs font-medium text-slate-800">{filing.documents} file(s)</div></div>
                                     </div>
 

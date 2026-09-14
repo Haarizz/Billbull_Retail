@@ -45,7 +45,12 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new GroupSeed("SYS-GRP-FA",   "1300", "Fixed Assets",          "Assets",      "Asset",     "Dr", "BS", "1000", 2),
             new GroupSeed("SYS-GRP-CL",   "2050", "Current Liabilities",   "Liabilities", "Liability", "Cr", "BS", "2000", 2),
             new GroupSeed("SYS-GRP-LTL",  "2400", "Long-term Liabilities", "Liabilities", "Liability", "Cr", "BS", "2000", 2),
-            new GroupSeed("SYS-GRP-3100", "3100", "Equity",                "Equity",      "Equity",    "Cr", "BS", "3000", 2),
+            // 3050, not 3100: code 3100 belongs to the Retained Earnings leaf below. When this
+            // sub-group claimed 3100 the leaf seed found the code taken and silently degraded to
+            // a patch, so Retained Earnings — the contra account every opening-balance journal
+            // plugs against — never existed, and the patch loop set this group's parent to its
+            // own code, orphaning all of Equity out of the COA tree. Matches 1050/2050.
+            new GroupSeed("SYS-GRP-3050", "3050", "Equity",                "Equity",      "Equity",    "Cr", "BS", "3000", 2),
             new GroupSeed("SYS-GRP-4100", "4100", "Sales",                 "Income",      "Income",    "Cr", "PL", "4000", 2),
             new GroupSeed("SYS-GRP-4200", "4200", "Other Income",          "Income",      "Income",    "Cr", "PL", "4000", 2),
             new GroupSeed("SYS-GRP-5100", "5100", "Cost of Goods Sold",    "Expenses",    "Expense",   "Dr", "PL", "5000", 2),
@@ -99,8 +104,8 @@ public class SystemAccountSeeder implements ApplicationRunner {
             new AccountSeed("SYS-2210", "2210", "Gratuity Payable",          "Liabilities", "Liability", "Cr", "BS", false, "2050", "CURRENT_LIABILITIES"),
             new AccountSeed("SYS-2250", "2250", "Accrued Liabilities",       "Liabilities", "Liability", "Cr", "BS", false, "2050", "CURRENT_LIABILITIES"),
             // ── Equity ────────────────────────────────────────────────────────
-            new AccountSeed("SYS-3001", "3001", "Owner's Equity / Share Capital","Equity",  "Equity",    "Cr", "BS", false, "3100", "EQUITY"),
-            new AccountSeed("SYS-3100", "3100", "Retained Earnings",         "Equity",      "Equity",    "Cr", "BS", false, "3100", "EQUITY"),
+            new AccountSeed("SYS-3001", "3001", "Owner's Equity / Share Capital","Equity",  "Equity",    "Cr", "BS", false, "3050", "EQUITY"),
+            new AccountSeed("SYS-3100", "3100", "Retained Earnings",         "Equity",      "Equity",    "Cr", "BS", false, "3050", "EQUITY"),
             // ── Revenue (parent: 4100 group) ──────────────────────────────────
             new AccountSeed("SYS-4001", "4001", "Sales Revenue",             "Income",      "Income",    "Cr", "PL", false, "4100", "REVENUE"),
             new AccountSeed("SYS-4002", "4002", "Sales Returns",             "Income",      "Income",    "Dr", "PL", false, "4100", "REVENUE"),

@@ -94,6 +94,18 @@ export interface TodayBill {
   status: "Paid" | "Credit" | "Refund";
 }
 
+/** Live POS counter figures for the current business date (backend /api/dashboard/pos-today). */
+export interface PosTodaySnapshot {
+  businessDate: string;
+  billCount: number;
+  grossSales: number;
+  netSales: number;
+  avgBill: number;
+  lastBillAt: string | null;
+  returnCount: number;
+  returnTotal: number;
+}
+
 export interface PurchaseAnalytics {
   totalPurchaseValue: number;
   suppliersCount: number;
@@ -497,6 +509,38 @@ class BillBullDashboardService {
       };
     });
     return { success: true, data: bills };
+  }
+
+  /**
+   * Today's POS snapshot. Hits a dedicated endpoint rather than deriving from the summary's
+   * recent-transaction list, which is only the last ten invoices of any date and channel.
+   */
+  async getPosToday(
+    branchFilter: string
+  ): Promise<ServiceResponse<PosTodaySnapshot | null>> {
+    try {
+      const branchId =
+        branchFilter && branchFilter !== "all" ? branchFilter : undefined;
+      const res = await api.get("/api/dashboard/pos-today", {
+        params: branchId ? { branchId } : {},
+      });
+      const d = res?.data ?? {};
+      return {
+        success: true,
+        data: {
+          businessDate: String(d.businessDate ?? ""),
+          billCount: Number(d.billCount ?? 0),
+          grossSales: Number(d.grossSales ?? 0),
+          netSales: Number(d.netSales ?? 0),
+          avgBill: Number(d.avgBill ?? 0),
+          lastBillAt: d.lastBillAt ?? null,
+          returnCount: Number(d.returnCount ?? 0),
+          returnTotal: Number(d.returnTotal ?? 0),
+        },
+      };
+    } catch {
+      return { success: false, data: null };
+    }
   }
 
   async getPurchaseAnalytics(

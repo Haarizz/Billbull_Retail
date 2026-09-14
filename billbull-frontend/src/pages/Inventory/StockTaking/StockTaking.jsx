@@ -34,6 +34,7 @@ const STOCK_TAKING_COLUMNS = [
 ];
 import { getImageUrl } from '../../../utils/urlUtils';
 import ExcelJS from 'exceljs';
+import { useNavigate } from 'react-router-dom';
 import { getWarehouses, getWarehouseStock, getWarehouseProductStock, getWarehouseBins, getWarehouseStockSummary } from '../../../api/warehouseApi';
 import { searchExactProducts, searchProductByBarcode } from '../../../api/productsApi';
 import { getDepartments } from '../../../api/departmentsApi';
@@ -1979,6 +1980,7 @@ const SessionView = ({
 };
 
 const StockTaking = () => {
+    const navigate = useNavigate();
     const { activeBranchId, isAllBranches } = useBranch();
     const [viewMode, setViewMode] = useState('list'); // 'list' or 'session'
     const [selectedSession, setSelectedSession] = useState(null);
@@ -1986,6 +1988,10 @@ const StockTaking = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    // Bins of the warehouse picked in the create modal. A stock take is bin-scoped end to end
+    // (counts and submit-for-approval both reject items without a bin), so a warehouse with no
+    // bins can only produce a dead session — the picker warns and blocks instead.
+    const [createWarehouseBins, setCreateWarehouseBins] = useState(null); // null = not loaded yet
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [sessionToDelete, setSessionToDelete] = useState(null);
     const [notifModal, setNotifModal] = useState(null);
@@ -2174,6 +2180,25 @@ const StockTaking = () => {
         getBrands().then(b => setBrandsList(Array.isArray(b) ? b : [])).catch(() => {});
     }, [activeBranchId, isAllBranches]);
 
+    // Load the chosen warehouse's bins while the create modal is open so the dialog can warn
+    // before a dead session is created rather than after.
+    React.useEffect(() => {
+        if (!isCreateModalOpen) return;
+        const wh = warehousesList.find(w => w.name === selectedWarehouse);
+        if (!wh) {
+            setCreateWarehouseBins([]);
+            return;
+        }
+        let cancelled = false;
+        setCreateWarehouseBins(null);
+        getWarehouseBins(wh.id)
+            .then(bins => { if (!cancelled) setCreateWarehouseBins(Array.isArray(bins) ? bins : []); })
+            .catch(() => { if (!cancelled) setCreateWarehouseBins([]); });
+        return () => { cancelled = true; };
+    }, [isCreateModalOpen, selectedWarehouse, warehousesList]);
+
+    const createWarehouseHasNoBins = createWarehouseBins !== null && createWarehouseBins.length === 0;
+
     const handleStartSession = async () => {
         setIsLoading(true);
         try {
@@ -2181,6 +2206,13 @@ const StockTaking = () => {
             if (!wh) {
                 setIsLoading(false);
                 showNotif('warning', 'Select Warehouse', 'Please select a valid warehouse');
+                return;
+            }
+
+            if (createWarehouseHasNoBins) {
+                setIsLoading(false);
+                showNotif('warning', 'No Bins in This Warehouse',
+                    `"${wh.name}" has no bins yet. Counted items must be assigned to a bin, so create at least one bin under Warehouses & Storages before starting a stock take.`);
                 return;
             }
 
@@ -3323,6 +3355,25 @@ const StockTaking = () => {
                                     </select>
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
                                 </div>
+                                {createWarehouseHasNoBins && (
+                                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                        <div className="space-y-1.5">
+                                            <p className="text-[11px] font-bold text-amber-800">This warehouse has no bins yet.</p>
+                                            <p className="text-[10px] text-amber-700 leading-relaxed">
+                                                Counted items must be assigned to a bin before a stock take can be counted or
+                                                submitted for approval. Create at least one bin for this warehouse first.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setIsCreateModalOpen(false); navigate('/inventory/warehouses'); }}
+                                                className="text-[10px] font-bold text-amber-900 underline underline-offset-2 hover:text-amber-700"
+                                            >
+                                                Go to Warehouses &amp; Storages
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Stock Take Type (Custom Dropdown) */}
@@ -3479,7 +3530,8 @@ const StockTaking = () => {
                             </button>
                             <button
                                 onClick={handleStartSession}
-                                disabled={isLoading}
+                                disabled={isLoading || createWarehouseHasNoBins}
+                                title={createWarehouseHasNoBins ? 'Create a bin for this warehouse before starting a stock take' : undefined}
                                 className="flex items-center gap-2 h-10 px-6 text-xs font-semibold text-slate-900 bg-[#F5C742] rounded-lg hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
                             >
                                 {isLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
@@ -3809,7 +3861,23 @@ const StockTaking = () => {
                                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
                                 </div>
                                 {warehouseBins.length === 0 && (
-                                    <p className="text-[10px] text-amber-600 font-medium">No bins found for this warehouse.</p>
+                                    <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+                                        <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                        <div className="space-y-1.5">
+                                            <p className="text-[11px] font-bold text-amber-800">This warehouse has no bins.</p>
+                                            <p className="text-[10px] text-amber-700 leading-relaxed">
+                                                There is nothing to assign here. Create a bin for this warehouse, then reopen
+                                                this session to assign the unassigned items.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setIsBulkBinModalOpen(false); setPendingBulkBinId(''); navigate('/inventory/warehouses'); }}
+                                                className="text-[10px] font-bold text-amber-900 underline underline-offset-2 hover:text-amber-700"
+                                            >
+                                                Go to Warehouses &amp; Storages
+                                            </button>
+                                        </div>
+                                    </div>
                                 )}
                             </div>
                         </div>

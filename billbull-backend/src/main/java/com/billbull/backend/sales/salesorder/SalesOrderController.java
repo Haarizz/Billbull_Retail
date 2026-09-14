@@ -10,11 +10,14 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/sales/sales-orders")
@@ -29,12 +32,26 @@ public class SalesOrderController {
     private final DocumentEmailSender emailSender;
     private final ModulePermissionService modulePermissionService;
 
+    /**
+     * Root for sales-order attachments, always resolved to an ABSOLUTE path.
+     * MultipartFile.transferTo() hands a relative path straight to Part.write(),
+     * which Tomcat resolves against the servlet TEMP dir rather than the working
+     * directory -- so a relative target misses the directory we just created and
+     * the upload dies with an IOException, which is what made confirming an order
+     * with an attachment fail. Files.copy() to an absolute path sidesteps that,
+     * matching ProductImageStorageService and ReceiptVoucherService.
+     */
+    private final Path attachmentRoot;
+
+
     public SalesOrderController(
             SalesOrderService service,
             SalesOrderAttachmentRepository attachmentRepo,
             AuditLogService auditLogService,
             DocumentEmailSender emailSender,
-            ModulePermissionService modulePermissionService) {
+            ModulePermissionService modulePermissionService,
+            @org.springframework.beans.factory.annotation.Value("${upload.path:uploads/}") String uploadPath) {
+        this.attachmentRoot = Paths.get(uploadPath, "sales-orders").toAbsolutePath().normalize();
         this.service = service;
         this.attachmentRepo = attachmentRepo;
         this.auditLogService = auditLogService;
@@ -160,23 +177,74 @@ public class SalesOrderController {
         }
     }
 
-    @PostMapping("/{id}/attachments")
-    public SalesOrderAttachment upload(
+    @PostMapping(value = "/{id}/attachments",
+            consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> upload(
             @PathVariable Long id,
-            @RequestParam("file") MultipartFile file) throws Exception {
+            @RequestParam("file") MultipartFile file) {
 
-        String dir = "uploads/sales-orders/" + id;
-        Files.createDirectories(Paths.get(dir));
+        modulePermissionService.requireCanEdit(MODULE);
 
-        String filePath = dir + "/" + file.getOriginalFilename();
-        file.transferTo(new File(filePath));
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Attachment file must not be empty."));
+        }
 
-        SalesOrderAttachment att = new SalesOrderAttachment();
-        att.setFileName(file.getOriginalFilename());
-        att.setFileType(file.getContentType());
-        att.setFilePath(filePath);
-        att.setSalesOrder(service.getById(id));
+        // Order must exist (and be accessible) before anything touches the disk.
+        SalesOrder order = service.getById(id);
 
-        return attachmentRepo.save(att);
+        String originalName = sanitizeFileName(file.getOriginalFilename());
+
+        try {
+            Path dir = attachmentRoot.resolve(String.valueOf(id)).normalize();
+            Files.createDirectories(dir);
+
+            // Unique on disk so a re-upload of the same name never clobbers the
+            // earlier file; the display name stays what the user picked.
+            String storedName = UUID.randomUUID() + "_" + originalName;
+            Path target = dir.resolve(storedName).normalize();
+            if (!target.startsWith(attachmentRoot)) {
+                return ResponseEntity.badRequest().body(Map.of("message", "Invalid attachment file name."));
+            }
+            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+
+            SalesOrderAttachment att = new SalesOrderAttachment();
+            att.setFileName(originalName);
+            att.setFileType(file.getContentType());
+            // Web-servable path — StaticResourceConfig maps /uploads/** to ./uploads/.
+            att.setFilePath("/uploads/sales-orders/" + id + "/" + storedName);
+            att.setSalesOrder(order);
+
+            SalesOrderAttachment saved = attachmentRepo.save(att);
+            return ResponseEntity.ok(Map.of(
+                    "id", saved.getId(),
+                    "fileName", saved.getFileName(),
+                    "fileType", saved.getFileType() == null ? "" : saved.getFileType(),
+                    "filePath", saved.getFilePath(),
+                    "salesOrderId", id));
+        } catch (IOException e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("message", "Failed to store attachment: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Strip any directory component a browser may send (IE/Edge historically send the
+     * full client path) plus control characters, so an upload cannot escape the order
+     * folder. 92 is the backslash code point, kept numeric to stay escape-free.
+     */
+    private static String sanitizeFileName(String original) {
+        String name = original == null ? "" : original.replace((char) 92, '/');
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        StringBuilder cleaned = new StringBuilder(name.length());
+        for (char c : name.toCharArray()) {
+            if (c >= ' ') {
+                cleaned.append(c);
+            }
+        }
+        name = cleaned.toString().trim();
+        return name.isEmpty() || name.equals(".") || name.equals("..") ? "attachment" : name;
     }
 }

@@ -3,6 +3,7 @@ package com.billbull.backend.dashboard;
 import com.billbull.backend.financials.expense.ExpenseRepository;
 import com.billbull.backend.hr.employees.EmployeeRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
+import com.billbull.backend.pos.businessdate.BusinessDayClock;
 import com.billbull.backend.purchase.grn.GrnRepository;
 import com.billbull.backend.purchase.lpo.LpoRepository;
 import com.billbull.backend.purchase.lpo.LpoStatus;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -61,6 +63,8 @@ public class DashboardService {
     private final ExpenseRepository expenseRepo;
     private final VendorRepository vendorRepo;
     private final SalesReturnRepository returnRepo;
+    /** POS figures are keyed on the business date, which is not the JVM-default calendar date. */
+    private final BusinessDayClock businessDayClock;
 
     public DashboardService(SalesInvoiceRepository invoiceRepo,
                              LpoRepository lpoRepo,
@@ -71,7 +75,8 @@ public class DashboardService {
                              CustomerRepository customerRepo,
                              ExpenseRepository expenseRepo,
                              VendorRepository vendorRepo,
-                             SalesReturnRepository returnRepo) {
+                             SalesReturnRepository returnRepo,
+                             BusinessDayClock businessDayClock) {
         this.invoiceRepo = invoiceRepo;
         this.lpoRepo = lpoRepo;
         this.grnRepo = grnRepo;
@@ -82,10 +87,42 @@ public class DashboardService {
         this.expenseRepo = expenseRepo;
         this.vendorRepo = vendorRepo;
         this.returnRepo = returnRepo;
+        this.businessDayClock = businessDayClock;
     }
 
     public void invalidateCache() {
         SUMMARY_CACHE.clear();
+    }
+
+    /**
+     * Today's point-of-sale numbers for the dashboard POS card. Deliberately not served from
+     * {@link #getSummary} — that response's recent-transaction list is the last ten sales
+     * invoices regardless of date or channel, which is not a POS-today figure.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public PosTodayResponse getPosToday(Long branchId) {
+        // The business date, not LocalDate.now() — POS invoices are stamped with the former,
+        // and the two diverge either side of midnight in the configured POS timezone.
+        LocalDate today = businessDayClock.now().toLocalDate();
+
+        Object[] sales = firstRow(invoiceRepo.findPosDaySnapshot(today, branchId));
+        long billCount = sales != null && sales[0] instanceof Number n ? n.longValue() : 0L;
+        double gross   = sales != null && sales[1] instanceof Number n ? n.doubleValue() : 0d;
+        String lastBillAt = sales != null && sales[2] instanceof LocalDateTime dt
+                ? dt.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME) : null;
+
+        Object[] returns = firstRow(returnRepo.findDayReturnSnapshot(today, branchId));
+        long returnCount   = returns != null && returns[0] instanceof Number n ? n.longValue() : 0L;
+        double returnTotal = returns != null && returns[1] instanceof Number n ? n.doubleValue() : 0d;
+
+        double avgBill = billCount > 0 ? gross / billCount : 0d;
+        return new PosTodayResponse(today.toString(), billCount, gross, gross - returnTotal,
+                avgBill, lastBillAt, returnCount, returnTotal);
+    }
+
+    /** Aggregate queries always return one row; this guards against an empty/!null-padded result. */
+    private static Object[] firstRow(List<Object[]> rows) {
+        return rows == null || rows.isEmpty() ? null : rows.get(0);
     }
 
     @Transactional(propagation = Propagation.NOT_SUPPORTED)

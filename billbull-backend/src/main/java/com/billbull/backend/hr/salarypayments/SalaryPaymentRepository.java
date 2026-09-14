@@ -19,4 +19,16 @@ public interface SalaryPaymentRepository extends JpaRepository<SalaryPayment, Lo
 
     // ✅ NEW: Find pending records for specific employees (Fixes Bulk Payment)
     List<SalaryPayment> findByEmployeeIdInAndStatus(List<String> employeeIds, String status);
+
+    // One payroll line per employee per period — these back the duplicate-payment
+    // guards in SalaryPaymentService.
+    List<SalaryPayment> findByEmployeeIdAndSalaryMonthAndSalaryYear(
+            String employeeId, int salaryMonth, int salaryYear);
+
+    boolean existsByEmployeeIdAndSalaryMonthAndSalaryYearAndStatus(
+            String employeeId, int salaryMonth, int salaryYear, String status);
+
+    // Bulk payment must stay inside the period it was launched for.
+    List<SalaryPayment> findByEmployeeIdInAndStatusAndSalaryMonthAndSalaryYear(
+            List<String> employeeIds, String status, int salaryMonth, int salaryYear);
 }

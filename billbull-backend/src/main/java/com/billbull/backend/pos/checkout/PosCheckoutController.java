@@ -81,6 +81,8 @@ public class PosCheckoutController {
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
     private final PaymentRepository paymentRepository;
+    /** Rebuilds an invoice's tender breakdown from its recorded payments, for receipt reprints. */
+    private final com.billbull.backend.sales.payment.InvoicePaymentSummaryService paymentSummaryService;
     private final com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     private final com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
     private final PosPaymentAllocationResolver allocationResolver;
@@ -113,7 +115,9 @@ public class PosCheckoutController {
                                   com.billbull.backend.security.ModulePermissionService modulePermissionService,
                                   com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService,
                                   PosDeliverySettlementService deliverySettlementService,
-                                  com.billbull.backend.sales.invoice.InvoiceCustomerContactService invoiceCustomerContactService) {
+                                  com.billbull.backend.sales.invoice.InvoiceCustomerContactService invoiceCustomerContactService,
+                                  com.billbull.backend.sales.payment.InvoicePaymentSummaryService paymentSummaryService) {
+        this.paymentSummaryService = paymentSummaryService;
         this.invoiceCustomerContactService = invoiceCustomerContactService;
         this.deliverySettlementService = deliverySettlementService;
         this.creditVoucherService = creditVoucherService;
@@ -654,6 +658,13 @@ public class PosCheckoutController {
         result.put("zatcaQr", qrCode);
         result.put("sellerName", sellerName);
         result.put("trn", trn);
+        // How this sale was actually settled, rebuilt from the recorded sales_payments rows —
+        // the same reconstruction every back-office screen already uses. A reprint must derive
+        // its payment block from persisted data, never from whatever a till happens to hold
+        // now: otherwise a receipt reprinted tomorrow, or from another terminal, silently drops
+        // the Credit Voucher (or card, or online) leg the customer actually paid with, and the
+        // copy contradicts the original.
+        result.put("paymentSummary", paymentSummaryService.summaryFor(invoice.getInvoiceNumber()));
         return ResponseEntity.ok(result);
     }
 

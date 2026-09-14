@@ -31,6 +31,13 @@ class SalesInvoiceReceiptReprintLookupTest {
     @Mock private OwnershipAccessService ownershipAccessService;
     @Mock private com.billbull.backend.inventory.batch.BatchSelectionService batchSelectionService;
 
+    @Mock private jakarta.persistence.EntityManager entityManager;
+    /** Real resolver over an empty overlay table — an uncorrected invoice must come back as-is. */
+    @org.mockito.Spy private com.billbull.backend.pos.admin.OverlayResolutionService overlayResolutionService =
+            new com.billbull.backend.pos.admin.OverlayResolutionService(
+                    org.mockito.Mockito.mock(com.billbull.backend.pos.admin.CorrectionOverlayRepository.class),
+                    new com.fasterxml.jackson.databind.ObjectMapper());
+
     @InjectMocks private SalesInvoiceService service;
 
     private AutoCloseable mocks;

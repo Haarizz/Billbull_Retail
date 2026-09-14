@@ -1,6 +1,8 @@
 package com.billbull.backend.inventory.batch;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -29,9 +31,11 @@ import com.billbull.backend.inventory.settings.InventorySettings;
 import com.billbull.backend.inventory.settings.InventorySettingsService;
 import com.billbull.backend.inventory.warehouse.Warehouse;
 import com.billbull.backend.purchase.grn.GrnEntity;
+import com.billbull.backend.purchase.grn.GrnItemBatch;
 import com.billbull.backend.purchase.grn.GrnItemEntity;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceItem;
+import com.billbull.backend.purchase.invoice.PurchaseInvoiceItemBatch;
 
 @ExtendWith(MockitoExtension.class)
 class PurchaseBatchCreationServiceTest {
@@ -51,7 +55,8 @@ class PurchaseBatchCreationServiceTest {
                 printQueueRepository,
                 inventorySettingsService,
                 productRepository,
-                packingRepository);
+                packingRepository,
+                new com.billbull.backend.purchase.batch.PurchaseBatchLotService());
 
         lenient().when(batchRepository.findBySourceDocumentTypeAndSourceDocumentIdAndPrintedFalse(anyString(), any(Long.class)))
                 .thenReturn(List.of());
@@ -170,6 +175,162 @@ class PurchaseBatchCreationServiceTest {
             assertEquals(7L, batch.getWarehouseId());
             assertEquals(1, batch.getQuantity());
         }
+    }
+
+    // ── Batch/expiry capture ────────────────────────────────────────────────────────────────
+
+    @Test
+    void capturedExpiryIsStampedOnEveryUnitOfTheLot() {
+        Product product = product(10L, true);
+        when(productRepository.findByCodeAndIsActiveTrue("CODE-10")).thenReturn(Optional.of(product));
+
+        LocalDate expiry = LocalDate.now().plusMonths(8);
+        PurchaseInvoiceItem item = invoiceItem(110L, "CODE-10", 3);
+        item.getBatchLots().add(invoiceLot(item, null, expiry, 3));
+
+        PurchaseInvoice invoice = invoice("PINV-EXP");
+        invoice.getItems().add(item);
+
+        List<BatchMaster> batches = service.replaceForPurchaseInvoice(invoice);
+
+        assertEquals(3, batches.size());
+        batches.forEach(batch -> assertEquals(expiry, batch.getExpiryDate()));
+    }
+
+    @Test
+    void twoLotsOnOneLineStayDistinctWithTheirOwnExpiryDates() {
+        Product product = product(10L, true);
+        when(productRepository.findByCodeAndIsActiveTrue("CODE-10")).thenReturn(Optional.of(product));
+
+        LocalDate firstExpiry = LocalDate.now().plusMonths(3);
+        LocalDate secondExpiry = LocalDate.now().plusMonths(10);
+        PurchaseInvoiceItem item = invoiceItem(111L, "CODE-10", 5);
+        item.getBatchLots().add(invoiceLot(item, null, firstExpiry, 2));
+        item.getBatchLots().add(invoiceLot(item, null, secondExpiry, 3));
+
+        PurchaseInvoice invoice = invoice("PINV-TWO-LOTS");
+        invoice.getItems().add(item);
+
+        List<BatchMaster> batches = service.replaceForPurchaseInvoice(invoice);
+
+        assertEquals(5, batches.size());
+        assertEquals(2, batches.stream().filter(b -> firstExpiry.equals(b.getExpiryDate())).count());
+        assertEquals(3, batches.stream().filter(b -> secondExpiry.equals(b.getExpiryDate())).count());
+
+        // Unit indexes run across the whole line: batch_master is unique on
+        // (document, line, unit index), so a second lot must not restart at 1.
+        assertEquals(List.of(1, 2, 3, 4, 5), batches.stream().map(BatchMaster::getUnitIndex).toList());
+
+        // Two lots, two lot counters; the units of each lot share a prefix.
+        String today = LocalDate.now().format(DateTimeFormatter.ofPattern("ddMMyy"));
+        assertEquals("PU-" + today + "-L01-CODE10-1", batches.get(0).getBatchNumber());
+        assertEquals("PU-" + today + "-L02-CODE10-3", batches.get(2).getBatchNumber());
+    }
+
+    @Test
+    void supplierSuppliedBatchNumberIsHonouredWithTheUnitIndexAppended() {
+        Product product = product(10L, true);
+        when(productRepository.findByCodeAndIsActiveTrue("CODE-10")).thenReturn(Optional.of(product));
+
+        LocalDate expiry = LocalDate.now().plusYears(1);
+        PurchaseInvoiceItem item = invoiceItem(112L, "CODE-10", 2);
+        item.getBatchLots().add(invoiceLot(item, "SUP-LOT-77", expiry, 2));
+
+        PurchaseInvoice invoice = invoice("PINV-SUP");
+        invoice.getItems().add(item);
+
+        List<BatchMaster> batches = service.replaceForPurchaseInvoice(invoice);
+
+        assertEquals(List.of("SUP-LOT-77-1", "SUP-LOT-77-2"),
+                batches.stream().map(BatchMaster::getBatchNumber).toList());
+        batches.forEach(batch -> assertEquals(expiry, batch.getExpiryDate()));
+    }
+
+    @Test
+    void lotQuantitiesThatDoNotMatchTheLineQuantityAreRejected() {
+        Product product = product(10L, true);
+        when(productRepository.findByCodeAndIsActiveTrue("CODE-10")).thenReturn(Optional.of(product));
+
+        PurchaseInvoiceItem item = invoiceItem(113L, "CODE-10", 5);
+        item.getBatchLots().add(invoiceLot(item, null, LocalDate.now().plusMonths(2), 2));
+
+        PurchaseInvoice invoice = invoice("PINV-MISMATCH");
+        invoice.getItems().add(item);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> service.replaceForPurchaseInvoice(invoice));
+        assertTrue(error.getMessage().contains("total 2"), error.getMessage());
+    }
+
+    @Test
+    void expiryControlledProductWithoutBatchFlagStillGetsPerUnitBatches() {
+        // Stock-taking treats expiry-controlled products as batch-tracked; purchasing must agree,
+        // otherwise the expiry date would have no per-unit row to live on.
+        Product product = product(10L, false);
+        product.setExpiryEnabled(true);
+        when(productRepository.findByCodeAndIsActiveTrue("CODE-10")).thenReturn(Optional.of(product));
+
+        LocalDate expiry = LocalDate.now().plusMonths(6);
+        PurchaseInvoiceItem item = invoiceItem(114L, "CODE-10", 2);
+        item.getBatchLots().add(invoiceLot(item, null, expiry, 2));
+
+        PurchaseInvoice invoice = invoice("PINV-EXPONLY");
+        invoice.getItems().add(item);
+
+        List<BatchMaster> batches = service.replaceForPurchaseInvoice(invoice);
+
+        assertEquals(2, batches.size());
+        batches.forEach(batch -> assertEquals(expiry, batch.getExpiryDate()));
+    }
+
+    @Test
+    void batchControlledLineWithNoCapturedLotsKeepsTheLegacySingleLotBehaviour() {
+        Product product = product(10L, true);
+        when(productRepository.findByCodeAndIsActiveTrue("CODE-10")).thenReturn(Optional.of(product));
+
+        PurchaseInvoice invoice = invoice("PINV-LEGACY");
+        invoice.getItems().add(invoiceItem(115L, "CODE-10", 2));
+
+        List<BatchMaster> batches = service.replaceForPurchaseInvoice(invoice);
+
+        assertEquals(2, batches.size());
+        batches.forEach(batch -> assertNull(batch.getExpiryDate()));
+    }
+
+    @Test
+    void grnLotsCarryTheirExpiryIntoTheGeneratedBatches() {
+        Product product = product(10L, true);
+        GrnEntity grn = grn("GRN-EXP");
+        GrnItemEntity item = grnItem(210L, grn, product, 2, 1);
+        LocalDate expiry = LocalDate.now().plusMonths(4);
+        item.getBatchLots().add(grnLot(item, "VND-9", expiry, 3));
+        grn.getItems().add(item);
+
+        List<BatchMaster> batches = service.createForGrnPost(grn, java.util.Map.of());
+
+        assertEquals(3, batches.size());
+        batches.forEach(batch -> assertEquals(expiry, batch.getExpiryDate()));
+        assertEquals(List.of("VND-9-1", "VND-9-2", "VND-9-3"),
+                batches.stream().map(BatchMaster::getBatchNumber).toList());
+    }
+
+    private PurchaseInvoiceItemBatch invoiceLot(PurchaseInvoiceItem item, String batchNumber,
+                                                LocalDate expiryDate, int quantity) {
+        PurchaseInvoiceItemBatch lot = new PurchaseInvoiceItemBatch();
+        lot.setInvoiceItem(item);
+        lot.setBatchNumber(batchNumber);
+        lot.setExpiryDate(expiryDate);
+        lot.setQuantity(quantity);
+        return lot;
+    }
+
+    private GrnItemBatch grnLot(GrnItemEntity item, String batchNumber, LocalDate expiryDate, int quantity) {
+        GrnItemBatch lot = new GrnItemBatch();
+        lot.setGrnItem(item);
+        lot.setBatchNumber(batchNumber);
+        lot.setExpiryDate(expiryDate);
+        lot.setQuantity(quantity);
+        return lot;
     }
 
     private PurchaseInvoice invoice(String invoiceNumber) {

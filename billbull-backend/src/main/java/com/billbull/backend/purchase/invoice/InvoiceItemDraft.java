@@ -3,6 +3,7 @@ package com.billbull.backend.purchase.invoice;
 import java.math.BigDecimal;
 import java.util.List;
 
+import com.billbull.backend.purchase.batch.PurchaseBatchLotDraft;
 import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
 
 public class InvoiceItemDraft {
@@ -33,6 +34,10 @@ public class InvoiceItemDraft {
     private Boolean serialEnabled;
     private List<PurchaseSerialDraft> serials;
     private Boolean batchEnabled;
+    private Boolean expiryEnabled;
+    private Boolean fefoEnabled;
+    private Integer minExpiryDaysForSale;
+    private List<PurchaseBatchLotDraft> batchLots;
     private List<InvoiceItemBatchDraft> batches;
 
     // ✅ REQUIRED: default constructor
@@ -247,5 +252,37 @@ public class InvoiceItemDraft {
 
     public void setSerials(List<PurchaseSerialDraft> serials) {
         this.serials = serials;
+    }
+
+    public Boolean getExpiryEnabled() {
+        return expiryEnabled;
+    }
+
+    public void setExpiryEnabled(Boolean expiryEnabled) {
+        this.expiryEnabled = expiryEnabled;
+    }
+
+    public Boolean getFefoEnabled() {
+        return fefoEnabled;
+    }
+
+    public void setFefoEnabled(Boolean fefoEnabled) {
+        this.fefoEnabled = fefoEnabled;
+    }
+
+    public Integer getMinExpiryDaysForSale() {
+        return minExpiryDaysForSale;
+    }
+
+    public void setMinExpiryDaysForSale(Integer minExpiryDaysForSale) {
+        this.minExpiryDaysForSale = minExpiryDaysForSale;
+    }
+
+    public List<PurchaseBatchLotDraft> getBatchLots() {
+        return batchLots;
+    }
+
+    public void setBatchLots(List<PurchaseBatchLotDraft> batchLots) {
+        this.batchLots = batchLots;
     }
 }

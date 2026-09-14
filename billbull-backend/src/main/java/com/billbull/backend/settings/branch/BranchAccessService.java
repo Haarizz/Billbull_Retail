@@ -3,6 +3,7 @@ package com.billbull.backend.settings.branch;
 import java.util.List;
 import java.util.Objects;
 
+import org.hibernate.Hibernate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -43,7 +44,21 @@ public class BranchAccessService {
         // persisted and returned straight to the client (e.g. SalesReturn.branch); once this
         // read-only transaction's session closes, Jackson serializing an uninitialized proxy
         // throws LazyInitializationException ("could not initialize proxy - no session").
-        return branchRepository.findById(user.getBranch().getId()).orElse(null);
+        return unproxy(branchRepository.findById(user.getBranch().getId()).orElse(null));
+    }
+
+    /**
+     * Returns a plain Branch instance, never a HibernateProxy. {@code User.branch} is a lazy
+     * {@code @ManyToOne}, so the find() above returns the proxy Hibernate already registered for
+     * that id in this session rather than a fresh instance. Callers stamp the result onto
+     * an entity that gets persisted and then re-read through a {@code LEFT JOIN FETCH ...branch}
+     * (e.g. Expense -> PostingEngine -> JournalEntryService.getEntryById); Hibernate 6.6 trips
+     * an NPE there ("Cannot invoke EntityHolder.getProxy() because data.entityHolder is null")
+     * when the association it is resolving is a detached proxy. Unwrapping here keeps every
+     * branch-stamping caller on a real entity.
+     */
+    private Branch unproxy(Branch branch) {
+        return branch == null ? null : (Branch) Hibernate.unproxy(branch);
     }
 
     public Branch getRequiredCurrentUserBranch() {
@@ -60,10 +75,10 @@ public class BranchAccessService {
             }
             // Load the active branch by id (admin switched away from primary,
             // or multi-branch restricted user switched within their allowed set).
-            return branchRepository.findById(ctx.activeBranchId())
+            return unproxy(branchRepository.findById(ctx.activeBranchId())
                     .orElseThrow(() -> new ResponseStatusException(
                             HttpStatus.BAD_REQUEST,
-                            "Active branch no longer exists. Refresh and try again."));
+                            "Active branch no longer exists. Refresh and try again.")));
         }
 
         Branch branch = getCurrentUserBranchOrNull();

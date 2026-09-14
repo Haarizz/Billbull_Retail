@@ -9,13 +9,17 @@ import java.util.Optional;
 
 public interface PosCounterRepository extends JpaRepository<PosCounter, Long> {
 
-    List<PosCounter> findByBranchIdOrderByDisplayOrderAscCounterNameAsc(Long branchId);
+    // Reads exclude soft-deleted rows (delete() clears isActive); the counter-code
+    // queries below deliberately do not, so a deleted code is never handed out again.
+    List<PosCounter> findByBranchIdAndIsActiveTrueOrderByDisplayOrderAscCounterNameAsc(Long branchId);
 
-    List<PosCounter> findByBranchIdAndStatusOrderByDisplayOrderAsc(Long branchId, PosCounterStatus status);
+    List<PosCounter> findByBranchIdAndStatusAndIsActiveTrueOrderByDisplayOrderAsc(Long branchId, PosCounterStatus status);
 
     Optional<PosCounter> findByBranchIdAndCounterCode(Long branchId, String counterCode);
 
     boolean existsByBranchIdAndCounterCode(Long branchId, String counterCode);
+
+    long countByBranchId(Long branchId);
 
     boolean existsByBranchIdAndCounterNameIgnoreCase(Long branchId, String counterName);
 

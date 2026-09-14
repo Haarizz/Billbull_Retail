@@ -109,6 +109,12 @@ class PosCheckoutControllerTest {
 
     @InjectMocks private PosCheckoutController controller;
 
+    /** The real settlement collaborator wired in {@link #setUp()} — kept as a field so the
+     *  payment-date tests can also exercise {@code settle()} directly, which is the only
+     *  way to reach its null-business-date fallback (the controller's own resolver never
+     *  returns null: with no session it falls through to the Business Day clock). */
+    private PosDeliverySettlementService deliverySettlementService;
+
     private AutoCloseable mocks;
 
     @BeforeEach
@@ -121,7 +127,7 @@ class PosCheckoutControllerTest {
         // so it's wired here and injected post-construction. See that class's javadoc for
         // why the whole settleDelivery() critical section had to move out of this
         // (non-transactional) controller into one atomic transactional method.
-        PosDeliverySettlementService deliverySettlementService = new PosDeliverySettlementService(
+        deliverySettlementService = new PosDeliverySettlementService(
                 invoiceRepository, invoiceService, ownershipAccessService, posSettingsService, auditService,
                 sessionService, businessDayContinuationGate, closureWorkflowGate, allocationResolver,
                 terminalActivityService, invoiceCustomerContactService);
@@ -874,6 +880,128 @@ class PosCheckoutControllerTest {
 
         verify(invoiceService, never()).recordPayment(anyLong(), anyDouble(), anyString(),
                 any(), any(), any(), any(), any(), any(), any());
+    }
+
+    // ---------------------------------------------------------------------
+    // settleDelivery() -- collection DATE. The date half of the same bug class as the
+    // collection-SESSION tests above: a delivery raised on Business Day D1 and collected
+    // on D2 is a D2 receipt. Stamping it D1 hid today's cash from every date-keyed
+    // cash/receipt report and back-dated the ReceiptVoucher (PaymentService.
+    // upsertReceiptVoucher copies Payment.paymentDate onto it) -- and therefore its GL
+    // entry -- into what may already be a closed accounting period.
+    // ---------------------------------------------------------------------
+
+    /** Business Day the delivery was raised on. */
+    private static final LocalDate SALE_DATE_D1 = LocalDate.of(2026, 8, 10);
+    /** Business Day the driver actually brings the cash back on -- four days later. */
+    private static final LocalDate SETTLE_DATE_D2 = LocalDate.of(2026, 8, 14);
+
+    /** An open settling session carrying its own Trading Date, exactly as production does. */
+    private PosSession openPosSessionTrading(Long id, LocalDate tradingDate) {
+        PosSession s = openPosSession(id);
+        s.setTradingDate(tradingDate);
+        return s;
+    }
+
+    private LocalDate capturedSettlementPaymentDate() {
+        ArgumentCaptor<LocalDate> captor = ArgumentCaptor.forClass(LocalDate.class);
+        verify(invoiceService).recordPayment(anyLong(), anyDouble(), any(), any(),
+                captor.capture(), any(), any(), any(), any(), any());
+        return captor.getValue();
+    }
+
+    @Test
+    void settleDeliveryDatesThePaymentOnTheSettlingBusinessDayNotTheInvoiceDate() {
+        // Scenario A: raised D1 (2026-08-10), collected D2 (2026-08-14) under session 100.
+        SalesInvoice invoice = deliveryInvoice(898L, "INV-2026-0898", 195.0, 0.0);
+        invoice.setInvoiceDate(SALE_DATE_D1);
+        when(invoiceRepository.findByIdForUpdate(898L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        when(sessionService.getById(100L)).thenReturn(openPosSessionTrading(100L, SETTLE_DATE_D2));
+
+        controller.settleDelivery(898L, deliverySettleRequest(100L));
+
+        // The receipt -- and every date-keyed report and GL posting derived from it --
+        // belongs to the day the money was collected.
+        assertEquals(SETTLE_DATE_D2, capturedSettlementPaymentDate(),
+                "the payment/collection date must be the settling session's Business Day");
+        // ...and the collection session fix is intact: same call, session 100.
+        verify(invoiceService).recordPayment(eq(898L), eq(195.0), eq("Cash"), any(),
+                eq(SETTLE_DATE_D2), any(), isNull(), isNull(), any(), eq(100L));
+        // The sale's own identity never moves: neither its date nor its creation session.
+        assertEquals(SALE_DATE_D1, invoice.getInvoiceDate(),
+                "settling later must never rewrite the invoice's own date");
+        assertEquals(Long.valueOf(99L), invoice.getPosSessionId());
+    }
+
+    @Test
+    void settleDeliveryDatesEveryTenderLegOfASplitOnTheSettlingBusinessDay() {
+        // One settlement, two legs -- both are the same collection event, so both carry D2.
+        SalesInvoice invoice = deliveryInvoice(899L, "INV-2026-0899", 195.0, 0.0);
+        invoice.setInvoiceDate(SALE_DATE_D1);
+        when(invoiceRepository.findByIdForUpdate(899L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        when(sessionService.getById(100L)).thenReturn(openPosSessionTrading(100L, SETTLE_DATE_D2));
+
+        PosCheckoutController.DeliverySettleRequest req = deliverySettleRequest(100L);
+        req.setCashAmount(95.0);
+        req.setCardAmount(100.0);
+        req.setCardType("Visa");
+
+        controller.settleDelivery(899L, req);
+
+        verify(invoiceService, times(2)).recordPayment(eq(899L), anyDouble(), anyString(),
+                any(), eq(SETTLE_DATE_D2), any(), isNull(), anyString(), anyString(), eq(100L));
+    }
+
+    @Test
+    void settleDeliveryFallsBackToTheInvoiceDateWhenThereIsNoSettlementBusinessDate() {
+        // Scenario B: the documented fallback. Only reachable by calling settle() directly --
+        // the controller's posBusinessDate() never returns null (with no session it falls
+        // through to the Business Day clock, covered by the next test).
+        SalesInvoice invoice = deliveryInvoice(900L, "INV-2026-0900", 195.0, 0.0);
+        invoice.setInvoiceDate(SALE_DATE_D1);
+        when(invoiceRepository.findByIdForUpdate(900L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+
+        deliverySettlementService.settle(900L, deliverySettleRequest(null), null);
+
+        assertEquals(SALE_DATE_D1, capturedSettlementPaymentDate(),
+                "with no settling Business Day resolvable at all, the invoice date is the fallback");
+    }
+
+    @Test
+    void backOfficeSettlementWithNoSessionDatesThePaymentOnTheBusinessDayClock() {
+        // Back-office settlement of an old delivery: still a collection happening TODAY,
+        // so it is dated by the Business Day clock (never LocalDate.now() in the JVM zone,
+        // never the stale invoice date).
+        SalesInvoice invoice = deliveryInvoice(901L, "INV-2026-0901", 195.0, 0.0);
+        invoice.setInvoiceDate(SALE_DATE_D1);
+        when(invoiceRepository.findByIdForUpdate(901L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+
+        controller.settleDelivery(901L, deliverySettleRequest(null));
+
+        assertEquals(businessDayClock.now().toLocalDate(), capturedSettlementPaymentDate());
+        assertEquals(SALE_DATE_D1, invoice.getInvoiceDate());
+    }
+
+    @Test
+    void settleDeliveryUsesTheSessionDateWhenALegacySessionHasNoTradingDate() {
+        // Sessions predating tradingDate fall back to sessionDate -- the same precedence
+        // posBusinessDate() applies at checkout. Still never the invoice date.
+        SalesInvoice invoice = deliveryInvoice(902L, "INV-2026-0902", 195.0, 0.0);
+        invoice.setInvoiceDate(SALE_DATE_D1);
+        when(invoiceRepository.findByIdForUpdate(902L)).thenReturn(java.util.Optional.of(invoice));
+        when(ownershipAccessService.canAccessRecord(any(), any())).thenReturn(true);
+        PosSession legacy = openPosSession(103L);
+        legacy.setTradingDate(null);
+        legacy.setSessionDate(SETTLE_DATE_D2);
+        when(sessionService.getById(103L)).thenReturn(legacy);
+
+        controller.settleDelivery(902L, deliverySettleRequest(103L));
+
+        assertEquals(SETTLE_DATE_D2, capturedSettlementPaymentDate());
     }
 
     @Test

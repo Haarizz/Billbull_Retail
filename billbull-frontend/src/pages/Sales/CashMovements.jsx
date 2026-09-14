@@ -9,6 +9,7 @@ import {
   createPosCashMovement,
   editPosCashMovement,
   voidPosCashMovement,
+  getCashMovementEligibleSessions,
 } from "../../api/posCashMovementApi";
 import { getSelectableCategories } from "../../api/posCashMovementCategoryApi";
 
@@ -17,6 +18,12 @@ const STATUSES = ["ACTIVE", "VOIDED"];
 const PAGE_SIZE = 20;
 
 const formatDateTime = (v) => (v ? new Date(v).toLocaleString() : "-");
+/** "#12 · Counter 1 (POS-01) — 2026-08-23" — enough context to tell two open tills apart. */
+const sessionLabel = (s) => {
+  const where = [s.counterName, s.terminalId ? `(${s.terminalId})` : ""].filter(Boolean).join(" ");
+  const parts = [`#${s.id}`, where || null, s.branchName || null, s.businessDate || null, s.openedBy || null];
+  return parts.filter(Boolean).join(" · ");
+};
 const formatAmount = (v) => (v == null ? "-" : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
 const StatusBadge = ({ status }) => {
@@ -341,8 +348,30 @@ function CreateModal({ onClose, onCreated }) {
   const [categoryId, setCategoryId] = useState("");
   const [categories, setCategories] = useState([]);
   const [categoryRequired, setCategoryRequired] = useState(false);
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // Only sessions a movement can actually be added to are offered — a closed (or stale, or
+  // mid-closure) session is never selectable, so the operator never gets as far as a
+  // "Cannot add cash movement to a closed session." error on Create.
+  useEffect(() => {
+    let cancelled = false;
+    setSessionsLoading(true);
+    getCashMovementEligibleSessions(activeBranch?.id)
+      .then((data) => {
+        if (cancelled) return;
+        const list = Array.isArray(data) ? data : [];
+        setSessions(list);
+        setSessionId((current) =>
+          list.some((s) => String(s.id) === String(current)) ? current : (list.length === 1 ? String(list[0].id) : "")
+        );
+      })
+      .catch(() => { if (!cancelled) setSessions([]); })
+      .finally(() => { if (!cancelled) setSessionsLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeBranch?.id]);
 
   useEffect(() => {
     setCategoryId("");
@@ -356,7 +385,7 @@ function CreateModal({ onClose, onCreated }) {
 
   const submit = async () => {
     if (!sessionId || !amount || Number(amount) <= 0) {
-      setError("Session ID and a positive amount are required.");
+      setError("Select an open session and enter a positive amount.");
       return;
     }
     if (categoryRequired && !categoryId) {
@@ -381,9 +410,23 @@ function CreateModal({ onClose, onCreated }) {
   return (
     <ModalShell title="New Cash Drop / Out" onClose={onClose} wide>
       {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
-      <label className="block text-xs font-semibold text-slate-600">Session ID</label>
-      <input type="number" value={sessionId} onChange={(e) => setSessionId(e.target.value)}
-        className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
+      <label className="block text-xs font-semibold text-slate-600">Session</label>
+      <select value={sessionId} onChange={(e) => setSessionId(e.target.value)}
+        disabled={sessionsLoading || sessions.length === 0}
+        className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400">
+        <option value="">
+          {sessionsLoading ? "Loading open sessions..." : sessions.length === 0 ? "No open sessions available" : "Select an open session..."}
+        </option>
+        {sessions.map((s) => (
+          <option key={s.id} value={s.id}>{sessionLabel(s)}</option>
+        ))}
+      </select>
+      {!sessionsLoading && sessions.length === 0 && (
+        <p className="text-xs text-amber-700 bg-[#FFF8E7] border border-[#FDE6A9] rounded p-2">
+          There are no open sessions{activeBranch?.name ? ` in ${activeBranch.name}` : ""} right now. A cash drop / out can
+          only be recorded against an open session, so open or resume one first.
+        </p>
+      )}
       <label className="block text-xs font-semibold text-slate-600">Movement Type</label>
       <select value={movementType} onChange={(e) => setMovementType(e.target.value)}
         className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm bg-white">
@@ -412,7 +455,7 @@ function CreateModal({ onClose, onCreated }) {
         className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" />
       <div className="flex justify-end gap-2 pt-2">
         <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-bold text-slate-600 rounded border border-slate-200">Cancel</button>
-        <button type="button" disabled={saving} onClick={submit}
+        <button type="button" disabled={saving || !sessionId} onClick={submit}
           className="px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 text-sm font-bold rounded shadow-sm disabled:opacity-50">
           {saving ? "Saving..." : "Create"}
         </button>

@@ -69,10 +69,14 @@ public class TaxController {
 
     // --- Filings ---
 
+    /**
+     * @param branchId scopes the live ledger VAT position attached to each filing
+     *                 (see TaxService.getAllFilings); omit for all branches.
+     */
     @GetMapping("/filings")
-    public List<TaxFilingDTO> getAllFilings() {
+    public List<TaxFilingDTO> getAllFilings(@RequestParam(required = false) Long branchId) {
         modulePermissionService.requireCanView(MODULE);
-        return taxService.getAllFilings();
+        return taxService.getAllFilings(branchId);
     }
 
     @PutMapping("/filings/{id}")

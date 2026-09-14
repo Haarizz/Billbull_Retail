@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle, Eye } from 'lucide-react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle, Eye, Gift } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import BusinessDayStatusChip from '../../../components/pos/BusinessDayStatusChip';
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
@@ -43,6 +43,10 @@ const POSTouchScreen = React.memo((props) => {
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     // layaway
     activeLayawayId, activeLayawayDeposit,
+    // credit vouchers applied to this sale — payment instruments, never cart lines. They carry
+    // no quantity, move no stock and attract no VAT; they only reduce what is left to collect.
+    appliedVoucherLines = [], voucherRedeemedTotal = 0, amountDueAfterVouchers = null,
+    removeAppliedVoucher,
     // shipping (order-level flat charge, not a cart line)
     shippingCharge = 0,
     // focus / numpad
@@ -712,6 +716,16 @@ const POSTouchScreen = React.memo((props) => {
                 <div className="flex justify-between text-xs font-semibold text-gray-500">
                   <span>{getPosVatLabel(currentInvoice, posSettings)}</span><span>{formatCurrency(currentInvoice.tax)}</span>
                 </div>
+                {/* Applied Credit Vouchers — settlement, not a cart line. */}
+                {appliedVoucherLines.map((line) => (
+                  <div key={line.id} className="flex justify-between text-xs font-semibold text-violet-600">
+                    <span className="flex items-center gap-1 min-w-0">
+                      <Gift className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{line.metadata?.voucherNumber || line.reference}</span>
+                    </span>
+                    <span className="shrink-0">−{formatCurrency(line.amount)}</span>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -724,6 +738,13 @@ const POSTouchScreen = React.memo((props) => {
                 )}
                 {(Number(shippingCharge) || 0) > 0 && (
                   <p className="text-xs text-white/80 font-medium">Shipping: {formatCurrency(Number(shippingCharge) || 0)}</p>
+                )}
+                {voucherRedeemedTotal > 0 && (
+                  <p className="text-xs text-white/80 font-medium">
+                    Voucher: −{formatCurrencyStr(voucherRedeemedTotal)} · Due: {formatCurrencyStr(amountDueAfterVouchers != null
+                      ? amountDueAfterVouchers
+                      : Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - voucherRedeemedTotal))}
+                  </p>
                 )}
               </div>
               <p className="text-3xl font-black text-white tabular-nums">
@@ -1082,6 +1103,38 @@ const POSTouchScreen = React.memo((props) => {
                     <span>Deposit Paid</span><span>−{formatCurrency(activeLayawayDeposit)}</span>
                   </div>
                 )}
+                {/* Credit Vouchers — shown below the product totals and visually separated,
+                    because a voucher settles the bill rather than being part of it. Each row
+                    names the voucher and can be removed until the sale is settled. */}
+                {appliedVoucherLines.map((line) => {
+                  const v = line.metadata?.voucher;
+                  const balanceLeft = v ? Math.max(0, (Number(v.remainingAmount) || 0) - line.amount) : 0;
+                  return (
+                    <div key={line.id} className="border-t border-violet-100 pt-1 mt-1">
+                      <div className="flex justify-between text-xs font-semibold text-violet-600">
+                        <span className="flex items-center gap-1 min-w-0">
+                          <Gift className="h-3 w-3 shrink-0" />
+                          <span className="truncate">
+                            Credit Voucher {line.metadata?.voucherNumber || line.reference}
+                          </span>
+                          {removeAppliedVoucher && (
+                            <button type="button" onClick={() => removeAppliedVoucher(line.id)}
+                              title="Remove this voucher" aria-label="Remove credit voucher"
+                              className="shrink-0 text-violet-300 hover:text-red-500">
+                              <XCircle className="h-3 w-3" />
+                            </button>
+                          )}
+                        </span>
+                        <span className="shrink-0">−{formatCurrency(line.amount)}</span>
+                      </div>
+                      {balanceLeft > 0 && (
+                        <p className="text-[10px] text-violet-400 pl-4">
+                          {formatCurrencyStr(balanceLeft)} stays on the voucher
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               <div className="bg-[#F5C742] px-3 py-2.5 flex items-center justify-between">
                 <div>
@@ -1090,6 +1143,20 @@ const POSTouchScreen = React.memo((props) => {
                       <p className="text-[10px] font-bold text-white/80 uppercase tracking-wide">Balance Due</p>
                       <p className="text-xl font-black text-white leading-none">{formatCurrency(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}</p>
                       <p className="text-[10px] text-white/70">Total: {formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</p>
+                    </>
+                  ) : voucherRedeemedTotal > 0 ? (
+                    // A voucher is already-surrendered value, so the headline figure becomes
+                    // what is still to be collected — the number the cashier has to take.
+                    <>
+                      <p className="text-[10px] font-bold text-white/80 uppercase tracking-wide">Amount Due</p>
+                      <p className="text-xl font-black text-white leading-none">
+                        {formatCurrency(amountDueAfterVouchers != null
+                          ? amountDueAfterVouchers
+                          : Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - voucherRedeemedTotal))}
+                      </p>
+                      <p className="text-[10px] text-white/70">
+                        Total: {formatCurrencyStr(currentInvoice.total + (Number(shippingCharge) || 0))} · Voucher: −{formatCurrencyStr(voucherRedeemedTotal)}
+                      </p>
                     </>
                   ) : (
                     <>

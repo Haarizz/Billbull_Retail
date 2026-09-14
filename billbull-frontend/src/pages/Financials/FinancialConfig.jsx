@@ -541,6 +541,12 @@ const FinancialConfig = () => {
             toast.error("Please fill all period details");
             return;
         }
+        // Dates are ISO (yyyy-mm-dd) from the date inputs, so a string compare orders them.
+        // The backend rejects this too; catching it here saves a round trip.
+        if (newPeriod.endDate < newPeriod.startDate) {
+            toast.error("End date cannot be before start date");
+            return;
+        }
         try {
             await createAccountingPeriod(newPeriod);
             toast.success("Accounting Period created");
@@ -549,7 +555,9 @@ const FinancialConfig = () => {
             fetchData();
         } catch (e) {
             console.error(e);
-            toast.error("Failed to create period");
+            // Surface the server's reason (inverted range, overlap with an existing
+            // period) instead of a generic failure the user cannot act on.
+            toast.error(e?.response?.data?.message || "Failed to create period");
         }
     };
 

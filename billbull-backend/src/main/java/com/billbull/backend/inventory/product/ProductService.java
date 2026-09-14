@@ -1,5 +1,6 @@
 package com.billbull.backend.inventory.product;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +40,7 @@ public class ProductService {
     private final ProductRepository productRepo;
     private final ProductPricingRepository pricingRepo;
     private final ProductBranchPricingRepository branchPricingRepo;
+    private final ProductPriceChangeRepository priceChangeRepo;
     private final ProductTaxRepository taxRepo;
     private final ProductInventoryPolicyRepository inventoryRepo;
     private final ProductMediaRepository mediaRepo;
@@ -77,6 +79,7 @@ public class ProductService {
             ProductRepository productRepo,
             ProductPricingRepository pricingRepo,
             ProductBranchPricingRepository branchPricingRepo,
+            ProductPriceChangeRepository priceChangeRepo,
             ProductTaxRepository taxRepo,
             ProductInventoryPolicyRepository inventoryRepo,
             ProductMediaRepository mediaRepo,
@@ -103,6 +106,7 @@ public class ProductService {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
+        this.priceChangeRepo = priceChangeRepo;
         this.taxRepo = taxRepo;
         this.inventoryRepo = inventoryRepo;
         this.mediaRepo = mediaRepo;
@@ -385,6 +389,7 @@ public class ProductService {
 
         java.util.Set<Long> incomingBranchIds = new java.util.HashSet<>();
         List<ProductBranchPricing> rowsToSave = new ArrayList<>();
+        List<ProductPriceChange> priceChanges = new ArrayList<>();
 
         for (ProductBranchPricing requestRow : requestRows) {
             Long branchId = requestRow.getBranch() != null ? requestRow.getBranch().getId() : null;
@@ -395,7 +400,17 @@ public class ProductService {
                     .orElseThrow(() -> new IllegalArgumentException("Invalid branch in product pricing: " + branchId));
             incomingBranchIds.add(branchId);
 
-            ProductBranchPricing row = existingByBranch.getOrDefault(branchId, new ProductBranchPricing());
+            ProductBranchPricing existing = existingByBranch.get(branchId);
+            ProductBranchPricing row = existing != null ? existing : new ProductBranchPricing();
+
+            // Same reasoning as the base pricing above: snapshot before the setters run.
+            BigDecimal beforeCost = existing != null ? existing.getCost() : null;
+            BigDecimal beforeRetail = existing != null ? existing.getRetailPrice() : null;
+            BigDecimal beforeWholesale = existing != null ? existing.getWholesalePrice() : null;
+            BigDecimal beforeMin = existing != null ? existing.getMinPrice() : null;
+            BigDecimal beforeMax = existing != null ? existing.getMaxPrice() : null;
+            BigDecimal beforeOnline = existing != null ? existing.getOnlinePrice() : null;
+
             row.setProduct(product);
             row.setBranch(branch);
             row.setCost(requestRow.getCost());
@@ -408,6 +423,16 @@ public class ProductService {
             row.setOnlinePrice(requestRow.getOnlinePrice());
             row.setStatus(requestRow.getStatus());
             rowsToSave.add(row);
+
+            if (existing != null) {
+                Long pid = product.getId();
+                recordPriceChange(priceChanges, pid, branchId, "Cost", beforeCost, row.getCost());
+                recordPriceChange(priceChanges, pid, branchId, "Retail", beforeRetail, row.getRetailPrice());
+                recordPriceChange(priceChanges, pid, branchId, "Wholesale", beforeWholesale, row.getWholesalePrice());
+                recordPriceChange(priceChanges, pid, branchId, "Min", beforeMin, row.getMinPrice());
+                recordPriceChange(priceChanges, pid, branchId, "Max", beforeMax, row.getMaxPrice());
+                recordPriceChange(priceChanges, pid, branchId, "Online", beforeOnline, row.getOnlinePrice());
+            }
         }
 
         List<ProductBranchPricing> rowsToDelete = existingRows.stream()
@@ -419,6 +444,27 @@ public class ProductService {
         }
         if (!rowsToSave.isEmpty()) {
             branchPricingRepo.saveAll(rowsToSave);
+        }
+        if (!priceChanges.isEmpty()) {
+            priceChangeRepo.saveAll(priceChanges);
+        }
+    }
+
+    /**
+     * Adds an audit row when a price level actually moved. {@code compareTo} rather than
+     * {@code equals} so a scale-only rewrite (30 → 30.00) is not reported as a change; a level
+     * going from unset to priced, or priced to unset, is.
+     */
+    private void recordPriceChange(List<ProductPriceChange> sink, Long productId, Long branchId,
+            String priceLevel, BigDecimal oldPrice, BigDecimal newPrice) {
+        if (productId == null) {
+            return;
+        }
+        boolean changed = (oldPrice == null || newPrice == null)
+                ? oldPrice != newPrice
+                : oldPrice.compareTo(newPrice) != 0;
+        if (changed) {
+            sink.add(new ProductPriceChange(productId, branchId, priceLevel, oldPrice, newPrice));
         }
     }
 
@@ -554,6 +600,17 @@ public class ProductService {
             ProductPricing pricing = pricingRepo.findByProductId(product.getId())
                     .orElse(new ProductPricing());
 
+            // Snapshot the current levels before the setters overwrite them. Only an edit to an
+            // existing pricing row is a "price change"; the first time a product is priced there is
+            // no old price for the audit to compare against.
+            boolean existingPricing = pricing.getId() != null;
+            BigDecimal beforeCost = pricing.getCost();
+            BigDecimal beforeRetail = pricing.getRetailPrice();
+            BigDecimal beforeWholesale = pricing.getWholesalePrice();
+            BigDecimal beforeMin = pricing.getMinPrice();
+            BigDecimal beforeMax = pricing.getMaxPrice();
+            BigDecimal beforeOnline = pricing.getOnlinePrice();
+
             pricing.setProduct(product);
             pricing.setCost(reqPricing.getCost());
             pricing.setLandingCost(reqPricing.getLandingCost());
@@ -571,7 +628,23 @@ public class ProductService {
                 pricing.setLoyaltyPoints(reqPricing.getLoyaltyPoints());
             }
 
+            // Capture the before/after of each level before the entity is flushed — product_pricing
+            // is updated in place, so this is the only moment the old price still exists.
+            List<ProductPriceChange> priceChanges = new ArrayList<>();
+            if (existingPricing) {
+                Long pid = product.getId();
+                recordPriceChange(priceChanges, pid, null, "Cost", beforeCost, pricing.getCost());
+                recordPriceChange(priceChanges, pid, null, "Retail", beforeRetail, pricing.getRetailPrice());
+                recordPriceChange(priceChanges, pid, null, "Wholesale", beforeWholesale, pricing.getWholesalePrice());
+                recordPriceChange(priceChanges, pid, null, "Min", beforeMin, pricing.getMinPrice());
+                recordPriceChange(priceChanges, pid, null, "Max", beforeMax, pricing.getMaxPrice());
+                recordPriceChange(priceChanges, pid, null, "Online", beforeOnline, pricing.getOnlinePrice());
+            }
+
             pricingRepo.save(pricing);
+            if (!priceChanges.isEmpty()) {
+                priceChangeRepo.saveAll(priceChanges);
+            }
         }
 
         saveBranchPrices(product, req.getBranchPrices());

@@ -4,13 +4,14 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { usePermissions } from '../../context/PermissionContext';
-import { receiptVoucherApi } from '../../api/receiptVoucherApi';
-import { getPosCashMovementById } from '../../api/posCashMovementApi';
-import { getSelectableCategories } from '../../api/posCashMovementCategoryApi';
+import { searchCustomersAllFields } from '../../api/customerledgerApi';
+import { getActivePaymentMethods } from '../../api/financialReportsBackendApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
+import SearchSelect from '../../components/common/SearchSelect';
 import {
   getTransactionCorrections, createTransactionCorrection, submitTransactionCorrection,
   approveTransactionCorrection, rejectTransactionCorrection, applyTransactionCorrection, cancelTransactionCorrection,
+  searchCorrectableInvoices, getInvoiceNumberPrefix,
 } from '../../api/posTransactionCorrectionApi';
 
 const PAGE_SIZE = 20;
@@ -26,13 +27,21 @@ const STATUS_BADGE = {
   FAILED: 'bg-red-100 text-red-700',
 };
 
+// Only the two receipt-voucher corrections are live. The rest stay listed — they are real
+// correction types the backend still understands and older rows reference them — but they are
+// not selectable until their own request forms are built, so they render as "Coming soon".
 const CORRECTION_KINDS = [
-  { key: 'CUSTOMER', label: 'Customer Correction', targetType: 'RECEIPT_VOUCHER', targetLabel: 'Receipt Voucher ID' },
-  { key: 'PAYMENT_MODE', label: 'Payment Mode Correction', targetType: 'RECEIPT_VOUCHER', targetLabel: 'Receipt Voucher ID' },
-  { key: 'RECEIPT_AMOUNT', label: 'Receipt Amount Correction', targetType: 'RECEIPT_VOUCHER', targetLabel: 'Receipt Voucher ID' },
-  { key: 'ADVANCE_PAYMENT', label: 'Advance Allocation Correction', targetType: 'CUSTOMER_ADVANCE', targetLabel: 'Advance Application ID' },
-  { key: 'CASH_MOVEMENT_CATEGORY', label: 'Cash Movement Category Correction', targetType: 'CASH_MOVEMENT', targetLabel: 'Cash Movement ID' },
+  { key: 'CUSTOMER', label: 'Customer Correction', targetType: 'RECEIPT_VOUCHER', available: true },
+  { key: 'PAYMENT_MODE', label: 'Payment Mode Correction', targetType: 'RECEIPT_VOUCHER', available: true },
+  { key: 'RECEIPT_AMOUNT', label: 'Receipt Amount Correction', targetType: 'RECEIPT_VOUCHER', available: false },
+  { key: 'ADVANCE_PAYMENT', label: 'Advance Allocation Correction', targetType: 'CUSTOMER_ADVANCE', available: false },
+  { key: 'CASH_MOVEMENT_CATEGORY', label: 'Cash Movement Category Correction', targetType: 'CASH_MOVEMENT', available: false },
 ];
+
+const AVAILABLE_KINDS = CORRECTION_KINDS.filter((k) => k.available);
+
+/** Used only if the Payment Methods master is empty — never leaves the field unusable. */
+const FALLBACK_PAYMENT_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque', 'Credit'];
 
 const formatMoney = (v) => (v == null ? '-' : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const formatDateTime = (v) => (v ? new Date(v).toLocaleString() : '-');
@@ -92,6 +101,19 @@ export default function PosTransactionCorrections() {
     }
   };
 
+  /**
+   * Approving and applying are separate lifecycle events on the backend (an approved correction
+   * that fails to post must stay APPROVED + FAILED, never silently applied). Operators still
+   * think of it as one decision, so this drives both in order and reports whichever step failed —
+   * an approval that lands but fails to post leaves the row APPROVED and re-applyable.
+   */
+  const handleApproveAndApply = (id) => {
+    withActing(id, async () => {
+      await approveTransactionCorrection(id);
+      await applyTransactionCorrection(id);
+    }, 'Correction approved and applied — offsetting GL entries posted.');
+  };
+
   const handleReject = (id) => {
     const reason = window.prompt('Rejection reason:');
     if (!reason || !reason.trim()) return;
@@ -122,7 +144,9 @@ export default function PosTransactionCorrections() {
           <select value={correctionTypeFilter} onChange={(e) => setCorrectionTypeFilter(e.target.value)}
             className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#F5C742]">
             <option value="">All correction types</option>
-            {CORRECTION_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+            {CORRECTION_KINDS.map((k) => (
+              <option key={k.key} value={k.key}>{k.available ? k.label : `${k.label} (Coming soon)`}</option>
+            ))}
           </select>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
             className="h-9 px-3 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-[#F5C742]">
@@ -181,8 +205,8 @@ export default function PosTransactionCorrections() {
                           </button>
                         )}
                         {canDecide && r.approvable && (
-                          <button disabled={actingId === r.id} title="Approve"
-                            onClick={() => withActing(r.id, () => approveTransactionCorrection(r.id), 'Correction approved.')}
+                          <button disabled={actingId === r.id} title="Approve & Apply"
+                            onClick={() => handleApproveAndApply(r.id)}
                             className="text-slate-500 hover:text-emerald-600 disabled:opacity-40">
                             <CheckCircle2 size={14} />
                           </button>
@@ -220,7 +244,7 @@ export default function PosTransactionCorrections() {
       </div>
 
       {showNewRequest && (
-        <NewCorrectionRequestModal onClose={() => setShowNewRequest(false)} onCreated={() => { setShowNewRequest(false); load(0); }} />
+        <NewCorrectionRequestModal canDecide={canDecide} onClose={() => setShowNewRequest(false)} onCreated={() => { setShowNewRequest(false); load(0); }} />
       )}
       {detailRow && (
         <CorrectionDetailModal row={detailRow} onClose={() => setDetailRow(null)} />
@@ -229,81 +253,91 @@ export default function PosTransactionCorrections() {
   );
 }
 
-function NewCorrectionRequestModal({ onClose, onCreated }) {
-  const [kind, setKind] = useState(CORRECTION_KINDS[0].key);
+function NewCorrectionRequestModal({ canDecide, onClose, onCreated }) {
+  const [kind, setKind] = useState(AVAILABLE_KINDS[0].key);
   const kindDef = CORRECTION_KINDS.find((k) => k.key === kind);
 
-  const [targetId, setTargetId] = useState('');
-  const [loadingTarget, setLoadingTarget] = useState(false);
-  const [target, setTarget] = useState(null);
-  const [categories, setCategories] = useState([]);
+  const [invoicePrefix, setInvoicePrefix] = useState('');
+  const [invoice, setInvoice] = useState(null);
 
-  const [correctedCustomerCode, setCorrectedCustomerCode] = useState('');
+  const [paymentModes, setPaymentModes] = useState(FALLBACK_PAYMENT_MODES);
+  const [correctedCustomer, setCorrectedCustomer] = useState(null);
+  const [walkIn, setWalkIn] = useState(false);
   const [correctedPaymentMode, setCorrectedPaymentMode] = useState('');
-  const [correctedAmount, setCorrectedAmount] = useState('');
-  const [correctedInvoiceNumber, setCorrectedInvoiceNumber] = useState('');
-  const [correctedCategoryId, setCorrectedCategoryId] = useState('');
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const resetTarget = () => { setTarget(null); setCategories([]); };
+  useEffect(() => {
+    getInvoiceNumberPrefix().then(setInvoicePrefix).catch(() => setInvoicePrefix(''));
+    getActivePaymentMethods()
+      .then((methods) => {
+        const names = (methods || []).map((m) => m.name).filter(Boolean);
+        if (names.length) setPaymentModes(names);
+      })
+      .catch(() => { /* master unavailable — the fallback list keeps the field usable */ });
+  }, []);
 
-  const lookupTarget = async () => {
-    if (!targetId) return;
-    setLoadingTarget(true);
+  const resetTargetSelection = () => {
+    setInvoice(null);
+    setCorrectedCustomer(null);
+    setWalkIn(false);
+    setCorrectedPaymentMode('');
     setError('');
-    resetTarget();
-    try {
-      if (kindDef.targetType === 'RECEIPT_VOUCHER') {
-        const rv = await receiptVoucherApi.getById(Number(targetId));
-        setTarget(rv);
-        setCorrectedPaymentMode(rv.paymentMode || '');
-        setCorrectedAmount(rv.amount ?? '');
-      } else if (kindDef.targetType === 'CASH_MOVEMENT') {
-        const m = await getPosCashMovementById(Number(targetId));
-        setTarget(m);
-        const sel = await getSelectableCategories(m.movementType, m.branchId);
-        setCategories(sel.categories || []);
-      } else if (kindDef.targetType === 'CUSTOMER_ADVANCE') {
-        // No single-record lookup endpoint exists for advance applications yet — the backend
-        // still fully validates the id and reason at submission time.
-        setTarget({ id: Number(targetId), _noPreview: true });
-      }
-    } catch (e) {
-      setError(e?.response?.data?.message || 'Transaction not found.');
-    } finally {
-      setLoadingTarget(false);
+  };
+
+  const pickInvoice = (opt) => {
+    if (!opt.correctable) return;
+    setInvoice(opt);
+    // Deliberately not pre-filled with the current mode: a correction whose new value equals the
+    // old one is rejected, so pre-filling would hand the operator a form that cannot be submitted.
+    setCorrectedPaymentMode('');
+    setError('');
+  };
+
+  // The invoice is what the operator picks; the receipt voucher behind it is what gets corrected.
+  const targetId = invoice?.receiptVoucherId;
+
+  const validate = () => {
+    if (!invoice) return 'Select the invoice to correct.';
+    if (kind === 'CUSTOMER') {
+      if (!walkIn && !correctedCustomer) return 'Select the corrected customer, or tick Walk-In.';
+      const nextCode = walkIn ? '' : (correctedCustomer.code || '');
+      if ((invoice.receiptCustomerCode || '') === nextCode) return 'The corrected customer is the same as the current one.';
     }
+    if (kind === 'PAYMENT_MODE') {
+      if (!correctedPaymentMode) return 'Select the corrected payment mode.';
+      if (correctedPaymentMode.toLowerCase() === (invoice.receiptPaymentMode || '').toLowerCase()) {
+        return 'The corrected payment mode is the same as the current one.';
+      }
+    }
+    if (!reason.trim()) return 'A correction reason is required.';
+    return '';
   };
 
   const submit = async () => {
-    if (!target) {
-      setError('Look up the transaction first.');
-      return;
-    }
-    if (!reason.trim()) {
-      setError('A correction reason is required.');
-      return;
-    }
+    const problem = validate();
+    if (problem) { setError(problem); return; }
     setSaving(true);
     setError('');
     try {
-      await createTransactionCorrection({
+      const created = await createTransactionCorrection({
         targetType: kindDef.targetType,
-        targetId: Number(targetId),
+        targetId,
         correctionType: kind,
         reason: reason.trim(),
-        correctedCustomerCode: kind === 'CUSTOMER' ? correctedCustomerCode : undefined,
+        correctedCustomerCode: kind === 'CUSTOMER' ? (walkIn ? '' : correctedCustomer.code) : undefined,
         correctedPaymentMode: kind === 'PAYMENT_MODE' ? correctedPaymentMode : undefined,
-        correctedAmount: (kind === 'RECEIPT_AMOUNT' || kind === 'ADVANCE_PAYMENT') ? Number(correctedAmount) : undefined,
-        correctedInvoiceNumber: kind === 'ADVANCE_PAYMENT' ? correctedInvoiceNumber : undefined,
-        correctedCategoryId: kind === 'CASH_MOVEMENT_CATEGORY' ? Number(correctedCategoryId) : undefined,
       });
-      toast.success('Correction request created.');
+      // A request left in REQUESTED is invisible to approvers, which is how corrections got
+      // stranded before — so creating one always hands it straight to the approval queue.
+      await submitTransactionCorrection(created.id);
+      toast.success(canDecide
+        ? 'Correction request submitted — approve and apply it from the list.'
+        : 'Correction request submitted for supervisor approval.');
       onCreated();
     } catch (e) {
-      setError(e?.response?.data?.message || 'Failed to create correction request.');
+      setError(e?.response?.data?.message || 'Failed to submit the correction request.');
     } finally {
       setSaving(false);
     }
@@ -311,103 +345,110 @@ function NewCorrectionRequestModal({ onClose, onCreated }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div role="dialog" aria-modal="true" className="bg-white rounded-2xl shadow-xl w-full max-w-xl overflow-hidden my-8">
+      <div role="dialog" aria-modal="true" className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden my-8">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
           <h2 className="text-sm font-bold text-slate-800">New Transaction Correction</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
         </div>
-        <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+        <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
           {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
 
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Correction Type</label>
-            <select value={kind} onChange={(e) => { setKind(e.target.value); setTargetId(''); resetTarget(); }}
+            <select value={kind} onChange={(e) => { setKind(e.target.value); resetTargetSelection(); }}
               className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm bg-white">
-              {CORRECTION_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+              {CORRECTION_KINDS.map((k) => (
+                <option key={k.key} value={k.key} disabled={!k.available}>
+                  {k.available ? k.label : `${k.label} — Coming soon`}
+                </option>
+              ))}
             </select>
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">{kindDef.targetLabel}</label>
-            <div className="flex gap-2">
-              <input type="number" value={targetId} onChange={(e) => setTargetId(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') lookupTarget(); }}
-                className="flex-1 h-9 px-3 border border-slate-200 rounded-lg text-sm" placeholder="e.g. 1024" />
-              <button onClick={lookupTarget} disabled={loadingTarget || !targetId}
-                className="px-4 h-9 bg-slate-900 text-white text-xs font-bold rounded-lg disabled:opacity-50">
-                {loadingTarget ? <Loader2 className="animate-spin" size={14} /> : 'Look Up'}
-              </button>
-            </div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">Invoice Number</label>
+            <SearchSelect
+              value={invoice}
+              display={invoice ? `${invoice.invoiceNumber} · ${invoice.customerName || invoice.customerCode || 'Walk-In'}` : ''}
+              prefix={invoicePrefix}
+              placeholder="type the last digits, e.g. 0211"
+              onSearch={searchCorrectableInvoices}
+              onSelect={pickInvoice}
+              onClear={resetTargetSelection}
+              renderOption={(opt, i, choose) => (
+                <li key={opt.invoiceId ?? i}>
+                  <button type="button" disabled={!opt.correctable} onClick={choose}
+                    className={`w-full text-left px-3 py-2 text-xs border-b border-slate-50 last:border-0 ${
+                      opt.correctable ? 'hover:bg-amber-50' : 'opacity-60 cursor-not-allowed'}`}>
+                    <div className="flex justify-between gap-2">
+                      <span className="font-bold text-slate-800">{opt.invoiceNumber}</span>
+                      <span className="text-slate-500">{formatMoney(opt.invoiceTotal)}</span>
+                    </div>
+                    <div className="flex justify-between gap-2 text-slate-500">
+                      <span className="truncate">{opt.customerName || opt.customerCode || 'Walk-In'}</span>
+                      <span>{opt.invoiceDate || ''}</span>
+                    </div>
+                    {!opt.correctable && <p className="text-[11px] text-amber-700 mt-0.5">{opt.blockReason}</p>}
+                  </button>
+                </li>
+              )}
+            />
+            <p className="text-[11px] text-slate-400 mt-1">
+              The correction is applied to the settlement receipt behind the invoice.
+            </p>
           </div>
 
-          {target && !target._noPreview && kindDef.targetType === 'RECEIPT_VOUCHER' && (
-            <div className="grid grid-cols-3 gap-3 text-xs bg-slate-50 rounded-lg p-3">
-              <div><span className="text-slate-500">Customer</span><p className="font-bold text-slate-800">{target.customerCode || 'Walk-In'}</p></div>
-              <div><span className="text-slate-500">Payment Mode</span><p className="font-bold text-slate-800">{target.paymentMode}</p></div>
-              <div><span className="text-slate-500">Amount</span><p className="font-bold text-slate-800">{formatMoney(target.amount)}</p></div>
-            </div>
-          )}
-          {target && !target._noPreview && kindDef.targetType === 'CASH_MOVEMENT' && (
-            <div className="grid grid-cols-3 gap-3 text-xs bg-slate-50 rounded-lg p-3">
-              <div><span className="text-slate-500">Type</span><p className="font-bold text-slate-800">{target.movementType}</p></div>
-              <div><span className="text-slate-500">Amount</span><p className="font-bold text-slate-800">{formatMoney(target.amount)}</p></div>
-              <div><span className="text-slate-500">Current Category</span><p className="font-bold text-slate-800">{target.categoryName || 'Uncategorized (Legacy)'}</p></div>
-            </div>
-          )}
-          {target && target._noPreview && (
-            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-              <span>No preview is available for advance allocations — the backend will validate this ID and reject the request if it's invalid, already refunded, or in a locked period.</span>
+          {invoice && (
+            <div className="grid grid-cols-4 gap-3 text-xs bg-slate-50 rounded-lg p-3">
+              <div><span className="text-slate-500">Receipt</span><p className="font-bold text-slate-800">{invoice.receiptVoucherNumber || `#${invoice.receiptVoucherId}`}</p></div>
+              <div><span className="text-slate-500">Customer</span><p className="font-bold text-slate-800 truncate" title={invoice.customerName}>{invoice.receiptCustomerCode || 'Walk-In'}</p></div>
+              <div><span className="text-slate-500">Payment Mode</span><p className="font-bold text-slate-800">{invoice.receiptPaymentMode || '-'}</p></div>
+              <div><span className="text-slate-500">Amount</span><p className="font-bold text-slate-800">{formatMoney(invoice.receiptAmount)}</p></div>
             </div>
           )}
 
-          {target && kind === 'CUSTOMER' && (
+          {invoice && kind === 'CUSTOMER' && (
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Corrected Customer Code (blank = Walk-In)</label>
-              <input value={correctedCustomerCode} onChange={(e) => setCorrectedCustomerCode(e.target.value)}
-                className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" placeholder="e.g. CUST-0042" />
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Corrected Customer</label>
+              <SearchSelect
+                value={walkIn ? null : correctedCustomer}
+                display={correctedCustomer ? `${correctedCustomer.code} · ${correctedCustomer.name}` : ''}
+                placeholder="search by code, name, mobile or TRN"
+                disabled={walkIn}
+                onSearch={searchCustomersAllFields}
+                onSelect={(c) => setCorrectedCustomer(c)}
+                onClear={() => setCorrectedCustomer(null)}
+                renderOption={(opt, i, choose) => (
+                  <li key={opt.id ?? i}>
+                    <button type="button" onClick={choose}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-amber-50 border-b border-slate-50 last:border-0">
+                      <span className="font-bold text-slate-800">{opt.code}</span>
+                      <span className="text-slate-600"> · {opt.name}</span>
+                      {opt.mobile && <span className="text-slate-400"> · {opt.mobile}</span>}
+                    </button>
+                  </li>
+                )}
+              />
+              <label className="flex items-center gap-2 mt-2 text-xs text-slate-600">
+                <input type="checkbox" checked={walkIn}
+                  onChange={(e) => { setWalkIn(e.target.checked); if (e.target.checked) setCorrectedCustomer(null); }} />
+                This sale belongs to no customer (Walk-In)
+              </label>
             </div>
           )}
-          {target && kind === 'PAYMENT_MODE' && (
+
+          {invoice && kind === 'PAYMENT_MODE' && (
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Corrected Payment Mode</label>
-              <input value={correctedPaymentMode} onChange={(e) => setCorrectedPaymentMode(e.target.value)}
-                className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" placeholder="e.g. Visa, Cash, Mastercard" />
-            </div>
-          )}
-          {target && kind === 'RECEIPT_AMOUNT' && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Corrected Amount</label>
-              <input type="number" step="0.01" value={correctedAmount} onChange={(e) => setCorrectedAmount(e.target.value)}
-                className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm font-bold" />
-            </div>
-          )}
-          {target && kind === 'ADVANCE_PAYMENT' && (
-            <>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Corrected Invoice Number (blank = keep current)</label>
-                <input value={correctedInvoiceNumber} onChange={(e) => setCorrectedInvoiceNumber(e.target.value)}
-                  className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm" placeholder="e.g. INV-1042" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Corrected Amount</label>
-                <input type="number" step="0.01" value={correctedAmount} onChange={(e) => setCorrectedAmount(e.target.value)}
-                  className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm font-bold" />
-              </div>
-            </>
-          )}
-          {target && kind === 'CASH_MOVEMENT_CATEGORY' && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Corrected Category</label>
-              <select value={correctedCategoryId} onChange={(e) => setCorrectedCategoryId(e.target.value)}
+              <select value={correctedPaymentMode} onChange={(e) => setCorrectedPaymentMode(e.target.value)}
                 className="w-full h-9 px-3 border border-slate-200 rounded-lg text-sm bg-white">
-                <option value="">Select a category...</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value="">Select a payment mode...</option>
+                {paymentModes.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
           )}
 
-          {target && (
+          {invoice && (
             <div>
               <label className="block text-xs font-semibold text-slate-600 mb-1">Reason for Correction</label>
               <textarea value={reason} onChange={(e) => setReason(e.target.value)}
@@ -415,10 +456,21 @@ function NewCorrectionRequestModal({ onClose, onCreated }) {
                 placeholder="e.g. Customer paid by card, cashier recorded it as cash in error." />
             </div>
           )}
+
+          {invoice && (
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg p-3 text-[11px] text-amber-800">
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <span>
+                Nothing changes until the request is approved and applied. On apply a new offsetting
+                GL entry is posted and the corrected values take effect on the receipt, the invoice,
+                the customer ledger and the session reports — no historical record is rewritten.
+              </span>
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 px-5 py-4 border-t border-slate-100">
           <button onClick={onClose} className="px-4 py-2 text-sm font-bold text-slate-600 rounded-lg border border-slate-200">Cancel</button>
-          <button disabled={saving || !target} onClick={submit}
+          <button disabled={saving || !invoice} onClick={submit}
             className="px-4 py-2 bg-[#F5C742] hover:bg-[#E5B732] text-slate-900 text-sm font-bold rounded-lg shadow-sm disabled:opacity-50">
             {saving ? 'Submitting...' : 'Submit Request'}
           </button>

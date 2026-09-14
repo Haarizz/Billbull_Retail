@@ -3,6 +3,7 @@ package com.billbull.backend.purchase.grn;
 import java.math.BigDecimal;
 import java.util.List;
 
+import com.billbull.backend.purchase.batch.PurchaseBatchLotDraft;
 import com.billbull.backend.purchase.serial.PurchaseSerialDraft;
 
 public record GrnItemResponse(
@@ -29,5 +30,9 @@ public record GrnItemResponse(
         String focUnit,
         String remarks,
         BigDecimal purchaseTax,
-        String detailedDesc) {
+        String detailedDesc,
+        boolean expiryEnabled,
+        boolean fefoEnabled,
+        Integer minExpiryDaysForSale,
+        List<PurchaseBatchLotDraft> batchLots) {
 }

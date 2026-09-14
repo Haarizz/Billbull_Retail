@@ -50,6 +50,9 @@ public class LedgerService {
     @Autowired
     private ApplicationContext applicationContext;
 
+    /** The frontend's "no specific branch" option in every branch dropdown on the Ledger page. */
+    private static final String ALL_BRANCHES_LABEL = "All Branches";
+
     private String normalizeBranchKey(String value) {
         return value == null ? null : value.trim().toLowerCase(Locale.ROOT);
     }
@@ -76,6 +79,34 @@ public class LedgerService {
         return keys;
     }
 
+    /**
+     * The single branch whose name or code matches {@code label}, or null when the label names
+     * no branch, names several, or is the "All Branches" placeholder.
+     *
+     * <p>Deliberately not {@code BranchAccessService.findBranchByName}: that returns an
+     * {@code Optional} from a derived query, so it throws on an ambiguous name — and branch names
+     * are not unique (one live tenant has twenty branches called "IT Branch"). Failing to pin a
+     * label down must leave branch_id null and fall back to the legacy label match, never fail
+     * the save.
+     */
+    private Branch resolveBranchByLabel(String label) {
+        if (label == null || label.isBlank() || ALL_BRANCHES_LABEL.equalsIgnoreCase(label.trim())) {
+            return null;
+        }
+        String key = normalizeBranchKey(label);
+        List<Branch> matches = branchRepository.findAll().stream()
+                .filter(branch -> key.equals(normalizeBranchKey(branch.getName()))
+                        || key.equals(normalizeBranchKey(branch.getCode())))
+                .toList();
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    /** True when a cost center names no branch at all (blank, or the "All Branches" label). */
+    private boolean isCompanyWideCostCenter(CostCenter costCenter) {
+        String label = costCenter.getBranch();
+        return label == null || label.isBlank() || ALL_BRANCHES_LABEL.equalsIgnoreCase(label.trim());
+    }
+
     private boolean matchesScopedLegacyBranch(String branchLabel, Set<String> scopedBranchKeys) {
         String normalized = normalizeBranchKey(branchLabel);
         return normalized != null && scopedBranchKeys.contains(normalized);
@@ -92,6 +123,12 @@ public class LedgerService {
                     Branch branch = costCenter.getBranchEntity();
                     if (branch != null && branch.getId() != null) {
                         return scope.branchIds().contains(branch.getId());
+                    }
+                    // A cost center tied to no branch is a company-wide master, like the Chart
+                    // of Accounts above: every branch sees it. Hiding it made a cost center
+                    // saved as "All Branches" vanish from the list the moment it was created.
+                    if (isCompanyWideCostCenter(costCenter)) {
+                        return true;
                     }
                     return matchesScopedLegacyBranch(costCenter.getBranch(), scopedBranchKeys);
                 })
@@ -149,6 +186,11 @@ public class LedgerService {
         return code;
     }
 
+    /** Single account by code, or null when no such code exists. */
+    public Account getAccountByCode(String code) {
+        return code == null ? null : accountRepo.findByCode(code.trim());
+    }
+
     public Account saveAccount(Account account) {
         boolean isNew = account.getId() == null || account.getId().isEmpty();
         if (isNew) {
@@ -168,6 +210,21 @@ public class LedgerService {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Account code '" + account.getCode() + "' already exists ("
                             + existing.getName() + ").");
+        }
+
+        // balanceAmount/balanceType are a cache of the ledger, advanced by recordTransaction on
+        // every posting — never a client-supplied figure. A new account therefore starts at zero
+        // and receives its opening balance from the journal the caller posts next: writing the
+        // typed figure here *as well* counted it twice, because the account list reads this field
+        // while the COA tree and every report read the ledger. An update keeps whatever the ledger
+        // has already accumulated, so renaming an account can never silently rewrite its balance.
+        if (isNew) {
+            account.setBalanceAmount(BigDecimal.ZERO);
+        } else {
+            accountRepo.findById(account.getId()).ifPresent(persisted -> {
+                account.setBalanceAmount(persisted.getBalanceAmount());
+                account.setBalanceType(persisted.getBalanceType());
+            });
         }
 
         return accountRepo.save(account);
@@ -207,12 +264,64 @@ public class LedgerService {
         return filterCostCentersByExactScope(costCenterRepo.findAll());
     }
 
+    /**
+     * Allocates the first free {@code CC-###} code. Scans every cost center rather than the
+     * branch-scoped list, so a code can never be handed out twice, and picks the first free
+     * number rather than max+1, so archiving or deleting one cannot strand the sequence.
+     */
+    public String nextCostCenterCode() {
+        Set<String> used = costCenterRepo.findAll().stream()
+                .map(CostCenter::getCode)
+                .filter(code -> code != null && !code.isBlank())
+                .map(code -> code.trim().toUpperCase(Locale.ROOT))
+                .collect(java.util.stream.Collectors.toSet());
+
+        for (int n = 1; n <= 9999; n++) {
+            String candidate = String.format("CC-%03d", n);
+            if (!used.contains(candidate)) {
+                return candidate;
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "No free cost center code remains. Enter a code manually.");
+    }
+
+    @Transactional
     public CostCenter saveCostCenter(CostCenter cc) {
-        if (cc.getId() == null || cc.getId().isEmpty()) {
+        boolean isNew = cc.getId() == null || cc.getId().isEmpty();
+        if (isNew) {
             cc.setId(UUID.randomUUID().toString());
             if (cc.getSpent() == null)
                 cc.setSpent(BigDecimal.ZERO);
+            if (cc.getStatus() == null || cc.getStatus().isBlank())
+                cc.setStatus("active");
         }
+
+        // Blank code on create => the server allocates it, mirroring saveAccount. The browser
+        // used to derive it from the length of the *branch-scoped* list it had loaded, so any
+        // user who could see no cost centers proposed CC-001 and collided with the seeded one —
+        // surfacing as an opaque 500 and "Failed to save Cost Center".
+        if (cc.getCode() == null || cc.getCode().isBlank()) {
+            cc.setCode(nextCostCenterCode());
+        } else {
+            cc.setCode(cc.getCode().trim());
+        }
+
+        CostCenter existing = costCenterRepo.findByCode(cc.getCode());
+        if (existing != null && !existing.getId().equals(cc.getId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cost center code '" + cc.getCode() + "' already exists ("
+                            + existing.getName() + ").");
+        }
+
+        // Resolve the free-text branch label to the real branch so branch_id is populated.
+        // branchEntity is @JsonIgnore, so nothing else can set it, and a null branch_id sends
+        // filterCostCentersByExactScope down its legacy label fallback — which matches on branch
+        // *name*, and several branches share one.
+        if (cc.getBranchEntity() == null) {
+            cc.setBranchEntity(resolveBranchByLabel(cc.getBranch()));
+        }
+
         return costCenterRepo.save(cc);
     }
 

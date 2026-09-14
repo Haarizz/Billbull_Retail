@@ -66,7 +66,8 @@ class PosSettingsServiceTest {
             @Override public java.time.LocalDateTime now() { return now; }
         };
         service = new PosSettingsService(repo, branchAccessService, encoder, userRepository,
-                auditLogService, posSessionService, posCredentialVerificationService, clock);
+                auditLogService, posSessionService, posCredentialVerificationService, clock,
+                new com.billbull.backend.pos.terminal.PosTerminalLimitPolicy(""));
     }
 
     @AfterEach

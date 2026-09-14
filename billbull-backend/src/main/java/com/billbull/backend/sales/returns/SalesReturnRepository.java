@@ -64,6 +64,19 @@ public interface SalesReturnRepository extends JpaRepository<SalesReturn, Long> 
     @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r WHERE r.returnDate = :date")
     Double getTotalReturnsForDate(@Param("date") LocalDate date);
 
+    /**
+     * Returns booked on a single business day, cancelled ones excluded — one row of
+     * {returnCount, refundedTotal}. Drives the POS card's "Returns" badge.
+     *
+     * <p>Matches on {@code tradingDate} when the return came from a POS session (it can differ
+     * from {@code returnDate} at a day boundary) and falls back to {@code returnDate} otherwise.
+     */
+    @Query("SELECT COUNT(r), CAST(COALESCE(SUM(r.totalAmount), 0) AS double) FROM SalesReturn r " +
+           "WHERE COALESCE(r.tradingDate, r.returnDate) = :date " +
+           "AND r.status <> com.billbull.backend.sales.returns.SalesReturnStatus.CANCELLED " +
+           "AND (:branchId IS NULL OR r.branch.id = :branchId)")
+    List<Object[]> findDayReturnSnapshot(@Param("date") LocalDate date, @Param("branchId") Long branchId);
+
     @Query("SELECT CAST(SUM(r.totalAmount) AS double) FROM SalesReturn r " +
            "WHERE r.returnDate BETWEEN :startDate AND :endDate " +
            "AND (:branchId IS NULL OR r.branch.id = :branchId)")

@@ -33,6 +33,14 @@ public class DashboardController {
         return ResponseEntity.ok(dashboardService.getSummary(timeRange, branchId, fromDate, toDate));
     }
 
+    /** Today's live POS counter snapshot — bills, net sales, average bill, last bill, returns. */
+    @GetMapping("/pos-today")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosTodayResponse> getPosToday(@RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(MODULE);
+        return ResponseEntity.ok(dashboardService.getPosToday(branchId));
+    }
+
     /** Force-clears the server-side cache and returns fresh data immediately. */
     @PostMapping("/summary/refresh")
     @PreAuthorize("isAuthenticated()")

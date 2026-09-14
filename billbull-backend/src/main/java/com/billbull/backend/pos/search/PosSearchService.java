@@ -18,6 +18,10 @@ import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.sales.customerledger.Customer;
 import com.billbull.backend.sales.customerledger.CustomerRepository;
+import com.billbull.backend.sales.voucher.CreditVoucher;
+import com.billbull.backend.sales.voucher.CreditVoucherCodeGenerator;
+import com.billbull.backend.sales.voucher.CreditVoucherRepository;
+import com.billbull.backend.sales.voucher.CreditVoucherResponse;
 
 /**
  * Unified POS search resolver. Maps one scanned/typed value to the single most
@@ -40,17 +44,20 @@ public class PosSearchService {
     private final BatchMasterRepository batchMasterRepository;
     private final SerialMasterRepository serialMasterRepository;
     private final CustomerRepository customerRepository;
+    private final CreditVoucherRepository creditVoucherRepository;
 
     public PosSearchService(ProductService productService,
                             ProductRepository productRepository,
                             BatchMasterRepository batchMasterRepository,
                             SerialMasterRepository serialMasterRepository,
-                            CustomerRepository customerRepository) {
+                            CustomerRepository customerRepository,
+                            CreditVoucherRepository creditVoucherRepository) {
         this.productService = productService;
         this.productRepository = productRepository;
         this.batchMasterRepository = batchMasterRepository;
         this.serialMasterRepository = serialMasterRepository;
         this.customerRepository = customerRepository;
+        this.creditVoucherRepository = creditVoucherRepository;
     }
 
     @Transactional(readOnly = true)
@@ -127,15 +134,49 @@ public class PosSearchService {
             }
         }
 
-        // 5. Exact customer code / mobile / phone / email.
+        // 5. Exact Credit Voucher — its redemption code (7KQ4-9PXM-2W8R), the barcode payload
+        //    (the same code without separators) or its voucher number (CV-2026-000007).
+        //
+        //    Deliberately after every product lookup: a scanned value that is genuinely a
+        //    product barcode must still ring up an item, and voucher codes are drawn from a
+        //    30-symbol alphabet wide enough that shadowing a real barcode would be an accident
+        //    either way. Deliberately before the customer lookup, which matches on free-text
+        //    fields (code/mobile/email) that a voucher code could plausibly collide with.
+        //
+        //    An ineligible voucher (cancelled, expired, spent, wrong branch) is returned as a
+        //    VOUCHER hit too, not as NONE — the till needs to say *why* it cannot be used, and
+        //    "no product found" would be a lie about a voucher the customer is holding.
+        CreditVoucherResponse voucher = resolveVoucher(q);
+        if (voucher != null) {
+            return PosResolveResponse.voucher(voucher);
+        }
+
+        // 6. Exact customer code / mobile / phone / email.
         Optional<Customer> customer = customerRepository
                 .findFirstByCodeIgnoreCaseOrMobileIgnoreCaseOrPhoneIgnoreCaseOrEmailIgnoreCase(q, q, q, q);
         if (customer.isPresent()) {
             return PosResolveResponse.customer(toCustomerMatch(customer.get()));
         }
 
-        // 6. No exact match — let the grid filter handle it.
+        // 7. No exact match — let the grid filter handle it.
         return PosResolveResponse.none();
+    }
+
+    /**
+     * Resolves a scanned/typed token to a voucher, or null when it is not one.
+     *
+     * <p>Tries the token as given (grouped code or voucher number) and normalised (the barcode
+     * payload, which is the code without separators) — the same two-shot resolution
+     * {@code CreditVoucherService.findByToken} uses, so scanning the printed barcode and typing
+     * the code off it reach the same voucher.
+     */
+    private CreditVoucherResponse resolveVoucher(String token) {
+        String normalised = CreditVoucherCodeGenerator.normalise(token);
+        CreditVoucher voucher = creditVoucherRepository.findByCodeOrBarcode(token)
+                .or(() -> creditVoucherRepository.findByCodeOrBarcode(normalised))
+                .or(() -> creditVoucherRepository.findByVoucherNumber(token))
+                .orElse(null);
+        return voucher == null ? null : CreditVoucherResponse.from(voucher);
     }
 
     private ProductAggregateResponse loadActiveProductByCode(String productCode) {

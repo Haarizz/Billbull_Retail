@@ -156,6 +156,21 @@ const SummaryReportCard = ({ title, subtext, metrics, buttonLabel = "Download Re
   </div>
 );
 
+// The API returns AdvanceType as its enum name (SALARY_ADVANCE / LOAN). Every
+// display site must go through this — the requests table used to compare the
+// raw value against the display string "Salary Advance", which never matched,
+// so every request rendered as "Loan" regardless of what was chosen.
+const ADVANCE_TYPE_LABELS = {
+  SALARY_ADVANCE: 'Salary Advance',
+  LOAN: 'Loan',
+};
+
+const advanceTypeLabel = (type) => {
+  if (!type) return '—';
+  const key = String(type).trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return ADVANCE_TYPE_LABELS[key] || String(type);
+};
+
 // --- Modals ---
 
 const NewRequestModal = ({ isOpen, onClose, onSave, employeeList }) => {
@@ -360,7 +375,7 @@ const ViewRequestModal = ({ isOpen, onClose, request }) => {
         <div className="p-6 border-b border-slate-100 flex justify-between items-start shrink-0">
           <div>
             <h3 className="text-lg font-bold text-slate-900">Advance Details & Repayment Schedule</h3>
-            <p className="text-sm text-slate-500">{request.employeeName} - {request.type}</p>
+            <p className="text-sm text-slate-500">{request.employeeName} - {advanceTypeLabel(request.type)}</p>
           </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:bg-slate-100 rounded-full transition-colors"><XIcon className="w-5 h-5" /></button>
         </div>
@@ -411,7 +426,7 @@ const ViewRequestModal = ({ isOpen, onClose, request }) => {
               </div>
               <div>
                 <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">Advance Type</div>
-                <div className="font-medium text-slate-900">{request.type}</div>
+                <div className="font-medium text-slate-900">{advanceTypeLabel(request.type)}</div>
               </div>
               <div className="col-span-2 pt-2 border-t border-slate-50">
                 <div className="text-xs font-semibold text-slate-500 mb-1 uppercase">Remarks</div>
@@ -888,8 +903,7 @@ const SalaryAdvances = () => {
                             </td>
                             <td className="px-6 py-4">
                               <span className="inline-flex items-center px-2 py-1 rounded border border-slate-200 bg-white text-xs font-medium text-slate-600">
-                                {/* ✅ Updated check for 'Salary Advance' */}
-                                {req.type === 'Salary Advance' ? 'Salary Advance' : 'Loan'}
+                                {advanceTypeLabel(req.type)}
                               </span>
                             </td>
                             <td className="px-6 py-4 font-medium text-slate-900">{req.requestedAmount?.toLocaleString()}</td>
@@ -972,7 +986,7 @@ const SalaryAdvances = () => {
                         <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                           {item.employeeName} <span className="text-xs font-normal text-slate-400 border border-slate-200 px-2 py-0.5 rounded-full">{item.employeeId}</span>
                         </h3>
-                        <div className="text-xs text-slate-500 mt-1">{item.department} • {item.type}</div>
+                        <div className="text-xs text-slate-500 mt-1">{item.department} • {advanceTypeLabel(item.type)}</div>
                       </div>
                       <StatusBadge status={item.status} />
                     </div>

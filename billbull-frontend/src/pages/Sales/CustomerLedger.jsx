@@ -382,6 +382,11 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
     const fileInputRef = useRef(null);
     const docInputRef = useRef(null);
     const videoRef = useRef(null);
+    // Same reason as the employee form: a MediaStream reachable only through the
+    // <video> element cannot be stopped once that element unmounts, which leaves
+    // the webcam held open after the modal is dismissed.
+    const cameraStreamRef = useRef(null);
+    const cameraRequestRef = useRef(0);
     const canvasRef = useRef(null);
 
     const createInitialFormState = () => ({
@@ -487,6 +492,12 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         } else if (isOpen && !customerToEdit) {
             setFormData(createInitialFormState());
             setAvatarPreview(null);
+        }
+        if (isOpen) {
+            // The stream was already stopped on close; clear the flag so the
+            // Photo tab does not come back showing a dead preview.
+            setIsCameraOpen(false);
+            setCameraError('');
         }
     }, [customerToEdit, defaultBranchName, defaultCurrency, isOpen]);
 
@@ -699,15 +710,41 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
         reader.readAsDataURL(file);
     };
 
+    /** Single point that hands the camera back to the OS. */
+    const stopCameraTracks = () => {
+        cameraRequestRef.current += 1;
+        const stream = cameraStreamRef.current;
+        if (stream) {
+            stream.getTracks().forEach((track) => track.stop());
+            cameraStreamRef.current = null;
+        }
+        if (videoRef.current) videoRef.current.srcObject = null;
+    };
+
+    /** Track release plus closing the preview — for user-initiated exits. */
+    const releaseCamera = () => {
+        stopCameraTracks();
+        setIsCameraOpen(false);
+    };
+
     const startCamera = async () => {
+        releaseCamera();
+        const requestId = cameraRequestRef.current;
         setIsCameraOpen(true);
         setCameraError('');
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            // Cancelled or restarted while the permission prompt was open.
+            if (cameraRequestRef.current !== requestId) {
+                stream.getTracks().forEach((track) => track.stop());
+                return;
+            }
+            cameraStreamRef.current = stream;
             if (videoRef.current) videoRef.current.srcObject = stream;
         } catch (err) {
             console.error("Camera Error:", err);
             setCameraError("Could not access camera. Please check permissions.");
+            setIsCameraOpen(false);
         }
     };
 
@@ -721,17 +758,20 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
             const dataUrl = canvasRef.current.toDataURL('image/jpeg');
             setAvatarPreview(dataUrl);
             canvasRef.current.toBlob((blob) => setAvatarFile(blob), 'image/jpeg');
-            stopCamera();
+            releaseCamera();
         }
     };
 
-    const stopCamera = () => {
-        if (videoRef.current && videoRef.current.srcObject) {
-            videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-            videoRef.current.srcObject = null;
-        }
-        setIsCameraOpen(false);
-    };
+    const stopCamera = releaseCamera;
+
+    // Release on modal close, on leaving the Photo tab, and on unmount.
+    useEffect(() => {
+        if (isOpen && activeTab === 'photo') return undefined;
+        stopCameraTracks();
+        return undefined;
+    }, [isOpen, activeTab]);
+
+    useEffect(() => () => stopCameraTracks(), []);
 
     const removePhoto = () => {
         setAvatarPreview(null);

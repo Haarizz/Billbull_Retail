@@ -36,6 +36,7 @@ import {
   File,
   XCircle,
   Check,
+  Loader2,
   X as XIcon,
   Edit,
   UserX,
@@ -139,6 +140,90 @@ const hasFilledValue = (value) => {
   }
 
   return Boolean(value);
+};
+
+// Required fields per wizard section — this is the same set the form marks with
+// a "*". The Review & Confirm tab derives section status from these, so a section
+// is "Completed" only when its mandatory fields actually hold a value; clicking
+// Next through a blank section no longer marks it done.
+//
+// Personal/Job cover the DB's NOT NULL columns (employee_code, first_name,
+// last_name, phone, email) plus the job fields the business treats as mandatory.
+// The remaining sections carry no mandatory fields and are always complete.
+const SECTION_REQUIRED_FIELDS = {
+  personal: [
+    { name: 'employeeCode', label: 'Employee Code' },
+    { name: 'firstName', label: 'First Name' },
+    { name: 'lastName', label: 'Last Name' },
+    { name: 'phone', label: 'Phone' },
+    { name: 'email', label: 'Email' },
+  ],
+  job: [
+    { name: 'role', label: 'Role / Designation' },
+    { name: 'department', label: 'Department' },
+    { name: 'branch', label: 'Branch (Default)' },
+    { name: 'employmentType', label: 'Employment Type' },
+    { name: 'joinDate', label: 'Join Date' },
+    { name: 'status', label: 'Status' },
+  ],
+  access: [],      // conditional — validated by validateLoginAccess()
+  payroll: [],
+  attendance: [],
+  docs: [],
+  assets: [],
+  notes: [],
+};
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Date of Birth bounds. DOB is optional, but when supplied it has to be a real
+// birth date: the browser's date input happily accepts 2050-03-24, and nothing
+// downstream ever looked at it.
+// The approval ladder. "Completed" is the terminal state, so there are
+// WORKFLOW_STAGES.length - 1 approval clicks between submission and Active.
+const WORKFLOW_STAGES = ["HR Review", "Manager Approval", "Accounts Approval", "Completed"];
+
+/** "Approve (1 of 3)" so the button says how far along the ladder this click is. */
+const approveButtonLabel = (stage) => {
+  const index = WORKFLOW_STAGES.indexOf(stage);
+  const total = WORKFLOW_STAGES.length - 1;
+  return index >= 0 && index < total ? `Approve (${index + 1} of ${total})` : 'Approve';
+};
+
+const describeEmployee = (emp) =>
+  `${emp?.firstName || ''} ${emp?.lastName || ''}`.trim() || 'Employee';
+
+const MIN_EMPLOYEE_AGE = 18;
+const MAX_EMPLOYEE_AGE = 100;
+
+/** yyyy-mm-dd for `today` shifted back by `years`. */
+const dateYearsAgo = (years) => {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - years);
+  return d.toISOString().split('T')[0];
+};
+
+const DOB_MAX = () => dateYearsAgo(MIN_EMPLOYEE_AGE);
+const DOB_MIN = () => dateYearsAgo(MAX_EMPLOYEE_AGE);
+
+/** Returns an error message for an out-of-range Date of Birth, or '' when fine. */
+const validateDateOfBirth = (value) => {
+  if (!hasFilledValue(value)) return '';
+  const dob = String(value).trim();
+  if (Number.isNaN(new Date(dob).getTime())) {
+    return 'Date of Birth is not a valid date';
+  }
+  const today = new Date().toISOString().split('T')[0];
+  if (dob > today) {
+    return 'Date of Birth cannot be in the future';
+  }
+  if (dob > DOB_MAX()) {
+    return `Date of Birth must make the employee at least ${MIN_EMPLOYEE_AGE} years old`;
+  }
+  if (dob < DOB_MIN()) {
+    return `Date of Birth cannot be more than ${MAX_EMPLOYEE_AGE} years ago`;
+  }
+  return '';
 };
 
 const buildInitialEmployeeForm = (defaultBranchName = '') => ({
@@ -375,7 +460,6 @@ const AddEmployeeModal = ({
 }) => {
   const { branches, defaultBranchName, formatBranchLabel } = useBranch();
   const [activeTab, setActiveTab] = useState('personal');
-  const [completedSteps, setCompletedSteps] = useState(new Set());
   const isAdmin = hasRole('ADMIN');
   const isCreateMode = !employeeToEdit;
   const canProvisionLoginAccess = isAdmin && isCreateMode;
@@ -388,6 +472,14 @@ const AddEmployeeModal = ({
 
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
+  // The live MediaStream must be held here, not only on the <video> element:
+  // closing the modal or switching wizard sections unmounts that element, and a
+  // stream reachable only through it can never be stopped — which is what kept
+  // the webcam locked system-wide after discarding the form.
+  const cameraStreamRef = useRef(null);
+  // Bumped on every start/stop so a getUserMedia promise that resolves after the
+  // user has already cancelled can tell it has been superseded and stop itself.
+  const cameraRequestRef = useRef(0);
   const canvasRef = useRef(null);
   const docInputRef = useRef(null);
 
@@ -500,7 +592,6 @@ const AddEmployeeModal = ({
     if (!isOpen) return;
 
     setActiveTab('personal');
-    setCompletedSteps(new Set());
     setAvatarFile(null);
     setIsCameraOpen(false);
     setCameraError('');
@@ -581,7 +672,6 @@ const AddEmployeeModal = ({
       if (restore) {
         setFormData({ ...buildInitialEmployeeForm(defaultBranchName), ...draft.formData });
         setActiveTab(draft.activeTab || 'personal');
-        setCompletedSteps(new Set(draft.completedSteps || []));
         setAvatarPreview(null);
         localStorage.removeItem('employee_form_draft');
         return;
@@ -725,10 +815,6 @@ const AddEmployeeModal = ({
   };
 
   const handleNext = () => {
-    const newCompleted = new Set(completedSteps);
-    newCompleted.add(activeTab);
-    setCompletedSteps(newCompleted);
-
     const currentIndex = navItems.findIndex(item => item.id === activeTab);
     if (currentIndex < navItems.length - 1) {
       setActiveTab(navItems[currentIndex + 1].id);
@@ -748,7 +834,7 @@ const AddEmployeeModal = ({
 
   const handleSaveDraft = () => {
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ formData, activeTab, completedSteps: [...completedSteps] }));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ formData, activeTab }));
       alert("Draft saved. Your progress will be restored when you reopen this form.");
     } catch {
       alert("Could not save draft to local storage.");
@@ -784,7 +870,52 @@ const AddEmployeeModal = ({
     return '';
   };
 
+  const dateOfBirthError = validateDateOfBirth(formData.dateOfBirth);
+
+  // Per-section list of what is still missing. Drives the sidebar ticks, the
+  // Review & Confirm status cards and the submit guard, so all three agree.
+  const sectionIssues = (() => {
+    const issues = {};
+    Object.entries(SECTION_REQUIRED_FIELDS).forEach(([sectionId, fields]) => {
+      issues[sectionId] = fields
+        .filter((field) => !hasFilledValue(formData[field.name]))
+        .map((field) => field.label);
+    });
+
+    // A malformed email reaches the DB as a valid string, so catch it here where
+    // we can still name the field.
+    if (hasFilledValue(formData.email) && !EMAIL_PATTERN.test(String(formData.email).trim())) {
+      issues.personal = [...issues.personal, 'Email (not a valid email address)'];
+    }
+
+    if (dateOfBirthError) {
+      issues.personal = [...issues.personal, dateOfBirthError];
+    }
+
+    const accessError = validateLoginAccess();
+    if (accessError) {
+      issues.access = [...issues.access, accessError];
+    }
+
+    return issues;
+  })();
+
+  const isSectionComplete = (sectionId) => (sectionIssues[sectionId] || []).length === 0;
+
+  const incompleteSections = navItems.slice(0, 8).filter((item) => !isSectionComplete(item.id));
+
   const handleFormSubmit = async () => {
+    if (incompleteSections.length > 0) {
+      const first = incompleteSections[0];
+      setFormError(
+        `Cannot submit yet — ${incompleteSections
+          .map((section) => `${section.label}: ${sectionIssues[section.id].join(', ')}`)
+          .join('; ')}.`
+      );
+      setActiveTab(first.id);
+      return;
+    }
+
     const accessError = validateLoginAccess();
     if (accessError) {
       setFormError(accessError);
@@ -824,11 +955,13 @@ const AddEmployeeModal = ({
       };
     }
 
-    const success = await onWorkflowStart(submissionData, avatarFile, !!employeeToEdit);
-    if (success) {
+    const result = await onWorkflowStart(submissionData, avatarFile, !!employeeToEdit);
+    if (result?.ok) {
       localStorage.removeItem('employee_form_draft');
       onClose();
+      return;
     }
+    setFormError(result?.message || 'Error saving employee.');
   };
 
   // --- Avatar Logic ---
@@ -855,17 +988,49 @@ const AddEmployeeModal = ({
     reader.readAsDataURL(file);
   };
 
+  /**
+   * Single point that hands the camera back to the OS. Safe to call repeatedly
+   * and when no camera is running.
+   */
+  const stopCameraTracks = () => {
+    cameraRequestRef.current += 1;
+    const stream = cameraStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  };
+
+  /** Track release plus closing the preview — for user-initiated exits. */
+  const releaseCamera = () => {
+    stopCameraTracks();
+    setIsCameraOpen(false);
+  };
+
   const startCamera = async () => {
+    releaseCamera();               // never leave a previous stream running
+    const requestId = cameraRequestRef.current;
     setIsCameraOpen(true);
     setCameraError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // Cancelled / closed / restarted while the permission prompt was open —
+      // this stream is already orphaned, so stop it rather than leak it.
+      if (cameraRequestRef.current !== requestId) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      cameraStreamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
       }
     } catch (err) {
       console.error("Camera Error:", err);
       setCameraError("Could not access camera. Please ensure permissions are granted.");
+      setIsCameraOpen(false);
     }
   };
 
@@ -883,18 +1048,24 @@ const AddEmployeeModal = ({
         setAvatarFile(blob);
       }, 'image/jpeg');
 
-      stopCamera();
+      releaseCamera();
     }
   };
 
-  const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-    }
-    setIsCameraOpen(false);
-  };
+  const stopCamera = releaseCamera;
+
+  // Hand the camera back whenever the preview can no longer be on screen: the
+  // modal was closed or discarded, the user moved to another wizard section, or
+  // the component unmounted. Previously the Cancel button was the only release
+  // path, so every other exit left the webcam held open. Stopping the tracks is
+  // enough here — isCameraOpen is reset when the modal next opens.
+  useEffect(() => {
+    if (isOpen && activeTab === 'personal') return undefined;
+    stopCameraTracks();
+    return undefined;
+  }, [isOpen, activeTab]);
+
+  useEffect(() => () => stopCameraTracks(), []);
 
   // --- Document Logic ---
   const handleDocUpload = (e) => {
@@ -1010,7 +1181,22 @@ const AddEmployeeModal = ({
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">Date of Birth</label>
-                    <input name="dateOfBirth" value={formData.dateOfBirth} onChange={handleInputChange} type="date" className="w-full text-sm border border-slate-200 rounded-md px-3 py-2 text-slate-600 focus:outline-none focus:border-[#F5C742]" />
+                    <input
+                      name="dateOfBirth"
+                      value={formData.dateOfBirth}
+                      onChange={handleInputChange}
+                      type="date"
+                      min={DOB_MIN()}
+                      max={DOB_MAX()}
+                      className={`w-full text-sm border rounded-md px-3 py-2 text-slate-600 focus:outline-none ${
+                        dateOfBirthError
+                          ? 'border-red-300 focus:border-red-400'
+                          : 'border-slate-200 focus:border-[#F5C742]'
+                      }`}
+                    />
+                    {dateOfBirthError && (
+                      <p className="mt-1 text-[11px] text-red-600">{dateOfBirthError}.</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1489,11 +1675,6 @@ const AddEmployeeModal = ({
               </div>
             </div>
 
-            {formError && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-600">
-                {formError}
-              </div>
-            )}
           </div>
         );
 
@@ -1816,8 +1997,6 @@ const AddEmployeeModal = ({
       }
 
       case 'review':
-        // Check completions for review
-        const isComplete = navItems.slice(0, 8).every(item => completedSteps.has(item.id));
         return (
           <div className="space-y-6 animate-in fade-in zoom-in-95 duration-200">
             <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4 flex items-start gap-3">
@@ -1829,24 +2008,49 @@ const AddEmployeeModal = ({
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {navItems.slice(0, 8).map((step) => (
-                <div key={step.id} className="bg-white border border-slate-200 rounded-lg p-4 h-24 flex flex-col justify-center">
-                  <div className="text-xs text-slate-500 mb-1">{step.label}</div>
-                  <div className={`text-sm font-medium ${completedSteps.has(step.id) ? 'text-green-600' : 'text-slate-800'}`}>
-                    {completedSteps.has(step.id) ? 'Completed' : 'Not Completed'}
+              {navItems.slice(0, 8).map((step) => {
+                const missing = sectionIssues[step.id] || [];
+                return (
+                  <div key={step.id} className="bg-white border border-slate-200 rounded-lg p-4 min-h-24 flex flex-col justify-center">
+                    <div className="text-xs text-slate-500 mb-1">{step.label}</div>
+                    <div className={`text-sm font-medium ${missing.length === 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {missing.length === 0 ? 'Completed' : 'Incomplete'}
+                    </div>
+                    {missing.length > 0 && (
+                      <div className="mt-1 text-[11px] text-slate-500">Missing: {missing.join(', ')}</div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <div className="bg-white border border-slate-200 rounded-lg p-6">
               <h3 className="text-sm font-semibold text-slate-700 mb-4">Validation Status</h3>
               <div className="space-y-2">
-                {!isComplete ? (
-                  <div className="flex items-center gap-2 text-red-500 text-xs">
-                    <AlertCircle size={14} />
-                    <span>You must complete all 8 sections before creating the employee.</span>
-                  </div>
+                {incompleteSections.length > 0 ? (
+                  <>
+                    <div className="flex items-center gap-2 text-red-500 text-xs">
+                      <AlertCircle size={14} />
+                      <span>
+                        {incompleteSections.length} section{incompleteSections.length > 1 ? 's' : ''} still
+                        {' '}need{incompleteSections.length > 1 ? '' : 's'} attention before this employee can be created.
+                      </span>
+                    </div>
+                    <ul className="ml-6 list-disc space-y-1 text-xs text-slate-600">
+                      {incompleteSections.map((section) => (
+                        <li key={section.id}>
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab(section.id)}
+                            className="font-medium text-slate-700 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+                          >
+                            {section.label}
+                          </button>
+                          {' — '}{sectionIssues[section.id].join(', ')}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 ) : (
                   <div className="flex items-center gap-2 text-green-600 text-xs">
                     <CheckCircle2 size={14} />
@@ -1926,10 +2130,11 @@ const AddEmployeeModal = ({
                 >
                   <item.icon size={14} className={activeTab === item.id ? 'text-slate-900' : 'text-slate-400'} />
                   {item.label}
-                  {completedSteps.has(item.id) && item.id !== activeTab && (
-                    <span className="hidden lg:block ml-auto text-green-500"><CheckCircle2 size={12} /></span>
+                  {item.id !== activeTab && item.id !== 'review' && (
+                    isSectionComplete(item.id)
+                      ? <span className="hidden lg:block ml-auto text-green-500"><CheckCircle2 size={12} /></span>
+                      : <span className="hidden lg:block ml-auto text-red-500"><AlertCircle size={12} /></span>
                   )}
-                  {item.id !== activeTab && !completedSteps.has(item.id) && <span className="hidden lg:block ml-auto w-1.5 h-1.5 rounded-full bg-slate-200"></span>}
                 </button>
               ))}
             </div>
@@ -2012,7 +2217,15 @@ const AddEmployeeModal = ({
         </div>
 
         {/* --- Footer --- */}
-        <div className="bg-white px-6 py-4 border-t border-slate-200 flex justify-between items-center flex-shrink-0">
+        <div className="bg-white border-t border-slate-200 flex-shrink-0">
+          {/* Submit errors surface here so they stay visible after the guard jumps
+              the user to the offending section. */}
+          {formError && (
+            <div className="mx-6 mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-600">
+              {formError}
+            </div>
+          )}
+          <div className="px-6 py-4 flex justify-between items-center">
           <button className="px-4 py-2 border border-slate-300 rounded-md text-sm font-medium text-slate-600 hover:bg-slate-50" onClick={handleBack}>Back</button>
           <div className="flex gap-3">
             <button onClick={handleSaveDraft} className="hidden sm:block px-4 py-2 bg-white border border-slate-300 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 shadow-sm">Save Draft</button>
@@ -2021,7 +2234,7 @@ const AddEmployeeModal = ({
               <button
                 onClick={handleFormSubmit}
                 className="px-6 py-2 bg-[#F5C742] rounded-md text-sm font-bold text-slate-900 hover:bg-yellow-400 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={!navItems.slice(0, 8).every(i => completedSteps.has(i.id))}
+                disabled={incompleteSections.length > 0}
               >
                 {employeeToEdit ? 'Update Employee' : 'Create Employee'}
               </button>
@@ -2033,6 +2246,7 @@ const AddEmployeeModal = ({
                 Next
               </button>
             )}
+          </div>
           </div>
         </div>
 
@@ -2847,30 +3061,64 @@ const Employees = () => {
 
         // Refresh UI
         await fetchData();
-        return true;
+        return { ok: true };
       } catch (e) {
         console.error(e);
-        toast.error(e.response?.data?.message || "Error saving employee. Check console.");
-        return false;
+        // Hand the server's message back to the modal as well as toasting it —
+        // the toast disappears, and the user needs to see which field the
+        // backend rejected while they fix it.
+        const message = e.response?.data?.message || "Error saving employee. Check console.";
+        toast.error(message);
+        return { ok: false, message };
       }
     };
 
+  // Approval advances ONE stage per call (HR Review → Manager Approval →
+  // Accounts Approval → Active), so a request legitimately needs three
+  // approvals. Without a pending state and a confirmation the button looked
+  // dead, and rapid repeat clicks fired concurrent requests that skipped
+  // stages — hence the per-row lock plus the toast naming the new stage.
+  const [decidingId, setDecidingId] = useState(null);
+
   const handleApproveStep = async (id) => {
+    if (decidingId) return;
+    setDecidingId(id);
     try {
-      await employeesApi.approveEmployee(id);
-      fetchData();
+      const updated = await employeesApi.approveEmployee(id);
+      await fetchData();
+
+      const stageIndex = WORKFLOW_STAGES.indexOf(updated?.workflowStage);
+      if (updated?.status === 'Active') {
+        toast.success(`${describeEmployee(updated)} approved and activated.`);
+      } else if (stageIndex > 0) {
+        toast.success(
+          `Approved — now at ${updated.workflowStage} `
+          + `(step ${stageIndex + 1} of ${WORKFLOW_STAGES.length - 1}).`
+        );
+      } else {
+        toast.success('Approval recorded.');
+      }
     } catch (e) {
-      alert("Error approving request");
+      console.error(e);
+      toast.error(e.response?.data?.message || 'Error approving request.');
+    } finally {
+      setDecidingId(null);
     }
   };
 
   const handleReject = async (id) => {
+    if (decidingId) return;
     if (window.confirm("Are you sure you want to reject this request?")) {
+      setDecidingId(id);
       try {
         await employeesApi.rejectEmployee(id);
-        fetchData();
+        await fetchData();
+        toast.success('Request rejected.');
       } catch (e) {
-        alert("Error rejecting request");
+        console.error(e);
+        toast.error(e.response?.data?.message || 'Error rejecting request.');
+      } finally {
+        setDecidingId(null);
       }
     }
   };
@@ -3068,7 +3316,7 @@ const Employees = () => {
 
   const renderStageBadge = (stage) => {
     const stageLabel = stage || EMPTY_DATA_LABEL;
-    const stages = ["HR Review", "Manager Approval", "Accounts Approval", "Completed"];
+    const stages = WORKFLOW_STAGES;
     const index = stages.indexOf(stageLabel);
 
     if (index === -1) {
@@ -3085,6 +3333,13 @@ const Employees = () => {
             <div key={s} className={`h-1.5 w-6 rounded-full ${i <= index ? 'bg-green-500' : 'bg-slate-200'}`}></div>
           ))}
         </div>
+        {/* Spell out that approval is a multi-step ladder, so a single click
+            moving the badge one notch does not read as a failed action. */}
+        <span className="text-[10px] text-slate-400">
+          {index < stages.length - 1
+            ? `${stages.length - 1 - index} approval${stages.length - 2 - index ? 's' : ''} remaining`
+            : 'Fully approved'}
+        </span>
       </div>
     )
   }
@@ -3354,15 +3609,19 @@ const Employees = () => {
                                 <div className="flex items-center justify-end gap-2">
                                   <button
                                     onClick={() => handleReject(req.id)}
-                                    className="p-1.5 rounded-full text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors" title="Reject"
+                                    disabled={Boolean(decidingId)}
+                                    className="p-1.5 rounded-full text-red-600 hover:bg-red-50 border border-transparent hover:border-red-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" title="Reject"
                                   >
                                     <XIcon size={16} />
                                   </button>
                                   <button
                                     onClick={() => handleApproveStep(req.id)}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 shadow-sm transition-colors"
+                                    disabled={Boolean(decidingId)}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 shadow-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                                   >
-                                    <Check size={14} /> Approve
+                                    {decidingId === req.id
+                                      ? <><Loader2 size={14} className="animate-spin" /> Working…</>
+                                      : <><Check size={14} /> {approveButtonLabel(req.stage)}</>}
                                   </button>
                                 </div>
                               ) : (

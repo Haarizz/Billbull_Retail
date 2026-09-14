@@ -51,6 +51,10 @@ public class PurchaseInvoiceItem {
     @OneToMany(mappedBy = "invoiceItem", cascade = jakarta.persistence.CascadeType.ALL, orphanRemoval = true)
     private List<PurchaseInvoiceItemSerial> serials = new ArrayList<>();
 
+    /** Batch/expiry lots captured on the line; drive BatchMaster generation for this invoice. */
+    @OneToMany(mappedBy = "invoiceItem", cascade = jakarta.persistence.CascadeType.ALL, orphanRemoval = true)
+    private List<PurchaseInvoiceItemBatch> batchLots = new ArrayList<>();
+
 	public Long getId() {
 		return id;
 	}
@@ -194,5 +198,13 @@ public class PurchaseInvoiceItem {
     public void setSerials(List<PurchaseInvoiceItemSerial> serials) {
         this.serials = serials;
     }
-    
+
+    public List<PurchaseInvoiceItemBatch> getBatchLots() {
+        return batchLots;
+    }
+
+    public void setBatchLots(List<PurchaseInvoiceItemBatch> batchLots) {
+        this.batchLots = batchLots;
+    }
+
 }

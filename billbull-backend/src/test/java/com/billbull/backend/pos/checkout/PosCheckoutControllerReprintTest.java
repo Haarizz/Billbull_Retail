@@ -46,6 +46,10 @@ class PosCheckoutControllerReprintTest {
     // cover authorization and audit, not receipt content.
     @Mock private InvoiceCustomerContactService invoiceCustomerContactService;
 
+    // Rebuilds the invoice's tender breakdown from its recorded payments, so a reprint can
+    // reproduce the payment block (Cash, Card, Credit Voucher, ...) the original receipt showed.
+    @Mock private com.billbull.backend.sales.payment.InvoicePaymentSummaryService paymentSummaryService;
+
     @InjectMocks private PosCheckoutController controller;
 
     private AutoCloseable mocks;
@@ -86,6 +90,25 @@ class PosCheckoutControllerReprintTest {
         assertEquals(1, invoice.getReprintCount());
         // ...and the original creator is left untouched.
         assertEquals(9001L, invoice.getCreatedByUserId());
+    }
+
+    @Test
+    void reprintCarriesTheRecordedTendersSoTheCopyMatchesTheOriginal() {
+        // A reprint must rebuild its payment block from what was persisted against the invoice.
+        // Reading the till's current state instead would silently drop the Credit Voucher (or
+        // card, or online) leg whenever the receipt is reprinted later, or from another terminal.
+        SalesInvoice invoice = posInvoice();
+        when(invoiceService.getByIdForReceiptReprint(166L)).thenReturn(invoice);
+        var summary = new com.billbull.backend.sales.payment.InvoicePaymentSummary(
+                "INV-2026-0166",
+                java.util.List.of(new com.billbull.backend.sales.payment.InvoicePaymentSummary.Allocation(
+                        "Voucher", "VOUCHER", new java.math.BigDecimal("100.00"), "EG56-RKDM-XV3K", null)),
+                "Voucher", new java.math.BigDecimal("100.00"));
+        when(paymentSummaryService.summaryFor("INV-2026-0166")).thenReturn(summary);
+
+        var response = controller.reprintReceipt(166L, 71L, "T003-256D", 1L);
+
+        assertSame(summary, response.getBody().get("paymentSummary"));
     }
 
     @Test

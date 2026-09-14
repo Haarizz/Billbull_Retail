@@ -5,6 +5,7 @@ import {
 import { useCompany } from '../../context/CompanyContext';
 import toast from "react-hot-toast";
 import { resolveCurrencyDisplayConfig, UAE_DIRHAM_SYMBOL_IMAGE } from '../../utils/countryCurrencyOptions';
+import { formatAmountInWords } from '../../utils/amountInWords';
 
 function CurrencySymbol({ currency }) {
     const cfg = resolveCurrencyDisplayConfig({ currency });
@@ -78,7 +79,7 @@ const MOCK = {
         { no: 1, account: "1001 - Cash", description: "Office Supplies Purchase", costCenter: "Admin", debit: 5000, credit: 0 },
         { no: 2, account: "6001 - Office Expenses", description: "Stationery & supplies", costCenter: "Sales Dept", debit: 0, credit: 5000 },
     ],
-    expensePayment: { mode: "Cash", account: "Petty Cash — Main Office", branch: "Dubai — Main", date: "22-May-2026" },
+    expensePayment: { mode: "Cash", account: "Petty Cash — Main Office", branch: "Dubai — Main", date: "22-May-2026", reference: "EXP-REQ-2026-0087" },
     expenseItems: [
         { no: 1, description: "Air Ticket — Dubai to Riyadh (Booking Ref: FZ-20280)", category: "Travel", costCenter: "Sales Dept", amount: 1200 },
         { no: 2, description: "Hotel Stay — 2 nights, Riyadh Marriott", category: "Accommodation", costCenter: "Sales Dept", amount: 800 },
@@ -94,6 +95,7 @@ const MOCK = {
             { ref: "SI-2026-0522", date: "10-May-2026", total: 6500, paid: 6500 },
         ],
     },
+    contra: { voucherNo: "CV-2026-0031", date: "22-May-2026", reference: "TRF-MAY-0031", branch: "Dubai — Main" },
     contraEntries: [
         { account: "1001 - Petty Cash", type: "Dr", amount: 2000 },
         { account: "1002 - Main Cash Account", type: "Cr", amount: 2000 },
@@ -107,6 +109,18 @@ const MOCK = {
 };
 
 const fmt = (n) => n.toLocaleString("en-AE", { minimumFractionDigits: 2 });
+
+// The designer preview is a *sample* document: every toggle must visibly change
+// it. A real company profile with, say, no email saved would otherwise make the
+// "Email" toggle look broken, so blank profile fields fall back to the mock
+// values here. Print paths pass the real profile straight through and are
+// unaffected — an unset field genuinely stays off the printout there.
+function previewCompany(company) {
+    const filled = Object.fromEntries(
+        Object.entries(company || {}).filter(([, v]) => v !== null && v !== undefined && String(v).trim() !== '')
+    );
+    return { ...MOCK.company, ...filled };
+}
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -174,7 +188,11 @@ function PaperHeader({ s, title, meta, claimantLabel = "Prepared By", claimantVa
                             const valFs = strVal.length > 22
                                 ? Math.max(f - 3.5, (f - 1) * 22 / strVal.length)
                                 : f - 1;
-                            return s[key] && (
+                            // A row with no value would print a bare label (an
+                            // expense voucher has no Reference field at all, for
+                            // one), so an empty value hides the row the same way
+                            // the company block hides an unset email/TRN.
+                            return s[key] && strVal && (
                                 <React.Fragment key={i}>
                                     <span style={{ fontSize: `${f - 1}px`, color: "#999", whiteSpace: "nowrap" }}>{label}</span>
                                     <div style={{ fontSize: `${valFs}px`, fontWeight: 600, color: "#1a1a2e", whiteSpace: "nowrap", overflow: "hidden", minWidth: 0 }}>{strVal}</div>
@@ -266,7 +284,9 @@ export function JournalPreview({ s, currency = 'AED', company = null, data = nul
     const reference  = data ? (data.reference || '') : 'ADJ-MAY-2026';
     const branch     = data ? (data.branch || data.branchName || '') : 'Dubai — Main';
     const narration  = data ? data.narration : 'Being the adjustment entry for office supplies purchase. Approved by Finance Manager.';
-    const amountInWords = data ? data.amountInWords : 'Five Thousand Dirhams Only';
+    const amountInWords = data
+        ? (data.amountInWords || formatAmountInWords(Math.max(totalDr, totalCr), currency))
+        : 'Five Thousand Dirhams Only';
     const preparedBy = data ? (data.preparedBy || '') : 'John Mathew';
 
     const thS = { background: `${gold}18`, color: "#1a1a2e", padding: "5px 8px", fontWeight: 700, fontSize: `${f - 0.5}px`, textAlign: "left" };
@@ -274,7 +294,7 @@ export function JournalPreview({ s, currency = 'AED', company = null, data = nul
 
     return (
         <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#333", padding: "28px 32px", position: "relative" }}>
-            <PaperHeader s={s} title="JOURNAL VOUCHER" company={company} claimantValue={preparedBy} meta={[
+            <PaperHeader s={s} title="JOURNAL VOUCHER" company={co} claimantValue={preparedBy} meta={[
                 ["showVoucherNumber", "Voucher No.", voucherNo],
                 ["showVoucherDate", "Date", voucherDate],
                 ["showReference", "Reference", reference],
@@ -374,9 +394,12 @@ export function ExpensePreview({ s, currency = 'AED', company = null, data = nul
         : MOCK.expensePayment;
     const voucherNo  = data ? (data.voucherNumber || '') : 'EV-2026-0112';
     const branch     = data ? (data.branch || '') : MOCK.expensePayment.branch;
+    const reference  = data ? (data.reference || '') : MOCK.expensePayment.reference;
     const narration  = data ? data.narration : 'Business travel and operational expenses — Riyadh trip, May 2026. All receipts attached.';
     const claimant   = data ? (data.claimant || data.vendor || '') : 'Ahmed Al Rashidi';
-    const amountInWords = data ? data.amountInWords : 'Two Thousand Five Hundred and Thirty Five Dirhams Only';
+    const amountInWords = data
+        ? (data.amountInWords || formatAmountInWords(total, currency))
+        : 'Two Thousand Five Hundred and Thirty Five Dirhams Only';
 
     const thS = { background: `${gold}18`, color: "#1a1a2e", padding: "5px 8px", fontWeight: 700, fontSize: `${f - 0.5}px`, textAlign: "left" };
     const tdS = { padding: "5px 8px", fontSize: `${f}px`, borderBottom: "1px solid #f1f5f9", verticalAlign: "top" };
@@ -387,6 +410,7 @@ export function ExpensePreview({ s, currency = 'AED', company = null, data = nul
             <PaperHeader s={s} title="EXPENSE VOUCHER" company={co} meta={[
                 ["showVoucherNumber", "Voucher No.", voucherNo],
                 ["showVoucherDate", "Date", pay.date],
+                ["showReference", "Reference", reference],
                 ["showBranch", "Branch", branch],
                 ["showCurrency", "Currency", currency],
             ]} claimantLabel="Claimant" claimantValue={claimant} />
@@ -488,7 +512,9 @@ export function ReceiptPaymentPreview({ s, mode, currency = 'AED', company = nul
     const date = data ? (data.date || '') : '22-May-2026';
     const branch = data ? (data.branch || '') : 'Dubai — Main';
     const narration = data ? data.narration : rpData.narration;
-    const amountInWords = data ? (data.amountInWords || '') : 'Fifteen Thousand Dirhams Only';
+    const amountInWords = data
+        ? (data.amountInWords || formatAmountInWords(rpData.amount, currency))
+        : 'Fifteen Thousand Dirhams Only';
 
     return (
         <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#333", padding: "28px 32px" }}>
@@ -587,10 +613,11 @@ function ContraPreview({ s, currency = 'AED', company = null }) {
 
     return (
         <div style={{ fontFamily: s.fontFamily, fontSize: `${f}px`, background: "#fff", color: "#333", padding: "28px 32px" }}>
-            <PaperHeader s={s} title="CONTRA VOUCHER" meta={[
-                ["showVoucherNumber", "Voucher No.", "CV-2026-0031"],
-                ["showVoucherDate", "Date", "22-May-2026"],
-                ["showBranch", "Branch", "Dubai — Main"],
+            <PaperHeader s={s} title="CONTRA VOUCHER" company={co} meta={[
+                ["showVoucherNumber", "Voucher No.", MOCK.contra.voucherNo],
+                ["showVoucherDate", "Date", MOCK.contra.date],
+                ["showReference", "Reference", MOCK.contra.reference],
+                ["showBranch", "Branch", MOCK.contra.branch],
                 ["showCurrency", "Currency", currency],
             ]} />
 
@@ -983,17 +1010,18 @@ export default function FinancialVoucherDesigner({ voucherType, templateName, in
     const [zoom, setZoom] = useState(90);
     const { company } = useCompany();
     const currency = company?.currency || company?.currencySymbol || 'AED';
+    const previewCo = previewCompany(company);
 
     const label = voucherTypeLabel(voucherType);
 
     function renderPreview() {
         switch (voucherType) {
-            case "journal-voucher": return <JournalPreview s={settings} currency={currency} company={company} />;
-            case "expense-voucher": return <ExpensePreview s={settings} currency={currency} company={company} />;
-            case "receipt-voucher": return <ReceiptPaymentPreview s={settings} mode="receipt" currency={currency} company={company} />;
-            case "payment-voucher": return <ReceiptPaymentPreview s={settings} mode="payment" currency={currency} company={company} />;
-            case "contra-voucher":  return <ContraPreview s={settings} currency={currency} company={company} />;
-            case "cheque-printing": return <ChequePreview s={settings} currency={currency} company={company} />;
+            case "journal-voucher": return <JournalPreview s={settings} currency={currency} company={previewCo} />;
+            case "expense-voucher": return <ExpensePreview s={settings} currency={currency} company={previewCo} />;
+            case "receipt-voucher": return <ReceiptPaymentPreview s={settings} mode="receipt" currency={currency} company={previewCo} />;
+            case "payment-voucher": return <ReceiptPaymentPreview s={settings} mode="payment" currency={currency} company={previewCo} />;
+            case "contra-voucher":  return <ContraPreview s={settings} currency={currency} company={previewCo} />;
+            case "cheque-printing": return <ChequePreview s={settings} currency={currency} company={previewCo} />;
             default: return null;
         }
     }

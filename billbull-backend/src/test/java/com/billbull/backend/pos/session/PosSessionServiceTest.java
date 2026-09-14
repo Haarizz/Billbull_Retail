@@ -4240,4 +4240,52 @@ class PosSessionServiceTest {
 
         assertEquals(org.springframework.http.HttpStatus.BAD_REQUEST, ex.getStatusCode());
     }
+
+    // ---------------------------------------------------------------------
+    // Cash Drop / Outs "Add New" session picker — the list must only ever offer
+    // sessions addCashMovement would accept, so a closed/stale/mid-closure session
+    // cannot be chosen and rejected after the operator presses Create.
+    // ---------------------------------------------------------------------
+
+    @Test
+    void eligibleCashMovementSessionsListsOnlyOpenCurrentDaySessionsOfTheBranch() {
+        PosSession open = sessionOnBusinessDay(0);
+        when(repo.findByBranchIdAndStatusOrderByOpenedAtDesc(1L, PosSessionStatus.OPEN))
+                .thenReturn(List.of(open));
+
+        List<PosCashMovementSessionOption> options = service.listCashMovementEligibleSessions(1L);
+
+        assertEquals(1, options.size());
+        assertEquals(67L, options.get(0).getId());
+        assertEquals("T002-95F6", options.get(0).getTerminalId());
+        // A CLOSED session never reaches the filter at all — the query itself asks for OPEN only.
+        verify(repo).findByBranchIdAndStatusOrderByOpenedAtDesc(1L, PosSessionStatus.OPEN);
+    }
+
+    @Test
+    void eligibleCashMovementSessionsExcludesAPreviousBusinessDaySession() {
+        when(repo.findByBranchIdAndStatusOrderByOpenedAtDesc(1L, PosSessionStatus.OPEN))
+                .thenReturn(List.of(sessionOnBusinessDay(1)));
+
+        assertTrue(service.listCashMovementEligibleSessions(1L).isEmpty());
+    }
+
+    @Test
+    void eligibleCashMovementSessionsExcludesASessionAlreadyInClosure() {
+        PosSession closing = sessionOnBusinessDay(0);
+        closing.setClosingStartedAt(java.time.LocalDateTime.now());
+        when(repo.findByBranchIdAndStatusOrderByOpenedAtDesc(1L, PosSessionStatus.OPEN))
+                .thenReturn(List.of(closing));
+
+        assertTrue(service.listCashMovementEligibleSessions(1L).isEmpty());
+    }
+
+    @Test
+    void eligibleCashMovementSessionsSpansEveryBranchWhenNoneIsSelected() {
+        when(repo.findByStatusOrderByOpenedAtDesc(PosSessionStatus.OPEN))
+                .thenReturn(List.of(sessionOnBusinessDay(0)));
+
+        assertEquals(1, service.listCashMovementEligibleSessions(null).size());
+        verify(repo, never()).findByBranchIdAndStatusOrderByOpenedAtDesc(any(), any());
+    }
 }

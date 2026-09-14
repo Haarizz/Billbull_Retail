@@ -76,6 +76,7 @@ import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal';
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import SerialEntryModal from '../../../components/purchase/SerialEntryModal';
+import BatchLotEntryModal from '../../../components/purchase/BatchLotEntryModal';
 import { useCompany } from '../../../context/CompanyContext';
 
 // SHORTCUTS HOOK
@@ -405,121 +406,31 @@ const ReturnsView = () => (
 
 // --- MODAL COMPONENTS ---
 
-const BatchModal = ({ isOpen, onClose, item, disabled }) => {
-  // Initial batch state logic
-  const [batches, setBatches] = useState([
-    { id: 1, batchNo: '2024001', mfg: '2024-11-01', exp: '2025-11-01', lpo: 24, rec: 24, acc: 23, rej: 1, reason: '' }
-  ]);
+const normalizeBatchLotRows = (batchLots) => (
+  Array.isArray(batchLots)
+    ? batchLots.map((lot) => ({
+      id: Number.isFinite(Number(lot?.id)) ? Number(lot.id) : null,
+      batchNumber: lot?.batchNumber || '',
+      manufacturingDate: lot?.manufacturingDate || '',
+      expiryDate: lot?.expiryDate || '',
+      quantity: Number(lot?.quantity) || 0
+    }))
+    : []
+);
 
-  const handleAddBatch = () => {
-    setBatches([...batches, {
-      id: Date.now(),
-      batchNo: '',
-      mfg: '',
-      exp: '',
-      lpo: 0,
-      rec: 0,
-      acc: 0,
-      rej: 0,
-      reason: ''
-    }]);
-  };
+// A product is lot-tracked when it is batch-controlled OR expiry-controlled, matching the
+// backend (PurchaseBatchLotService.isLotTracked) and stock-taking.
+const isLotTrackedItem = (item) => Boolean(item?.batch || item?.expiryEnabled);
 
-  const handleRemoveBatch = (id) => {
-    setBatches(batches.filter(b => b.id !== id));
-  };
+// Base units received on this line: accepted + FOC, the same figure the backend expands into
+// per-unit batch rows.
+const getGrnLotQty = (item) => (Number(item?.accepted) || 0) + (Number(item?.foc) || 0);
 
-  const updateBatch = (id, field, value) => {
-    setBatches(batches.map(b => b.id === id ? { ...b, [field]: value } : b));
-  };
-
-  if (!isOpen || !item) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white w-[900px] rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Layers className="h-4 w-4 text-[#F5C742]" />
-              <h3 className="font-bold text-slate-800">Batch Management - {item.name}</h3>
-            </div>
-            <p className="text-xs text-slate-500">Manage batch numbers, manufacturing and expiry dates</p>
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
-        </div>
-
-        {/* Content */}
-        <div className="p-6 bg-slate-50/50">
-          <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <table className="bb-nowrap-table w-full text-xs text-left">
-              <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 font-medium">
-                <tr>
-                  <th className="p-3">Batch No</th>
-                  <th className="p-3">MFG Date</th>
-                  <th className="p-3">Expiry Date</th>
-                  <th className="p-3 text-center">LPO Qty</th>
-                  <th className="p-3 text-center">Received</th>
-                  <th className="p-3 text-center">Accepted</th>
-                  <th className="p-3 text-center">Rejected</th>
-                  <th className="p-3">Reason</th>
-                  <th className="p-3 text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {batches.map(b => (
-                  <tr key={b.id}>
-                    <td className="p-3">
-                      <div className="flex items-center border border-emerald-500 rounded-md bg-white overflow-hidden w-24">
-                        <div className="bg-emerald-500 text-white px-1.5 py-1 text-[10px] font-bold">BAT</div>
-                        <input
-                          type="text"
-                          value={b.batchNo}
-                          onChange={(e) => updateBatch(b.id, 'batchNo', e.target.value)}
-                          className="w-full text-xs px-1 outline-none text-slate-700 font-mono"
-                          disabled={disabled}
-                        />
-                      </div>
-                    </td>
-                    <td className="p-3"><input type="date" value={b.mfg} onChange={(e) => updateBatch(b.id, 'mfg', e.target.value)} className="border border-slate-200 rounded px-2 py-1 text-slate-600 w-24" disabled={disabled} /></td>
-                    <td className="p-3"><input type="date" value={b.exp} onChange={(e) => updateBatch(b.id, 'exp', e.target.value)} className="border border-slate-200 rounded px-2 py-1 text-slate-600 w-24" disabled={disabled} /></td>
-                    <td className="p-3 text-center text-slate-400">{b.lpo}</td>
-                    <td className="p-3 text-center"><input type="number" value={b.rec} onChange={(e) => updateBatch(b.id, 'rec', e.target.value)} className="w-12 text-center border border-slate-200 rounded py-1" disabled={disabled} /></td>
-                    <td className="p-3 text-center"><input type="number" value={b.acc} onChange={(e) => updateBatch(b.id, 'acc', e.target.value)} className="w-12 text-center border border-slate-200 rounded py-1" disabled={disabled} /></td>
-                    <td className="p-3 text-center"><input type="number" value={b.rej} onChange={(e) => updateBatch(b.id, 'rej', e.target.value)} className="w-12 text-center border border-slate-200 rounded py-1" disabled={disabled} /></td>
-                    <td className="p-3"><input type="text" value={b.reason} onChange={(e) => updateBatch(b.id, 'reason', e.target.value)} placeholder="Reason..." className="border border-slate-200 rounded px-2 py-1 w-20" disabled={disabled} /></td>
-                    <td className="p-3 text-center">
-                      {!disabled && <button onClick={() => handleRemoveBatch(b.id)} className="text-red-400 hover:text-red-600"><X size={14} /></button>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {!disabled && (
-              <div className="p-3 border-t border-slate-100 bg-slate-50">
-                <button
-                  onClick={handleAddBatch}
-                  className="flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-900 border border-slate-300 rounded px-3 py-1.5 bg-white shadow-sm"
-                >
-                  <Plus size={12} /> Add Batch
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end gap-2 bg-white">
-          <button onClick={onClose} className="px-4 py-2 text-xs font-bold text-slate-600 border border-slate-300 rounded-md hover:bg-slate-50 transition-colors">Cancel</button>
-          {!disabled && <button onClick={onClose} className="px-4 py-2 text-xs font-bold text-slate-900 bg-[#F5C742] rounded-md hover:bg-[#E5B732] shadow-sm transition-colors">Save Batches</button>}
-        </div>
-
-      </div>
-    </div>
-  );
-};
+const getGrnLotCount = (item) => (
+  Array.isArray(item?.batchLots)
+    ? item.batchLots.reduce((sum, lot) => sum + (Number(lot?.quantity) || 0), 0)
+    : 0
+);
 
 const normalizeSerialRows = (serials) => (
   Array.isArray(serials)
@@ -934,6 +845,20 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                 lpoItem.product?.isSerial ||
                 productDetail?.isSerial
               ),
+              expiryEnabled: Boolean(
+                lpoItem.expiryEnabled ||
+                lpoItem.product?.expiryEnabled ||
+                productDetail?.expiryEnabled
+              ),
+              fefoEnabled: Boolean(
+                lpoItem.fefoEnabled ||
+                lpoItem.product?.fefoEnabled ||
+                productDetail?.fefoEnabled
+              ),
+              minExpiryDaysForSale: Number(
+                lpoItem.minExpiryDaysForSale ?? productDetail?.minExpiryDaysForSale
+              ) || 0,
+              batchLots: normalizeBatchLotRows(lpoItem.batchLots),
               serials: normalizeSerialRows(lpoItem.serials),
               availableUnits: productDetail?.availableUnits || [lpoItem.uom || lpoItem.unit || "Unit"],
               unitConversions: productDetail?.unitConversions || {},
@@ -1030,6 +955,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
           remarks: i.remarks || '',
           variance: i.received - i.lpoQty,
           batch: Boolean(i.batch ?? i.batchManaged ?? i.batchEnabled),
+          expiryEnabled: Boolean(i.expiryEnabled),
+          fefoEnabled: Boolean(i.fefoEnabled),
+          minExpiryDaysForSale: Number(i.minExpiryDaysForSale) || 0,
+          batchLots: normalizeBatchLotRows(i.batchLots),
           serialEnabled: Boolean(i.serialEnabled ?? i.isSerial),
           serials: normalizeSerialRows(i.serials)
         });
@@ -1053,7 +982,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
 
   const handleOpenBatchModal = (item) => {
-    if (!item?.serialEnabled && !item?.batch) return;
+    if (!item?.serialEnabled && !isLotTrackedItem(item)) return;
     setSelectedBatchItem(item);
     setBatchModalOpen(true);
   };
@@ -1063,6 +992,15 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
     setItems(prev => prev.map(item => (
       item.id === selectedBatchItem.id
         ? { ...item, serials: normalizeSerialRows(serials) }
+        : item
+    )));
+  };
+
+  const handleSaveBatchLots = (batchLots) => {
+    if (!selectedBatchItem) return;
+    setItems(prev => prev.map(item => (
+      item.id === selectedBatchItem.id
+        ? { ...item, batchLots: normalizeBatchLotRows(batchLots) }
         : item
     )));
   };
@@ -1181,6 +1119,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       total: unitCost,
       variance: 1, // Received 1 without LPO
       batch: Boolean(product.isBatch ?? product.batch),
+      expiryEnabled: Boolean(product.expiryEnabled ?? product.isExpiryEnabled),
+      fefoEnabled: Boolean(product.fefoEnabled ?? product.isFefoEnabled),
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchLots: [],
       serialEnabled: Boolean(product.isSerial ?? product.serial),
       serials: [],
       foc: 0,
@@ -1328,6 +1270,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       total: netCost * qty,
       variance: qty,
       batch: Boolean(product.isBatch ?? product.batch),
+      expiryEnabled: Boolean(product.expiryEnabled ?? product.isExpiryEnabled),
+      fefoEnabled: Boolean(product.fefoEnabled ?? product.isFefoEnabled),
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchLots: [],
       serialEnabled: Boolean(product.isSerial ?? product.serial),
       serials: [],
       foc: 0,
@@ -1359,6 +1305,10 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
       total: 0,
       variance: 0,
       batch: false,
+      expiryEnabled: false,
+      fefoEnabled: false,
+      minExpiryDaysForSale: 0,
+      batchLots: [],
       serialEnabled: false,
       serials: [],
       tax: 0,
@@ -1564,12 +1514,19 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
         title="Serial Tracking"
       />
 
-      {/* Batch Modal */}
-      <BatchModal
-        isOpen={isBatchModalOpen && Boolean(selectedBatchItem?.batch) && !selectedBatchItem?.serialEnabled}
+      {/* Batch + expiry capture. Serialised products track per-unit serials instead, so the two
+          editors are mutually exclusive. */}
+      <BatchLotEntryModal
+        isOpen={isBatchModalOpen && isLotTrackedItem(selectedBatchItem) && !selectedBatchItem?.serialEnabled}
         onClose={() => setBatchModalOpen(false)}
+        onSave={handleSaveBatchLots}
         item={selectedBatchItem}
+        expectedQty={getGrnLotQty(selectedBatchItem)}
+        expiryRequired={Boolean(selectedBatchItem?.expiryEnabled)}
+        minExpiryDaysForSale={Number(selectedBatchItem?.minExpiryDaysForSale) || 0}
+        fefoEnabled={Boolean(selectedBatchItem?.fefoEnabled)}
         disabled={isLocked}
+        title="Batch & Expiry"
       />
 
       {/* Comparison Modal */}
@@ -2075,15 +2032,19 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                         <td className="p-3 text-right font-bold text-[#F5C742]">{item.total.toFixed(2)}</td>
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center gap-2">
-                            {(item.serialEnabled || item.batch) && (
+                            {(item.serialEnabled || isLotTrackedItem(item)) && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenBatchModal(item)}
-                                className="px-2 py-1 text-[10px] font-semibold rounded border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                className={`px-2 py-1 text-[10px] font-semibold rounded border hover:bg-slate-50 ${
+                                  !item.serialEnabled && item.expiryEnabled && getGrnLotCount(item) !== getGrnLotQty(item)
+                                    ? 'border-red-300 text-red-600 bg-red-50/40'
+                                    : 'border-slate-200 text-slate-600'
+                                }`}
                               >
                                 {item.serialEnabled
                                   ? `Serials ${(item.serials || []).filter(serial => serial?.serialNumber).length}/${getGrnExpectedSerialCount(item)}`
-                                  : 'Batches'}
+                                  : `Batches ${getGrnLotCount(item)}/${getGrnLotQty(item)}`}
                               </button>
                             )}
                             {!isLocked && (
@@ -2583,6 +2544,17 @@ const GRN = () => {
         taxAmt: Number(i.taxAmt) || 0,
         total: i.total,
         batch: i.batch,
+        batchLots: Array.isArray(i.batchLots)
+          ? i.batchLots
+            .filter(lot => (Number(lot?.quantity) || 0) > 0 || lot?.expiryDate || lot?.batchNumber)
+            .map(lot => ({
+              id: Number.isFinite(Number(lot.id)) ? Number(lot.id) : null,
+              batchNumber: lot.batchNumber || null,
+              manufacturingDate: lot.manufacturingDate || null,
+              expiryDate: lot.expiryDate || null,
+              quantity: Number(lot.quantity) || 0
+            }))
+          : [],
         serials: Array.isArray(i.serials)
           ? i.serials.map(serial => ({
             id: serial.id !== null && serial.id !== undefined && serial.id !== '' && Number.isFinite(Number(serial.id))

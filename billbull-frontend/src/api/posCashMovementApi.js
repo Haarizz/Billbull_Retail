@@ -23,6 +23,16 @@ export const getPosCashMovementById = async (id) => {
   return res.data;
 };
 
+/**
+ * Sessions a new cash movement may actually be added to (OPEN, current Business Day, not
+ * mid-closure) — feeds the "Add New" session picker so a closed session can never be chosen.
+ * The backend re-validates on create regardless; this list is what keeps the form honest.
+ */
+export const getCashMovementEligibleSessions = async (branchId) => {
+  const res = await api.get(`${BASE}/eligible-sessions`, { params: { branchId } });
+  return res.data;
+};
+
 export const createPosCashMovement = async ({ sessionId, movementType, amount, description, reference, categoryId }) => {
   const res = await api.post(BASE, { sessionId, movementType, amount, description, reference, categoryId });
   return res.data;

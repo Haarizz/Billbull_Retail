@@ -4,8 +4,10 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -32,8 +34,45 @@ public class AccountingPeriodService {
 
     @Transactional
     public AccountingPeriod createPeriod(AccountingPeriod period) {
+        validateNewPeriod(period);
         period.setStatus(AccountingPeriod.STATUS_OPEN);
         return repository.save(period);
+    }
+
+    /**
+     * Guards the two ways a period range can be nonsense. An inverted range (end before start)
+     * covers no dates at all, so nothing ever resolves to it and it can never be closed
+     * meaningfully. An overlapping range is worse: {@link #findCoveringPeriod} and
+     * {@code existsClosedPeriodContainingDate} both assume one period owns a given date, so a
+     * second period covering the same day makes the period lock depend on which row sorts first.
+     */
+    private void validateNewPeriod(AccountingPeriod period) {
+        String name = period.getPeriodName() != null ? period.getPeriodName().trim() : "";
+        if (name.isEmpty()) {
+            throw badRequest("Period name is required.");
+        }
+        period.setPeriodName(name);
+
+        LocalDate start = period.getStartDate();
+        LocalDate end   = period.getEndDate();
+        if (start == null || end == null) {
+            throw badRequest("Both a start date and an end date are required.");
+        }
+        if (end.isBefore(start)) {
+            throw badRequest("End date (" + end + ") cannot be before start date (" + start + ").");
+        }
+
+        List<AccountingPeriod> clashes = repository.findOverlapping(start, end);
+        if (!clashes.isEmpty()) {
+            AccountingPeriod clash = clashes.get(0);
+            throw badRequest("Dates overlap the existing period '" + clash.getPeriodName() + "' ("
+                    + clash.getStartDate() + " to " + clash.getEndDate()
+                    + "). Accounting periods cannot overlap.");
+        }
+    }
+
+    private ResponseStatusException badRequest(String reason) {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, reason);
     }
 
     @Transactional

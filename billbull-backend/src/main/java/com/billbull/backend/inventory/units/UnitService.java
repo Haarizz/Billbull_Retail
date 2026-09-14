@@ -31,6 +31,20 @@ public class UnitService {
                 .orElse(null);
     }
 
+    // Conversion rate is optional (defaults to 1), but when supplied it must be a positive
+    // multiplier — a zero or negative rate makes every derived-unit price/quantity conversion
+    // nonsensical. Guarded in the service so both create and update share one rule.
+    private java.math.BigDecimal resolveConversionRate(UnitRequest req) {
+        java.math.BigDecimal rate = req.getConversionRate();
+        if (rate == null) {
+            return java.math.BigDecimal.ONE;
+        }
+        if (rate.signum() <= 0) {
+            throw new IllegalArgumentException("Conversion Rate must be greater than 0");
+        }
+        return rate;
+    }
+
     // ------------------------
     // LIST
     // ------------------------
@@ -78,7 +92,7 @@ public class UnitService {
             unit.setBaseUnit(unitRepo.findById((long) req.getBaseUnitId())
                     .orElseThrow(() -> new IllegalArgumentException("Base unit not found")));
         }
-        unit.setConversionRate(req.getConversionRate() != null ? req.getConversionRate() : java.math.BigDecimal.ONE);
+        unit.setConversionRate(resolveConversionRate(req));
 
         unitRepo.save(unit);
 
@@ -107,7 +121,7 @@ public class UnitService {
         } else {
             unit.setBaseUnit(null);
         }
-        unit.setConversionRate(req.getConversionRate() != null ? req.getConversionRate() : java.math.BigDecimal.ONE);
+        unit.setConversionRate(resolveConversionRate(req));
 
         unitRepo.save(unit);
 

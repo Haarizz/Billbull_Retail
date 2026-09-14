@@ -8,7 +8,9 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -296,7 +298,38 @@ public class ReceiptVoucherService {
         return candidate;
     }
 
+    /** Attachment rules, kept in step with the Receipt Voucher upload widget on the client. */
+    private static final Set<String> ALLOWED_ATTACHMENT_EXTENSIONS = Set.of("png", "jpg", "jpeg", "pdf");
+    private static final Set<String> ALLOWED_ATTACHMENT_CONTENT_TYPES =
+            Set.of("image/png", "image/jpeg", "application/pdf");
+    private static final long MAX_ATTACHMENT_BYTES = 10L * 1024 * 1024;
+
+    private void validateAttachment(MultipartFile file) {
+        String originalFileName = StringUtils.cleanPath(
+                file.getOriginalFilename() != null ? file.getOriginalFilename() : "");
+
+        int dot = originalFileName.lastIndexOf('.');
+        String extension = dot >= 0 ? originalFileName.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+        if (!ALLOWED_ATTACHMENT_EXTENSIONS.contains(extension)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Unsupported attachment type. Only PNG, JPG and PDF files can be attached.");
+        }
+
+        // Content type is advisory (the client sets it), so it only rules a file out when present.
+        String contentType = file.getContentType();
+        if (contentType != null && !ALLOWED_ATTACHMENT_CONTENT_TYPES.contains(contentType.toLowerCase(Locale.ROOT))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Unsupported attachment type. Only PNG, JPG and PDF files can be attached.");
+        }
+
+        if (file.getSize() > MAX_ATTACHMENT_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Attachment is too large. Maximum size is 10 MB.");
+        }
+    }
+
     private void storeFile(MultipartFile file, ReceiptVoucher receipt) {
+        validateAttachment(file);
         String originalFileName = StringUtils.cleanPath(Objects.requireNonNull(file.getOriginalFilename()));
         String fileName = UUID.randomUUID().toString() + "_" + originalFileName;
 
@@ -316,6 +349,10 @@ public class ReceiptVoucherService {
     }
 
     private void validateReceipt(ReceiptVoucher receipt, Long currentReceiptId) {
+        if (receipt.getDate() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Voucher date is required.");
+        }
+
         if (receipt.getAmount() == null || receipt.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Receipt amount must be greater than zero.");
         }

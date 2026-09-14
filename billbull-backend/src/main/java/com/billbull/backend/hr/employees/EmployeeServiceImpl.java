@@ -65,10 +65,71 @@ public class EmployeeServiceImpl implements EmployeeService {
         return repository.findByStatus("Pending");
     }
 
+    /**
+     * Guards the NOT NULL / UNIQUE columns before the insert reaches Postgres.
+     * Without this the DB rejects the row and the client only sees the generic
+     * "violates a data constraint" message with no clue which field was blank.
+     */
+    private void validateRequired(Employee employee, Long existingId) {
+        List<String> missing = new java.util.ArrayList<>();
+        if (isBlank(employee.getEmployeeCode())) missing.add("Employee Code");
+        if (isBlank(employee.getFirstName())) missing.add("First Name");
+        if (isBlank(employee.getLastName())) missing.add("Last Name");
+        if (isBlank(employee.getPhone())) missing.add("Phone");
+        if (isBlank(employee.getEmail())) missing.add("Email");
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Required field" + (missing.size() > 1 ? "s are" : " is") + " missing: "
+                            + String.join(", ", missing) + ".");
+        }
+
+        validateDateOfBirth(employee.getDateOfBirth());
+
+        repository.findByEmployeeCodeIgnoreCase(employee.getEmployeeCode().trim())
+                .filter(other -> existingId == null || !other.getId().equals(existingId))
+                .ifPresent(other -> {
+                    throw new IllegalArgumentException(
+                            "Employee Code '" + employee.getEmployeeCode().trim()
+                                    + "' is already used by " + other.getFirstName() + " "
+                                    + other.getLastName() + ". Choose a different code.");
+                });
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    /**
+     * Date of Birth is optional, but a supplied one has to be a plausible birth
+     * date — the date picker will happily hand us a date in 2050. Bounds mirror
+     * MIN/MAX_EMPLOYEE_AGE in the Add/Edit Employee form.
+     */
+    private static final int MIN_EMPLOYEE_AGE = 18;
+    private static final int MAX_EMPLOYEE_AGE = 100;
+
+    private void validateDateOfBirth(java.time.LocalDate dateOfBirth) {
+        if (dateOfBirth == null) {
+            return;
+        }
+        java.time.LocalDate today = java.time.LocalDate.now();
+        if (dateOfBirth.isAfter(today)) {
+            throw new IllegalArgumentException("Date of Birth cannot be in the future.");
+        }
+        if (dateOfBirth.isAfter(today.minusYears(MIN_EMPLOYEE_AGE))) {
+            throw new IllegalArgumentException(
+                    "Date of Birth must make the employee at least " + MIN_EMPLOYEE_AGE + " years old.");
+        }
+        if (dateOfBirth.isBefore(today.minusYears(MAX_EMPLOYEE_AGE))) {
+            throw new IllegalArgumentException(
+                    "Date of Birth cannot be more than " + MAX_EMPLOYEE_AGE + " years ago.");
+        }
+    }
+
     @Override
     @Transactional
     public Employee createEmployee(EmployeeUpsertRequest request, MultipartFile avatar) {
         Employee employee = request.toEmployee();
+        validateRequired(employee, null);
         employee.setStatus("Pending");
         employee.setWorkflowStage("HR Review");
         resolveBranchEntity(employee);
@@ -87,6 +148,8 @@ public class EmployeeServiceImpl implements EmployeeService {
     public Employee updateEmployee(Long id, EmployeeUpsertRequest request, MultipartFile avatar) {
         Employee updated = request.toEmployee();
         Employee existing = getById(id);
+        updated.setEmployeeCode(existing.getEmployeeCode());
+        validateRequired(updated, id);
 
         // Capture old email BEFORE field updates (needed for linked user email sync)
         String oldEmail = existing.getEmail();
@@ -239,6 +302,13 @@ public class EmployeeServiceImpl implements EmployeeService {
     public Employee approve(Long id) {
         Employee emp = getById(id);
 
+        // Each call advances exactly one stage, so a stray repeat click on a
+        // request that already finished the ladder must not silently re-approve.
+        if (!"Pending".equals(emp.getStatus())) {
+            throw new IllegalStateException(
+                    "This employee is no longer awaiting approval (status: " + emp.getStatus() + ").");
+        }
+
         if ("HR Review".equals(emp.getWorkflowStage())) {
             emp.setWorkflowStage("Manager Approval");
         } else if ("Manager Approval".equals(emp.getWorkflowStage())) {
@@ -259,6 +329,10 @@ public class EmployeeServiceImpl implements EmployeeService {
     @Override
     public Employee reject(Long id) {
         Employee emp = getById(id);
+        if (!"Pending".equals(emp.getStatus())) {
+            throw new IllegalStateException(
+                    "This employee is no longer awaiting approval (status: " + emp.getStatus() + ").");
+        }
         emp.setStatus("Rejected");
         emp.setWorkflowStage("Rejected");
         return repository.save(emp);

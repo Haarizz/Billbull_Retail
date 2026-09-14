@@ -43,8 +43,16 @@ public class Brand extends BaseEntity {
     @Column(name = "tag")
     private List<String> tags = new ArrayList<>();
 
+    // User-facing status shown in the Brands list. An inactive brand still EXISTS and must stay
+    // visible in the list (and match the "Inactive" status filter) — it is only barred from being
+    // picked for new products. Soft-deletion is tracked separately by `deleted` below.
     @Column(nullable = false)
     private boolean active = true;
+
+    // Soft-delete flag. Deleted brands are hidden from every list and from uniqueness checks, but
+    // the row is kept so the DB unique indexes on name/code stay intact and create() can revive it.
+    @Column(name = "deleted", nullable = false)
+    private boolean deleted = false;
 
     // --------------------
     // Barcode Prefix Settings
@@ -158,6 +166,14 @@ public class Brand extends BaseEntity {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public boolean isDeleted() {
+        return deleted;
+    }
+
+    public void setDeleted(boolean deleted) {
+        this.deleted = deleted;
     }
 
     public String getBarcodePrefix() {

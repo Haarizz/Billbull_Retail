@@ -1,0 +1,1176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{color-scheme:light dark}
+html,body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>POS Extraction Blueprint</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;700&family=JetBrains+Mono:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+:root{
+  --paper:#FBFAF7; --paper-2:#F4F2EC; --paper-3:#EDEAE1;
+  --ink:#171512; --ink-2:#4A453C; --ink-3:#7A7366;
+  --rule:#E0DCD2; --rule-2:#CFC9BC;
+  --accent:#B8860F; --accent-soft:#F7EDD2;
+  --ok:#2C6B4B; --ok-soft:#E4F0E8;
+  --warn:#A96A12; --warn-soft:#FAEDD8;
+  --crit:#9E3126; --crit-soft:#F8E3E0;
+  --cool:#3F5568; --cool-soft:#E5EBF0;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#15140F; --paper-2:#1E1C16; --paper-3:#26241C;
+    --ink:#F2EFE6; --ink-2:#BDB6A6; --ink-3:#8B8474;
+    --rule:#302D24; --rule-2:#433F33;
+    --accent:#F5C742; --accent-soft:#3A3016;
+    --ok:#6FC496; --ok-soft:#1B2E23;
+    --warn:#E3A952; --warn-soft:#33280F;
+    --crit:#E38176; --crit-soft:#361A17;
+    --cool:#8FB0C9; --cool-soft:#1B242C;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#15140F; --paper-2:#1E1C16; --paper-3:#26241C;
+  --ink:#F2EFE6; --ink-2:#BDB6A6; --ink-3:#8B8474;
+  --rule:#302D24; --rule-2:#433F33;
+  --accent:#F5C742; --accent-soft:#3A3016;
+  --ok:#6FC496; --ok-soft:#1B2E23;
+  --warn:#E3A952; --warn-soft:#33280F;
+  --crit:#E38176; --crit-soft:#361A17;
+  --cool:#8FB0C9; --cool-soft:#1B242C;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--paper); color:var(--ink);
+  font-family:"Source Serif 4",Georgia,"Times New Roman",serif;
+  font-size:16.5px; line-height:1.62; margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+.wrap{display:grid; grid-template-columns:minmax(0,1fr); max-width:1320px; margin:0 auto; padding:0 24px 96px}
+@media(min-width:1080px){
+  .wrap{grid-template-columns:236px minmax(0,1fr); gap:56px; padding:0 40px 120px}
+}
+nav.toc{display:none}
+@media(min-width:1080px){
+  nav.toc{
+    display:block; position:sticky; top:0; align-self:start;
+    max-height:100vh; overflow-y:auto; padding:36px 0 40px;
+  }
+  nav.toc .tl{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); font-weight:600; margin:0 0 12px; font-family:Archivo,sans-serif}
+  nav.toc ol{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:1px; font-family:Archivo,sans-serif; font-size:12px}
+  nav.toc a{display:grid; grid-template-columns:22px 1fr; gap:4px; padding:4px 6px 4px 0; color:var(--ink-2); text-decoration:none; border-radius:3px}
+  nav.toc a:hover{color:var(--ink); background:var(--paper-2)}
+  nav.toc a b{color:var(--ink-3); font-weight:600; font-variant-numeric:tabular-nums}
+  nav.toc .grp{margin-top:14px; padding-top:12px; border-top:1px solid var(--rule)}
+}
+main{min-width:0}
+
+header.mast{border-bottom:2px solid var(--ink); padding:44px 0 22px; margin-bottom:44px}
+.eyebrow{font-family:Archivo,sans-serif; font-size:11px; font-weight:600; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); margin:0 0 14px}
+h1{font-family:Archivo,system-ui,sans-serif; font-weight:700; font-size:clamp(34px,5.4vw,56px); line-height:1.02; letter-spacing:-.022em; margin:0 0 16px; text-wrap:balance}
+.standfirst{font-size:19px; line-height:1.5; color:var(--ink-2); max-width:62ch; margin:0 0 26px}
+.meta{display:flex; flex-wrap:wrap; gap:10px 0; font-family:"JetBrains Mono",ui-monospace,monospace; font-size:11.5px; color:var(--ink-3); border-top:1px solid var(--rule); padding-top:14px}
+.meta div{padding-right:24px; margin-right:24px; border-right:1px solid var(--rule)}
+.meta div:last-child{border-right:0; padding-right:0; margin-right:0}
+.meta b{display:block; color:var(--ink); font-weight:600; margin-top:2px}
+
+section{margin:0 0 60px; scroll-margin-top:24px}
+h2{font-family:Archivo,sans-serif; font-weight:700; font-size:26px; letter-spacing:-.012em; line-height:1.15; margin:0 0 6px; text-wrap:balance;
+   display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:baseline}
+h2 .n{font-size:12px; font-weight:600; color:var(--accent); font-variant-numeric:tabular-nums; font-family:"JetBrains Mono",monospace}
+.hrule{height:1px; background:var(--rule-2); margin:0 0 22px}
+h3{font-family:Archivo,sans-serif; font-weight:600; font-size:16.5px; letter-spacing:-.004em; margin:32px 0 8px; color:var(--ink)}
+h4{font-family:Archivo,sans-serif; font-weight:600; font-size:12.5px; letter-spacing:.05em; margin:22px 0 7px; color:var(--ink-3); text-transform:uppercase}
+p{margin:0 0 14px; max-width:70ch}
+ul,ol{margin:0 0 14px; padding-left:20px; max-width:70ch}
+li{margin:0 0 6px}
+li::marker{color:var(--ink-3)}
+a{color:var(--ink); text-decoration-color:var(--rule-2); text-underline-offset:2px}
+a:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:2px}
+code,.mono{font-family:"JetBrains Mono",ui-monospace,monospace; font-size:.855em; background:var(--paper-2); padding:.1em .34em; border-radius:3px; color:var(--ink); word-break:break-word}
+strong{font-weight:600}
+
+.tw{overflow-x:auto; margin:0 0 20px; border:1px solid var(--rule); border-radius:5px; background:var(--paper)}
+table{border-collapse:collapse; width:100%; font-family:Archivo,sans-serif; font-size:12.5px; line-height:1.4}
+th{text-align:left; font-weight:600; font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3);
+   padding:10px 12px; background:var(--paper-2); border-bottom:1px solid var(--rule-2); white-space:nowrap; vertical-align:bottom}
+td{padding:9px 12px; border-bottom:1px solid var(--rule); vertical-align:top; color:var(--ink-2)}
+tr:last-child td{border-bottom:0}
+td:first-child{color:var(--ink); font-weight:600}
+td .mono,th .mono{background:none; padding:0; font-size:11px}
+.num{font-variant-numeric:tabular-nums; text-align:right}
+
+.p{display:inline-block; font-family:Archivo,sans-serif; font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+   padding:2px 7px; border-radius:3px; white-space:nowrap; line-height:1.5}
+.p-ok{background:var(--ok-soft); color:var(--ok)}
+.p-warn{background:var(--warn-soft); color:var(--warn)}
+.p-crit{background:var(--crit-soft); color:var(--crit)}
+.p-cool{background:var(--cool-soft); color:var(--cool)}
+.p-acc{background:var(--accent-soft); color:var(--accent)}
+.p-mute{background:var(--paper-3); color:var(--ink-3)}
+
+.call{border-left:3px solid var(--accent); background:var(--paper-2); padding:14px 18px; margin:0 0 20px; border-radius:0 4px 4px 0}
+.call p:last-child{margin-bottom:0}
+.call .lab{font-family:Archivo,sans-serif; font-size:10px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--accent); display:block; margin-bottom:5px}
+.call.crit{border-left-color:var(--crit)} .call.crit .lab{color:var(--crit)}
+.call.ok{border-left-color:var(--ok)} .call.ok .lab{color:var(--ok)}
+.call.cool{border-left-color:var(--cool)} .call.cool .lab{color:var(--cool)}
+
+.dia{border:1px solid var(--rule); border-radius:6px; background:var(--paper-2); padding:22px; margin:0 0 20px; overflow-x:auto}
+.dia .cap{font-family:Archivo,sans-serif; font-size:10.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3); margin:0 0 16px}
+.lyr{display:grid; gap:9px; min-width:520px}
+.row{display:grid; gap:9px}
+.r2{grid-template-columns:1fr 1fr}
+.r3{grid-template-columns:1fr 1fr 1fr}
+.bx{border:1px solid var(--rule-2); background:var(--paper); border-radius:4px; padding:11px 13px; font-family:Archivo,sans-serif}
+.bx .t{font-size:13px; font-weight:600; color:var(--ink); margin-bottom:3px}
+.bx .s{font-size:11px; color:var(--ink-3); line-height:1.4}
+.bx.acc{border-color:var(--accent); background:var(--accent-soft)}
+.bx.acc .s{color:var(--ink-2)}
+.bx.cool{border-color:var(--cool); background:var(--cool-soft)}
+.bx.cool .s{color:var(--ink-2)}
+.bx.dash{border-style:dashed; background:none}
+.bx.new{border-color:var(--ok); background:var(--ok-soft)}
+.bx.new .s{color:var(--ink-2)}
+.arw{text-align:center; font-family:"JetBrains Mono",monospace; font-size:14px; color:var(--ink-3); line-height:1}
+.tree{font-family:"JetBrains Mono",ui-monospace,monospace; font-size:12px; line-height:1.65; color:var(--ink-2); white-space:pre; margin:0; overflow-x:auto}
+.tree b{color:var(--ink); font-weight:600}
+.tree i{color:var(--ok); font-style:normal; font-weight:600}
+.tree u{color:var(--crit); text-decoration:none; font-weight:600}
+
+.flow{display:grid; gap:0; min-width:500px; font-family:Archivo,sans-serif; font-size:12.5px}
+.flow .st{display:grid; grid-template-columns:132px 1fr; gap:14px; padding:7px 0; border-bottom:1px solid var(--rule)}
+.flow .st:last-child{border-bottom:0}
+.flow .st .k{font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-3); padding-top:2px}
+.flow .st .v{color:var(--ink-2)}
+.flow .st .v .mono{font-size:11.5px}
+
+.phase{border:1px solid var(--rule); border-radius:6px; margin:0 0 16px; overflow:hidden; background:var(--paper)}
+.phase>.ph{display:grid; grid-template-columns:auto 1fr auto; gap:14px; align-items:center; padding:12px 18px; background:var(--paper-2); border-bottom:1px solid var(--rule)}
+.phase>.ph .pn{font-family:"JetBrains Mono",monospace; font-size:11px; font-weight:600; color:var(--accent); letter-spacing:.08em}
+.phase>.ph .pt{font-family:Archivo,sans-serif; font-size:15px; font-weight:600; color:var(--ink)}
+.phase .pb{padding:16px 18px 6px}
+.phase .pb .flow .st{grid-template-columns:110px 1fr}
+
+.verdict{border:2px solid var(--ink); border-radius:6px; overflow:hidden; margin:0 0 22px}
+.verdict .vh{background:var(--ink); color:var(--paper); font-family:Archivo,sans-serif; font-weight:700; font-size:13px;
+             letter-spacing:.14em; text-transform:uppercase; padding:11px 18px}
+.vrow{display:grid; grid-template-columns:minmax(180px,250px) 1fr; gap:16px; padding:12px 18px; border-bottom:1px solid var(--rule); align-items:baseline}
+.vrow:last-child{border-bottom:0}
+.vrow .q{font-family:Archivo,sans-serif; font-size:11.5px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--ink-3)}
+.vrow .a{font-family:Archivo,sans-serif; font-size:14px; font-weight:600; color:var(--ink)}
+.vrow .a em{display:block; font-family:"Source Serif 4",serif; font-style:normal; font-weight:400; font-size:13.5px; color:var(--ink-2); margin-top:3px}
+@media(max-width:640px){.vrow{grid-template-columns:1fr; gap:4px}}
+
+.figs{display:grid; grid-template-columns:repeat(auto-fit,minmax(148px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); border-radius:5px; overflow:hidden; margin:0 0 24px}
+.fig{background:var(--paper); padding:14px 16px}
+.fig .v{font-family:Archivo,sans-serif; font-size:24px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1.1; color:var(--ink)}
+.fig .l{font-family:Archivo,sans-serif; font-size:10.5px; color:var(--ink-3); line-height:1.35; margin-top:4px}
+.foot{border-top:1px solid var(--rule); margin-top:44px; padding-top:18px; font-family:Archivo,sans-serif; font-size:11.5px; color:var(--ink-3); max-width:70ch}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<nav class="toc">
+  <p class="tl">Contents</p>
+  <ol>
+    <li><a href="#s1"><b>01</b><span>Target architecture</span></a></li>
+    <li><a href="#s2"><b>02</b><span>Repository structure</span></a></li>
+    <li><a href="#s3"><b>03</b><span>Current → target file map</span></a></li>
+    <li><a href="#s4"><b>04</b><span>Ownership map</span></a></li>
+    <li><a href="#s5"><b>05</b><span>Shared package</span></a></li>
+    <li><a href="#s6"><b>06</b><span>POS dependency tree</span></a></li>
+    <li><a href="#s7"><b>07</b><span>Decomposing POSSales</span></a></li>
+    <li><a href="#s8"><b>08</b><span>API dependency map</span></a></li>
+    <li><a href="#s9"><b>09</b><span>Tenant linking</span></a></li>
+    <li><a href="#s10"><b>10</b><span>Auth &amp; context design</span></a></li>
+    <li><a href="#s11"><b>11</b><span>Branch / terminal / session</span></a></li>
+    <li><a href="#s12"><b>12</b><span>Screen templates</span></a></li>
+    <li><a href="#s13"><b>13</b><span>Device &amp; printing</span></a></li>
+    <li><a href="#s14"><b>14</b><span>Deployment</span></a></li>
+    <li><a href="#s15"><b>15</b><span>Security requirements</span></a></li>
+    <li><a href="#s16"><b>16</b><span>Testing &amp; parity</span></a></li>
+    <li class="grp"><a href="#s17"><b>17</b><span>Migration phases</span></a></li>
+    <li><a href="#s18"><b>18</b><span>Risks</span></a></li>
+    <li><a href="#s19"><b>19</b><span>Rollback</span></a></li>
+    <li><a href="#s20"><b>20</b><span>First coding task</span></a></li>
+    <li class="grp"><a href="#final"><b>——</b><span>Final decision</span></a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="mast">
+  <p class="eyebrow">Implementation Blueprint · Sequel to the POS Separation Audit</p>
+  <h1>Extracting BillBull POS into a standalone application</h1>
+  <p class="standfirst">A phased plan to lift the point-of-sale experience out of the Retail SPA and stand it up as a second browser client of the same BillBull API and the same tenant database — without a second backend, a second database, or a rewrite of POS business logic.</p>
+  <div class="meta">
+    <div>Date<b>8 September 2026</b></div>
+    <div>Branch<b>feature/posclient</b></div>
+    <div>Status<b>Awaiting approval — no code changed</b></div>
+    <div>Scope<b>Frontend extraction + minimal API hardening</b></div>
+  </div>
+</header>
+
+<section id="s0">
+  <h2><span class="n">00</span><span>What the code actually says</span></h2>
+  <div class="hrule"></div>
+  <p>Six measurements taken from the working tree drive most of the decisions in this document. They are the difference between a plan and a guess.</p>
+  <div class="figs">
+    <div class="fig"><div class="v">15,818</div><div class="l">lines in <span class="mono">POSSales.jsx</span> — one component</div></div>
+    <div class="fig"><div class="v">481</div><div class="l"><span class="mono">useState</span> calls in that component</div></div>
+    <div class="fig"><div class="v">0</div><div class="l">react-router imports anywhere in the POS tree</div></div>
+    <div class="fig"><div class="v">3</div><div class="l">React contexts POS consumes from Retail</div></div>
+    <div class="fig"><div class="v">23</div><div class="l">POS backend controllers already in place</div></div>
+    <div class="fig"><div class="v">1</div><div class="l">shared frontend build serving every tenant</div></div>
+  </div>
+
+  <div class="call ok">
+    <span class="lab">The finding that shapes everything</span>
+    <p>Tenant identity is <strong>not</strong> a frontend concern today. One build is deployed to <span class="mono">/var/www/billbull</span> and served by every client vhost; nginx maps the hostname to a per-tenant Spring Boot instance on its own port (<span class="mono">8080</span>, <span class="mono">8081</span>, <span class="mono">8082</span>…), and that instance owns the tenant database. The browser bundle is tenant-agnostic apart from cosmetic overrides in <span class="mono">config/clientConfig.js</span>. A standalone POS therefore inherits correct tenant routing for free — provided it is served from the tenant's own origin.</p>
+  </div>
+
+  <div class="call">
+    <span class="lab">The finding that constrains everything</span>
+    <p><span class="mono">POSSales.jsx</span> holds 481 <span class="mono">useState</span> declarations, 50 <span class="mono">useEffect</span> blocks and roughly 5,800 lines of JSX in a single function component. Its already-extracted children (<span class="mono">POSConsole</span> 3,518 lines, <span class="mono">POSTouchScreen</span> 1,996, <span class="mono">CustomerView</span> 1,417) are driven by enormous prop bags rather than owned state. Nothing about creating <span class="mono">apps/pos</span> is hard; making this component portable is the entire project.</p>
+  </div>
+</section>
+
+<section id="s1">
+  <h2><span class="n">01</span><span>Target architecture</span></h2>
+  <div class="hrule"></div>
+  <p>Two browser clients, one API, one tenant database per client. Neither frontend imports from the other; neither knows the other exists.</p>
+
+  <div class="dia">
+    <p class="cap">Target — two clients of one platform</p>
+    <div class="lyr">
+      <div class="row r2">
+        <div class="bx cool"><div class="t">BillBull Retail</div><div class="s">Browser app · back-office · <span class="mono">&lt;client&gt;.billbull.app/</span></div></div>
+        <div class="bx new"><div class="t">BillBull POS</div><div class="s">Browser app · cashier till · <span class="mono">&lt;client&gt;.billbull.app/pos/</span></div></div>
+      </div>
+      <div class="arw">↘&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↙</div>
+      <div class="bx acc"><div class="t">BillBull API — one Spring Boot instance per tenant</div><div class="s">JWT auth · RBAC · <span class="mono">SalesInvoiceService</span> · <span class="mono">PostingEngineService</span> · stock movement ledger · POS session &amp; business-day enforcement · voucher numbering</div></div>
+      <div class="arw">↓</div>
+      <div class="bx"><div class="t">Client / tenant PostgreSQL database</div><div class="s">Source of truth. Shared by both clients. No POS-specific database.</div></div>
+    </div>
+  </div>
+
+  <div class="dia">
+    <p class="cap">What is explicitly out of scope</p>
+    <div class="lyr">
+      <div class="row r3">
+        <div class="bx dash"><div class="t">POS backend</div><div class="s">Not built. Existing <span class="mono">pos/*</span> controllers are sufficient.</div></div>
+        <div class="bx dash"><div class="t">POS database</div><div class="s">Not built. POS tables live in the tenant DB.</div></div>
+        <div class="bx dash"><div class="t">Microservices</div><div class="s">Not introduced at any phase.</div></div>
+      </div>
+      <div class="row r3">
+        <div class="bx dash"><div class="t">Offline mode</div><div class="s">Out of scope. Structure permits it later; nothing is built for it now.</div></div>
+        <div class="bx dash"><div class="t">Desktop <span class="mono">.exe</span></div><div class="s">Deferred. The app is written so a wrapper needs no rearchitecture.</div></div>
+        <div class="bx dash"><div class="t">Retail redesign</div><div class="s">Retail changes only where code moves into the shared package.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s2">
+  <h2><span class="n">02</span><span>Target repository structure</span></h2>
+  <div class="hrule"></div>
+
+  <h3>Current</h3>
+  <p class="tree"><b>Billbull_Retail/</b>
+├── billbull-backend/          Spring Boot, Maven, unchanged throughout
+├── billbull-frontend/         <b>single Vite app — Retail + embedded POS</b>
+│   ├── package.json           no workspaces, no path aliases
+│   ├── vite.config.js         one build, one entry
+│   └── src/
+│       ├── main.jsx  App.jsx  Sidebar-wrapped router, 100+ routes
+│       ├── api/ (81 files)  context/ (4)  hooks/ (10)  utils/ (46)
+│       ├── components/  ui/ (49)  pos/  print/  auth/
+│       └── pages/  Sales/POSSales.jsx  Sales/POS/**  Enterprise/Pos*
+├── tools/pos-print-agent/     independent Node tray app, v0.5.3
+└── k8s/ docs/ *.md            deployment runbooks referencing billbull-frontend/</p>
+
+  <h3>Target</h3>
+  <p class="tree"><b>Billbull_Retail/</b>
+├── <i>package.json</i>              <i>NEW — private workspace root (apps/*, packages/*, billbull-frontend)</i>
+├── billbull-backend/          unchanged
+├── billbull-frontend/         Retail app <b>— path unchanged until Phase 8</b>
+│   └── src/…                  imports shared code as <span class="mono">@billbull/shared/*</span>
+├── <i>packages/shared/</i>         <i>NEW — transport, contexts, money math, print, UI primitives</i>
+│   ├── package.json           name: @billbull/shared, type: module, exports map
+│   └── src/  api/ context/ utils/ ui/ hooks/
+├── <i>apps/pos/</i>                <i>NEW — standalone POS browser app</i>
+│   ├── index.html  vite.config.js  package.json
+│   └── src/  main.jsx  PosApp.jsx  shell/ features/ context/ device/
+├── tools/pos-print-agent/     unchanged
+└── k8s/ docs/                 + one new nginx location block per tenant</p>
+
+  <div class="call cool">
+    <span class="lab">Why <span class="mono">billbull-frontend/</span> does not move on day one</span>
+    <p>Every deployment runbook, the eight-client update script and the k8s manifests hard-code the path <span class="mono">billbull-frontend/</span>. npm workspaces let a package live at any path, so <span class="mono">apps/pos</span> and <span class="mono">packages/shared</span> can exist alongside it immediately while Retail keeps its current location and build command. Renaming it to <span class="mono">apps/retail</span> is a cosmetic <span class="mono">git mv</span> plus a documentation sweep — schedule it in Phase 8, after POS is live, so a path rename never shares a release with a behavioural change.</p>
+  </div>
+
+  <h3>Build system decisions</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Decision</th><th>Choice</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>Monorepo tool</td><td>npm workspaces only — no Turborepo, no Nx</td><td>npm is already the toolchain; two apps and one library do not justify a task runner. Root scripts <span class="mono">-w</span> into each workspace.</td></tr>
+      <tr><td>Shared package format</td><td>Source-only ESM, consumed via Vite, no build step</td><td>Both consumers are Vite apps. A build step in <span class="mono">packages/shared</span> adds a watch-mode failure surface for zero benefit.</td></tr>
+      <tr><td>Import specifier</td><td><span class="mono">@billbull/shared/utils/vatMath</span> via <span class="mono">exports</span> subpaths</td><td>Named subpaths keep tree-shaking intact and make an accidental deep import into another app impossible.</td></tr>
+      <tr><td>Path aliases</td><td>Add <span class="mono">@/</span> → <span class="mono">src/</span> in <span class="mono">apps/pos</span> only</td><td>Retail uses ~4-level relative imports today; converting it is churn with no payoff. New code starts clean.</td></tr>
+      <tr><td>Tailwind v4</td><td>Each app owns its <span class="mono">index.css</span>; shared UI ships classes only</td><td>Tailwind v4's Vite plugin scans the app's own graph including linked workspace sources. One theme block per app, POS free to diverge.</td></tr>
+      <tr><td>Tests</td><td>Vitest per workspace; shared package tests live with the shared code</td><td>Money math must be tested once, next to its single implementation.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s3">
+  <h2><span class="n">03</span><span>Current → target file map</span></h2>
+  <div class="hrule"></div>
+
+  <h3>Moves to <span class="mono">apps/pos</span></h3>
+  <div class="tw"><table>
+    <thead><tr><th>Current path</th><th>Lines</th><th>Target</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mono">pages/Sales/POSSales.jsx</span></td><td class="num">15,818</td><td><span class="mono">apps/pos/src/</span> — decomposed, never moved whole</td><td>See §07. Moves as ~15 hooks + a shell, not as a file.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/POSConsole.jsx</span></td><td class="num">3,518</td><td><span class="mono">features/console/</span></td><td>Settings/console surface; consumes context instead of props.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/POSTouchScreen.jsx</span></td><td class="num">1,996</td><td><span class="mono">templates/classic/</span> + <span class="mono">templates/focus/</span></td><td>Hosts both Classic and Cart&nbsp;Focus behind <span class="mono">posTemplate</span>.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/CustomerView.jsx</span></td><td class="num">1,417</td><td><span class="mono">features/customer/</span></td><td>Customer-facing display.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/posPrintUtils.js</span></td><td class="num">1,851</td><td><span class="mono">device/print/</span></td><td>POS-only receipt assembly; leans on shared ESC/POS primitives.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/TradePOS/**</span></td><td class="num">878</td><td><span class="mono">templates/compact/</span></td><td>Current Compact template implementation.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/payments/**</span></td><td class="num">3,138</td><td><span class="mono">features/payments/</span></td><td>Already modular — 20 files, cleanest part of the tree.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/receiptTemplates/**</span></td><td class="num">1,411</td><td><span class="mono">device/receipts/</span></td><td>Template 2 / bilingual tax-invoice receipts.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POS/{CustomerPicker,POSCurrency,POSPrintPreview,DeviceDashboardPanel,posConstants,posUtils}</span></td><td class="num">1,286</td><td>matching feature folders</td><td>Mechanical moves.</td></tr>
+      <tr><td><span class="mono">components/pos/**</span></td><td class="num">~1,400</td><td><span class="mono">apps/pos/src/components/</span></td><td>Except <span class="mono">BusinessDayStatusChip</span> — see shared list.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Becomes shared</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Current path</th><th>Target subpath</th><th>Why shared, not copied</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mono">api/axiosConfig.js</span></td><td><span class="mono">@billbull/shared/api/client</span></td><td>JWT attach, <span class="mono">X-Branch-Id</span>, 401/403/429 handling, request-id correlation. One transport or two divergent ones.</td></tr>
+      <tr><td><span class="mono">api/auth.js</span>, <span class="mono">api/branchApi.js</span>, <span class="mono">api/companyProfileApi.js</span>, <span class="mono">api/posApi.js</span> + 14 POS siblings, <span class="mono">productsApi</span>, <span class="mono">customerledgerApi</span>, <span class="mono">salesInvoiceApi</span>, <span class="mono">salesReturnApi</span>, <span class="mono">salesorderApi</span>, <span class="mono">salesPaymentApi</span>, <span class="mono">branchTaxApi</span>, <span class="mono">printTemplateApi</span>, <span class="mono">receiptVoucherApi</span>, <span class="mono">creditVoucherApi</span>, <span class="mono">departmentsApi</span>, <span class="mono">unitsApi</span>, <span class="mono">ledgerApi</span>, <span class="mono">financialsApi</span>, <span class="mono">salesReportsApi</span>, <span class="mono">employeeApi</span></td><td><span class="mono">@billbull/shared/api/*</span></td><td>Both clients call these. Retail's POS-administration screens and POS itself must agree on the wire shape.</td></tr>
+      <tr><td><span class="mono">utils/vatMath.js</span>, <span class="mono">salesPricing.js</span>, <span class="mono">unitPricing.js</span></td><td><span class="mono">@billbull/shared/money/*</span></td><td class="num" style="text-align:left"><span class="p p-crit">Financial correctness</span> Duplication here produces two answers to one tax question.</td></tr>
+      <tr><td><span class="mono">utils/cashDenominations.js</span>, <span class="mono">posReportViewModel.js</span>, <span class="mono">posSessionBusinessDay.js</span></td><td><span class="mono">@billbull/shared/pos/*</span></td><td>Retail's Cash Movements and POS Administration screens read the same view-models the till writes.</td></tr>
+      <tr><td><span class="mono">utils/escPosReceipt.js</span>, <span class="mono">printGenerator.js</span>, <span class="mono">documentTemplateRenderer.js</span>, <span class="mono">printTemplateConfig.js</span>, <span class="mono">branchPrintProfile.js</span>, <span class="mono">bilingualReceiptCanvas.js</span>, <span class="mono">overlayInvoiceRenderer.js</span>, <span class="mono">receiptLabels.js</span>, <span class="mono">receiptFont.js</span>, <span class="mono">interFontBase64.js</span>, <span class="mono">dirhamSymbolBase64.js</span>, <span class="mono">documentTaxType.js</span>, <span class="mono">printTiming.js</span></td><td><span class="mono">@billbull/shared/print/*</span></td><td>A reprint from Retail and a reprint from POS must produce byte-identical output.</td></tr>
+      <tr><td><span class="mono">utils/localPrintAgent.js</span>, <span class="mono">zebraZpl.js</span></td><td><span class="mono">@billbull/shared/device/*</span></td><td>Agent protocol version, health probe timing, integrity hashing and ESC/POS→text fallback are one contract.</td></tr>
+      <tr><td><span class="mono">utils/exportUtils.js</span>, <span class="mono">clientLogger.js</span>, <span class="mono">urlUtils.js</span>, <span class="mono">dateUtils.js</span>, <span class="mono">displayName.js</span>, <span class="mono">filenameUtils.js</span>, <span class="mono">customerResolution.js</span>, <span class="mono">salesNumbering.js</span>, <span class="mono">serialNumbering.js</span>, <span class="mono">amountInWords.js</span>, <span class="mono">countryCurrencyOptions.js</span></td><td><span class="mono">@billbull/shared/utils/*</span></td><td>Genuinely common; each already has both-side callers.</td></tr>
+      <tr><td><span class="mono">context/CompanyContext.jsx</span>, <span class="mono">BranchContext.jsx</span>, <span class="mono">PermissionContext.jsx</span></td><td><span class="mono">@billbull/shared/context/*</span></td><td>The three contexts POS consumes today. Shared with a POS-specific configuration surface — see §11.</td></tr>
+      <tr><td><span class="mono">components/ui/**</span> (49 files) + <span class="mono">AsyncSearchableDropdown</span>, <span class="mono">AedSymbolRenderer</span>, <span class="mono">AppAlertBridge</span></td><td><span class="mono">@billbull/shared/ui/*</span></td><td>Radix wrappers and the dirham glyph renderer. POS will restyle via tokens, not by forking components.</td></tr>
+      <tr><td><span class="mono">hooks/useHeartbeat.js</span>, <span class="mono">useIdleTimeout.js</span>, <span class="mono">usePermission.js</span>, <span class="mono">useShortcuts.js</span></td><td><span class="mono">@billbull/shared/hooks/*</span></td><td>Terminal heartbeat and idle lock are POS-critical and Retail-used.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Stays in Retail — never moves, never shared</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Path</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mono">layout/Sidebar.jsx</span> (910 lines), <span class="mono">pages/Dashboard.jsx</span>, <span class="mono">pages/dashboards/**</span></td><td>The Retail navigation shell. POS has no sidebar and no home page.</td></tr>
+      <tr><td><span class="mono">App.jsx</span>, <span class="mono">auth/PrivateRoute.jsx</span>, <span class="mono">auth/RoleRoute.jsx</span>, <span class="mono">components/auth/ResourceGuard.jsx</span></td><td>Retail's 100-route table. POS writes its own three-route shell; <span class="mono">ResourceGuard</span> may be re-implemented small rather than shared.</td></tr>
+      <tr><td><span class="mono">pages/Enterprise/Pos*.jsx</span> — Administration, Correction Dashboard/History/Analytics/Audit, Transaction Corrections, Session Denomination Corrections, Cash Movement Categories</td><td class="num" style="text-align:left"><span class="p p-warn">Deliberate</span> POS <em>administration</em> is back-office work with maker-checker semantics. It belongs to Retail. The till never performs corrections.</td></tr>
+      <tr><td><span class="mono">pages/Sales/POSTerminals.jsx</span>, <span class="mono">POSCounters.jsx</span>, <span class="mono">CashMovements.jsx</span></td><td>Terminal/counter registries and back-office cash-movement review are administration, not till operation.</td></tr>
+      <tr><td><span class="mono">utils/purchasePrintUtils.js</span>, <span class="mono">financialPrintTemplate.js</span>, <span class="mono">journalVoucherPrintTemplate.js</span>, <span class="mono">pickListPrintTemplate.js</span>, <span class="mono">statementUtils.js</span>, <span class="mono">documentEmailSender.js</span>, <span class="mono">emailImageInliner.js</span>, <span class="mono">accountCodeGenerator.js</span></td><td>Back-office document surfaces with no POS caller. Keeping them out of shared is how shared stays honest.</td></tr>
+      <tr><td><span class="mono">pages/Inventory/**</span>, <span class="mono">Purchase/**</span>, <span class="mono">Financials/**</span>, <span class="mono">HR/**</span>, <span class="mono">Settings/**</span>, <span class="mono">Customer/**</span>, <span class="mono">MyProfile/**</span></td><td>Back-office domains, untouched by this project.</td></tr>
+      <tr><td><span class="mono">context/NotificationContext.jsx</span></td><td>Retail notification centre. A cashier does not need a notification inbox.</td></tr>
+      <tr><td><span class="mono">utils/supabase/customer-connect-service.ts</span></td><td class="num" style="text-align:left"><span class="p p-mute">Unresolved</span> Lone TypeScript file referencing Supabase. Do not move, do not share, do not depend on it. Confirm live-or-dead separately.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Shared with Retail <em>and</em> POS — the difficult case</h3>
+  <div class="call">
+    <span class="lab">Sales Return</span>
+    <p><span class="mono">POSSales.jsx</span> imports <span class="mono">pages/Sales/SalesReturn/SalesReturnScreen.jsx</span> (542 lines, backed by <span class="mono">useSalesReturn.js</span> at 643 lines and eleven components — 3,861 lines total) and distinguishes the two callers with an <span class="mono">ENTRY_POINT</span> constant. This is the one large Retail <em>page</em> POS genuinely reuses.</p>
+    <p><strong>Decision:</strong> promote <span class="mono">pages/Sales/SalesReturn/**</span> to <span class="mono">@billbull/shared/features/sales-return/</span> as a self-contained feature module. It already parameterises its entry point, it has passing tests (<span class="mono">salesReturnPrint</span>, <span class="mono">salesReturnVoucherFlow</span>, <span class="mono">salesReturnPrintLanguage</span>), and its refund/credit-voucher arithmetic is exactly the kind of code that must not exist twice. This is the sole exception to "shared holds no pages".</p>
+  </div>
+
+  <h3>Deleted only after migration completes</h3>
+  <ul>
+    <li><span class="mono">pages/Sales/POSSales.jsx</span> and <span class="mono">pages/Sales/POS/**</span> — deleted in Phase 8, after the pilot signs off, never before.</li>
+    <li>The <span class="mono">/sales/pos</span> route block in <span class="mono">App.jsx</span> and the <span class="mono">POSSales</span> import — same commit.</li>
+    <li><span class="mono">config/clientConfig.js</span> <span class="mono">posFirstMode</span> flag and the three <span class="mono">landing.defaultRoute: "/sales/pos"</span> overrides — replaced by pointing those tenants' till browsers at <span class="mono">/pos/</span>.</li>
+    <li>Duplicated originals under <span class="mono">billbull-frontend/src/utils/</span> and <span class="mono">src/api/</span> — deleted the moment their shared twin is imported by Retail, not left as dead copies.</li>
+  </ul>
+</section>
+
+<section id="s4">
+  <h2><span class="n">04</span><span>Ownership map</span></h2>
+  <div class="hrule"></div>
+
+  <div class="dia">
+    <p class="cap">Four owners, no overlap</p>
+    <div class="lyr">
+      <div class="row r2">
+        <div class="bx new"><div class="t">BillBull POS owns</div><div class="s">POS shell and routing · POS login · terminal registration and identity · branch/store selection for the till · POS session open/close/transfer · cart and line editing · product search, barcode and batch scan · customer selection and quick-create · checkout orchestration · payment capture (cash, card, credit, BNPL, voucher, online, split) · returns entry point · layaway · held sales · delivery settlement · cash in/out during a session · X and Z report screens · denomination counting · receipt preview and reprint · printer/scanner/drawer interaction · POS console settings · Classic / Compact / Cart&nbsp;Focus template selection · customer-facing display</div></div>
+        <div class="bx cool"><div class="t">BillBull Retail owns</div><div class="s">products and catalogue management · inventory, stock take, transfers · purchasing, GRN, LPO, vendors · financials, GL, vouchers, tax · HR · company/branch/user/role administration · document numbering and print templates · all reporting · <strong>POS administration</strong> · terminal and counter registries · transaction and denomination corrections · back-office cash-movement review · POS correction analytics and audit views</div></div>
+      </div>
+      <div class="arw">↓&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓</div>
+      <div class="bx acc"><div class="t">packages/shared owns</div><div class="s">HTTP transport and interceptors · API client functions both apps call · auth primitives (token read, JWT decode, role check) · company/branch/permission contexts · tax, pricing and rounding arithmetic · denomination and session business-day helpers · receipt, ESC/POS, ZPL and document rendering · local print agent protocol · design-system primitives · the Sales Return feature module · export and logging helpers</div></div>
+      <div class="arw">↓</div>
+      <div class="bx"><div class="t">BillBull backend owns</div><div class="s">every business rule · authorization and RBAC · sales posting via <span class="mono">SalesInvoiceService</span> · stock movement ledger writes · payment recording · GL posting via <span class="mono">PostingEngineService</span> · voucher and document numbering · POS session and business-day enforcement · period locks · persistence</div></div>
+    </div>
+  </div>
+
+  <div class="call crit">
+    <span class="lab">The boundary that is easiest to get wrong</span>
+    <p>POS administration is <strong>Retail's</strong>. A cashier's terminal must not be able to rename terminals, reassign counters, approve corrections or adjust denomination records — those screens carry maker-checker weight and belong in the back office behind the existing RBAC gates. The till consumes terminal and counter records; it does not manage them. The single exception already in the code is self-registration (<span class="mono">POST /api/pos/terminals/register</span>), which is how a till claims an identity on first boot, and it stays.</p>
+  </div>
+</section>
+
+<section id="s5">
+  <h2><span class="n">05</span><span>Shared package — and how to keep it honest</span></h2>
+  <div class="hrule"></div>
+  <p>The audit named duplicated financial arithmetic as the highest-severity risk of this split. The counter-risk is a shared package that absorbs everything and re-couples the two apps by the back door. Both are prevented by rules, not by intentions.</p>
+
+  <h3>Admission rules</h3>
+  <ol>
+    <li><strong>Two real callers.</strong> A module enters <span class="mono">packages/shared</span> only when both <span class="mono">billbull-frontend</span> and <span class="mono">apps/pos</span> import it. "POS will probably need it" is not a caller.</li>
+    <li><strong>No app-shell code.</strong> Nothing that knows about routes, sidebars, page layout or navigation. The Sales Return module is the one carved exception and it is a self-contained feature, not a page in a router.</li>
+    <li><strong>No cross-app state.</strong> Shared contexts hold server-derived data (company profile, branch list, permission set). They never hold "the other app's" UI state.</li>
+    <li><strong>Every money module ships with tests.</strong> <span class="mono">vatMath</span>, <span class="mono">salesPricing</span>, <span class="mono">unitPricing</span>, <span class="mono">cashDenominations</span> and <span class="mono">posReportViewModel</span> must have Vitest coverage in <span class="mono">packages/shared</span> before either app is allowed to import them from there.</li>
+    <li><strong>Explicit exports map.</strong> <span class="mono">package.json</span> lists every public subpath. Anything not listed is unreachable, so growth is a deliberate edit rather than a side effect.</li>
+    <li><strong>An ESLint boundary rule.</strong> A <span class="mono">no-restricted-imports</span> rule forbids <span class="mono">apps/pos</span> from importing any path containing <span class="mono">billbull-frontend</span>, and forbids <span class="mono">packages/shared</span> from importing either app. This is the mechanism that makes "no Retail↔POS frontend dependency" checkable in CI rather than aspirational.</li>
+  </ol>
+
+  <h3>Subpath layout</h3>
+  <p class="tree">@billbull/shared
+├── /api/client          axios instance + interceptors
+├── /api/&lt;feature&gt;       auth, branch, company, pos, products, customers, sales, print-template…
+├── /context             CompanyProvider, BranchProvider, PermissionProvider
+├── /money               vatMath, salesPricing, unitPricing            <u>tests required</u>
+├── /pos                 cashDenominations, posReportViewModel, posSessionBusinessDay  <u>tests required</u>
+├── /print               escPosReceipt, printGenerator, documentTemplateRenderer, templates, fonts
+├── /device              localPrintAgent, zebraZpl
+├── /ui                  Radix primitives, AedSymbolRenderer, AsyncSearchableDropdown
+├── /hooks               useHeartbeat, useIdleTimeout, usePermission, useShortcuts
+├── /features/sales-return   the one shared feature module
+└── /utils               logging, dates, names, exports, numbering</p>
+
+  <div class="call cool">
+    <span class="lab">Migration mechanics for a shared module</span>
+    <p>Move the file with <span class="mono">git mv</span> so history follows it. In its old location leave <em>nothing</em> — no re-export shim. Update Retail's imports in the same commit. A shim would let the two copies drift silently, which is the exact failure this package exists to prevent. Each module moves in its own small PR, and Retail's test suite plus a build is the gate.</p>
+  </div>
+</section>
+
+<section id="s6">
+  <h2><span class="n">06</span><span>POS dependency tree from <span class="mono">/sales/pos</span></span></h2>
+  <div class="hrule"></div>
+
+  <p class="tree"><b>App.jsx</b>  <span class="mono">BrowserRouter</span>
+└── CompanyProvider                        <b>context — POS needs</b>
+    └── BranchProvider                     <b>context — POS needs</b>
+        └── AedSymbolRenderer, AppAlertBridge, Toaster ×2   <b>POS needs</b>
+            └── Route "/*" → PrivateRoute            <u>Retail-shaped, POS rewrites small</u>
+                └── PermissionProvider               <b>context — POS needs</b>
+                    └── ErrorBoundary                <b>POS needs its own</b>
+                        └── NotificationProvider     <u>Retail-only — POS drops</u>
+                            └── <b>Sidebar</b> (910 lines)   <u>Retail-only — POS drops</u>
+                                └── Route "/sales/pos"
+                                    └── ResourceGuard module="sales.invoice"   <u>replace with POS permission</u>
+                                        └── <b>POSSales</b>  (15,818 lines, 481 useState)
+                                            ├── contexts   useCompany · useBranch · usePermissions
+                                            ├── hooks      useHeartbeat · useIdleTimeout
+                                            ├── children   POSConsole · POSTouchScreen · TradePOSTouchScreen
+                                            │              CustomerView · CustomerPicker · POSPrintPreview
+                                            │              POSCurrency · DeviceDashboardPanel
+                                            ├── components/pos  BusinessDayStatusBanner + Context ·
+                                            │              ItemEntry/* · ReceiptShareModal ·
+                                            │              SupervisorTakeoverDialog · TerminalStatusBadge
+                                            ├── payments/  PaymentAllocationPanel · usePaymentManager ·
+                                            │              paymentModel · paymentPayloadAdapter ·
+                                            │              paymentPresentation · voucherRedemption ·
+                                            │              useCheckoutCapabilities
+                                            ├── shared feature  SalesReturn/SalesReturnScreen
+                                            ├── 18 api modules  posApi (68 exports) · products · customers ·
+                                            │              salesInvoice · salesOrder · salesPayment ·
+                                            │              salesReturn · salesReports · branchTax ·
+                                            │              printTemplate · posPrinter · posCashMovementCategory ·
+                                            │              receiptVoucher · ledger · financials · departments ·
+                                            │              units · employee
+                                            └── 14 utils   vatMath · posReportViewModel · posSessionBusinessDay ·
+                                                           cashDenominations · printGenerator · escPosReceipt ·
+                                                           localPrintAgent · documentTemplateRenderer ·
+                                                           documentTaxType · exportUtils · printTiming ·
+                                                           displayName · qrcode · recharts</p>
+
+  <h3>What the tree proves</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Assumption to verify</th><th>Finding</th><th>Consequence for the split</th></tr></thead>
+    <tbody>
+      <tr><td>Router coupling</td><td class="num" style="text-align:left"><span class="p p-ok">None</span> Zero <span class="mono">react-router</span> imports in <span class="mono">POSSales.jsx</span> or anywhere under <span class="mono">pages/Sales/POS/</span></td><td>POS can be mounted under any shell. The audit's "largely router-independent" finding is confirmed as fully router-independent.</td></tr>
+      <tr><td>Sidebar / layout coupling</td><td class="num" style="text-align:left"><span class="p p-ok">None</span> <span class="mono">Sidebar</span> is a wrapper, never imported by POS</td><td>Dropping the Retail shell costs nothing. POS renders full-bleed by default.</td></tr>
+      <tr><td>Context coupling</td><td class="num" style="text-align:left"><span class="p p-warn">Three</span> <span class="mono">useCompany</span> (line 431), <span class="mono">useBranch</span> (432), <span class="mono">usePermissions</span> (502)</td><td>All three move to <span class="mono">packages/shared</span>. POS mounts them itself. No Retail dependency remains.</td></tr>
+      <tr><td>Auth assumption</td><td>Token in <span class="mono">sessionStorage</span> under key <span class="mono">token</span>; branch mirrored to <span class="mono">activeBranchId</span>; both read by the axios interceptor</td><td>Shared transport carries this unchanged. See §15 for the sessionStorage lifetime problem.</td></tr>
+      <tr><td>Branch assumption</td><td>POS reads <span class="mono">branches</span> from <span class="mono">BranchContext</span> and relies on the interceptor's <span class="mono">X-Branch-Id</span> header</td><td>Works unchanged. POS constrains selection to one branch — see §11.</td></tr>
+      <tr><td>Terminal assumption</td><td>Fingerprint in <span class="mono">localStorage['billbull:pos:device_fingerprint']</span> (line 2271); terminal id cached per-branch key (2277); registered via <span class="mono">registerPosTerminal</span> (2295)</td><td>Already device-local and origin-scoped, not Retail-scoped. Survives the move as long as the origin does — a further argument for same-origin deployment.</td></tr>
+      <tr><td>Session assumption</td><td>Resume via <span class="mono">getActivePosSession(terminalId)</span>; business day via <span class="mono">posSessionBusinessDay</span>; banner via <span class="mono">BusinessDayStatusContext</span></td><td>All backend-driven. No Retail state involved.</td></tr>
+      <tr><td>Scanner assumption</td><td>Config in <span class="mono">localStorage</span> keyed by <span class="mono">(branchId, terminalId)</span> (line 4953)</td><td>Same origin-scoping consequence as the fingerprint.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s7">
+  <h2><span class="n">07</span><span>Decomposing <span class="mono">POSSales.jsx</span></span></h2>
+  <div class="hrule"></div>
+
+  <div class="call crit">
+    <span class="lab">The rule that governs this section</span>
+    <p>Decomposition happens <strong>in place, in <span class="mono">billbull-frontend</span>, against the live <span class="mono">/sales/pos</span> route</strong>, before <span class="mono">apps/pos</span> exists. Every extraction is behaviour-preserving and is proven by the existing route continuing to work. Only once the component is a thin shell over ~15 hooks does anything move. Moving 15,818 lines first and refactoring in the new home would leave both copies unverifiable at once.</p>
+  </div>
+
+  <h3>Why state-first, not JSX-first</h3>
+  <p>The instinct is to cut the 5,800 lines of JSX (lines 9,998–15,818) into components. That is the wrong first cut: the JSX is already partly extracted, and the child components are only unwieldy because they receive prop bags sourced from 481 <span class="mono">useState</span> declarations in the parent. Extract the <em>state</em> into hooks, expose it through one <span class="mono">PosWorkspaceContext</span>, and the prop bags collapse on their own — <span class="mono">POSConsole</span>'s 3,518 lines and <span class="mono">POSTouchScreen</span>'s 1,996 shrink without either file being restructured.</p>
+
+  <h3>Extraction order and boundaries</h3>
+  <p>Ordered by risk ascending — the first extractions are the ones whose blast radius is smallest and whose test coverage is best, so the team learns the pattern on cheap work.</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>#</th><th>Target module</th><th>Current code</th><th>Public interface</th><th>Dependencies</th><th>Risk</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td><span class="mono">features/cash-drawer/useCashDrawer</span></td><td>~4,870–4,889</td><td><span class="mono">{ openDrawer, drawerBusy, lastKickAt }</span></td><td><span class="mono">posCashDrawerApi</span>, <span class="mono">localPrintAgent</span></td><td><span class="p p-ok">Low</span> Self-contained, no cart interaction</td></tr>
+      <tr><td class="num">2</td><td><span class="mono">features/hold/useHeldSales</span></td><td>~4,518–4,636</td><td><span class="mono">{ heldSales, hold(cart), resume(id), discard(id), refresh }</span></td><td><span class="mono">posApi</span> held-sale endpoints, cart snapshot shape</td><td><span class="p p-ok">Low</span> Reads/writes a cart snapshot only</td></tr>
+      <tr><td class="num">3</td><td><span class="mono">features/layaway/useLayaway</span></td><td>~4,636–4,870</td><td><span class="mono">{ layaways, create, cancel, convert, load, payments }</span></td><td><span class="mono">posApi</span> layaway endpoints, payment manager for conversion</td><td><span class="p p-warn">Medium</span> Conversion posts money — parity-test convert-to-sale</td></tr>
+      <tr><td class="num">4</td><td><span class="mono">features/delivery/useDelivery</span></td><td>~4,254–4,518</td><td><span class="mono">{ orders, settle(id, method), deliveryPersons }</span></td><td><span class="mono">posApi</span> delivery, <span class="mono">employeeApi</span></td><td><span class="p p-warn">Medium</span> Settlement records payment</td></tr>
+      <tr><td class="num">5</td><td><span class="mono">features/settings/usePosBehaviour</span></td><td>~3,940–4,254</td><td><span class="mono">{ behaviour, setBehaviour, save, hiddenPanels, template }</span></td><td><span class="mono">getPosSettings</span>/<span class="mono">savePosSettings</span></td><td><span class="p p-ok">Low</span> Console-tab state, no money</td></tr>
+      <tr><td class="num">6</td><td><span class="mono">features/analytics/useSalesAnalytics</span></td><td>~6,160–7,170</td><td><span class="mono">{ range, setRange, data, loading, refresh }</span></td><td><span class="mono">salesReportsApi</span>, recharts</td><td><span class="p p-ok">Low</span> Read-only</td></tr>
+      <tr><td class="num">7</td><td><span class="mono">features/reports/useXZReports</span></td><td>~7,170–7,400 + handlers</td><td><span class="mono">{ buildXViewModel, buildZViewModel, printX, printZ, exportX, exportZ, checkPrintable }</span></td><td>shared <span class="mono">posReportViewModel</span>, <span class="mono">printGenerator</span>, <span class="mono">exportUtils</span></td><td><span class="p p-crit">High</span> Z-report is the day's accounting record — snapshot-test the view-model</td></tr>
+      <tr><td class="num">8</td><td><span class="mono">features/customer/useCustomerSelection</span></td><td>scattered</td><td><span class="mono">{ customer, select, clear, quickCreate, creditBalance, history, statement }</span></td><td><span class="mono">customerledgerApi</span>, <span class="mono">posCreditBalance</span>, <span class="mono">financialsApi</span></td><td><span class="p p-warn">Medium</span> Credit limit gates checkout</td></tr>
+      <tr><td class="num">9</td><td><span class="mono">features/catalog/useCatalog</span></td><td>scattered + <span class="mono">6,046+</span> entry-mode block</td><td><span class="mono">{ categories, items, search, scan(code), favourites, entryMode, resolveBarcode }</span></td><td><span class="mono">productsApi</span>, <span class="mono">posBatchCheck</span>, <span class="mono">resolvePosEntry</span>, <span class="mono">ItemEntry</span></td><td><span class="p p-warn">Medium</span> Barcode resolution has tax-mode branches (<span class="mono">posBarcodeTaxMode</span> test exists)</td></tr>
+      <tr><td class="num">10</td><td><span class="mono">features/cart/useCart</span></td><td>scattered, largest slice</td><td><span class="mono">{ lines, add, remove, setQty, setPrice, lineDiscount, orderDiscount, totals, clear, snapshot, restore }</span></td><td>shared <span class="mono">vatMath</span>, <span class="mono">salesPricing</span>, <span class="mono">unitPricing</span>, branch tax config</td><td class="num" style="text-align:left"><span class="p p-crit">Highest</span> Every displayed and posted amount originates here</td></tr>
+      <tr><td class="num">11</td><td><span class="mono">features/payments/</span></td><td>already extracted (20 files)</td><td>existing <span class="mono">usePaymentManager</span> API, widened to own its modals</td><td><span class="mono">paymentModel</span>, <span class="mono">voucherRedemption</span>, <span class="mono">bnplProviders</span></td><td><span class="p p-ok">Low</span> Best-factored area, 6 test files already</td></tr>
+      <tr><td class="num">12</td><td><span class="mono">features/checkout/useCheckout</span></td><td>~5,400–6,046</td><td><span class="mono">{ submit(), phase, result, error, retry }</span></td><td><span class="mono">posCheckout</span>, cart, payments, session, printing</td><td class="num" style="text-align:left"><span class="p p-crit">Highest</span> Contains the "payment confirmed" boundary at line 5,456 and the deliberate post-success background finalisation at 5,508 — that ordering is load-bearing and must not be reshuffled</td></tr>
+      <tr><td class="num">13</td><td><span class="mono">features/session/useSession</span></td><td>scattered</td><td><span class="mono">{ session, open, close, beginClosure, cancelClosure, cashIn, cashOut, transfer, sync, businessDay, dayStatus }</span></td><td><span class="mono">posApi</span> sessions, <span class="mono">posSessionBusinessDay</span>, denomination ladder</td><td><span class="p p-crit">High</span> Variance authorisation and closure permission live here</td></tr>
+      <tr><td class="num">14</td><td><span class="mono">device/usePosPrinting</span></td><td>~via <span class="mono">posPrintUtils</span></td><td><span class="mono">{ printReceipt, reprint, preview, resolvePrinter, jobAudit }</span></td><td>shared <span class="mono">escPosReceipt</span>, <span class="mono">localPrintAgent</span>, <span class="mono">posPrinterApi</span>, <span class="mono">posPrintJobApi</span></td><td><span class="p p-warn">Medium</span> Print-job bookkeeping must stay best-effort and never block a print</td></tr>
+      <tr><td class="num">15</td><td><span class="mono">bootstrap/usePosBootstrap</span></td><td>2,271–2,400</td><td><span class="mono">{ ready, settings, terminal, branch, resumedSession, error }</span></td><td>fingerprint, <span class="mono">registerPosTerminal</span>, <span class="mono">getPosSettings</span>, <span class="mono">getActivePosSession</span></td><td><span class="p p-crit">High</span> Extracted <em>last</em> in Retail, becomes <em>first</em> in POS — it is the seam the standalone app is built on</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The shape after decomposition</h3>
+  <div class="dia">
+    <p class="cap">POS application composition — identical in both hosts</p>
+    <div class="lyr">
+      <div class="bx acc"><div class="t">PosWorkspaceProvider</div><div class="s">Composes the 15 hooks into one context value. The only thing <span class="mono">POSSales.jsx</span> (Retail) and <span class="mono">PosApp.jsx</span> (standalone) both render — which is what makes side-by-side comparison meaningful.</div></div>
+      <div class="arw">↓</div>
+      <div class="row r3">
+        <div class="bx"><div class="t">Classic</div><div class="s"><span class="mono">POSTouchScreen</span> 3-column</div></div>
+        <div class="bx"><div class="t">Compact</div><div class="s"><span class="mono">TradePOSTouchScreen</span></div></div>
+        <div class="bx"><div class="t">Cart Focus</div><div class="s"><span class="mono">POSTouchScreen</span> focus mode</div></div>
+      </div>
+      <div class="arw">↓</div>
+      <div class="row r3">
+        <div class="bx dash"><div class="t">POSConsole</div><div class="s">settings, reports, admin-lite</div></div>
+        <div class="bx dash"><div class="t">CustomerView</div><div class="s">second-screen display</div></div>
+        <div class="bx dash"><div class="t">Device panel</div><div class="s">printers, scanners, drawer</div></div>
+      </div>
+    </div>
+  </div>
+
+  <h3>Rules for every extraction PR</h3>
+  <ul>
+    <li>One hook per PR. Never two.</li>
+    <li>No behaviour change, no API change, no rename of a value the UI displays. If a bug is found, log it and fix it in a separate PR after the extraction lands.</li>
+    <li>The hook's test lands in the same PR. For hooks 7, 10, 12 and 13 the test is a snapshot of computed output against fixtures captured in Phase&nbsp;0.</li>
+    <li>Line count of <span class="mono">POSSales.jsx</span> is recorded in the PR description. It is the project's progress metric, and it only goes down.</li>
+    <li><span class="mono">/sales/pos</span> is exercised manually on the PR branch before merge — open a session, sell an item, take cash, print, close.</li>
+  </ul>
+</section>
+
+<section id="s8">
+  <h2><span class="n">08</span><span>API dependency map</span></h2>
+  <div class="hrule"></div>
+  <p>Twenty-three POS controllers already exist under <span class="mono">/api/pos/**</span>. The standalone client needs remarkably little from the backend, because the backend was never the coupled layer.</p>
+
+  <h3>A · Reused unchanged</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Area</th><th>Endpoints</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Authentication</td><td><span class="mono">POST /api/auth/login</span>, <span class="mono">GET /api/auth/profile</span></td><td>Same credentials, same JWT, same claims. POS is a client, not a new identity provider.</td></tr>
+      <tr><td>Terminal</td><td><span class="mono">POST /api/pos/terminals/register</span>, <span class="mono">/heartbeat</span>, <span class="mono">/rename</span>, <span class="mono">/status</span>, <span class="mono">/set-main</span></td><td>Fingerprint-based self-registration already works from any origin.</td></tr>
+      <tr><td>Session</td><td><span class="mono">/api/pos/sessions/{open,active,close,begin-closure,cancel-closure,sync,transfer,day-status,history}</span></td><td>Complete. Business-day enforcement stays server-side.</td></tr>
+      <tr><td>Checkout</td><td><span class="mono">POST /api/pos/checkout</span></td><td>Already idempotent — the controller guards on a client-supplied <span class="mono">checkoutKey</span> (line 181). No change required.</td></tr>
+      <tr><td>Search / resolve</td><td><span class="mono">/api/pos/resolve</span>, <span class="mono">/api/pos/batch-check</span>, <span class="mono">/api/pos/invoices</span>, <span class="mono">/api/pos/lookup</span></td><td>Purpose-built POS lookup surface via <span class="mono">PosSearchController</span>.</td></tr>
+      <tr><td>Settings</td><td><span class="mono">/api/pos/settings</span>, <span class="mono">/settings/supervisor-auth</span></td><td>Carries <span class="mono">defaultLayout</span> — the template field. See §12.</td></tr>
+      <tr><td>Money movement</td><td><span class="mono">/api/pos/cash-movements</span>, <span class="mono">/denominations</span>, <span class="mono">/layaways</span>, <span class="mono">/held-sales</span></td><td>Unchanged.</td></tr>
+      <tr><td>Reports</td><td><span class="mono">/api/pos/reports/{x,z,day-close}</span></td><td>Unchanged.</td></tr>
+      <tr><td>Devices</td><td><span class="mono">/api/pos/{printers,print-jobs,scanners,cash-drawers,devices,hardware-profiles}</span></td><td>Includes the network-printer relay the frontend uses to bypass the local agent.</td></tr>
+      <tr><td>Branch / company / tax</td><td><span class="mono">/api/branches</span>, <span class="mono">/api/company-profile</span>, branch tax configuration</td><td>Unchanged.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>B · Small improvements required</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Change</th><th>Where</th><th>Why standalone POS needs it</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td>CORS origin allowance</td><td><span class="mono">config/CorsConfig.java</span></td><td class="num" style="text-align:left"><span class="p p-crit">Conditional</span> The allowlist is a hard-coded list of thirteen hostnames. Needed <strong>only if</strong> POS gets its own subdomain. The recommended same-origin sub-path deployment makes this change unnecessary — which is a large part of why it is recommended.</td><td>2</td></tr>
+      <tr><td>Token lifetime for tills</td><td><span class="mono">jwt.expiration</span> + token storage</td><td>24-hour JWT in <span class="mono">sessionStorage</span> means a cashier who closes the tab mid-shift must log in again. A till runs a full trading day. See §15 for the recommended minimal fix.</td><td>2</td></tr>
+      <tr><td>POS bootstrap aggregate</td><td>new <span class="mono">GET /api/pos/bootstrap</span></td><td class="num" style="text-align:left"><span class="p p-mute">Optional</span> Today startup fires settings + register + active-session + branches + company + tax config + printers separately. One aggregate response cuts cold-start latency on a modest till. Behaviour-neutral, purely a performance improvement — build it only if measured start-up is unacceptable.</td><td>2</td></tr>
+      <tr><td>Terminal identity header</td><td><span class="mono">X-Terminal-Id</span> on the shared axios instance</td><td>Terminal id currently travels as a body field or query param on the endpoints that need it. A header set once at bootstrap makes every POS request attributable in <span class="mono">RequestLoggingFilter</span> and in the three audit trails, which materially helps side-by-side diagnosis in Phase 5.</td><td>2</td></tr>
+      <tr><td>POS permission keys</td><td><span class="mono">security/RolePermissionInitializer</span></td><td>The route is gated on <span class="mono">sales.invoice</span> — a Retail permission that also grants back-office invoice access. A standalone POS should gate on a dedicated <span class="mono">pos.till.operate</span> so a cashier role can be granted the till without the back office.</td><td>2</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>C · Newly added</h3>
+  <p>Only the optional bootstrap aggregate and the new permission key. <strong>No new domain endpoint is required for standalone POS.</strong> That is the strongest single argument that this split is a frontend project.</p>
+
+  <h3>D · POS should stop calling</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Call</th><th>Replace with</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mono">getAllCustomers()</span></td><td><span class="mono">searchCustomersAllFields</span> / POS customer lookup</td><td>Loading the full customer table onto a till is a memory and latency cost that grows with the tenant.</td></tr>
+      <tr><td><span class="mono">getProducts()</span> / <span class="mono">getProductsList()</span> unbounded</td><td>paged catalogue + <span class="mono">resolvePosEntry</span> / <span class="mono">posBatchCheck</span></td><td>Same reason. The POS search controller exists precisely for this.</td></tr>
+      <tr><td><span class="mono">getAllSalesInvoices()</span></td><td><span class="mono">getPosInvoices</span> / <span class="mono">lookupPosInvoice</span></td><td>Scoped to the till's own branch and session.</td></tr>
+      <tr><td><span class="mono">getAllPosTerminals()</span>, <span class="mono">renamePosTerminal</span>, <span class="mono">setTerminalStatus</span>, <span class="mono">setMainPosTerminal</span></td><td>nothing — Retail POS Administration owns these</td><td>Per §04: the till consumes terminal records, it does not administer them.</td></tr>
+      <tr><td><span class="mono">fetchStatementOfAccount</span>, <span class="mono">getBankAccounts</span></td><td>keep only if a POS screen genuinely renders them</td><td>Audit each at extraction time; back-office financial surfaces should not be reachable from a till.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s9">
+  <h2><span class="n">09</span><span>Client / tenant linking</span></h2>
+  <div class="hrule"></div>
+
+  <h3>How the current system identifies a tenant</h3>
+  <div class="dia">
+    <p class="cap">Today — resolution is entirely server-side</p>
+    <div class="flow">
+      <div class="st"><div class="k">Browser</div><div class="v">Requests <span class="mono">https://royaltools.billbull.app/</span></div></div>
+      <div class="st"><div class="k">nginx vhost</div><div class="v">Matches <span class="mono">server_name royaltools.billbull.app</span>; serves the <em>shared</em> build from <span class="mono">/var/www/billbull</span></div></div>
+      <div class="st"><div class="k">API proxy</div><div class="v"><span class="mono">location /api/ → 127.0.0.1:8080</span>. The next tenant's vhost proxies to <span class="mono">:8081</span>, the next to <span class="mono">:8082</span></div></div>
+      <div class="st"><div class="k">Spring instance</div><div class="v">One process per tenant, started with its own profile (<span class="mono">application-royaltools.properties</span>)</div></div>
+      <div class="st"><div class="k">Database</div><div class="v">That profile's own PostgreSQL database</div></div>
+      <div class="st"><div class="k">Frontend's role</div><div class="v"><strong>None.</strong> The bundle never names a tenant. <span class="mono">clientConfig.js</span> reads the hostname purely for cosmetics — landing route, sidebar collapse, <span class="mono">posFirstMode</span></div></div>
+    </div>
+  </div>
+
+  <div class="call ok">
+    <span class="lab">Is hostname-based resolution suitable for standalone POS?</span>
+    <p><strong>Yes — because it is not really hostname-based resolution.</strong> It is <em>origin-based</em>: the browser sends requests to a relative <span class="mono">/api/</span> path, nginx resolves the tenant, and the answer arrives from the right database. Any app served from a tenant's origin is automatically that tenant's app. The only genuinely hostname-dependent code in the frontend is <span class="mono">clientConfig.js</span>, and POS does not need it — its landing route is the till, always.</p>
+  </div>
+
+  <h3>Design</h3>
+  <div class="dia">
+    <p class="cap">Standalone POS — same mechanism, one new location block</p>
+    <div class="flow">
+      <div class="st"><div class="k">Till browser</div><div class="v"><span class="mono">https://royaltools.billbull.app/pos/</span></div></div>
+      <div class="st"><div class="k">nginx</div><div class="v"><span class="mono">location /pos/ { try_files $uri $uri/ /pos/index.html; }</span> — same vhost, same certificate</div></div>
+      <div class="st"><div class="k">POS bundle</div><div class="v">Built with Vite <span class="mono">base: '/pos/'</span>. Calls <span class="mono">/api/…</span> relatively, exactly as Retail does</div></div>
+      <div class="st"><div class="k">Tenant</div><div class="v">Resolved by the same vhost that already resolves it for Retail. Zero new tenant configuration</div></div>
+    </div>
+  </div>
+
+  <h3>Why the sub-path beats a <span class="mono">pos.</span> subdomain</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Concern</th><th><span class="mono">&lt;client&gt;.billbull.app/pos/</span></th><th><span class="mono">pos.&lt;client&gt;.billbull.app</span></th></tr></thead>
+    <tbody>
+      <tr><td>Tenant resolution</td><td class="num" style="text-align:left"><span class="p p-ok">Inherited</span> Nothing to configure</td><td>New vhost per tenant, duplicated <span class="mono">/api/</span> proxy with the right port — a per-tenant chance to point POS at the wrong database</td></tr>
+      <tr><td>CORS</td><td class="num" style="text-align:left"><span class="p p-ok">None</span> Same origin</td><td>13+ new entries in a hard-coded Java allowlist; a missed one is a production outage at a till</td></tr>
+      <tr><td>TLS</td><td class="num" style="text-align:left"><span class="p p-ok">Existing cert</span></td><td>New certificate per tenant, or a wildcard the estate does not currently use</td></tr>
+      <tr><td>Auth origin</td><td class="num" style="text-align:left"><span class="p p-ok">Shared</span> Token storage and <span class="mono">localStorage</span> terminal fingerprint keep working</td><td class="num" style="text-align:left"><span class="p p-crit">Breaks</span> New origin means a new storage partition — every till re-registers and gets a new terminal record</td></tr>
+      <tr><td>Desktop wrapper later</td><td>Wrapper points at one URL per tenant</td><td>Identical</td></tr>
+      <tr><td>Separation optics</td><td>Same domain, different app</td><td class="num" style="text-align:left"><span class="p p-warn">Nicer</span> The only real advantage, and it is cosmetic</td></tr>
+    </tbody>
+  </table></div>
+
+  <p><strong>Recommendation:</strong> ship on the sub-path. If a distinct POS hostname is later wanted for branding, add it as a second <span class="mono">server_name</span> on the <em>same</em> vhost with the same proxy target and a CORS entry — a deliberate, reversible follow-up rather than a precondition.</p>
+
+  <div class="call cool">
+    <span class="lab">POS never asks Retail which tenant it is</span>
+    <p>The POS app contains no tenant identifier, no client list and no import from <span class="mono">clientConfig.js</span>. Its tenant is whatever the origin it was served from resolves to. That is the cleanest possible answer to the requirement that POS must not depend on the Retail browser application for tenant identity.</p>
+  </div>
+</section>
+
+<section id="s10">
+  <h2><span class="n">10</span><span>Authentication and context design</span></h2>
+  <div class="hrule"></div>
+
+  <div class="dia">
+    <p class="cap">POS boot sequence — no Retail surface at any step</p>
+    <div class="flow">
+      <div class="st"><div class="k">1 · Open</div><div class="v"><span class="mono">/pos/</span> → <span class="mono">PosApp</span>. No sidebar, no dashboard, no Retail route table</div></div>
+      <div class="st"><div class="k">2 · Login</div><div class="v">POS-styled login screen. Same <span class="mono">POST /api/auth/login</span>, same JWT. Full-screen, touch-sized, keyboard-and-numpad friendly. Optionally offers a saved-cashier list for the registered terminal</div></div>
+      <div class="st"><div class="k">3 · Gate</div><div class="v"><span class="mono">RequirePosAccess</span> — checks the <span class="mono">pos.till.operate</span> permission. A user without it sees "This account is not enabled for the till", not a redirect into a Retail page that does not exist here</div></div>
+      <div class="st"><div class="k">4 · Bootstrap</div><div class="v"><span class="mono">usePosBootstrap</span>: read/create device fingerprint → register or resume terminal → load POS settings → load company, branch and tax config → resolve active session</div></div>
+      <div class="st"><div class="k">5 · Branch</div><div class="v">Auto-selected when the user has exactly one, or when the terminal record already names one. Otherwise a full-screen branch chooser — never a header dropdown</div></div>
+      <div class="st"><div class="k">6 · Session</div><div class="v">Resume the active session, or present Open Session with the opening float and denomination ladder</div></div>
+      <div class="st"><div class="k">7 · Workspace</div><div class="v">The till, in the configured template. This is the app's home. There is no other page</div></div>
+    </div>
+  </div>
+
+  <h3>Route table — the whole of it</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Route</th><th>Renders</th><th>Guard</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mono">/login</span></td><td><span class="mono">PosLogin</span></td><td>public</td></tr>
+      <tr><td><span class="mono">/</span></td><td><span class="mono">PosWorkspace</span> — the till</td><td>authenticated + <span class="mono">pos.till.operate</span> + bootstrapped + session</td></tr>
+      <tr><td><span class="mono">/customer-display</span></td><td><span class="mono">CustomerView</span> on the second screen</td><td>authenticated; opened as a separate window from the workspace</td></tr>
+      <tr><td><span class="mono">*</span></td><td>redirect to <span class="mono">/</span></td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <p>Console, reports, device panels, returns, layaway and held sales are <em>overlays within the workspace</em>, exactly as they are today — not routes. This is why POS being router-independent matters: the existing UX already assumes a single screen with modal surfaces, and the standalone shell simply stops pretending otherwise.</p>
+
+  <h3>Providers POS mounts, and what it drops</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Provider</th><th>POS</th><th>Configuration difference</th></tr></thead>
+    <tbody>
+      <tr><td><span class="mono">CompanyProvider</span></td><td class="num" style="text-align:left"><span class="p p-ok">Mounts</span></td><td>Document title becomes <span class="mono">BillBull POS — {Company}</span>, not <span class="mono">BillBull - Retail OS</span></td></tr>
+      <tr><td><span class="mono">BranchProvider</span></td><td class="num" style="text-align:left"><span class="p p-ok">Mounts</span></td><td>No "All Branches" option — a till is always exactly one branch. The <span class="mono">X-Branch-Id: ALL</span> path is disabled in POS</td></tr>
+      <tr><td><span class="mono">PermissionProvider</span></td><td class="num" style="text-align:left"><span class="p p-ok">Mounts</span></td><td>Unchanged</td></tr>
+      <tr><td><span class="mono">BusinessDayStatusProvider</span></td><td class="num" style="text-align:left"><span class="p p-ok">Mounts</span></td><td>Promoted from a POS-page component to an app-level provider</td></tr>
+      <tr><td><span class="mono">PosWorkspaceProvider</span></td><td class="num" style="text-align:left"><span class="p p-ok">New</span></td><td>The composed hooks from §07 — POS-owned, never shared</td></tr>
+      <tr><td><span class="mono">NotificationProvider</span></td><td class="num" style="text-align:left"><span class="p p-crit">Drops</span></td><td>Retail notification centre. Not a till concern</td></tr>
+      <tr><td><span class="mono">Sidebar</span></td><td class="num" style="text-align:left"><span class="p p-crit">Drops</span></td><td>910 lines of Retail navigation</td></tr>
+      <tr><td>Retail <span class="mono">ErrorBoundary</span></td><td class="num" style="text-align:left"><span class="p p-warn">Reimplemented</span></td><td>POS needs a till-appropriate recovery screen — large touch target, "Reload till", and it must not lose an in-progress cart silently. Retail's version reloads the page, which on a till is a data-loss event</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s11">
+  <h2><span class="n">11</span><span>Company → branch → terminal → cashier → session</span></h2>
+  <div class="hrule"></div>
+  <p>Each level already has a working mechanism. The task is to make POS own the establishment of each one rather than inherit it from a Retail provider that happens to be mounted above it.</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>Level</th><th>Existing mechanism</th><th>Who owns it after the split</th><th>Change required</th></tr></thead>
+    <tbody>
+      <tr><td>Company / tenant</td><td>Origin → nginx vhost → tenant Spring instance → tenant DB. Profile via <span class="mono">GET /api/company-profile</span></td><td>Deployment (§09)</td><td class="num" style="text-align:left"><span class="p p-ok">None</span></td></tr>
+      <tr><td>Branch / store</td><td><span class="mono">BranchContext</span> → <span class="mono">sessionStorage['activeBranchId']</span> → <span class="mono">X-Branch-Id</span> interceptor header. Backend enforces via <span class="mono">BranchScope</span> / <span class="mono">BranchContextHolder</span></td><td>Shared provider, POS-configured</td><td>Disable "All Branches" in POS; present branch choice as a full-screen boot step; persist the till's branch alongside its terminal record so it survives a re-login</td></tr>
+      <tr><td>Terminal</td><td>Fingerprint in <span class="mono">localStorage['billbull:pos:device_fingerprint']</span> + terminal id cached per branch + <span class="mono">POST /api/pos/terminals/register</span> + heartbeat</td><td class="num" style="text-align:left"><span class="p p-warn">POS-owned</span></td><td>Extract to <span class="mono">usePosBootstrap</span>. Add <span class="mono">X-Terminal-Id</span> to the axios instance once resolved. Keep the existing "reset this terminal" escape hatch (lines 10,026 and 10,179) — it is genuinely used in the field</td></tr>
+      <tr><td>Cashier</td><td>JWT subject; supervisor override via <span class="mono">verifyPosSupervisorPin</span> / <span class="mono">verifySupervisorAuth</span>; takeover via <span class="mono">SupervisorTakeoverDialog</span>; idle lock via <span class="mono">useIdleTimeout</span></td><td>Shared auth primitives, POS-owned UI</td><td>POS login screen replaces the Retail one. Idle lock becomes a till lock screen (re-enter PIN) rather than a logout, so an idle terminal does not discard a cart</td></tr>
+      <tr><td>Session</td><td><span class="mono">/api/pos/sessions/*</span>, <span class="mono">posSessionBusinessDay</span>, denomination ladder, variance authorisation, <span class="mono">BusinessDayStatusContext</span></td><td class="num" style="text-align:left"><span class="p p-warn">POS-owned</span></td><td>Extract to <span class="mono">useSession</span>; promote the business-day provider to app level; session resume becomes a boot step rather than an effect inside a page</td></tr>
+    </tbody>
+  </table></div>
+
+  <div class="call">
+    <span class="lab">Context that must become POS-owned</span>
+    <p>Terminal identity and session state are today <em>page state inside <span class="mono">POSSales.jsx</span></em>. In the standalone app they are <em>application state</em> — the app cannot render its only screen without them. That promotion, from page effect to boot step, is the single most important structural change of the whole migration, and it is why <span class="mono">usePosBootstrap</span> is extracted last in Retail and consumed first in POS.</p>
+  </div>
+
+  <div class="call crit">
+    <span class="lab">Storage partition warning</span>
+    <p>The device fingerprint and the scanner configuration live in <span class="mono">localStorage</span>, which is partitioned by origin. Serving POS from the same origin as Retail preserves both. Serving it from a new subdomain silently re-registers every till as a new terminal and loses every scanner profile. Whichever deployment shape is chosen, this must be verified on real hardware in Phase 6 before any pilot.</p>
+  </div>
+</section>
+
+<section id="s12">
+  <h2><span class="n">12</span><span>Screen templates</span></h2>
+  <div class="hrule"></div>
+  <p>One POS product, three configurable UI templates. Nothing about the templates is redesigned; the only work is carrying the existing configuration mechanism across intact.</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>Template</th><th>Stored value</th><th>Current implementation</th><th>Target</th></tr></thead>
+    <tbody>
+      <tr><td>Classic</td><td><span class="mono">classic</span></td><td><span class="mono">POSTouchScreen.jsx</span> — 3-column with inline numpad</td><td><span class="mono">apps/pos/src/templates/classic/</span></td></tr>
+      <tr><td>Compact</td><td><span class="mono">compact</span></td><td><span class="mono">TradePOS/TradePOSTouchScreen.jsx</span> — replaced the legacy compact template</td><td><span class="mono">apps/pos/src/templates/compact/</span></td></tr>
+      <tr><td>Cart Focus</td><td><span class="mono">focus</span></td><td><span class="mono">POSTouchScreen.jsx</span> branch at line 265 — three equal columns, full-screen cart</td><td><span class="mono">apps/pos/src/templates/focus/</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>How configuration flows, now and after</h3>
+  <div class="dia">
+    <p class="cap">Template resolution — unchanged end to end</p>
+    <div class="flow">
+      <div class="st"><div class="k">Persisted</div><div class="v"><span class="mono">PosSettings.defaultLayout</span> (line 115) — <span class="mono">"classic" | "compact" | "focus"</span>, default <span class="mono">classic</span></div></div>
+      <div class="st"><div class="k">Read</div><div class="v"><span class="mono">GET /api/pos/settings</span> during bootstrap</div></div>
+      <div class="st"><div class="k">State</div><div class="v"><span class="mono">posTemplate</span> — today <span class="mono">POSSales.jsx:951</span>; after decomposition, <span class="mono">usePosBehaviour</span></div></div>
+      <div class="st"><div class="k">Chosen</div><div class="v"><span class="mono">POSConsole</span> Appearance tab (line 818) — the three-card picker</div></div>
+      <div class="st"><div class="k">Saved</div><div class="v"><span class="mono">savePosSettings({ defaultLayout })</span> (line 765)</div></div>
+      <div class="st"><div class="k">Rendered</div><div class="v"><span class="mono">PosWorkspace</span> switches on <span class="mono">posTemplate</span>. Each template is a lazy-loaded chunk, so a till downloads only the layout it runs</div></div>
+    </div>
+  </div>
+
+  <p>Templates are siblings under one route, sharing one <span class="mono">PosWorkspaceProvider</span>. They differ only in layout and which of the shared actions they surface. No template gets its own build, its own entry point or its own state — that would recreate, inside POS, exactly the duplication this project exists to remove.</p>
+
+  <div class="call cool">
+    <span class="lab">A parity requirement, not a design change</span>
+    <p>All three templates must be exercised in the Phase 5 side-by-side comparison. A cart total that agrees in Classic but not in Cart Focus is a real class of bug: the current code branches on <span class="mono">posTemplate</span> in a 1,996-line component, and extraction is where such a divergence would surface.</p>
+  </div>
+</section>
+
+<section id="s13">
+  <h2><span class="n">13</span><span>Device and printing preservation</span></h2>
+  <div class="hrule"></div>
+
+  <div class="call ok">
+    <span class="lab">Position</span>
+    <p>The hardware architecture is <strong>not</strong> touched by this project. It is already independent of the Retail UI: the print agent speaks HTTP to <span class="mono">127.0.0.1:19777</span>, network printers are relayed through the backend, and Zebra printing goes through Browser Print. The extraction's job is to move the calling code without altering a single byte of the protocol.</p>
+  </div>
+
+  <div class="tw"><table>
+    <thead><tr><th>Path</th><th>Mechanism today</th><th>Effect of standalone POS</th><th>Verification</th></tr></thead>
+    <tbody>
+      <tr><td>USB / Bluetooth / Windows-queue receipt printer</td><td>Browser → <span class="mono">localPrintAgent.js</span> → <span class="mono">POST /print/escpos</span> (base64 raw bytes) on <span class="mono">127.0.0.1:19777</span>, with <span class="mono">localhost</span> fallback, 400&nbsp;ms <span class="mono">/health</span> probe, 15&nbsp;s cooldown</td><td class="num" style="text-align:left"><span class="p p-ok">None</span> The agent listens on loopback and does not care which origin called it</td><td>Print a receipt from both apps; compare the SHA-256 integrity hash the agent reports (<span class="mono">logEscPosIntegrity</span>)</td></tr>
+      <tr><td>ESC/POS rejection fallback</td><td>v4/WSD drivers refusing raw <span class="mono">StartDocPrinter</span> auto-fall back to <span class="mono">/print/receipt</span>, annotated <span class="mono">fallbackUsed: "text"</span></td><td class="num" style="text-align:left"><span class="p p-ok">None</span></td><td>Force the fallback on a known-bad driver in Phase 6; confirm the compatibility-mode warning still surfaces</td></tr>
+      <tr><td>Network / IP printer</td><td>Bypasses the agent entirely — <span class="mono">posPrinterApi.printPosPrinterEscPos</span> opens a raw socket from the backend to the printer's LAN IP</td><td class="num" style="text-align:left"><span class="p p-ok">None</span> Server-side path, unaffected by which client posted</td><td>Print from a device with no agent installed</td></tr>
+      <tr><td>Print job audit</td><td><span class="mono">createPrintJob</span> → <span class="mono">dispatchPrintJob</span> → <span class="mono">reportPrintJobResult</span>, best-effort, must never block the print. Stuck <span class="mono">DISPATCHED</span> jobs swept to <span class="mono">FAILED</span> by <span class="mono">PosPrintJobTimeoutSweepJob</span></td><td class="num" style="text-align:left"><span class="p p-warn">Watch</span> The best-effort contract must survive extraction into <span class="mono">usePosPrinting</span></td><td>Parity test: kill the backend mid-print; the receipt must still print</td></tr>
+      <tr><td>Cash drawer</td><td>Kick-open command through the same agent / printer path</td><td class="num" style="text-align:left"><span class="p p-ok">None</span></td><td>Open on cash sale and on manual kick, both apps</td></tr>
+      <tr><td>Barcode scanner</td><td>Keyboard-wedge and configured input modes; profile in <span class="mono">localStorage</span> keyed by branch + terminal</td><td class="num" style="text-align:left"><span class="p p-crit">Origin-sensitive</span> A new origin loses the stored profile</td><td>Scan on a real till after deployment; confirm the saved profile is intact (same-origin) or re-created cleanly</td></tr>
+      <tr><td>Zebra labels</td><td><span class="mono">zebraZpl.js</span> via Browser Print</td><td class="num" style="text-align:left"><span class="p p-ok">None</span></td><td>Print a label where the tenant uses this</td></tr>
+      <tr><td>Agent version</td><td>Integrity hashing requires agent ≥ 0.5.0; current release 0.5.3</td><td>No change requested</td><td>Record the agent version on each pilot till before go-live</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>All of <span class="mono">localPrintAgent.js</span>, <span class="mono">escPosReceipt.js</span> and <span class="mono">zebraZpl.js</span> move to <span class="mono">packages/shared</span> unchanged, so a receipt reprinted from Retail's back office and one printed at the till are produced by the same code — which is the only way the parity tests in §16 can mean anything.</p>
+</section>
+
+<section id="s14">
+  <h2><span class="n">14</span><span>Build and deployment</span></h2>
+  <div class="hrule"></div>
+
+  <h3>Two builds, one origin per tenant</h3>
+  <div class="dia">
+    <p class="cap">Per-tenant deployment after the split</p>
+    <div class="lyr">
+      <div class="row r2">
+        <div class="bx cool"><div class="t">Retail bundle</div><div class="s"><span class="mono">npm run build -w billbull-frontend</span> → <span class="mono">/var/www/billbull/</span> · base <span class="mono">/</span></div></div>
+        <div class="bx new"><div class="t">POS bundle</div><div class="s"><span class="mono">npm run build -w apps/pos</span> → <span class="mono">/var/www/billbull/pos/</span> · base <span class="mono">/pos/</span></div></div>
+      </div>
+      <div class="arw">↓&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↓</div>
+      <div class="bx acc"><div class="t">One nginx vhost per tenant — two location blocks</div><div class="s"><span class="mono">location /pos/ { try_files $uri $uri/ /pos/index.html; }</span> placed <strong>before</strong> <span class="mono">location / { try_files $uri $uri/ /index.html; }</span> · <span class="mono">location /api/</span> and <span class="mono">/uploads/</span> unchanged and shared by both</div></div>
+      <div class="arw">↓</div>
+      <div class="bx"><div class="t">That tenant's Spring instance → that tenant's database</div><div class="s">Untouched</div></div>
+    </div>
+  </div>
+
+  <h3>Configuration</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Item</th><th>Setting</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>Vite base</td><td><span class="mono">base: '/pos/'</span></td><td>Makes every asset URL absolute under <span class="mono">/pos/</span>; a wrapper or a relocation later is a one-line change</td></tr>
+      <tr><td>API base URL</td><td>unset in production; falls through to <span class="mono">window.location.origin</span></td><td>Same behaviour the Retail bundle already relies on. <span class="mono">VITE_API_BASE_URL</span> stays available for local dev against a remote tenant</td></tr>
+      <tr><td>Dev server</td><td>POS on <span class="mono">5174</span>, Retail keeps <span class="mono">5173</span></td><td><span class="mono">5173</span> is already in the CORS allowlist; add <span class="mono">http://localhost:5174</span> in Phase 2 for local development only</td></tr>
+      <tr><td>Asset caching</td><td><span class="mono">location /pos/assets/ { expires 1y; immutable; }</span></td><td>Mirrors the existing Retail rule; content-hashed filenames make it safe</td></tr>
+      <tr><td>index.html caching</td><td><span class="mono">no-store</span> on <span class="mono">/pos/index.html</span></td><td class="num" style="text-align:left"><span class="p p-warn">Important</span> A till that caches a stale shell after a deploy is a support call. Retail tolerates this today; POS should not</td></tr>
+      <tr><td>CORS</td><td>no change</td><td>Same-origin. This is the deployment shape's main dividend</td></tr>
+      <tr><td>Auth origin</td><td>identical to Retail's</td><td>Token storage, terminal fingerprint and scanner profiles all survive</td></tr>
+      <tr><td>Deploy scripts</td><td>one extra build + copy step in <span class="mono">UPDATE_COMMANDS_8_CLIENTS.md</span></td><td>The eight-client update flow gains a step; it does not change shape</td></tr>
+      <tr><td>Rollout order</td><td>Retail first, then POS</td><td>Both read the same API; deploying Retail first keeps the API contract ahead of its newest consumer</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Structured for a desktop wrapper, without building one</h3>
+  <ul>
+    <li>Every asset path is relative to a single configurable <span class="mono">base</span> — a wrapper serving from <span class="mono">file://</span> or a local server needs one build-time change, not a restructure.</li>
+    <li>Nothing depends on <span class="mono">window.location.hostname</span>. Tenant comes from the API base URL, which a wrapper can inject.</li>
+    <li>Device access is already out-of-process (the print agent). A wrapper does not need to re-implement printing — the biggest reason POS desktop wrappers usually require a rewrite.</li>
+    <li>The app has no deep-link surface to preserve: three routes, one of them a redirect.</li>
+    <li><strong>Nothing in this plan builds toward a wrapper.</strong> These are consequences of decisions taken for other reasons; no work is spent on packaging now.</li>
+  </ul>
+</section>
+
+<section id="s15">
+  <h2><span class="n">15</span><span>Security for an independent client</span></h2>
+  <div class="hrule"></div>
+  <p>POS becoming a separate client changes the threat surface only where the origin, the token lifetime or the permission gate changes. Everything else is the existing, unchanged security model.</p>
+
+  <h3>Must fix before standalone POS</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Item</th><th>Current state</th><th>Required change</th></tr></thead>
+    <tbody>
+      <tr><td>POS permission gate</td><td>Route gated on <span class="mono">sales.invoice</span> — a Retail permission that also grants back-office invoice access</td><td>Add <span class="mono">pos.till.operate</span> in <span class="mono">RolePermissionInitializer</span>; gate the POS app on it; grant it to existing POS-capable roles in the same seeder so no tenant loses access on deploy</td></tr>
+      <tr><td>Token lifetime on a till</td><td><span class="mono">sessionStorage</span> + 24-hour JWT, no refresh endpoint anywhere in the codebase</td><td class="num" style="text-align:left"><span class="p p-crit">Blocking</span> A cashier who closes the tab loses the token mid-shift. Minimum viable fix: for POS only, persist the token in <span class="mono">localStorage</span> scoped to the POS path, paired with the idle lock screen from §11 so an unattended till is protected by a PIN rather than by token volatility. A refresh-token endpoint is the better answer and is explicitly deferred</td></tr>
+      <tr><td>Terminal attribution</td><td>Terminal id travels per-endpoint in bodies and query params</td><td>Set <span class="mono">X-Terminal-Id</span> once at bootstrap so every POS request is attributable in <span class="mono">RequestLoggingFilter</span> and in the audit trails. This is a Phase&nbsp;5 diagnosis requirement as much as a security one</td></tr>
+      <tr><td>CORS</td><td>Hard-coded thirteen-hostname allowlist</td><td>No change under same-origin deployment. Add <span class="mono">http://localhost:5174</span> for development. <em>If</em> a POS subdomain is later chosen, every tenant's POS origin must be added before that tenant's cutover</td></tr>
+      <tr><td>Branch scope on a till</td><td>POS can in principle send <span class="mono">X-Branch-Id: ALL</span> because it uses the Retail branch provider</td><td>Disable the "All Branches" path in the POS branch provider. A till transacting across branches is a correctness bug before it is a security one</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Can be improved later</h3>
+  <ul>
+    <li><strong>Refresh tokens with rotation.</strong> The right fix for shift-length sessions; a self-contained backend project, not a precondition for the split.</li>
+    <li><strong>Device-bound terminal tokens.</strong> The fingerprint is a <span class="mono">localStorage</span> string a determined user can copy. Binding a terminal to a server-issued device credential is a real hardening step, and it is orthogonal to extraction.</li>
+    <li><strong>Content-Security-Policy on the POS origin.</strong> Worth adding once the bundle's external dependencies are known and stable.</li>
+    <li><strong>Narrowing <span class="mono">Access-Control-Allow-Headers: *</span>.</strong> Pre-existing, unrelated to this project.</li>
+    <li><strong>Per-cashier PIN as a first-class credential.</strong> Supervisor PIN verification exists; extending it to cashier sign-in would improve till ergonomics but changes the auth model.</li>
+  </ul>
+
+  <div class="call">
+    <span class="lab">Not a security rewrite</span>
+    <p>Five items block the split, and four of them are configuration or a header. The one substantive change — token persistence for a till — is scoped deliberately narrowly, because the alternative (a refresh-token subsystem) would put a backend security project on the critical path of a frontend extraction.</p>
+  </div>
+</section>
+
+<section id="s16">
+  <h2><span class="n">16</span><span>Testing and parity</span></h2>
+  <div class="hrule"></div>
+
+  <div class="dia">
+    <p class="cap">The parity principle</p>
+    <div class="lyr">
+      <div class="row r2">
+        <div class="bx cool"><div class="t">Same input → embedded POS</div><div class="s"><span class="mono">/sales/pos</span> in the Retail SPA</div></div>
+        <div class="bx new"><div class="t">Same input → standalone POS</div><div class="s"><span class="mono">/pos/</span></div></div>
+      </div>
+      <div class="arw">↘&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;↙</div>
+      <div class="bx acc"><div class="t">Same BillBull API · same tenant database</div><div class="s">Equivalent request payloads, equivalent persisted rows, equivalent GL and stock effects</div></div>
+    </div>
+  </div>
+
+  <h3>Characterization suite — built in Phase 0, before any code moves</h3>
+  <p>The existing frontend suite is a good starting point: fourteen POS-relevant test files already exist under <span class="mono">pages/Sales/__tests__</span> and <span class="mono">utils/__tests__</span>, covering payment manager, voucher redemption, BNPL, checkout capabilities, barcode tax mode, variance approval and session business day. They are not sufficient — nothing covers the cart, totals or the checkout payload.</p>
+
+  <div class="tw"><table>
+    <thead><tr><th>Layer</th><th>Test</th><th>Form</th><th>Gate</th></tr></thead>
+    <tbody>
+      <tr><td>Cart totals</td><td>Line subtotal, line discount, order discount, rounding, mixed tax rates, inclusive vs exclusive, zero-rated and exempt lines, negative lines</td><td>Vitest against <span class="mono">useCart</span> + shared <span class="mono">vatMath</span>, fixture-driven</td><td class="num" style="text-align:left"><span class="p p-crit">Blocking</span> every phase</td></tr>
+      <tr><td>Checkout payload</td><td>Golden JSON snapshot of the <span class="mono">posCheckout</span> body for a matrix of carts × payment mixes × customers</td><td>Vitest snapshot, network mocked</td><td class="num" style="text-align:left"><span class="p p-crit">Blocking</span></td></tr>
+      <tr><td>Payments</td><td>Split tender, overtender and change, credit within and beyond limit, voucher partial redemption, BNPL provider selection, card settlement reference</td><td>Extend the six existing payment tests</td><td class="num" style="text-align:left"><span class="p p-crit">Blocking</span></td></tr>
+      <tr><td>Returns</td><td>Full and partial return, refund method matrix, credit-voucher issue, returnable-batch selection</td><td>Extend <span class="mono">salesReturnVoucherFlow</span></td><td>Blocking</td></tr>
+      <tr><td>X / Z reports</td><td>View-model snapshot from a fixed session fixture; denomination totals; variance calculation</td><td>Vitest snapshot on shared <span class="mono">posReportViewModel</span></td><td class="num" style="text-align:left"><span class="p p-crit">Blocking</span></td></tr>
+      <tr><td>Receipt HTML</td><td>Byte-level snapshot per template, both languages, with and without a customer</td><td>Vitest snapshot on shared <span class="mono">documentTemplateRenderer</span></td><td>Blocking</td></tr>
+      <tr><td>ESC/POS bytes</td><td>Base64 payload snapshot + SHA-256, per receipt type</td><td>Vitest snapshot on shared <span class="mono">escPosReceipt</span></td><td>Blocking</td></tr>
+      <tr><td>Session</td><td>Open, cash in/out, business-day boundary, begin/cancel closure, close with and without variance, transfer</td><td>Vitest against <span class="mono">useSession</span></td><td>Blocking</td></tr>
+      <tr><td>Inventory effect</td><td>A checkout writes the expected <span class="mono">StockMovement</span> rows and on-hand aggregates match</td><td>Backend integration test — name it <span class="mono">*Test</span>, never <span class="mono">*IT</span>, or no build phase runs it</td><td>Blocking</td></tr>
+      <tr><td>GL effect</td><td>A checkout produces the expected journal lines via <span class="mono">PostingEngineService</span></td><td>Backend integration test</td><td>Blocking</td></tr>
+      <tr><td>Customer balance</td><td>A credit sale moves the ledger by exactly the invoice amount</td><td>Backend integration test</td><td>Blocking</td></tr>
+      <tr><td>Devices</td><td>Cash drawer kick, scanner input mode, network-printer relay, agent fallback to text</td><td class="num" style="text-align:left"><span class="p p-warn">Manual</span> Hardware, Phase 6</td><td>Blocking the pilot</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The side-by-side comparison — Phase 5</h3>
+  <div class="tw"><table>
+    <thead><tr><th>Step</th><th>Method</th></tr></thead>
+    <tbody>
+      <tr><td>1 · Capture</td><td>Run a fixed 30-transaction script against the embedded POS on a QA tenant. Record every outbound request body and every response.</td></tr>
+      <tr><td>2 · Reset</td><td>Restore the QA tenant database to the pre-run snapshot (<span class="mono">reset_transactional_data.sql</span> already exists for this).</td></tr>
+      <tr><td>3 · Repeat</td><td>Run the identical script against the standalone POS.</td></tr>
+      <tr><td>4 · Diff requests</td><td>Compare captured payloads field by field, ignoring only <span class="mono">checkoutKey</span>, <span class="mono">X-Request-Id</span> and timestamps. Any other difference is a defect until explained.</td></tr>
+      <tr><td>5 · Diff database</td><td>Compare <span class="mono">sales_invoice</span>, <span class="mono">sales_invoice_line</span>, <span class="mono">stock_movement</span>, <span class="mono">journal_line</span>, <span class="mono">gl_account_balance</span>, <span class="mono">pos_session</span>, <span class="mono">pos_cash_movement</span>, <span class="mono">pos_print_job</span> and the customer ledger between the two runs.</td></tr>
+      <tr><td>6 · Diff output</td><td>Compare receipt HTML and ESC/POS SHA-256 hashes from both runs.</td></tr>
+      <tr><td>7 · Repeat per template</td><td>All three of Classic, Compact and Cart Focus.</td></tr>
+    </tbody>
+  </table></div>
+
+  <p><strong>Exit criterion for the pilot:</strong> a clean database diff across all three templates, plus a hardware pass on a real till. Nothing less.</p>
+</section>
+
+<section id="s17">
+  <h2><span class="n">17</span><span>Migration phases</span></h2>
+  <div class="hrule"></div>
+  <p>Eight phases. The embedded <span class="mono">/sales/pos</span> route stays operational through all of them and is removed only in the last.</p>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 0</span><span class="pt">Characterization safety net</span><span class="p p-crit">No production change</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">Make the current POS's financial behaviour executable, so every later change has something to disagree with</div></div>
+      <div class="st"><div class="k">Files</div><div class="v"><span class="mono">billbull-frontend/src/pages/Sales/__tests__/</span> (new fixtures + cart/checkout/report tests), <span class="mono">utils/__tests__/</span>, backend <span class="mono">pos/checkout</span> integration tests</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">Tests only. No source file is modified</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Nothing</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-ok">None</span> — additive</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v"><span class="mono">npm test</span> green; <span class="mono">mvn -o test</span> green; snapshots committed and reviewed by someone who knows the tax rules</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Delete the tests</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 1</span><span class="pt">Workspace and shared package</span><span class="p p-warn">Retail touched</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">Create the boundary before anything needs it</div></div>
+      <div class="st"><div class="k">Files</div><div class="v">New root <span class="mono">package.json</span> (workspaces); new <span class="mono">packages/shared/</span>; Retail imports rewritten module by module; ESLint boundary rule</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">One module per PR, <span class="mono">git mv</span>, no re-export shims, Retail imports updated in the same commit. Money modules first, then print, then transport, then UI, then contexts, then Sales Return</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Phase 0 — these moves are only safe because the tests exist</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-warn">Medium</span> — broad but mechanical; the danger is a missed import surfacing at runtime rather than build time</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">Retail builds and its full suite passes after every PR; smoke-test one screen from each Retail domain</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Revert the PR — each is one module, independently revertible</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 2</span><span class="pt">API and security hardening</span><span class="p p-cool">Backend</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">Make the backend ready for a second client before that client exists</div></div>
+      <div class="st"><div class="k">Files</div><div class="v"><span class="mono">security/RolePermissionInitializer</span> (add <span class="mono">pos.till.operate</span>), <span class="mono">config/CorsConfig</span> (dev origin), shared axios instance (<span class="mono">X-Terminal-Id</span>), token persistence strategy, optionally a bootstrap aggregate endpoint</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">Additive only. The new permission is granted to existing POS-capable roles by the seeder so no tenant regresses on deploy</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Phase 1 for the shared axios instance</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-warn">Medium</span> — a seeder change runs against every tenant on boot</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">Boot a tenant profile against a copy of its database; confirm the permission seeds and existing roles keep POS access; embedded POS still works end to end</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Revert; the permission row is inert if unused</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 3</span><span class="pt">Decompose POSSales in place</span><span class="p p-crit">Longest phase</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">Reduce <span class="mono">POSSales.jsx</span> from 15,818 lines to a thin composition over ~15 hooks, with <span class="mono">/sales/pos</span> working after every merge</div></div>
+      <div class="st"><div class="k">Files</div><div class="v"><span class="mono">pages/Sales/POSSales.jsx</span> and new <span class="mono">pages/Sales/POS/hooks/</span>, in the extraction order of §07</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">One hook per PR, behaviour-preserving, test in the same PR, line count in the description</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Phase 0 (tests) and Phase 1 (shared money and print modules)</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-crit">High</span> — hooks 10 (cart), 12 (checkout) and 13 (session) touch every posted amount; the checkout success-boundary ordering at lines 5,456 and 5,508 is load-bearing</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">Characterization suite after every PR, plus a manual till run: open session, sell, tender cash, print, return, close</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Revert one hook. The route never depended on a half-finished state</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 4</span><span class="pt">Create apps/pos</span><span class="p p-ok">Additive</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">A standalone POS that renders the same <span class="mono">PosWorkspaceProvider</span> the embedded route now renders</div></div>
+      <div class="st"><div class="k">Files</div><div class="v">New <span class="mono">apps/pos/</span>: <span class="mono">index.html</span>, <span class="mono">vite.config.js</span>, <span class="mono">main.jsx</span>, <span class="mono">PosApp.jsx</span>, <span class="mono">shell/PosLogin</span>, <span class="mono">shell/RequirePosAccess</span>, <span class="mono">shell/PosBootGate</span>, <span class="mono">shell/PosErrorBoundary</span>; the POS feature folders move here</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">The Retail route keeps working by importing the same feature modules. Two hosts, one implementation — which is exactly what makes Phase 5 a fair comparison</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Phase 3 complete</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-ok">Low</span> — nothing in production changes; POS is not yet deployed anywhere</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">POS builds; boots to login; completes a sale against a QA tenant; all three templates render</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Delete <span class="mono">apps/pos</span>. Retail is unaffected</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 5</span><span class="pt">Side-by-side parity</span><span class="p p-cool">QA tenant only</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">Prove equivalence at the database, not at the screen</div></div>
+      <div class="st"><div class="k">Files</div><div class="v">No source change. A comparison harness and the 30-transaction script</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">Deploy POS to <span class="mono">qa.billbull.app/pos/</span> alongside the embedded route on the same tenant</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Phase 4</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-ok">Low</span> — QA data only</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">The §16 diff procedure, clean across all three templates</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Remove the QA <span class="mono">/pos/</span> location block</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 6</span><span class="pt">Hardware and production validation</span><span class="p p-warn">Real tills</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">Confirm the device layer is genuinely untouched</div></div>
+      <div class="st"><div class="k">Files</div><div class="v">None. Configuration and a hardware checklist</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">Deploy to one real till on a willing tenant, in parallel with its existing embedded POS</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Phase 5 clean</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-warn">Medium</span> — driver and agent variation across sites is the known unknown</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">The §13 verification column, executed on hardware. Explicitly confirm the terminal fingerprint and scanner profile survived, and record the print-agent version</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">The till returns to <span class="mono">/sales/pos</span> — one bookmark change</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 7</span><span class="pt">Pilot</span><span class="p p-warn">Live trading</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">One tenant, all tills, a full trading week on the standalone POS</div></div>
+      <div class="st"><div class="k">Files</div><div class="v">That tenant's nginx configuration and deploy script</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">Tills point at <span class="mono">/pos/</span>. The embedded route stays available and reachable throughout</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Phase 6</div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-crit">High</span> — real money. Mitigated entirely by the instant rollback below</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">Daily Z-report reconciliation for the full week; no unexplained variance; no increase in failed print jobs</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Point the tills back at <span class="mono">/sales/pos</span>. No deploy, no database change, no data migration — the two clients write identical rows</div></div>
+    </div></div>
+  </div>
+
+  <div class="phase">
+    <div class="ph"><span class="pn">PHASE 8</span><span class="pt">Remove POS from Retail</span><span class="p p-ok">Cleanup</span></div>
+    <div class="pb"><div class="flow">
+      <div class="st"><div class="k">Goal</div><div class="v">One POS implementation, one home</div></div>
+      <div class="st"><div class="k">Files</div><div class="v">Delete <span class="mono">pages/Sales/POSSales.jsx</span> and <span class="mono">pages/Sales/POS/**</span>; remove the <span class="mono">/sales/pos</span> route and import from <span class="mono">App.jsx</span>; retire <span class="mono">posFirstMode</span> and the three <span class="mono">landing.defaultRoute</span> overrides in <span class="mono">clientConfig.js</span>; optionally <span class="mono">git mv billbull-frontend apps/retail</span> and sweep the deployment docs</div></div>
+      <div class="st"><div class="k">Changes</div><div class="v">Deletion only. The path rename ships in its own release, never alongside a behavioural change</div></div>
+      <div class="st"><div class="k">Depends on</div><div class="v">Every tenant migrated to <span class="mono">/pos/</span></div></div>
+      <div class="st"><div class="k">Risk</div><div class="v"><span class="p p-ok">Low</span> — but irreversible in practice, so it waits for full rollout</div></div>
+      <div class="st"><div class="k">Validation</div><div class="v">Retail builds smaller; no dangling imports; POS-administration screens in Retail still work</div></div>
+      <div class="st"><div class="k">Rollback</div><div class="v">Revert the deletion commit — until a later release makes that awkward, which is why this is last</div></div>
+    </div></div>
+  </div>
+</section>
+
+<section id="s18">
+  <h2><span class="n">18</span><span>Risks</span></h2>
+  <div class="hrule"></div>
+  <div class="tw"><table>
+    <thead><tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td>Duplicated financial arithmetic between the two apps</td><td><span class="p p-crit">Critical</span></td><td>The §05 admission rules, the ESLint boundary rule, and the no-shim policy: an original is deleted the moment its shared twin is imported</td></tr>
+      <tr><td>Behaviour drift while decomposing a 481-state component</td><td><span class="p p-crit">Critical</span></td><td>Phase 0 characterization before any extraction; one hook per PR; the live route as the continuous check</td></tr>
+      <tr><td>The checkout success boundary is reordered during extraction</td><td><span class="p p-crit">Critical</span></td><td>Lines 5,456 and 5,508 carry explicit comments about post-success background finalisation. Treat that ordering as a contract; test it by killing the backend mid-checkout</td></tr>
+      <tr><td>A new origin partitions <span class="mono">localStorage</span>, losing terminal identity and scanner profiles</td><td><span class="p p-crit">Critical</span></td><td>Same-origin sub-path deployment; explicit Phase 6 hardware verification</td></tr>
+      <tr><td>Token expiry mid-shift on a till</td><td><span class="p p-warn">High</span></td><td>Phase 2 token-persistence change plus the idle lock screen</td></tr>
+      <tr><td><span class="mono">packages/shared</span> becomes a dumping ground and re-couples the apps</td><td><span class="p p-warn">High</span></td><td>Two-real-callers rule, explicit exports map, no app-shell code, CI-enforced import boundary</td></tr>
+      <tr><td>Template-specific divergence surfaced by extraction</td><td><span class="p p-warn">High</span></td><td>All three templates run through the full Phase 5 diff</td></tr>
+      <tr><td>Phase 1 shared-package churn destabilises Retail while POS work is still months out</td><td><span class="p p-warn">Medium</span></td><td>One module per PR; Retail's suite plus a build gates each; move money modules first so the highest-value work lands earliest</td></tr>
+      <tr><td>Two deploy artefacts drift in version</td><td><span class="p p-warn">Medium</span></td><td>Both built from one commit, deployed in one step, Retail first. Surface the build commit in each app's console output</td></tr>
+      <tr><td>Print-agent variation across sites</td><td><span class="p p-warn">Medium</span></td><td>Record agent version per till; the ESC/POS→text fallback already exists and is preserved unchanged</td></tr>
+      <tr><td>The permission seeder regresses POS access for an existing role</td><td><span class="p p-warn">Medium</span></td><td>Grant <span class="mono">pos.till.operate</span> to existing POS-capable roles in the same seeder; boot-test against a copy of a real tenant database</td></tr>
+      <tr><td>Sales Return coupling makes the shared feature module awkward</td><td><span class="p p-mute">Low</span></td><td>It already parameterises its entry point and has three passing test files; it is the best-prepared shared candidate in the tree</td></tr>
+      <tr><td>Scope creep into POS administration, offline mode or packaging</td><td><span class="p p-mute">Low</span></td><td>§01's out-of-scope table and §04's ownership map are the reference when the question comes up mid-project</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="s19">
+  <h2><span class="n">19</span><span>Rollback strategy</span></h2>
+  <div class="hrule"></div>
+
+  <div class="call ok">
+    <span class="lab">Why rollback is cheap here</span>
+    <p>Both clients write the same rows to the same database through the same API. There is no data migration, no dual-write, no reconciliation. Rolling back is therefore always "stop using one client and use the other" — never "undo the data". This is the strongest practical argument for the shared-backend architecture over a separate POS service.</p>
+  </div>
+
+  <div class="tw"><table>
+    <thead><tr><th>Phase</th><th>Rollback</th><th>Time</th><th>Data impact</th></tr></thead>
+    <tbody>
+      <tr><td>0 · Tests</td><td>Delete the tests</td><td>Minutes</td><td>None</td></tr>
+      <tr><td>1 · Shared package</td><td>Revert the offending single-module PR</td><td>Minutes</td><td>None</td></tr>
+      <tr><td>2 · API hardening</td><td>Revert; the new permission row is inert if nothing gates on it</td><td>One deploy</td><td>None</td></tr>
+      <tr><td>3 · Decomposition</td><td>Revert one hook PR; <span class="mono">/sales/pos</span> was working before it and works after</td><td>Minutes</td><td>None</td></tr>
+      <tr><td>4 · apps/pos exists</td><td>Delete the directory; nothing in production references it</td><td>Minutes</td><td>None</td></tr>
+      <tr><td>5 · QA side-by-side</td><td>Remove the QA <span class="mono">/pos/</span> location block</td><td>One nginx reload</td><td>QA data only</td></tr>
+      <tr><td>6 · Hardware pilot</td><td>Change one till's bookmark back to <span class="mono">/sales/pos</span></td><td class="num" style="text-align:left"><span class="p p-ok">Seconds</span></td><td>None</td></tr>
+      <tr><td>7 · Tenant pilot</td><td>Point every till back to <span class="mono">/sales/pos</span>. No deploy, no schema change, no migration</td><td class="num" style="text-align:left"><span class="p p-ok">Seconds</span></td><td>None — an open session resumes identically in either client</td></tr>
+      <tr><td>8 · Removal</td><td>Revert the deletion commit and redeploy</td><td>One deploy</td><td>None</td></tr>
+    </tbody>
+  </table></div>
+
+  <p><strong>The rollback that matters is Phase 7's</strong>, because it is the only one that can happen with customers waiting at a till. It is a URL change, and it works because the embedded POS is deliberately left in place until §17's final phase.</p>
+</section>
+
+<section id="s20">
+  <h2><span class="n">20</span><span>The first coding task</span></h2>
+  <div class="hrule"></div>
+
+  <div class="call">
+    <span class="lab">First task</span>
+    <p><strong>Write the cart-and-checkout characterization suite against the current embedded POS, in <span class="mono">billbull-frontend</span>, changing no source file.</strong></p>
+    <p>Concretely: fixtures for a representative matrix of carts — mixed tax rates, inclusive and exclusive pricing, line and order discounts, zero-rated and exempt lines, multi-unit items, a returned line — driven through the current totals code path, with committed snapshots of both the computed totals and the exact <span class="mono">posCheckout</span> request body each cart produces. Then the same treatment for the X and Z report view-models from a fixed session fixture, and a SHA-256 snapshot of the ESC/POS bytes for one receipt of each type.</p>
+  </div>
+
+  <h3>Why this and not something else</h3>
+  <ul>
+    <li><strong>Every later step is unsafe without it.</strong> Phase 1 moves <span class="mono">vatMath</span> and <span class="mono">salesPricing</span> into a shared package; Phase 3 pulls apart the component that calls them. Both are refactors of money code, and a refactor without a characterization test is a rewrite with extra steps.</li>
+    <li><strong>It is the only task with zero production risk.</strong> No source file changes. It cannot break a till.</li>
+    <li><strong>It pays off even if the split is cancelled.</strong> The current POS has fourteen test files and none of them covers the cart, the totals or the checkout payload — the three things that decide whether a customer is charged correctly. This suite is worth writing regardless of what happens to <span class="mono">apps/pos</span>.</li>
+    <li><strong>It answers a question the plan cannot.</strong> Writing the fixtures forces someone to read the totals code closely enough to enumerate its branches. If there are surprises in there — and in 15,818 lines there usually are — the project should discover them now, not during Phase 3.</li>
+    <li><strong>It sets the standard.</strong> Every extraction PR from then on has an obvious, non-negotiable definition of "still correct".</li>
+  </ul>
+
+  <p>The alternatives were considered and rejected: creating the workspace first produces churn across Retail with nothing verifying it; decomposing first is the refactor-without-a-net case above; and creating <span class="mono">apps/pos</span> first means the standalone app is built on a component that is about to change underneath it.</p>
+</section>
+
+<section id="final">
+  <h2><span class="n">——</span><span>Final decision</span></h2>
+  <div class="hrule"></div>
+  <div class="verdict">
+    <div class="vh">Final decision</div>
+    <div class="vrow"><div class="q">Standalone POS</div><div class="a">YES<em>A separate browser application, extracted from the Retail SPA.</em></div></div>
+    <div class="vrow"><div class="q">Architecture</div><div class="a">POS frontend → BillBull API → existing client database<em>No intermediate layer, no adapter service.</em></div></div>
+    <div class="vrow"><div class="q">Retail</div><div class="a">Separate browser application<em>Stays at <span class="mono">billbull-frontend/</span> until Phase 8; renamed to <span class="mono">apps/retail</span> only as cleanup.</em></div></div>
+    <div class="vrow"><div class="q">POS</div><div class="a">Separate browser application<span class="mono">apps/pos</span>, served at <span class="mono">&lt;client&gt;.billbull.app/pos/</span><em>Same origin as Retail — preserves tenant routing, CORS, token storage and terminal identity.</em></div></div>
+    <div class="vrow"><div class="q">Backend</div><div class="a">Shared BillBull backend<em>23 existing POS controllers. No new domain endpoint required.</em></div></div>
+    <div class="vrow"><div class="q">Database</div><div class="a">Shared corresponding tenant database<em>Resolved by origin → nginx vhost → per-tenant Spring instance, exactly as today.</em></div></div>
+    <div class="vrow"><div class="q">POS templates</div><div class="a">Classic / Compact / Cart Focus inside one POS app<em>Driven by the existing <span class="mono">PosSettings.defaultLayout</span> field. Lazy-loaded siblings under one route.</em></div></div>
+    <div class="vrow"><div class="q">Retail ↔ POS direct frontend dependency</div><div class="a">NO<em>Enforced by an ESLint <span class="mono">no-restricted-imports</span> boundary rule in CI, not by convention.</em></div></div>
+    <div class="vrow"><div class="q">POS ↔ BillBull API</div><div class="a">YES<em>The only integration point.</em></div></div>
+    <div class="vrow"><div class="q">Second POS backend</div><div class="a">NO</div></div>
+    <div class="vrow"><div class="q">Second POS database</div><div class="a">NO</div></div>
+    <div class="vrow"><div class="q">Initial .exe</div><div class="a">NO — future packaging decision<em>The app is structured so a wrapper needs no rearchitecture; no work is spent on it now.</em></div></div>
+    <div class="vrow"><div class="q">Offline</div><div class="a">OUT OF SCOPE</div></div>
+    <div class="vrow"><div class="q">First implementation step</div><div class="a">Write the cart-and-checkout characterization suite against the current embedded POS<em>Fixtures and committed snapshots for cart totals, the <span class="mono">posCheckout</span> request body, X/Z report view-models and ESC/POS receipt bytes — in <span class="mono">billbull-frontend</span>, with zero source files modified.</em></div></div>
+  </div>
+
+  <p class="foot">Implementation blueprint · sequel to the BillBull POS Separation Audit · branch <span class="mono">feature/posclient</span> · 8 September 2026. All measurements taken from the working tree at the time of writing. No source file has been modified; this document is for approval before any code is written.</p>
+</section>
+</main>
+</div>
+</body>
+</html>

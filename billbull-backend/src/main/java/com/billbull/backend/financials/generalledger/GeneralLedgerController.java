@@ -96,6 +96,9 @@ public class GeneralLedgerController {
         BigDecimal opening = account.getBalanceAmount();
         String openingType = account.getBalanceType();
 
+        // saveAccount deliberately drops the client-supplied balance: the opening balance is
+        // established by the journal below and read back from the ledger, so the account list
+        // and the COA tree cannot disagree about it.
         Account saved = ledgerService.saveAccount(account);
 
         // An opening balance typed on the create form used to be written only to
@@ -103,22 +106,46 @@ public class GeneralLedgerController {
         // Balance and Balance Sheet all aggregate posted ledger entries, so the new
         // account showed 0.00. Post the matching opening-balance journal (same contra
         // account as the bulk opening-balance screen) so the figure actually appears.
-        if (isNew && opening != null && opening.abs().compareTo(new BigDecimal("0.005")) >= 0
-                && !Boolean.TRUE.equals(saved.getIsGroup())) {
+        boolean wantsOpeningBalance = isNew && opening != null
+                && opening.abs().compareTo(new BigDecimal("0.005")) >= 0
+                && !Boolean.TRUE.equals(saved.getIsGroup());
+        if (wantsOpeningBalance) {
             try {
-                postingEngineService.postAccountOpeningBalance(
+                JournalEntry posted = postingEngineService.postAccountOpeningBalance(
                         saved.getCode(), opening, openingType, LocalDate.now(),
                         ledgerService.currentScopedBranchOrNull());
+                if (posted == null) {
+                    // The posting engine declines silently for its own reasons (a group
+                    // account, the Retained Earnings contra account itself). Reporting an
+                    // unqualified success here is what left users staring at a 0.00 balance.
+                    saved.setOpeningBalanceWarning(openingBalanceWarning(saved.getCode(),
+                            "the posting engine declined to post it for this account"));
+                } else {
+                    // recordTransaction advanced Account.balanceAmount as it wrote the ledger
+                    // rows, so re-read rather than returning the pre-posting snapshot.
+                    Account reread = ledgerService.getAccountByCode(saved.getCode());
+                    if (reread != null) {
+                        saved = reread;
+                    }
+                }
             } catch (RuntimeException ex) {
                 // The account itself is already committed. Failing the request here would
-                // report "failed to save" for an account that exists, so surface the reason
-                // in the log and let the caller keep the created account.
+                // report "failed to save" for an account that exists, so keep the account,
+                // log the reason, and hand the caller a warning to show the user instead of
+                // a success message contradicted by a 0.00 balance.
                 log.warn("[Ledger] Account {} was created but its opening balance {} {} could not be posted: {}",
                         saved.getCode(), opening, openingType, ex.getMessage());
+                saved.setOpeningBalanceWarning(openingBalanceWarning(saved.getCode(), ex.getMessage()));
             }
         }
 
         return saved;
+    }
+
+    private static String openingBalanceWarning(String accountCode, String reason) {
+        return "Account " + accountCode + " was created, but its opening balance could not be"
+                + " posted to the ledger (" + reason + "). The account currently shows 0.00 -"
+                + " enter the balance from Financials > Opening Balances once the cause is fixed.";
     }
 
     @PostMapping("/accounts/{id}/archive")
@@ -134,22 +161,30 @@ public class GeneralLedgerController {
     // ---------------- COST CENTERS ENDPOINTS ----------------
 
     @GetMapping("/cost-centers")
+    @PreAuthorize("isAuthenticated()")
     public List<CostCenter> getCostCenters() {
+        modulePermissionService.requireCanView("finance.ledger");
         return ledgerService.getAllCostCenters();
     }
 
     @PostMapping("/cost-centers")
+    @PreAuthorize("isAuthenticated()")
     public CostCenter createOrUpdateCostCenter(@RequestBody CostCenter cc) {
+        modulePermissionService.requireCanEdit("finance.ledger");
         return ledgerService.saveCostCenter(cc);
     }
 
     @PostMapping("/cost-centers/{id}/archive")
+    @PreAuthorize("isAuthenticated()")
     public CostCenter archiveCostCenter(@PathVariable String id) {
+        modulePermissionService.requireCanEdit("finance.ledger");
         return ledgerService.archiveCostCenter(id);
     }
 
     @PostMapping("/cost-centers/{id}/unarchive")
+    @PreAuthorize("isAuthenticated()")
     public CostCenter unarchiveCostCenter(@PathVariable String id) {
+        modulePermissionService.requireCanEdit("finance.ledger");
         return ledgerService.unarchiveCostCenter(id);
     }
 

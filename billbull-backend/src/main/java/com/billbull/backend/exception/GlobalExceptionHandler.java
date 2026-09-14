@@ -143,13 +143,40 @@ public class GlobalExceptionHandler {
             org.springframework.dao.DataIntegrityViolationException ex) {
         log.warn("DataIntegrityViolationException requestId={}: {}", requestId(), ex.getMostSpecificCause().getMessage());
         String cause = ex.getMostSpecificCause().getMessage();
-        boolean duplicate = cause != null && cause.toLowerCase().contains("duplicate key");
+        String lower = cause == null ? "" : cause.toLowerCase();
+
+        if (lower.contains("duplicate key")) {
+            return ResponseEntity
+                    .status(HttpStatus.CONFLICT)
+                    .body(errorBody("This record conflicts with an existing one — the name or code is already in use, "
+                            + "possibly by a previously deleted record."));
+        }
+
+        // Postgres: `null value in column "phone" of relation "employees" violates
+        // not-null constraint`. Naming the column turns an unactionable message into
+        // one the user can fix, so pull it out when it is there.
+        String column = extractQuoted(cause, "null value in column");
+        if (column != null) {
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body(errorBody("Required field '" + column + "' is missing. Fill it in and try again."));
+        }
+
         return ResponseEntity
                 .status(HttpStatus.CONFLICT)
-                .body(errorBody(duplicate
-                        ? "This record conflicts with an existing one — the name or code is already in use, "
-                                + "possibly by a previously deleted record."
-                        : "The request could not be saved because it violates a data constraint."));
+                .body(errorBody("The request could not be saved because it violates a data constraint."));
+    }
+
+    /** Returns the first double-quoted token following {@code marker}, or null. */
+    private static String extractQuoted(String message, String marker) {
+        if (message == null) return null;
+        int start = message.toLowerCase().indexOf(marker.toLowerCase());
+        if (start < 0) return null;
+        int open = message.indexOf('"', start);
+        if (open < 0) return null;
+        int close = message.indexOf('"', open + 1);
+        if (close < 0) return null;
+        return message.substring(open + 1, close);
     }
 
     @ExceptionHandler(RuntimeException.class)

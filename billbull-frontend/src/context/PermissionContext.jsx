@@ -95,8 +95,14 @@ export const PermissionProvider = ({ children }) => {
             return exact[actionKey] === true;
         }
 
-        // 2. Parent fallback only when no explicit row exists
-        if (modKey?.includes('.')) {
+        // 2. Parent fallback only when no explicit row exists — except for approving anything
+        //    under pos.admin, which must be granted explicitly and never inherited from the
+        //    operational `pos` row every till user holds. Mirrors
+        //    ModulePermissionService.approvalIsInheritable, so the buttons a user sees match the
+        //    calls the API will actually accept. Viewing and creating still inherit, so a cashier
+        //    keeps the correction request form.
+        const approvalNotInheritable = actionKey === 'approve' && modKey?.startsWith('pos.admin');
+        if (modKey?.includes('.') && !approvalNotInheritable) {
             const parentKey = modKey.split('.')[0];
             const parent = granularPermissions[parentKey];
             if (parent && parent[actionKey] === true) {

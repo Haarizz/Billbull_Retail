@@ -70,7 +70,9 @@ class PosSessionCorrectionEndToEndTest {
         service = new PosSessionDenominationCorrectionService(
                 repo, correctionRequestRepo, correctionRequestService, posSessionRepository,
                 auditService, new ObjectMapper(), overlayRepository, denominationCountService,
-                postingEngine, branchRepository);
+                postingEngine, branchRepository,
+                // Denies self-approval, so these tests keep exercising the strict maker-checker path.
+                org.mockito.Mockito.mock(com.billbull.backend.security.ModulePermissionService.class));
 
         session = new PosSession();
         ReflectionTestUtils.setField(session, "id", 1L);

@@ -51,6 +51,7 @@ import PaginationFooter from '../../../components/common/PaginationFooter';
 import ItemAddOnsModal from '../../../components/ItemAddOnsModal'; // BB-026
 import StockAvailabilityModal from '../../../components/StockAvailabilityModal';
 import SerialEntryModal from '../../../components/purchase/SerialEntryModal';
+import BatchLotEntryModal from '../../../components/purchase/BatchLotEntryModal';
 import { useCompany } from '../../../context/CompanyContext';
 import { formatDisplayDate } from '../../../utils/dateUtils';
 import { compareDocumentValues } from '../../../utils/documentOrdering';
@@ -279,6 +280,34 @@ const mapInvoiceFromApi = (inv) => {
     flag: inv.flag || "None"
   };
 };
+
+const normalizeBatchLotRows = (batchLots) => (
+  Array.isArray(batchLots)
+    ? batchLots.map((lot) => ({
+      id: Number.isFinite(Number(lot?.id)) ? Number(lot.id) : null,
+      batchNumber: lot?.batchNumber || '',
+      manufacturingDate: lot?.manufacturingDate || '',
+      expiryDate: lot?.expiryDate || '',
+      quantity: Number(lot?.quantity) || 0
+    }))
+    : []
+);
+
+// Lot-tracked = batch-controlled OR expiry-controlled, matching the backend
+// (PurchaseBatchLotService.isLotTracked) and stock-taking.
+const isLotTrackedItem = (item) => Boolean(item?.batchEnabled || item?.expiryEnabled);
+
+// Base units the line brings into stock: qty + FOC, the figure the backend expands into
+// per-unit batch rows.
+const getInvoiceLotQty = (item) => (
+  Math.max(0, Number(item?.qty) || 0) + Math.max(0, Number(item?.foc) || 0)
+);
+
+const getInvoiceLotCount = (item) => (
+  Array.isArray(item?.batchLots)
+    ? item.batchLots.reduce((sum, lot) => sum + (Number(lot?.quantity) || 0), 0)
+    : 0
+);
 
 const normalizeSerialRows = (serials) => (
   Array.isArray(serials)
@@ -833,6 +862,8 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
   const [isItemStockModalOpen, setIsItemStockModalOpen] = useState(false);
   const [isSerialModalOpen, setIsSerialModalOpen] = useState(false);
   const [selectedSerialItem, setSelectedSerialItem] = useState(null);
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [selectedBatchItem, setSelectedBatchItem] = useState(null);
   const isViewMode = mode === "view";
 
   // Expanded rows state
@@ -1061,7 +1092,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           remarks: item.remarks || "",
           serialEnabled: Boolean(item.serialEnabled ?? item.isSerial),
           serials: normalizeSerialRows(item.serials),
-          batchEnabled: Boolean(item.batchEnabled ?? item.batch)
+          batchEnabled: Boolean(item.batchEnabled ?? item.batch),
+          expiryEnabled: Boolean(item.expiryEnabled),
+          fefoEnabled: Boolean(item.fefoEnabled),
+          minExpiryDaysForSale: Number(item.minExpiryDaysForSale) || 0,
+          batchLots: normalizeBatchLotRows(item.batchLots)
         };
       });
 
@@ -1285,7 +1320,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
             remarks: item.remarks || "",
             serialEnabled: Boolean(item.serialEnabled || item.isSerial || item.serial || item.product?.isSerial),
             serials: normalizeSerialRows(item.serials),
-            batchEnabled: Boolean(item.batchEnabled || item.isBatch || item.isBatchTracked || item.product?.isBatch)
+            batchEnabled: Boolean(item.batchEnabled || item.isBatch || item.isBatchTracked || item.product?.isBatch),
+            expiryEnabled: Boolean(item.expiryEnabled || item.product?.expiryEnabled),
+            fefoEnabled: Boolean(item.fefoEnabled || item.product?.fefoEnabled),
+            minExpiryDaysForSale: Number(item.minExpiryDaysForSale ?? item.product?.minExpiryDaysForSale) || 0,
+            batchLots: normalizeBatchLotRows(item.batchLots)
           }))
         }));
 
@@ -1423,7 +1462,11 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
           remarks: item.remarks || "",
           serialEnabled: Boolean(item.serialEnabled ?? item.isSerial),
           serials: normalizeSerialRows(item.serials),
-          batchEnabled: Boolean(item.batchEnabled ?? item.batch)
+          batchEnabled: Boolean(item.batchEnabled ?? item.batch),
+          expiryEnabled: Boolean(item.expiryEnabled),
+          fefoEnabled: Boolean(item.fefoEnabled),
+          minExpiryDaysForSale: Number(item.minExpiryDaysForSale) || 0,
+          batchLots: normalizeBatchLotRows(item.batchLots)
         };
       });
 
@@ -1512,6 +1555,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       serialEnabled: Boolean(product.isSerial ?? product.serial),
       serials: [],
       batchEnabled: Boolean(product.isBatch ?? product.batch),
+      expiryEnabled: Boolean(product.expiryEnabled ?? product.isExpiryEnabled),
+      fefoEnabled: Boolean(product.fefoEnabled ?? product.isFefoEnabled),
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchLots: [],
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
@@ -1566,6 +1613,10 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
       serialEnabled: Boolean(product.isSerial ?? product.serial),
       serials: [],
       batchEnabled: Boolean(product.isBatch ?? product.batch),
+      expiryEnabled: Boolean(product.expiryEnabled ?? product.isExpiryEnabled),
+      fefoEnabled: Boolean(product.fefoEnabled ?? product.isFefoEnabled),
+      minExpiryDaysForSale: Number(product.minExpiryDaysForSale) || 0,
+      batchLots: [],
       availableUnits: product.availableUnits || [defaultUnit],
       unitConversions: product.unitConversions || {},
       unitPrices: product.unitPrices || {},
@@ -1745,6 +1796,24 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
     setFormData({ ...formData, items: formData.items.filter(i => i.id !== id) });
   };
 
+  const handleOpenBatchLotModal = (item) => {
+    if (!isLotTrackedItem(item) || item?.serialEnabled) return;
+    setSelectedBatchItem(item);
+    setIsBatchModalOpen(true);
+  };
+
+  const handleSaveBatchLots = (batchLots) => {
+    if (!selectedBatchItem) return;
+    setFormData(prev => ({
+      ...prev,
+      items: prev.items.map(item => (
+        item.id === selectedBatchItem.id
+          ? { ...item, batchLots: normalizeBatchLotRows(batchLots) }
+          : item
+      ))
+    }));
+  };
+
   const handleOpenSerialModal = (item) => {
     if (!item?.serialEnabled) return;
     setSelectedSerialItem(item);
@@ -1851,6 +1920,17 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
 
       lineTotal: invoiceType === SOURCE.GRN ? calculateRow(i).total : calculateRow(i).total,
       warehouseName: formData.warehouse,
+      batchLots: Array.isArray(i.batchLots)
+        ? i.batchLots
+          .filter(lot => (Number(lot?.quantity) || 0) > 0 || lot?.expiryDate || lot?.batchNumber)
+          .map(lot => ({
+            id: Number.isFinite(Number(lot.id)) ? Number(lot.id) : null,
+            batchNumber: lot.batchNumber || null,
+            manufacturingDate: lot.manufacturingDate || null,
+            expiryDate: lot.expiryDate || null,
+            quantity: Number(lot.quantity) || 0
+          }))
+        : [],
       serials: Array.isArray(i.serials)
         ? i.serials.map(serial => ({
           id: serial.id !== null && serial.id !== undefined && serial.id !== '' && Number.isFinite(Number(serial.id))
@@ -2329,6 +2409,19 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                           <td className="p-3 text-right font-bold text-[#F5C742]">{calc.total.toFixed(2)}</td>
                           <td className="p-3 text-center">
                             <div className="flex items-center justify-center gap-2">
+                              {isLotTrackedItem(item) && !item.serialEnabled && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenBatchLotModal(item)}
+                                  className={`px-2 py-1 text-[10px] font-semibold rounded border hover:bg-slate-50 ${
+                                    item.expiryEnabled && getInvoiceLotCount(item) !== getInvoiceLotQty(item)
+                                      ? 'border-red-300 text-red-600 bg-red-50/40'
+                                      : 'border-slate-200 text-slate-600'
+                                  }`}
+                                >
+                                  Batches {getInvoiceLotCount(item)}/{getInvoiceLotQty(item)}
+                                </button>
+                              )}
                               {item.serialEnabled && (
                                 <button
                                   type="button"
@@ -2682,6 +2775,19 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
         initialSearch={pendingFastEntrySearch}
         actionLabel="Add to Invoice"
         mode="purchase"
+      />
+
+      <BatchLotEntryModal
+        isOpen={isBatchModalOpen}
+        onClose={() => setIsBatchModalOpen(false)}
+        onSave={handleSaveBatchLots}
+        item={selectedBatchItem}
+        expectedQty={getInvoiceLotQty(selectedBatchItem)}
+        expiryRequired={Boolean(selectedBatchItem?.expiryEnabled)}
+        minExpiryDaysForSale={Number(selectedBatchItem?.minExpiryDaysForSale) || 0}
+        fefoEnabled={Boolean(selectedBatchItem?.fefoEnabled)}
+        disabled={isFormLocked}
+        title="Batch & Expiry"
       />
 
       <SerialEntryModal

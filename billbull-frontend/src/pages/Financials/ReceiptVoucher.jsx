@@ -236,6 +236,7 @@ const ReceiptVoucher = () => {
     const [receipts, setReceipts] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [editingReceipt, setEditingReceipt] = useState(null);
+    const [formErrors, setFormErrors] = useState({});
     const [formData, setFormData] = useState({
         date: '2026-01-22',
         branch: '',
@@ -276,6 +277,7 @@ const ReceiptVoucher = () => {
             openingInvoiceId: null,
             attachment: null
         });
+        setFormErrors({});
         setIsAddModalOpen(true);
     };
 
@@ -447,9 +449,17 @@ const ReceiptVoucher = () => {
             sourceMap[sourceKey].amount += amount;
             sourceMap[sourceKey].count++;
 
-            // Payment Mode
-            if (!paymentModeMap[r.mode]) paymentModeMap[r.mode] = 0;
-            paymentModeMap[r.mode]++;
+            // Payment Mode — group case-insensitively on a whitespace-normalised key so
+            // 'Cash', 'CASH' and 'cash ' (written by the POS, sales-order and manual paths)
+            // tally as one mode instead of splitting the count three ways.
+            const rawMode = typeof r.mode === 'string' ? r.mode.trim().replace(/\s+/g, ' ') : '';
+            if (rawMode) {
+                const modeKey = rawMode.toLowerCase();
+                if (!paymentModeMap[modeKey]) {
+                    paymentModeMap[modeKey] = { label: rawMode, count: 0 };
+                }
+                paymentModeMap[modeKey].count++;
+            }
         });
 
         const incomeSources = Object.entries(sourceMap).map(([label, data]) => ({
@@ -461,13 +471,14 @@ const ReceiptVoucher = () => {
             bg: data.bg
         }));
 
-        // Find most used payment
+        // Find most used payment. Ties break alphabetically so the badge is stable across
+        // refetches rather than following whatever order the API happened to return.
         let mostUsedPayment = 'N/A';
         let maxCount = 0;
-        Object.entries(paymentModeMap).forEach(([mode, count]) => {
-            if (count > maxCount) {
+        Object.values(paymentModeMap).forEach(({ label, count }) => {
+            if (count > maxCount || (count === maxCount && label.localeCompare(mostUsedPayment) < 0)) {
                 maxCount = count;
-                mostUsedPayment = mode;
+                mostUsedPayment = label;
             }
         });
 
@@ -515,10 +526,38 @@ const ReceiptVoucher = () => {
     const [openActionId, setOpenActionId] = useState(null);
 
     // --- FILE HANDLERS ---
+    // Kept in step with the dropzone caption and the backend guard in ReceiptVoucherService.
+    const ALLOWED_ATTACHMENT_EXTENSIONS = ['png', 'jpg', 'jpeg', 'pdf'];
+    const ALLOWED_ATTACHMENT_MIME_TYPES = ['image/png', 'image/jpeg', 'application/pdf'];
+    const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
     const handleFileChange = (e) => {
-        if (e.target.files && e.target.files[0]) {
-            setFormData({ ...formData, attachment: e.target.files[0] });
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        const extension = (file.name.split('.').pop() || '').toLowerCase();
+        // Browsers leave `type` blank for some files, so the extension is the fallback check.
+        const typeAllowed = file.type
+            ? ALLOWED_ATTACHMENT_MIME_TYPES.includes(file.type)
+            : ALLOWED_ATTACHMENT_EXTENSIONS.includes(extension);
+
+        if (!typeAllowed || !ALLOWED_ATTACHMENT_EXTENSIONS.includes(extension)) {
+            setFormErrors(prev => ({ ...prev, attachment: 'Unsupported file type. Attach a PNG, JPG or PDF file.' }));
+            e.target.value = '';
+            return;
         }
+
+        if (file.size > MAX_ATTACHMENT_BYTES) {
+            setFormErrors(prev => ({
+                ...prev,
+                attachment: `File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum size is 10 MB.`
+            }));
+            e.target.value = '';
+            return;
+        }
+
+        setFormErrors(prev => ({ ...prev, attachment: undefined }));
+        setFormData({ ...formData, attachment: file });
     };
 
     const handleTriggerUpload = () => {
@@ -527,6 +566,7 @@ const ReceiptVoucher = () => {
 
     const handleRemoveFile = () => {
         setFormData({ ...formData, attachment: null });
+        setFormErrors(prev => ({ ...prev, attachment: undefined }));
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
@@ -583,6 +623,7 @@ const ReceiptVoucher = () => {
             openingInvoiceId: receipt.openingInvoiceId || null,
             attachment: null
         });
+        setFormErrors({});
         setIsAddModalOpen(true);
         setOpenActionId(null);
     };
@@ -603,11 +644,33 @@ const ReceiptVoucher = () => {
             purpose: receipt.purpose || 'ADVANCE_RECEIVED',
             attachment: null
         });
+        setFormErrors({});
         setIsAddModalOpen(true);
         setOpenActionId(null);
     };
 
+    // Returns an errors object; empty means the form is valid.
+    const validateForm = () => {
+        const errors = {};
+        const rawDate = (formData.date || '').trim();
+        if (!rawDate) {
+            errors.date = 'Voucher date is required.';
+        } else {
+            const parsed = new Date(rawDate);
+            if (Number.isNaN(parsed.getTime())) {
+                errors.date = 'Enter a valid voucher date.';
+            }
+        }
+        return errors;
+    };
+
     const handleSave = async () => {
+        const errors = validateForm();
+        setFormErrors(errors);
+        if (Object.keys(errors).length > 0) {
+            return false;
+        }
+
         const payload = {
             date: formData.date,
             branch: formData.branch || defaultBranchName,
@@ -639,11 +702,14 @@ const ReceiptVoucher = () => {
                 await receiptVoucherApi.create(submitData);
             }
             fetchReceipts(); // Refresh list
+            setFormErrors({});
             setIsAddModalOpen(false);
+            return true;
         } catch (error) {
             console.error("Failed to save receipt:", error);
             const message = error?.response?.data?.message || error?.response?.data || "Failed to save receipt. Please try again.";
             alert(message);
+            return false;
         }
     };
 
@@ -1347,9 +1413,15 @@ const ReceiptVoucher = () => {
                                     <input
                                         type="date"
                                         value={formData.date}
-                                        onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                                        className="w-full px-3 py-2 text-xs border border-slate-200 rounded-md focus:border-blue-500 focus:outline-none text-slate-700 font-medium"
+                                        onChange={(e) => {
+                                            setFormData({ ...formData, date: e.target.value });
+                                            setFormErrors(prev => ({ ...prev, date: undefined }));
+                                        }}
+                                        className={`w-full px-3 py-2 text-xs border rounded-md focus:outline-none text-slate-700 font-medium ${formErrors.date ? 'border-red-400 focus:border-red-500' : 'border-slate-200 focus:border-blue-500'}`}
                                     />
+                                    {formErrors.date && (
+                                        <p className="mt-1 text-[10px] font-medium text-red-600">{formErrors.date}</p>
+                                    )}
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-600 mb-1">Branch</label>
@@ -1491,9 +1563,9 @@ const ReceiptVoucher = () => {
                             {/* File Upload */}
                             <div
                                 onClick={handleTriggerUpload}
-                                className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${formData.attachment ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
+                                className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${formErrors.attachment ? 'border-red-300 bg-red-50' : formData.attachment ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-slate-50 hover:bg-slate-100'}`}
                             >
-                                <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} />
+                                <input type="file" ref={fileInputRef} accept=".png,.jpg,.jpeg,.pdf,image/png,image/jpeg,application/pdf" className="hidden" onChange={handleFileChange} />
 
                                 {formData.attachment ? (
                                     <>
@@ -1519,12 +1591,15 @@ const ReceiptVoucher = () => {
                                     </>
                                 )}
                             </div>
+                            {formErrors.attachment && (
+                                <p className="mt-1 text-[10px] font-medium text-red-600">{formErrors.attachment}</p>
+                            )}
 
                         </div>
 
                         <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 sticky bottom-0">
                             <button onClick={() => setIsAddModalOpen(false)} className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50">Cancel</button>
-                            <button onClick={() => { handleSave(); handlePrint(); }} className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-2"><Printer size={14} /> Save & Print</button>
+                            <button onClick={async () => { if (await handleSave()) handlePrint(); }} className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-2"><Printer size={14} /> Save & Print</button>
                             <button onClick={handleSave} className="px-5 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm">
                                 {editingReceipt ? 'Update Receipt' : 'Save Receipt'}
                             </button>

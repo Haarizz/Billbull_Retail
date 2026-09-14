@@ -305,6 +305,48 @@ class PaymentServiceTest {
                 .applyAgainstOutstandingInvoices(any(), any());
     }
 
+    @Test
+    void receiptVoucherIsDatedByThePaymentDateNotTheLinkedInvoiceDate() {
+        // The GL half of the delivery-settlement collection-date fix: a delivery raised on
+        // 2026-08-10 but collected on 2026-08-14 must post its ReceiptVoucher (and hence its
+        // journal entry) on the 14th. This pins the copy in upsertReceiptVoucher() that
+        // carries the collection date all the way into accounting.
+        LocalDate saleDate = LocalDate.of(2026, 8, 10);
+        LocalDate collectionDate = LocalDate.of(2026, 8, 14);
+
+        Payment payment = new Payment();
+        payment.setPaymentNumber("PAY-2026-0898");
+        payment.setPaymentDate(collectionDate);
+        payment.setPaymentType(PaymentType.RECEIVED);
+        payment.setCustomerCode("CUST-898");
+        payment.setLinkedInvoice("INV-2026-0898");
+        payment.setAmount(new java.math.BigDecimal("195.0"));
+        payment.setPaymentMode("Cash");
+        payment.setStatus(PaymentStatus.COMPLETED);
+
+        SalesInvoice invoice = new SalesInvoice();
+        invoice.setId(898L);
+        invoice.setInvoiceNumber("INV-2026-0898");
+        invoice.setCustomerCode("CUST-898");
+        invoice.setInvoiceDate(saleDate);
+
+        ReceiptVoucher savedReceipt = new ReceiptVoucher();
+        savedReceipt.setId(98L);
+
+        when(paymentRepository.save(any(Payment.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(numberingService.resolveNumberForCreate(SalesDocumentType.SALES_PAYMENT, "PAY-2026-0898"))
+                .thenReturn("PAY-2026-0898");
+        when(salesInvoiceRepository.findByInvoiceNumber("INV-2026-0898")).thenReturn(Optional.of(invoice));
+        when(receiptVoucherService.createReceipt(any(ReceiptVoucher.class), any())).thenReturn(savedReceipt);
+
+        paymentService.savePayment(payment);
+
+        ArgumentCaptor<ReceiptVoucher> receiptCaptor = ArgumentCaptor.forClass(ReceiptVoucher.class);
+        verify(receiptVoucherService).createReceipt(receiptCaptor.capture(), any());
+        assertEquals(collectionDate, receiptCaptor.getValue().getDate(),
+                "the receipt voucher must post on the collection date, not the invoice date");
+    }
+
     // ---------------------------------------------------------------------
     // recomputeInvoiceBalances() — running remaining-balance fold.
     // Characterization: pins the per-payment invoiceBalance math so the

@@ -140,6 +140,13 @@ public class PosCashMovementService {
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Cash movement not found: " + id));
     }
 
+    /** Feeds the "Add New" session picker — delegated to {@link PosSessionService}, which owns
+     *  the same guards {@code create} runs, so the form can only offer acceptable sessions. */
+    @Transactional(readOnly = true)
+    public List<PosCashMovementSessionOption> listEligibleSessions(Long branchId) {
+        return posSessionService.listCashMovementEligibleSessions(branchId);
+    }
+
     /** Back-office "Add New" — same validation/GL/audit path as the POS terminal quick action
      *  (see {@link PosSessionService#addCashMovement}); session must still be OPEN. */
     @Transactional

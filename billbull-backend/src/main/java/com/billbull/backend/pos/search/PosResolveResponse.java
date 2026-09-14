@@ -19,6 +19,18 @@ public class PosResolveResponse {
          * add it to the cart — it shows {@link #message} to the cashier instead.
          */
         BLOCKED,
+        /**
+         * The query matched a Credit Voucher (its code, barcode payload or voucher
+         * number) rather than anything sellable. A voucher is a payment instrument,
+         * never a cart line: the frontend applies it as a VOUCHER payment allocation
+         * on the open sale and must never add it to the item list.
+         *
+         * <p>Returned whether or not the voucher can actually be redeemed — the
+         * envelope carries {@code voucher.redeemable} and
+         * {@code voucher.notRedeemableReason}, so a cancelled or spent voucher gets a
+         * voucher-specific message instead of a generic "item not found".
+         */
+        VOUCHER,
         NONE
     }
 
@@ -48,6 +60,13 @@ public class PosResolveResponse {
 
     /** Populated when {@code type == CUSTOMER}. */
     private CustomerMatch customer;
+
+    /**
+     * Populated when {@code type == VOUCHER}. The same DTO the voucher lookup endpoint
+     * returns, so the till reads one shape of voucher wherever it came from, and the
+     * balance/eligibility shown always comes from the server.
+     */
+    private com.billbull.backend.sales.voucher.CreditVoucherResponse voucher;
 
     public static class CustomerMatch {
         private Long id;
@@ -104,6 +123,13 @@ public class PosResolveResponse {
         return res;
     }
 
+    public static PosResolveResponse voucher(com.billbull.backend.sales.voucher.CreditVoucherResponse voucher) {
+        PosResolveResponse res = new PosResolveResponse();
+        res.type = Type.VOUCHER;
+        res.voucher = voucher;
+        return res;
+    }
+
     public static PosResolveResponse blocked(String message) {
         PosResolveResponse res = new PosResolveResponse();
         res.type = Type.BLOCKED;
@@ -125,4 +151,6 @@ public class PosResolveResponse {
     public void setPinnedExpiry(java.time.LocalDate pinnedExpiry) { this.pinnedExpiry = pinnedExpiry; }
     public CustomerMatch getCustomer() { return customer; }
     public void setCustomer(CustomerMatch customer) { this.customer = customer; }
+    public com.billbull.backend.sales.voucher.CreditVoucherResponse getVoucher() { return voucher; }
+    public void setVoucher(com.billbull.backend.sales.voucher.CreditVoucherResponse voucher) { this.voucher = voucher; }
 }

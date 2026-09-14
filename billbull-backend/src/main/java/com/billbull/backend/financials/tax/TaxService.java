@@ -16,6 +16,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
@@ -26,8 +28,12 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.billbull.backend.financials.reports.FinancialReportService;
+
 @Service
 public class TaxService {
+
+    private static final Logger log = LoggerFactory.getLogger(TaxService.class);
 
     private static final Set<String> ALLOWED_FREQUENCIES = Set.of("Monthly", "Quarterly", "Annually");
     private static final Set<String> ALLOWED_CONFIG_STATUSES = Set.of("Active", "Inactive");
@@ -38,14 +44,17 @@ public class TaxService {
 
     private final TaxConfigurationRepository taxConfigurationRepository;
     private final TaxFilingRepository taxFilingRepository;
+    private final FinancialReportService financialReportService;
     private final Path fileStorageLocation;
 
     public TaxService(
             TaxConfigurationRepository taxConfigurationRepository,
             TaxFilingRepository taxFilingRepository,
+            FinancialReportService financialReportService,
             @Value("${file.upload-dir:uploads}/tax_filings") String uploadDir) {
         this.taxConfigurationRepository = taxConfigurationRepository;
         this.taxFilingRepository = taxFilingRepository;
+        this.financialReportService = financialReportService;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
 
         try {
@@ -178,6 +187,24 @@ public class TaxService {
 
     @Transactional
     public List<TaxFilingDTO> getAllFilings() {
+        return getAllFilings(null);
+    }
+
+    /**
+     * Filings for the dashboard, each enriched with the live GL position for its
+     * own period (see {@link TaxFilingDTO#getLedgerAmount()}).
+     *
+     * The stored {@code amount} is the declared figure and stays untouched — it is
+     * seeded at 0 by {@link #createInitialFiling} and only ever set when someone
+     * files the return, which is why an untouched dashboard used to read 0.00 while
+     * the VAT reports showed real activity. The ledger figures come from the same
+     * {@code FinancialReportService.generateVatReturnReport} the VAT Return Summary
+     * report uses, so both screens agree for the same period and branch.
+     *
+     * @param branchId branch to scope the ledger lookup to; null = all branches.
+     */
+    @Transactional
+    public List<TaxFilingDTO> getAllFilings(Long branchId) {
         // QA-057: ensure every active configuration has at least one filing so the
         // dashboard never renders "TBD" / a missing File Return button. createConfig
         // seeds an initial filing for new configs, but pre-existing configs (created
@@ -192,9 +219,102 @@ public class TaxService {
             }
         }
 
+        // One ledger scan per distinct period, not per filing — configs on the same
+        // frequency share a period, and history rows repeat older ones.
+        java.util.Map<String, java.util.Map<String, Object>> vatByPeriod = new java.util.HashMap<>();
+
         return taxFilingRepository.findAll().stream()
                 .map(TaxFilingDTO::fromEntity)
+                .peek(dto -> applyLedgerPosition(dto, branchId, vatByPeriod))
                 .collect(java.util.stream.Collectors.toList());
+    }
+
+    /**
+     * Fills a filing DTO's ledger fields from the GL for the filing's own period.
+     * Only open VAT filings carry ledger figures: a filed return's declared amount
+     * is the record of what was submitted, and Corporate Tax / Excise have no
+     * equivalent ledger derivation. Both are left null and the UI keeps showing the
+     * declared amount alone.
+     */
+    private void applyLedgerPosition(TaxFilingDTO dto, Long branchId,
+            java.util.Map<String, java.util.Map<String, Object>> vatByPeriod) {
+        if (dto.getType() == null || !dto.getType().toUpperCase().contains("VAT")) {
+            return;
+        }
+        if ("Filed".equals(dto.getStatus())) {
+            return;
+        }
+        LocalDate[] range = resolvePeriodRange(dto.getPeriod());
+        if (range == null) {
+            return;
+        }
+        dto.setPeriodStart(range[0].toString());
+        dto.setPeriodEnd(range[1].toString());
+        try {
+            java.util.Map<String, Object> vat = vatByPeriod.computeIfAbsent(
+                    range[0] + "|" + range[1],
+                    key -> financialReportService.generateVatReturnReport(range[0], range[1], branchId));
+            dto.setLedgerOutputTax(asAmount(vat.get("netOutputTax")));
+            dto.setLedgerInputTax(asAmount(vat.get("netInputTax")));
+            dto.setLedgerAmount(asAmount(vat.get("netVatPayable")));
+        } catch (RuntimeException ex) {
+            // A ledger hiccup must never take the whole Tax Dashboard down; the
+            // declared amount still renders.
+            log.warn("[Tax] Failed to compute ledger VAT for filing {}: {}", dto.getId(), ex.getMessage(), ex);
+        }
+    }
+
+    private BigDecimal asAmount(Object value) {
+        return value instanceof BigDecimal ? (BigDecimal) value : BigDecimal.ZERO;
+    }
+
+    /**
+     * Turns a filing's period label back into the date range it stands for, matching
+     * the labels {@link #createInitialFiling} writes: "Q3 2026", "September 2026"
+     * (MMMM yyyy) and "FY 2026". Returns null for anything else so the caller can
+     * fall back to the declared amount rather than reporting a wrong period.
+     */
+    static LocalDate[] resolvePeriodRange(String period) {
+        if (!StringUtils.hasText(period)) {
+            return null;
+        }
+        String text = period.trim().replaceAll("\\s+", " ");
+        String[] parts = text.split(" ");
+        if (parts.length != 2) {
+            return null;
+        }
+
+        Integer year = parseYear(parts[1]);
+        if (year == null) {
+            return null;
+        }
+
+        String head = parts[0].toUpperCase(java.util.Locale.ENGLISH);
+        if (head.length() == 2 && head.charAt(0) == 'Q' && head.charAt(1) >= '1' && head.charAt(1) <= '4') {
+            int quarter = head.charAt(1) - '0';
+            LocalDate start = LocalDate.of(year, (quarter - 1) * 3 + 1, 1);
+            return new LocalDate[] { start, start.plusMonths(3).minusDays(1) };
+        }
+        if ("FY".equals(head)) {
+            return new LocalDate[] { LocalDate.of(year, 1, 1), LocalDate.of(year, 12, 31) };
+        }
+
+        try {
+            java.time.YearMonth month = java.time.YearMonth.parse(text,
+                    DateTimeFormatter.ofPattern("MMMM yyyy", java.util.Locale.ENGLISH));
+            return new LocalDate[] { month.atDay(1), month.atEndOfMonth() };
+        } catch (java.time.format.DateTimeParseException ignored) {
+            return null;
+        }
+    }
+
+    private static Integer parseYear(String text) {
+        try {
+            int year = Integer.parseInt(text);
+            return year >= 1900 && year <= 9999 ? year : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     public TaxFiling updateFiling(Long id, TaxFiling updatedFiling) {

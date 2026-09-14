@@ -107,6 +107,7 @@ public class ProductImportService {
     private final ProductPackingRepository packingRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository mediaRepo;
+    private final ProductPriceChangeRepository priceChangeRepo;
     private final ProductImageStorageService imageStorageService;
     private final ConcurrentMap<String, ImportJobStatus> importJobs = new ConcurrentHashMap<>();
     private final ExecutorService importExecutor = Executors.newSingleThreadExecutor();
@@ -114,7 +115,8 @@ public class ProductImportService {
     public ProductImportService(ProductRepository productRepo, BrandRepository brandRepo,
             DepartmentRepository departmentRepo,
             UnitRepository unitRepo, ProductPackingRepository packingRepo, ProductBarcodeRepository barcodeRepo,
-            ProductMediaRepository mediaRepo, ProductImageStorageService imageStorageService) {
+            ProductMediaRepository mediaRepo, ProductPriceChangeRepository priceChangeRepo,
+            ProductImageStorageService imageStorageService) {
         this.productRepo = productRepo;
         this.brandRepo = brandRepo;
         this.departmentRepo = departmentRepo;
@@ -122,7 +124,22 @@ public class ProductImportService {
         this.packingRepo = packingRepo;
         this.barcodeRepo = barcodeRepo;
         this.mediaRepo = mediaRepo;
+        this.priceChangeRepo = priceChangeRepo;
         this.imageStorageService = imageStorageService;
+    }
+
+    /** Adds an audit row when a price level actually moved (scale-only rewrites are not changes). */
+    private void addPriceChange(List<ProductPriceChange> sink, Long productId, String priceLevel,
+            BigDecimal oldPrice, BigDecimal newPrice) {
+        if (productId == null) {
+            return;
+        }
+        boolean changed = (oldPrice == null || newPrice == null)
+                ? oldPrice != newPrice
+                : oldPrice.compareTo(newPrice) != 0;
+        if (changed) {
+            sink.add(new ProductPriceChange(productId, null, priceLevel, oldPrice, newPrice));
+        }
     }
 
     @CacheEvict(value = "productList", allEntries = true)
@@ -524,6 +541,16 @@ public class ProductImportService {
                         }
 
                         ProductPricing pricing = product.getPricing() != null ? product.getPricing() : new ProductPricing();
+                        // Snapshot the levels before the setters so a bulk re-import lands in the
+                        // Price Level / Price Change Audit report like a manual edit does. Only an
+                        // update has an old price to compare against.
+                        boolean auditPrices = isUpdate && pricing.getId() != null;
+                        BigDecimal beforeCost = auditPrices ? pricing.getCost() : null;
+                        BigDecimal beforeRetail = auditPrices ? pricing.getRetailPrice() : null;
+                        BigDecimal beforeWholesale = auditPrices ? pricing.getWholesalePrice() : null;
+                        BigDecimal beforeMin = auditPrices ? pricing.getMinPrice() : null;
+                        BigDecimal beforeMax = auditPrices ? pricing.getMaxPrice() : null;
+                        BigDecimal beforeOnline = auditPrices ? pricing.getOnlinePrice() : null;
                         pricing.setCost(defaultZero(productCost));
                         pricing.setLandingCost(defaultZero(landingCost));
                         pricing.setNlc(defaultZero(netLandedCost));
@@ -595,6 +622,20 @@ public class ProductImportService {
                         product.setTax(tax);
 
                         Product savedProduct = productRepo.save(product);
+
+                        if (auditPrices) {
+                            List<ProductPriceChange> priceChanges = new ArrayList<>();
+                            Long pid = savedProduct.getId();
+                            addPriceChange(priceChanges, pid, "Cost", beforeCost, pricing.getCost());
+                            addPriceChange(priceChanges, pid, "Retail", beforeRetail, pricing.getRetailPrice());
+                            addPriceChange(priceChanges, pid, "Wholesale", beforeWholesale, pricing.getWholesalePrice());
+                            addPriceChange(priceChanges, pid, "Min", beforeMin, pricing.getMinPrice());
+                            addPriceChange(priceChanges, pid, "Max", beforeMax, pricing.getMaxPrice());
+                            addPriceChange(priceChanges, pid, "Online", beforeOnline, pricing.getOnlinePrice());
+                            if (!priceChanges.isEmpty()) {
+                                priceChangeRepo.saveAll(priceChanges);
+                            }
+                        }
 
                         ProductPacking packing = upsertDefaultPacking(savedProduct, rowUnit, productCost, priceInclTax);
                         upsertBarcode(savedProduct, packing, barcodeValue, repeatedCodeInCurrentFile);
@@ -948,7 +989,10 @@ public class ProductImportService {
         Optional<Brand> byName = brandRepo.findByNameIgnoreCase(trimmedName);
         if (byName.isPresent()) {
             Brand found = byName.get();
-            if (!found.isActive()) {
+            // Only revive a soft-deleted brand. A brand the user deliberately marked Inactive keeps
+            // that status; the import still attaches to it rather than creating a duplicate.
+            if (found.isDeleted()) {
+                found.setDeleted(false);
                 found.setActive(true);
                 brandRepo.save(found);
             }

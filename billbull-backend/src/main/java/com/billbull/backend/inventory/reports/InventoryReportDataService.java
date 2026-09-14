@@ -5,6 +5,7 @@ import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -17,6 +18,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -65,6 +69,7 @@ public class InventoryReportDataService {
     private final InventoryReportService stockReportService;
     private final ProductRepository productRepo;
     private final ProductPricingRepository pricingRepo;
+    private final com.billbull.backend.inventory.product.ProductPriceChangeRepository priceChangeRepo;
     private final ProductInventoryPolicyRepository inventoryRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final StockMovementRepository stockRepo;
@@ -84,6 +89,7 @@ public class InventoryReportDataService {
             InventoryReportService stockReportService,
             ProductRepository productRepo,
             ProductPricingRepository pricingRepo,
+            com.billbull.backend.inventory.product.ProductPriceChangeRepository priceChangeRepo,
             ProductInventoryPolicyRepository inventoryRepo,
             ProductBarcodeRepository barcodeRepo,
             StockMovementRepository stockRepo,
@@ -99,6 +105,7 @@ public class InventoryReportDataService {
         this.stockReportService = stockReportService;
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
+        this.priceChangeRepo = priceChangeRepo;
         this.inventoryRepo = inventoryRepo;
         this.barcodeRepo = barcodeRepo;
         this.stockRepo = stockRepo;
@@ -162,7 +169,7 @@ public class InventoryReportDataService {
             case "reconciliation", "stock-reconciliation-report" -> stockReconciliationReport(warehouseId, scope);
             case "wastage", "wastage-internal-consumption" -> wastageInternalConsumption(warehouseId, scope);
             case "in_out_summary", "inflow-outflow-summary" -> inflowOutflowSummary(warehouseId, scope);
-            case "price_audit", "price-level-audit" -> priceLevelAudit(scope);
+            case "price_audit", "price-level-audit" -> priceLevelAudit(scope, dateFrom, dateTo, productId);
             case "cost_variance", "grn-invoice-cost-variance" -> grnInvoiceCostVariance(scope);
             case "margin", "item-margin-report" -> itemMarginReport(scope);
             case "master_completeness", "item-master-completeness" -> itemMasterCompleteness(scope);
@@ -813,48 +820,88 @@ public class InventoryReportDataService {
         return report;
     }
 
-    private InventoryReportDataResponse priceLevelAudit(java.util.Collection<Long> scope) {
-        List<Product> products = activeStockProducts(scope);
-        List<Long> productIds = products.stream().map(Product::getId).toList();
-        Map<Long, ProductPricing> pricing = pricingMap(productIds);
-        List<Map<String, Object>> rows = products.stream().map(p -> {
-            ProductPricing pr = pricing.get(p.getId());
+    /** Caps one report render — a wide date range on a busy catalogue is still one bounded query. */
+    private static final int PRICE_AUDIT_ROW_LIMIT = 5000;
+
+    /**
+     * Price Level / Price Change Audit — reads the {@code product_price_changes} trail rather than
+     * the current price levels. It used to list every active product's present prices, which meant
+     * Old Price and New Price were the same number, Change % was always 0%, and the whole catalogue
+     * was loaded and priced just to show one day's edits. The date range is pushed into the query,
+     * so the cost now scales with the number of changes, not the size of the catalogue.
+     */
+    private InventoryReportDataResponse priceLevelAudit(java.util.Collection<Long> scope,
+            LocalDate dateFrom, LocalDate dateTo, Long productId) {
+        LocalDateTime from = dateFrom != null ? dateFrom.atStartOfDay() : null;
+        LocalDateTime to = dateTo != null ? dateTo.atTime(LocalTime.MAX) : null;
+        Pageable limit = PageRequest.of(0, PRICE_AUDIT_ROW_LIMIT);
+
+        List<com.billbull.backend.inventory.product.ProductPriceChange> changes = scope != null
+                ? priceChangeRepo.findInRangeInBranchScope(from, to, scope, limit)
+                : priceChangeRepo.findInRange(from, to, limit);
+
+        if (productId != null) {
+            changes = changes.stream().filter(c -> productId.equals(c.getProductId())).toList();
+        }
+
+        Map<Long, Product> products = productRepo
+                .findAllById(changes.stream().map(c -> c.getProductId()).distinct().toList())
+                .stream()
+                .collect(Collectors.toMap(Product::getId, Function.identity(), (a, b) -> a));
+
+        List<Map<String, Object>> rows = changes.stream().map(c -> {
+            Product p = products.get(c.getProductId());
+            BigDecimal oldPrice = c.getOldPrice();
+            BigDecimal newPrice = c.getNewPrice();
             return row(
-                    "sku", firstNonBlank(p.getSku(), p.getCode()),
-                    "item", p.getName(),
-                    "category", p.getCategory(),
-                    "cost", pr != null ? pr.getCost() : null,
-                    "retailPrice", pr != null ? pr.getRetailPrice() : null,
-                    "wholesalePrice", pr != null ? pr.getWholesalePrice() : null,
-                    "minPrice", pr != null ? pr.getMinPrice() : null,
-                    "maxPrice", pr != null ? pr.getMaxPrice() : null,
-                    "onlinePrice", pr != null ? pr.getOnlinePrice() : null,
-                    "gp", pr != null ? pr.getGp() : null,
-                    "updatedBy", pr != null ? pr.getUpdatedBy() : p.getUpdatedBy(),
-                    "updatedAt", pr != null ? pr.getUpdatedAt() : p.getUpdatedAt());
+                    "date", c.getCreatedAt(),
+                    "sku", p != null ? firstNonBlank(p.getSku(), p.getCode()) : "-",
+                    "item", p != null ? p.getName() : "-",
+                    "category", p != null ? p.getCategory() : null,
+                    "priceLevel", c.getPriceLevel(),
+                    "oldPrice", oldPrice,
+                    "newPrice", newPrice,
+                    "change", bd(newPrice).subtract(bd(oldPrice)),
+                    "pct", percentChange(oldPrice, newPrice),
+                    "changedBy", firstNonBlank(c.getCreatedBy(), "System"));
         }).toList();
 
         InventoryReportDataResponse report = base("price-level-audit", "Price Level / Price Change Audit",
-                "Current price levels and latest pricing update metadata.");
+                "Every price-level change in the selected period, with the value before and after the edit.");
         report.setCards(List.of(
-                card("Priced Items", rows.stream().filter(r -> bd(r.get("retailPrice")).compareTo(BigDecimal.ZERO) > 0).count(), "with retail price", "number"),
-                card("Missing Cost", rows.stream().filter(r -> bd(r.get("cost")).compareTo(BigDecimal.ZERO) == 0).count(), "needs costing", "number"),
-                card("Missing Retail", rows.stream().filter(r -> bd(r.get("retailPrice")).compareTo(BigDecimal.ZERO) == 0).count(), "needs selling price", "number")));
+                card("Price Changes", rows.size(), "in selected period", "number"),
+                card("Items Affected",
+                        rows.stream().map(r -> r.get("sku")).filter(Objects::nonNull).distinct().count(),
+                        "distinct SKUs", "number"),
+                card("Increases",
+                        rows.stream().filter(r -> bd(r.get("change")).compareTo(BigDecimal.ZERO) > 0).count(),
+                        "price raised", "number"),
+                card("Decreases",
+                        rows.stream().filter(r -> bd(r.get("change")).compareTo(BigDecimal.ZERO) < 0).count(),
+                        "price lowered", "number")));
         report.setColumns(List.of(
+                column("Date", "date", "date"),
                 column("SKU", "sku", "text"),
                 column("Item", "item", "text"),
-                column("Category", "category", "text"),
-                column("Cost", "cost", "currency"),
-                column("Retail", "retailPrice", "currency"),
-                column("Wholesale", "wholesalePrice", "currency"),
-                column("Min", "minPrice", "currency"),
-                column("Max", "maxPrice", "currency"),
-                column("Online", "onlinePrice", "currency"),
-                column("GP %", "gp", "number"),
-                column("Updated By", "updatedBy", "text"),
-                column("Updated At", "updatedAt", "date")));
+                column("Price Level", "priceLevel", "text"),
+                column("Old Price", "oldPrice", "currency"),
+                column("New Price", "newPrice", "currency"),
+                column("Change", "change", "currency"),
+                column("Change %", "pct", "number"),
+                column("Changed By", "changedBy", "text")));
         report.setRows(rows);
         return report;
+    }
+
+    /**
+     * ((new - old) / old) x 100, to one decimal. Null when there is no old price to compare
+     * against (the level was previously unset) — the report renders that as "-" rather than 0%.
+     */
+    private BigDecimal percentChange(BigDecimal oldPrice, BigDecimal newPrice) {
+        if (oldPrice == null || oldPrice.compareTo(BigDecimal.ZERO) == 0) return null;
+        return bd(newPrice).subtract(oldPrice)
+                .multiply(HUNDRED)
+                .divide(oldPrice, 1, RoundingMode.HALF_UP);
     }
 
     private InventoryReportDataResponse grnInvoiceCostVariance(java.util.Collection<Long> scope) {

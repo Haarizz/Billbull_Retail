@@ -26,15 +26,18 @@ public class PosTerminalService {
     private final PosSettingsRepository settingsRepo;
     private final PosCounterRepository counterRepo;
     private final BranchAccessService branchAccessService;
+    private final PosTerminalLimitPolicy limitPolicy;
 
     public PosTerminalService(PosTerminalRepository repo,
                               PosSettingsRepository settingsRepo,
                               PosCounterRepository counterRepo,
-                              BranchAccessService branchAccessService) {
+                              BranchAccessService branchAccessService,
+                              PosTerminalLimitPolicy limitPolicy) {
         this.repo = repo;
         this.settingsRepo = settingsRepo;
         this.counterRepo = counterRepo;
         this.branchAccessService = branchAccessService;
+        this.limitPolicy = limitPolicy;
     }
 
     private String currentUser() {
@@ -121,7 +124,7 @@ public class PosTerminalService {
         // 3. New terminal — check limit (excludes archived + decommissioned terminals, which have
         // both freed their slot permanently or temporarily — see countActiveLimitByBranchId)
         PosSettings settings = settingsRepo.findByBranchId(branchId).orElse(new PosSettings());
-        int max = settings.getMaxTerminalsPerBranch() != null ? settings.getMaxTerminalsPerBranch() : 5;
+        int max = limitPolicy.resolveLimit(settings);
         long current = repo.countActiveLimitByBranchId(branchId);
         if (current >= max) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
@@ -257,7 +260,7 @@ public class PosTerminalService {
         }
         // Re-check limit before restore
         PosSettings settings = settingsRepo.findByBranchId(terminal.getBranchId()).orElse(new PosSettings());
-        int max = settings.getMaxTerminalsPerBranch() != null ? settings.getMaxTerminalsPerBranch() : 5;
+        int max = limitPolicy.resolveLimit(settings);
         long current = repo.countActiveLimitByBranchId(terminal.getBranchId());
         if (current >= max) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
@@ -314,6 +317,7 @@ public class PosTerminalService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Terminal not found: " + terminalPk));
         if (counterId != null) {
             PosCounter counter = counterRepo.findById(counterId)
+                    .filter(PosCounter::isActive)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Counter not found: " + counterId));
             terminal.setCounterId(counter.getId());
             terminal.setCounterName(counter.getCounterName());

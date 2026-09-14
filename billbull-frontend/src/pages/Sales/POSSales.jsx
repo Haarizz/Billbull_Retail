@@ -174,10 +174,11 @@ import {
 } from './POS/POSPrintPreview';
 import { usePaymentManager } from './POS/payments/usePaymentManager';
 import { buildCheckoutPaymentFields, buildSettlementPaymentFields } from './POS/payments/paymentPayloadAdapter';
-import { buildPaymentBlock, paymentBlockRows, matchesPaymentFilter, PAYMENT_FILTERS, reconcilePaymentBlock, paymentAuditSnapshot } from './POS/payments/paymentPresentation';
+import { buildPaymentBlock, buildPaymentBlockFromRecords, paymentBlockRows, matchesPaymentFilter, PAYMENT_FILTERS, reconcilePaymentBlock, paymentAuditSnapshot } from './POS/payments/paymentPresentation';
 import { useCheckoutCapabilities } from './POS/payments/useCheckoutCapabilities';
 import PaymentAllocationPanel from './POS/payments/PaymentAllocationPanel';
 import { PAYMENT_TYPES } from './POS/payments/paymentModel';
+import { planVoucherApplication, capVoucherAllocations } from './POS/payments/voucherRedemption';
 import CustomerPicker from './POS/CustomerPicker';
 import { formatUserDisplayName } from '../../utils/displayName';
 import { useCompany } from '../../context/CompanyContext';
@@ -210,6 +211,12 @@ import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
 const DELIVERY_SETTLE_METHODS = [
   PAYMENT_TYPES.CASH, PAYMENT_TYPES.CARD, PAYMENT_TYPES.ONLINE,
 ];
+
+/** Currency rounding to 2dp. Money comparisons are made at fils precision everywhere. */
+const round2Money = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+/** Bare 2dp amount for inline feedback messages (the currency symbol comes from context). */
+const formatMoney2 = (n) => round2Money(n).toFixed(2);
 
 const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
 // 'YYYY-MM-DD' for the browser's local calendar day — toISOString() would shift
@@ -906,6 +913,9 @@ export default function POSSales() {
   const posSettingsRef = useRef(null);
   const handleProductSelectionRef = useRef(null);
   const showFeedbackRef = useRef(null);
+  // handleUnifiedEntry is frozen at mount, so the voucher-scan handler is reached through a
+  // ref for the same reason addToInvoiceRef exists.
+  const applyScannedVoucherRef = useRef(null);
   posSettingsRef.current = posSettings;
   // True when the Quick Customer modal was launched from the Checkout credit
   // panel, so the newly created customer is auto-selected as the credit buyer.
@@ -1479,6 +1489,119 @@ export default function POSSales() {
     [checkoutPayment.paymentLines, checkoutEffectiveDue, activeLayawayDeposit],
   );
 
+
+  // ── Credit Voucher redemption from the sales screen ───────────────────────
+  //
+  // A voucher applied by scanning at the till is NOT a second mechanism: it is a VOUCHER
+  // payment allocation on the very same Payment Manager that the checkout panel writes to.
+  // That is what keeps one source of truth — the footer, the checkout screen, the payload,
+  // the receipt and the backend redemption all read the same allocation. A voucher is never
+  // a cart line: it carries no quantity, no stock movement, no VAT and no revenue.
+  //
+  // Nothing here spends the voucher. Applying it only records the intent; the backend
+  // redeems it under a row lock during checkout, which is why the cashier can add it,
+  // remove it, or abandon the sale entirely and the balance is untouched.
+  const appliedVoucherLines = useMemo(
+    () => checkoutPayment.paymentLines.filter((l) => l.paymentType === PAYMENT_TYPES.VOUCHER),
+    [checkoutPayment.paymentLines],
+  );
+
+  const voucherRedeemedTotal = useMemo(
+    () => round2Money(appliedVoucherLines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)),
+    [appliedVoucherLines],
+  );
+
+  /** What the customer still has to settle in cash/card/etc. after the applied vouchers. */
+  const amountDueAfterVouchers = useMemo(
+    () => Math.max(0, round2Money(checkoutEffectiveDue - voucherRedeemedTotal)),
+    [checkoutEffectiveDue, voucherRedeemedTotal],
+  );
+
+  const { addLine: addCheckoutLine, updateLine: updateCheckoutLine, removeLine: removeCheckoutLine } = checkoutPayment;
+  const checkoutPaymentLinesRef = useRef(checkoutPayment.paymentLines);
+  checkoutPaymentLinesRef.current = checkoutPayment.paymentLines;
+  const checkoutEffectiveDueRef = useRef(checkoutEffectiveDue);
+  checkoutEffectiveDueRef.current = checkoutEffectiveDue;
+
+  /**
+   * Applies a voucher the cashier scanned or typed into the main POS search box.
+   *
+   * Returns `{ ok, message }` so the caller can surface a voucher-specific message — a
+   * cancelled or spent voucher must never read as "no product found".
+   */
+  const applyScannedVoucher = useCallback((voucher) => {
+    // Every rule lives in planVoucherApplication (POS/payments/voucherRedemption) so the
+    // edge cases — expired, cancelled, spent, double scan, voucher bigger or smaller than the
+    // bill — are decided in one pure, directly tested place rather than inside this screen.
+    const plan = planVoucherApplication(voucher, checkoutPaymentLinesRef.current || [],
+      checkoutEffectiveDueRef.current || 0);
+    if (!plan.ok) return { ok: false, message: plan.reason };
+
+    addCheckoutLine({
+      paymentType: PAYMENT_TYPES.VOUCHER,
+      amount: plan.amount,
+      // The code is the whole contract of the allocation — it is what the backend redeems.
+      reference: voucher.voucherCode,
+      // Display only, so the footer and receipt can name the voucher without a refetch.
+      // Never read as authority for balance or eligibility.
+      metadata: { voucher, voucherNumber: voucher.voucherNumber },
+    });
+
+    return {
+      ok: true,
+      message: plan.remainingOnVoucher > 0
+        ? `Voucher ${voucher.voucherNumber} applied ${formatMoney2(plan.amount)} — ${formatMoney2(plan.remainingOnVoucher)} stays on the voucher`
+        : `Voucher ${voucher.voucherNumber} applied ${formatMoney2(plan.amount)}`,
+    };
+  }, [addCheckoutLine]);
+  applyScannedVoucherRef.current = applyScannedVoucher;
+
+  /**
+   * Backing out of the payment screen drops the tenders taken there — but keeps a voucher
+   * applied on the sales screen.
+   *
+   * A voucher scanned at the cart belongs to the cart, the way the items do: cancelling
+   * checkout returns the cashier to that cart, and silently losing the voucher they already
+   * scanned would make them hunt for the paper again. Clearing it is still one click away
+   * (remove it from the footer) or automatic when the cart is cleared.
+   */
+  const cancelCheckoutTenders = useCallback(() => {
+    (checkoutPaymentLinesRef.current || []).forEach((l) => {
+      if (l.paymentType !== PAYMENT_TYPES.VOUCHER) removeCheckoutLine(l.id);
+    });
+  }, [removeCheckoutLine]);
+
+  /** Drops one applied voucher. Nothing was spent, so there is nothing to reverse. */
+  const removeAppliedVoucher = useCallback((lineId) => {
+    const line = (checkoutPaymentLinesRef.current || []).find((l) => l.id === lineId);
+    removeCheckoutLine(lineId);
+    if (line) {
+      showFeedbackRef.current?.('success',
+        `Voucher ${line.metadata?.voucherNumber || line.reference} removed`);
+    }
+  }, [removeCheckoutLine]);
+
+  // Keeps applied vouchers inside the bill as the cart changes.
+  //
+  // A voucher applied against a 500 bill cannot still claim 500 after the cashier voids a
+  // line and the bill drops to 300 — the backend refuses non-cash tender above the invoice
+  // total, so the sale would simply fail at settlement. Re-cap the allocations here instead,
+  // in the order they were applied, and drop any that no longer fit. Only ever shrinks: a
+  // voucher is never silently grown to swallow items added later.
+  useEffect(() => {
+    const lines = checkoutPaymentLinesRef.current || [];
+    capVoucherAllocations(lines, checkoutEffectiveDue).forEach((adj) => {
+      const line = lines.find((l) => l.id === adj.id);
+      const name = line?.metadata?.voucherNumber || line?.reference;
+      if (adj.action === 'remove') {
+        removeCheckoutLine(adj.id);
+        showFeedbackRef.current?.('error', `Voucher ${name} removed — the sale no longer needs it`);
+      } else {
+        updateCheckoutLine(adj.id, { amount: adj.amount });
+        showFeedbackRef.current?.('success', `Voucher ${name} reduced to ${formatMoney2(adj.amount)}`);
+      }
+    });
+  }, [checkoutEffectiveDue, removeCheckoutLine, updateCheckoutLine]);
 
   // Single source of truth for "who is this sale's customer". A credit allocation names the
   // account it is charged to; if that pick never mirrored back onto selectedCustomer, the
@@ -4104,6 +4227,10 @@ export default function POSSales() {
     });
     // Shipping is an order-level charge, not a cart line — clear it with the cart.
     setShippingCharge(0);
+    // Abandoning the cart abandons its tenders too. A voucher applied to a cart that is then
+    // cleared must not carry over onto the next customer's sale — nothing was spent (the
+    // backend only redeems at checkout), so dropping the allocation releases it entirely.
+    checkoutPayment.clearLines();
   };
 
   // Map live cart lines to the backend item shape shared by checkout + layaway.
@@ -5603,6 +5730,23 @@ export default function POSSales() {
     setTimeout(() => setCashDropFeedback(null), 3000);
   };
 
+  /**
+   * The payment block for a reprint, rebuilt from the invoice's recorded tender rows.
+   *
+   * The backend returns `paymentSummary.allocations` — one entry per Payment row, the same
+   * reconstruction the sales list and invoice screens use — so a reprinted receipt shows the
+   * tenders that actually settled the sale rather than whatever the till holds now. Returns
+   * null for a sale with no recorded tender (an unpaid credit invoice), where the renderer's
+   * existing cash fallback still applies.
+   */
+  const buildReprintPaymentBlock = useCallback((reprintResult, full) => {
+    const allocations = reprintResult?.paymentSummary?.allocations;
+    if (!Array.isArray(allocations) || allocations.length === 0) return null;
+    return buildPaymentBlockFromRecords(allocations, {
+      invoiceTotal: Number(full?.invoiceTotal) || 0,
+    });
+  }, []);
+
   const fetchReprintInvoices = async () => {
     setReprintLoading(true);
     setReprintError(null);
@@ -5661,6 +5805,11 @@ export default function POSSales() {
           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
             full,
             isReprint: true,
+            // The tender breakdown is rebuilt from the recorded payments the backend returned,
+            // never from the till's current state — a reprint has to show the Credit Voucher
+            // (and every other leg) exactly as the original receipt did, whichever terminal or
+            // day it is reprinted from.
+            paymentBlock: buildReprintPaymentBlock(reprintResult, full),
             customerPhone: custRec?.phone,
             customerEmail: custRec?.email,
             customerTrn: custRec?.trn,
@@ -5784,6 +5933,20 @@ export default function POSSales() {
     if (result?.type === 'BLOCKED') {
       showFeedback('error', result.message || 'This unit is not available for sale.');
       setBarcodeInput('');
+      return;
+    }
+
+    // A Credit Voucher is a payment instrument, never a cart line: it gets no quantity, no
+    // stock movement, no VAT and no revenue. Applying it records a VOUCHER allocation on the
+    // sale's Payment Manager — the same allocation the checkout panel would create — and the
+    // backend redeems it under a row lock at settlement.
+    if (result?.type === 'VOUCHER') {
+      const outcome = applyScannedVoucherRef.current?.(result.voucher)
+        || { ok: false, message: 'Voucher could not be applied.' };
+      // Voucher failures always speak about the voucher. "No product found" for a voucher the
+      // customer is holding tells the cashier nothing they can act on.
+      showFeedback(outcome.ok ? 'success' : 'error', outcome.message);
+      clearInputs();
       return;
     }
 
@@ -9205,11 +9368,23 @@ export default function POSSales() {
                     <div className="p-4 border-t border-[#327F74]/10 flex items-center gap-6">
                       <div className="flex flex-col gap-1">
                         <label className="text-xs text-gray-500">Card Machine Batch No.</label>
-                        <input value={xReportCardBatchNo} onChange={e => setXReportCardBatchNo(e.target.value)} placeholder="BATCH-001" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-36 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
+                        <input
+                          value={xReportCardBatchNo}
+                          onChange={e => setXReportCardBatchNo(e.target.value)}
+                          placeholder="BATCH-001"
+                          disabled={isSessionClosed}
+                          title={isSessionClosed ? 'Session is closed — settlement details are locked.' : undefined}
+                          className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-36 focus:outline-none focus:ring-1 focus:ring-[#327F74] disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+                        />
                       </div>
                       <div className="flex items-center gap-2">
                         <label className="text-xs text-gray-500">Card Settlement Verified:</label>
-                        <button onClick={() => setXReportCardVerified(!xReportCardVerified)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${xReportCardVerified ? 'bg-[#327F74]' : 'bg-gray-200'}`}>
+                        <button
+                          onClick={() => setXReportCardVerified(!xReportCardVerified)}
+                          disabled={isSessionClosed}
+                          title={isSessionClosed ? 'Session is closed — settlement details are locked.' : undefined}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${xReportCardVerified ? 'bg-[#327F74]' : 'bg-gray-200'}`}
+                        >
                           <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${xReportCardVerified ? 'translate-x-4' : 'translate-x-0.5'}`} />
                         </button>
                         <span className={`text-xs ${xReportCardVerified ? 'text-green-600' : 'text-gray-400'}`}>{xReportCardVerified ? 'Yes' : 'No'}</span>
@@ -9783,6 +9958,9 @@ export default function POSSales() {
     updateQuantity, updateDiscount, updateItemPrice, voidFromInvoice,
     guardedRemoveFromInvoice, guardedClearInvoice, holdInvoice, recallInvoice, heldSales, holdBusy, deleteHeldBill,
     activeLayawayId, activeLayawayDeposit, shippingCharge,
+    // Credit Vouchers applied to the open sale. Payment instruments, not cart lines: the
+    // templates render them in the totals footer, below the product totals, and never as items.
+    appliedVoucherLines, voucherRedeemedTotal, amountDueAfterVouchers, removeAppliedVoucher,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
     classicDiscountType, setClassicDiscountType, discountInputType, setDiscountInputType,
@@ -11485,7 +11663,7 @@ export default function POSSales() {
                   const settleReady = canSettle && currentInvoice.items.length > 0 && !checkoutLoading;
                   return (
                     <div className="flex items-stretch gap-3">
-                      <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); checkoutPayment.clearLines(); }}
+                      <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); cancelCheckoutTenders(); }}
                         aria-label="Cancel checkout"
                         className="flex-none w-28 sm:w-36 min-h-[64px] rounded-xl border-2 border-gray-300 bg-white text-gray-600 font-bold text-base transition-all duration-200 ease-out hover:bg-gray-100 hover:border-gray-400 hover:text-gray-800 active:scale-[0.98] focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 motion-reduce:transform-none">
                         Cancel
@@ -12106,6 +12284,9 @@ export default function POSSales() {
                   const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                     full,
                     isReprint: true,
+                    // Same rule as the Reprint dialog: the tenders come from what was recorded
+                    // against the invoice, so the voucher leg survives a page reload.
+                    paymentBlock: buildReprintPaymentBlock(reprintResult, full),
                     cashGiven: lastPaidInvoice?.paidAmount,
                     changeAmount: lastPaidInvoice?.changeAmount,
                     customerPhone: lastPaidInvoice?.customer?.phone,

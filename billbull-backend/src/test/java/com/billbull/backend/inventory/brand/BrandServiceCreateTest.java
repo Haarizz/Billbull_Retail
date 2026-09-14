@@ -43,10 +43,10 @@ class BrandServiceCreateTest {
     @Test
     void createRevivesSoftDeletedBrandWithSameName() {
         Brand deleted = brand(7L, "Nestle", "NES");
-        deleted.setActive(false);
-        stubNoActiveDuplicates();
-        when(repository.findByActiveFalseAndNameIgnoreCase("Nestle")).thenReturn(List.of(deleted));
-        when(repository.findByActiveFalseAndCodeIgnoreCase("NES")).thenReturn(List.of(deleted));
+        deleted.setDeleted(true);
+        stubNoLiveDuplicates();
+        when(repository.findByDeletedTrueAndNameIgnoreCase("Nestle")).thenReturn(List.of(deleted));
+        when(repository.findByDeletedTrueAndCodeIgnoreCase("NES")).thenReturn(List.of(deleted));
         when(repository.save(any(Brand.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.create(request("Nestle", "NES"), null);
@@ -55,12 +55,13 @@ class BrandServiceCreateTest {
         verify(repository).save(saved.capture());
         assertEquals(7L, saved.getValue().getId(), "the deleted row is reused, not duplicated");
         assertTrue(saved.getValue().isActive());
+        assertTrue(!saved.getValue().isDeleted(), "reviving clears the soft-delete flag");
     }
 
     @Test
     void createRejectsNameAlreadyHeldByAnActiveBrand() {
-        when(repository.existsByCodeAndActiveTrue("NES")).thenReturn(false);
-        when(repository.existsByNameAndActiveTrue("Nestle")).thenReturn(true);
+        when(repository.existsByCodeAndDeletedFalse("NES")).thenReturn(false);
+        when(repository.existsByNameAndDeletedFalse("Nestle")).thenReturn(true);
 
         RuntimeException ex = assertThrows(RuntimeException.class,
                 () -> service.create(request("Nestle", "NES"), null));
@@ -72,12 +73,12 @@ class BrandServiceCreateTest {
     @Test
     void createReportsAConflictWhenNameAndCodeBelongToDifferentDeletedBrands() {
         Brand deletedName = brand(7L, "Nestle", "NES");
-        deletedName.setActive(false);
+        deletedName.setDeleted(true);
         Brand deletedCode = brand(9L, "Nescafe", "NES2");
-        deletedCode.setActive(false);
-        stubNoActiveDuplicates();
-        when(repository.findByActiveFalseAndNameIgnoreCase("Nestle")).thenReturn(List.of(deletedName));
-        when(repository.findByActiveFalseAndCodeIgnoreCase("NES2")).thenReturn(List.of(deletedCode));
+        deletedCode.setDeleted(true);
+        stubNoLiveDuplicates();
+        when(repository.findByDeletedTrueAndNameIgnoreCase("Nestle")).thenReturn(List.of(deletedName));
+        when(repository.findByDeletedTrueAndCodeIgnoreCase("NES2")).thenReturn(List.of(deletedCode));
 
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 () -> service.create(request("Nestle", "NES2"), null));
@@ -88,9 +89,9 @@ class BrandServiceCreateTest {
 
     @Test
     void createInsertsANewBrandWhenNothingHoldsTheName() {
-        stubNoActiveDuplicates();
-        when(repository.findByActiveFalseAndNameIgnoreCase(anyString())).thenReturn(List.of());
-        when(repository.findByActiveFalseAndCodeIgnoreCase(anyString())).thenReturn(List.of());
+        stubNoLiveDuplicates();
+        when(repository.findByDeletedTrueAndNameIgnoreCase(anyString())).thenReturn(List.of());
+        when(repository.findByDeletedTrueAndCodeIgnoreCase(anyString())).thenReturn(List.of());
         when(repository.save(any(Brand.class))).thenAnswer(inv -> inv.getArgument(0));
 
         service.create(request("Lipton", "LIP"), null);
@@ -101,11 +102,23 @@ class BrandServiceCreateTest {
         assertEquals("Lipton", saved.getValue().getName());
     }
 
+    @Test
+    void listIncludesInactiveBrandsSoTheInactiveFilterCanMatch() {
+        Brand inactive = brand(3L, "Lipton", "LIP");
+        inactive.setActive(false);
+        when(repository.findByDeletedFalse()).thenReturn(List.of(inactive));
+
+        List<BrandResponse> rows = service.list();
+
+        assertEquals(1, rows.size(), "an Inactive brand is still a live brand");
+        assertTrue(!rows.get(0).active);
+    }
+
     // ---- fixtures ----
 
-    private void stubNoActiveDuplicates() {
-        when(repository.existsByCodeAndActiveTrue(anyString())).thenReturn(false);
-        when(repository.existsByNameAndActiveTrue(anyString())).thenReturn(false);
+    private void stubNoLiveDuplicates() {
+        when(repository.existsByCodeAndDeletedFalse(anyString())).thenReturn(false);
+        when(repository.existsByNameAndDeletedFalse(anyString())).thenReturn(false);
     }
 
     private BrandRequest request(String name, String code) {

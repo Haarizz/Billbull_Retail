@@ -189,9 +189,11 @@ const QuickAddModal = ({ isOpen, onClose, onSuccess }) => {
         if (isOpen) {
             Promise.all([getBrands(), getUnits()])
                 .then(([b, u]) => {
-                    setBrands(b);
+                    // Inactive brands cannot be used for new products.
+                    const activeBrands = (Array.isArray(b) ? b : []).filter(x => x.active !== false);
+                    setBrands(activeBrands);
                     setUnits(u);
-                    if (b.length > 0) setFormData(prev => ({ ...prev, brandId: b[0].id }));
+                    if (activeBrands.length > 0) setFormData(prev => ({ ...prev, brandId: activeBrands[0].id }));
                     if (u.length > 0) setFormData(prev => ({ ...prev, unitId: u[0].id }));
                 })
                 .catch(console.error);

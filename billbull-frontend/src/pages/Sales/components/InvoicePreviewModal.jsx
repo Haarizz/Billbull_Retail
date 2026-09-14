@@ -112,11 +112,20 @@ html, body { min-height: 0 !important; height: auto !important; background: #fff
     return out.replace(/<\/head>/i, injection + '</head>');
 };
 
+// Pay-mode chips shown in the preview footer. The chosen mode is stamped on the
+// invoice (so the Pay Mode column in the list and the editor badge show it) and
+// is pre-selected — but still changeable — in the post-confirm settlement modal.
+const ALL_PAY_MODES = ['Cash', 'Card', 'Bank Transfer', 'Cheque', 'Credit'];
+const PAY_MODE_EMOJI = { Cash: '💵', Card: '💳', 'Bank Transfer': '🏦', Cheque: '🧾', Credit: '🔑' };
+
 const InvoicePreviewModal = ({
     mode = 'Draft',
     invoiceNo = '',
     documentTitle = '',
     getHtml,
+    payMode = '',
+    onPayModeChange,
+    hideCredit = false,
     onClose,
     onConfirm,
     onPrint,
@@ -125,6 +134,9 @@ const InvoicePreviewModal = ({
     onWhatsApp,
 }) => {
     const isDraft = mode !== 'Confirmed';
+    // A pay mode is mandatory before finalizing; drafts may be saved without one.
+    const payModes = hideCredit ? ALL_PAY_MODES.filter(m => m !== 'Credit') : ALL_PAY_MODES;
+    const payModeMissing = !isDraft && !payMode;
     const [html, setHtml] = useState('');
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
@@ -214,6 +226,28 @@ const InvoicePreviewModal = ({
                     </div>
                 </div>
 
+                {/* Pay mode selection — carried into the saved invoice and the settlement modal */}
+                <div className="px-5 py-3 bg-white border-t border-slate-100 flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mr-1">
+                        Pay Mode {!isDraft && <span className="text-red-500">*</span>}
+                    </span>
+                    {payModes.map((m) => (
+                        <button
+                            key={m}
+                            type="button"
+                            onClick={() => onPayModeChange?.(m)}
+                            className={`px-3 py-1.5 rounded-md border text-xs font-semibold transition ${payMode === m
+                                ? 'border-[#F5C742] bg-[#FFF8E7] text-slate-900 shadow-sm'
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                        >
+                            <span className="mr-1">{PAY_MODE_EMOJI[m]}</span>{m}
+                        </button>
+                    ))}
+                    {payModeMissing && (
+                        <span className="text-[11px] font-medium text-amber-600 ml-auto">Select pay mode to continue</span>
+                    )}
+                </div>
+
                 {/* Footer actions */}
                 <div className="px-5 py-3 bg-white border-t border-slate-100 flex justify-between items-center">
                     <button onClick={onClose} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 hover:text-slate-800">
@@ -226,7 +260,11 @@ const InvoicePreviewModal = ({
                         <button onClick={onWhatsApp} title="WhatsApp" className="p-2 rounded-md hover:bg-slate-100 text-slate-500"><MessageCircle size={18} /></button>
                         <button
                             onClick={onConfirm}
-                            className="flex items-center gap-1.5 px-4 py-2 bg-[#F5C742] text-slate-900 rounded-md text-sm font-bold hover:bg-yellow-500 shadow-sm ml-1"
+                            disabled={payModeMissing}
+                            title={payModeMissing ? 'Select a pay mode to continue' : undefined}
+                            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-bold shadow-sm ml-1 ${payModeMissing
+                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                : 'bg-[#F5C742] text-slate-900 hover:bg-yellow-500'}`}
                         >
                             {isDraft ? <><Save size={16} /> Save as Draft</> : <><CheckCircle2 size={16} /> Confirm &amp; Finalize</>}
                         </button>

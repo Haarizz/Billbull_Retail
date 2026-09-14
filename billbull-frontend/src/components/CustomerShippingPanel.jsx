@@ -22,6 +22,8 @@ const CustomerShippingPanel = ({
     onDeliveryTypeChange,
     expectedDispatch = '',
     onExpectedDispatchChange,
+    // Earliest selectable dispatch date ('YYYY-MM-DD'); blocks back-dating.
+    minExpectedDispatch,
     isReadOnly = false,
     currency = 'AED',
     currencySymbol,
@@ -303,6 +305,7 @@ const CustomerShippingPanel = ({
                         <input
                             type="date"
                             value={expectedDispatch}
+                            min={minExpectedDispatch}
                             onChange={e => onExpectedDispatchChange?.(e.target.value)}
                             disabled={isReadOnly}
                             className="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs text-slate-700

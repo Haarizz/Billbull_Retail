@@ -16,10 +16,14 @@ import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.inventory.settings.InventorySettingsService;
+import com.billbull.backend.purchase.batch.PurchaseBatchLotDraft;
+import com.billbull.backend.purchase.batch.PurchaseBatchLotService;
 import com.billbull.backend.purchase.grn.GrnEntity;
+import com.billbull.backend.purchase.grn.GrnItemBatch;
 import com.billbull.backend.purchase.grn.GrnItemEntity;
 import com.billbull.backend.purchase.invoice.PurchaseInvoice;
 import com.billbull.backend.purchase.invoice.PurchaseInvoiceItem;
+import com.billbull.backend.purchase.invoice.PurchaseInvoiceItemBatch;
 
 @Service
 public class PurchaseBatchCreationService {
@@ -33,19 +37,29 @@ public class PurchaseBatchCreationService {
     private final InventorySettingsService inventorySettingsService;
     private final ProductRepository productRepository;
     private final ProductPackingRepository packingRepository;
+    private final PurchaseBatchLotService lotService;
 
     public PurchaseBatchCreationService(
             BatchMasterRepository batchRepository,
             BatchPrintQueueRepository printQueueRepository,
             InventorySettingsService inventorySettingsService,
             ProductRepository productRepository,
-            ProductPackingRepository packingRepository) {
+            ProductPackingRepository packingRepository,
+            PurchaseBatchLotService lotService) {
         this.batchRepository = batchRepository;
         this.printQueueRepository = printQueueRepository;
         this.inventorySettingsService = inventorySettingsService;
         this.productRepository = productRepository;
         this.packingRepository = packingRepository;
+        this.lotService = lotService;
     }
+
+    /**
+     * One captured lot expanded into the per-unit rows it will become. The unit rows of a lot
+     * share a lot prefix, an expiry date and a manufacturing date; only the trailing unit index
+     * differs — the same shape stock-taking stores in stock_take_item_batches.
+     */
+    private record LotPlan(String batchNumber, LocalDate expiryDate, LocalDate manufacturingDate, int quantity) {}
 
     @Transactional
     public List<BatchMaster> replaceForPurchaseInvoice(PurchaseInvoice invoice) {
@@ -75,7 +89,7 @@ public class PurchaseBatchCreationService {
         boolean countsMatch = true;
         for (PurchaseInvoiceItem item : invoice.getItems()) {
             Product product = requireProductByCode(item.getItemCode(), invoice.getInvoiceNumber());
-            if (!product.isBatch()) {
+            if (!lotService.isLotTracked(product)) {
                 continue;
             }
             int expectedQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty())
@@ -158,7 +172,7 @@ public class PurchaseBatchCreationService {
 
         for (PurchaseInvoiceItem item : invoice.getItems()) {
             Product product = requireProductByCode(item.getItemCode(), invoice.getInvoiceNumber());
-            if (!product.isBatch()) {
+            if (!lotService.isLotTracked(product)) {
                 continue;
             }
 
@@ -169,23 +183,34 @@ public class PurchaseBatchCreationService {
             }
 
             BigDecimal unitCost = resolveBaseUnitCost(product.getId(), item.getUom(), item.getUnitCost());
-            int lotIndex = nextLotIndex(product, generatedDate, nextLotByProduct);
-            for (int unitIndex = 1; unitIndex <= baseQty; unitIndex++) {
-                batches.add(newBatch(
-                        product,
-                        invoice.getInvoiceNumber(),
-                        DOC_TYPE_PURCHASE_INVOICE,
-                        invoice.getId(),
-                        item.getId(),
-                        warehouseId,
-                        zoneId,
-                        locatorId,
-                        binId,
-                        lotIndex,
-                        unitIndex,
-                        generatedDate,
-                        null,
-                        unitCost));
+            String context = "purchase invoice " + invoice.getInvoiceNumber() + " line " + item.getItemCode();
+            List<LotPlan> plans = resolvePlans(product, invoiceLotDrafts(item), baseQty, context);
+
+            // The unit index runs across the whole line, not per lot: batch_master is unique on
+            // (source document, source line, unit index), so restarting at 1 for a second lot on
+            // the same line would collide.
+            int unitIndex = 1;
+            for (LotPlan plan : plans) {
+                int lotIndex = plan.batchNumber() == null
+                        ? nextLotIndex(product, generatedDate, nextLotByProduct)
+                        : 0;
+                for (int i = 0; i < plan.quantity(); i++, unitIndex++) {
+                    batches.add(newBatch(
+                            product,
+                            invoice.getInvoiceNumber(),
+                            DOC_TYPE_PURCHASE_INVOICE,
+                            invoice.getId(),
+                            item.getId(),
+                            warehouseId,
+                            zoneId,
+                            locatorId,
+                            binId,
+                            lotIndex,
+                            unitIndex,
+                            generatedDate,
+                            plan,
+                            unitCost));
+                }
             }
         }
         return batches;
@@ -209,7 +234,7 @@ public class PurchaseBatchCreationService {
             if (product == null) {
                 throw new IllegalStateException("GRN item is missing a product for " + grn.getGrnNo());
             }
-            if (!product.isBatch()) {
+            if (!lotService.isLotTracked(product)) {
                 continue;
             }
 
@@ -227,23 +252,31 @@ public class PurchaseBatchCreationService {
                     product.getId(),
                     item.getUom(),
                     item.getNetCost() != null ? item.getNetCost() : item.getUnitCost());
-            int lotIndex = nextLotIndex(product, generatedDate, nextLotByProduct);
-            for (int unitIndex = 1; unitIndex <= baseQty; unitIndex++) {
-                batches.add(newBatch(
-                        product,
-                        grn.getGrnNo(),
-                        DOC_TYPE_GRN,
-                        grn.getId(),
-                        item.getId(),
-                        warehouseId,
-                        zoneId,
-                        locatorId,
-                        effectiveBinId,
-                        lotIndex,
-                        unitIndex,
-                        generatedDate,
-                        null,
-                        unitCost));
+            String context = "GRN " + grn.getGrnNo() + " line " + item.getProductCode();
+            List<LotPlan> plans = resolvePlans(product, grnLotDrafts(item), baseQty, context);
+
+            int unitIndex = 1;
+            for (LotPlan plan : plans) {
+                int lotIndex = plan.batchNumber() == null
+                        ? nextLotIndex(product, generatedDate, nextLotByProduct)
+                        : 0;
+                for (int i = 0; i < plan.quantity(); i++, unitIndex++) {
+                    batches.add(newBatch(
+                            product,
+                            grn.getGrnNo(),
+                            DOC_TYPE_GRN,
+                            grn.getId(),
+                            item.getId(),
+                            warehouseId,
+                            zoneId,
+                            locatorId,
+                            effectiveBinId,
+                            lotIndex,
+                            unitIndex,
+                            generatedDate,
+                            plan,
+                            unitCost));
+                }
             }
         }
         return batches;
@@ -262,7 +295,7 @@ public class PurchaseBatchCreationService {
             int lotIndex,
             int unitIndex,
             LocalDate generatedDate,
-            LocalDate expiryDate,
+            LotPlan plan,
             BigDecimal unitCost) {
         if (sourceDocumentId == null || sourceLineId == null) {
             throw new IllegalStateException("Batch source document and line IDs are required");
@@ -271,12 +304,18 @@ public class PurchaseBatchCreationService {
             throw new IllegalStateException("Batch source reference number is required");
         }
 
-        String batchNumber = BatchNumberGenerator.generate(
-                StockIdentifier.PU,
-                generatedDate,
-                lotIndex,
-                product.getCode(),
-                unitIndex);
+        // A user/supplier-supplied lot prefix is honoured as-is with the unit index appended, the
+        // same convention StockTakeService.addBatch uses for a typed batch number. Otherwise the
+        // standard PU-{ddMMyy}-L{NN}-{code}-{unit} identity is generated.
+        String customPrefix = plan != null ? plan.batchNumber() : null;
+        String batchNumber = customPrefix != null
+                ? customPrefix + "-" + unitIndex
+                : BatchNumberGenerator.generate(
+                        StockIdentifier.PU,
+                        generatedDate,
+                        lotIndex,
+                        product.getCode(),
+                        unitIndex);
         if (batchRepository.existsByBatchNumber(batchNumber)) {
             throw new IllegalStateException("Batch number already exists: " + batchNumber);
         }
@@ -306,7 +345,8 @@ public class PurchaseBatchCreationService {
         batch.setQuantity(1);
         batch.setGeneratedDate(generatedDate);
         batch.setEntryDate(generatedDate);
-        batch.setExpiryDate(expiryDate);
+        batch.setExpiryDate(plan != null ? plan.expiryDate() : null);
+        batch.setManufacturingDate(plan != null ? plan.manufacturingDate() : null);
         batch.setUnitCost(unitCost);
         batch.setStatus(BatchStatus.AVAILABLE);
         return batch;
@@ -366,11 +406,64 @@ public class PurchaseBatchCreationService {
             Product product = requireProductByCode(item.getItemCode(), invoice.getInvoiceNumber());
             int baseQty = resolveBaseQty(product.getId(), item.getUom(), item.getQty())
                     + resolveBaseQty(product.getId(), item.getFocUnit(), item.getFocQty());
-            if (product.isBatch() && baseQty > 0) {
+            if (lotService.isLotTracked(product) && baseQty > 0) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Turn the lots captured on a document line into the per-unit generation plan.
+     *
+     * No lots captured means the pre-existing behaviour: one auto-numbered lot covering the whole
+     * line with no expiry date. Posting-time validation is what refuses that for an
+     * expiry-controlled product; here we only guard the arithmetic, because this runs on draft
+     * saves too.
+     */
+    private List<LotPlan> resolvePlans(Product product, List<PurchaseBatchLotDraft> lots, int baseQty, String context) {
+        List<PurchaseBatchLotDraft> normalized = lotService.normalizeDrafts(lots);
+        if (normalized.isEmpty()) {
+            return List.of(new LotPlan(null, null, null, baseQty));
+        }
+
+        lotService.validateForCapture(product, normalized, baseQty, context);
+
+        List<LotPlan> plans = new ArrayList<>(normalized.size());
+        for (PurchaseBatchLotDraft lot : normalized) {
+            plans.add(new LotPlan(
+                    lot.getBatchNumber(),
+                    lot.getExpiryDate(),
+                    lot.getManufacturingDate(),
+                    lot.getQuantity() != null ? lot.getQuantity() : 0));
+        }
+        return plans;
+    }
+
+    private List<PurchaseBatchLotDraft> invoiceLotDrafts(PurchaseInvoiceItem item) {
+        if (item.getBatchLots() == null || item.getBatchLots().isEmpty()) {
+            return List.of();
+        }
+        List<PurchaseBatchLotDraft> drafts = new ArrayList<>(item.getBatchLots().size());
+        for (PurchaseInvoiceItemBatch lot : item.getBatchLots()) {
+            drafts.add(lotService.toDraft(
+                    lot.getId(), lot.getBatchNumber(), lot.getManufacturingDate(),
+                    lot.getExpiryDate(), lot.getQuantity()));
+        }
+        return drafts;
+    }
+
+    private List<PurchaseBatchLotDraft> grnLotDrafts(GrnItemEntity item) {
+        if (item.getBatchLots() == null || item.getBatchLots().isEmpty()) {
+            return List.of();
+        }
+        List<PurchaseBatchLotDraft> drafts = new ArrayList<>(item.getBatchLots().size());
+        for (GrnItemBatch lot : item.getBatchLots()) {
+            drafts.add(lotService.toDraft(
+                    lot.getId(), lot.getBatchNumber(), lot.getManufacturingDate(),
+                    lot.getExpiryDate(), lot.getQuantity()));
+        }
+        return drafts;
     }
 
     private boolean isAgainstGrn(PurchaseInvoice invoice) {

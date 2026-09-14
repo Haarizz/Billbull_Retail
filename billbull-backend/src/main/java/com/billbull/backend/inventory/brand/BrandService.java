@@ -40,12 +40,15 @@ public class BrandService {
 
     // ---------------------------
     // LIST (ONLY METHOD USED)
+    // Returns every non-deleted brand, ACTIVE AND INACTIVE — the Brands page renders the
+    // Active/Inactive badge and filters by status client-side, so hiding inactive rows here made
+    // the "Inactive" filter permanently empty.
     // ---------------------------
     public List<BrandResponse> list() {
         java.util.Collection<Long> scope = activeScope();
         List<Brand> rows = scope != null
-                ? repository.findActiveInBranchScope(scope)
-                : repository.findByActiveTrue();
+                ? repository.findLiveInBranchScope(scope)
+                : repository.findByDeletedFalse();
         return rows.stream().map(this::map).toList();
     }
 
@@ -56,8 +59,8 @@ public class BrandService {
 
         java.util.Collection<Long> scope = activeScope();
         boolean codeExists = scope != null
-                ? repository.existsActiveByCodeInBranchScope(req.code, scope)
-                : repository.existsByCodeAndActiveTrue(req.code);
+                ? repository.existsLiveByCodeInBranchScope(req.code, scope)
+                : repository.existsByCodeAndDeletedFalse(req.code);
         if (codeExists) {
             throw new RuntimeException(scope != null
                     ? "Brand code already exists in this branch"
@@ -65,8 +68,8 @@ public class BrandService {
         }
 
         boolean nameExists = scope != null
-                ? repository.existsActiveByNameInBranchScope(req.name, scope)
-                : repository.existsByNameAndActiveTrue(req.name);
+                ? repository.existsLiveByNameInBranchScope(req.name, scope)
+                : repository.existsByNameAndDeletedFalse(req.name);
         if (nameExists) {
             throw new RuntimeException(scope != null
                     ? "Brand name already exists in this branch"
@@ -82,7 +85,7 @@ public class BrandService {
         Brand revived = findSoftDeletedHolding(req.name, req.code, targetBranch);
         if (revived != null) {
             setFields(revived, req, logo);
-            revived.setActive(true);
+            revived.setDeleted(false);
             if (req.auto != null && req.auto) {
                 revived.setBarcode(generateBarcode(req.prefix, req.prefixLength, req.suffixLength, req.ruleGlobalUnique));
             }
@@ -141,7 +144,7 @@ public class BrandService {
             throw new IllegalStateException("Cannot delete brand. It is currently in use by " + count + " products.");
         }
 
-        brand.setActive(false);
+        brand.setDeleted(true);
         repository.save(brand);
     }
 
@@ -157,8 +160,8 @@ public class BrandService {
      */
     private Brand findSoftDeletedHolding(String name, String code, com.billbull.backend.settings.branch.Branch targetBranch) {
         Long targetBranchId = com.billbull.backend.inventory.scope.MasterDataBranchService.branchIdOf(targetBranch);
-        Brand byName = firstInTier(repository.findByActiveFalseAndNameIgnoreCase(name), targetBranchId);
-        Brand byCode = firstInTier(repository.findByActiveFalseAndCodeIgnoreCase(code), targetBranchId);
+        Brand byName = firstInTier(repository.findByDeletedTrueAndNameIgnoreCase(name), targetBranchId);
+        Brand byCode = firstInTier(repository.findByDeletedTrueAndCodeIgnoreCase(code), targetBranchId);
 
         if (byName != null && byCode != null && !byName.getId().equals(byCode.getId())) {
             throw new IllegalStateException("Brand code '" + code + "' still belongs to the deleted brand '"

@@ -15,6 +15,7 @@ import org.springframework.cache.annotation.Caching;
 
 import com.billbull.backend.inventory.batch.BatchMaster;
 import com.billbull.backend.inventory.batch.PurchaseBatchCreationService;
+import com.billbull.backend.purchase.batch.PurchaseBatchLotDraft;
 import com.billbull.backend.inventory.product.Product;
 import com.billbull.backend.inventory.product.ProductBarcodeRepository;
 import com.billbull.backend.inventory.product.ProductPackingRepository;
@@ -60,6 +61,7 @@ public class GrnService {
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final ProductPackingRepository packingRepository;
     private final PurchaseBatchCreationService purchaseBatchCreationService;
+    private final com.billbull.backend.purchase.batch.PurchaseBatchLotService purchaseBatchLotService;
     private final PurchaseSerialService purchaseSerialService;
     private final SerialMasterRepository serialMasterRepository;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
@@ -84,6 +86,7 @@ public class GrnService {
             com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             ProductPackingRepository packingRepository,
             PurchaseBatchCreationService purchaseBatchCreationService,
+            com.billbull.backend.purchase.batch.PurchaseBatchLotService purchaseBatchLotService,
             PurchaseSerialService purchaseSerialService,
             SerialMasterRepository serialMasterRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
@@ -107,6 +110,7 @@ public class GrnService {
         this.ownershipAccessService = ownershipAccessService;
         this.packingRepository = packingRepository;
         this.purchaseBatchCreationService = purchaseBatchCreationService;
+        this.purchaseBatchLotService = purchaseBatchLotService;
         this.purchaseSerialService = purchaseSerialService;
         this.serialMasterRepository = serialMasterRepository;
         this.notifPublisher = notifPublisher;
@@ -296,11 +300,14 @@ public class GrnService {
             item.setDiscountPercent(i.discountPercent() != null ? i.discountPercent() : BigDecimal.ZERO);
             item.setTaxAmount(i.taxAmt());
             item.setPurchaseTax(i.purchaseTax());
-            item.setBatchManaged(product.isBatch() && i.batch());
+            // Derived from product configuration, not the client flag: an expiry-controlled product
+            // is lot-tracked even when the caller did not tick "batch".
+            item.setBatchManaged(purchaseBatchLotService.isLotTracked(product));
             item.setFocQty(i.focQty());
             item.setFocUnit(i.focUnit());
             item.setRemarks(i.remarks());
             syncItemSerials(item, i.serials(), documentSerials, grn.getGrnNo());
+            syncItemBatchLots(item, product, i.batchLots(), grn.getGrnNo());
 
             subtotal = subtotal.add(i.total());
             grn.getItems().add(item);
@@ -477,6 +484,9 @@ public class GrnService {
             }
         }
 
+        // Strict batch/expiry validation before any identity is minted or stock is written.
+        validateBatchLotsForPosting(grn);
+
         purchaseBatchCreationService.createForGrnPost(grn, productBinMap);
 
         for (GrnItemEntity item : grn.getItems()) {
@@ -539,7 +549,7 @@ public class GrnService {
                             grn.getBranchCode()));
                 }
                 serialMasterRepository.saveAll(serialMasters);
-            } else if (item.getProduct().isBatch()) {
+            } else if (purchaseBatchLotService.isLotTracked(item.getProduct())) {
                 int baseQty = baseAccepted + baseFoc;
                 List<BatchMaster> batches = purchaseBatchCreationService.findForGrnLine(grn.getId(), item.getId());
                 if (batches.size() != baseQty) {
@@ -668,7 +678,11 @@ public class GrnService {
                         i.getPurchaseTax() != null
                                 ? i.getPurchaseTax()
                                 : purchaseTaxResolutionService.resolvePurchaseTaxRateForProduct(i.getProduct()),
-                        i.getProduct().getDetailedDesc())).toList(),
+                        i.getProduct().getDetailedDesc(),
+                        i.getProduct().isExpiryEnabled(),
+                        i.getProduct().isFefoEnabled(),
+                        i.getProduct().getMinExpiryDaysForSale(),
+                        toBatchLotDrafts(i))).toList(),
                 g.getBranchId(),
                 g.getBranchName(),
                 g.getBranchCode());
@@ -703,6 +717,77 @@ public class GrnService {
             entity.setExpiryDate(serial.getExpiryDate());
             item.getSerials().add(entity);
         }
+    }
+
+    /**
+     * Persist the batch/expiry lots captured on a GRN line. Save-time validation only: a GRN can
+     * be saved as a draft with lots still incomplete, and postGrn() runs the strict pass.
+     */
+    private void syncItemBatchLots(
+            GrnItemEntity item,
+            Product product,
+            List<PurchaseBatchLotDraft> requestLots,
+            String grnNo) {
+        item.getBatchLots().clear();
+
+        List<PurchaseBatchLotDraft> normalized = purchaseBatchLotService.normalizeDrafts(requestLots);
+        if (normalized.isEmpty()) {
+            return;
+        }
+
+        int baseQty = resolveBaseQty(product.getId(), item.getUom(), item.getAcceptedQty())
+                + resolveBaseQty(product.getId(), item.getFocUnit(), item.getFocQty());
+        purchaseBatchLotService.validateForCapture(
+                product, normalized, baseQty,
+                "GRN " + grnNo + " line " + item.getProductCode());
+
+        for (PurchaseBatchLotDraft lot : normalized) {
+            GrnItemBatch entity = new GrnItemBatch();
+            entity.setGrnItem(item);
+            entity.setBatchNumber(lot.getBatchNumber());
+            entity.setManufacturingDate(lot.getManufacturingDate());
+            entity.setExpiryDate(lot.getExpiryDate());
+            entity.setQuantity(lot.getQuantity());
+            item.getBatchLots().add(entity);
+        }
+    }
+
+    /**
+     * Post-time gate: every accepted line of a lot-tracked product must carry complete,
+     * non-expired lot information before stock is posted.
+     */
+    private void validateBatchLotsForPosting(GrnEntity grn) {
+        LocalDate receiptDate = grn.getGrnDate() != null ? grn.getGrnDate() : LocalDate.now();
+        for (GrnItemEntity item : grn.getItems()) {
+            Product product = item.getProduct();
+            if (product == null || product.isSerial() || !purchaseBatchLotService.isLotTracked(product)) {
+                continue;
+            }
+            int accepted = item.getAcceptedQty() != null ? item.getAcceptedQty() : 0;
+            int foc = item.getFocQty() != null ? item.getFocQty() : 0;
+            int baseQty = resolveBaseQty(product.getId(), item.getUom(), accepted)
+                    + resolveBaseQty(product.getId(), item.getFocUnit(), foc);
+            purchaseBatchLotService.validateForPosting(
+                    product,
+                    toBatchLotDrafts(item),
+                    baseQty,
+                    receiptDate,
+                    "GRN " + grn.getGrnNo() + " line " + item.getProductCode());
+        }
+    }
+
+    private List<PurchaseBatchLotDraft> toBatchLotDrafts(GrnItemEntity item) {
+        if (item == null || item.getBatchLots() == null || item.getBatchLots().isEmpty()) {
+            return List.of();
+        }
+        return item.getBatchLots().stream()
+                .sorted(java.util.Comparator.comparing(
+                        GrnItemBatch::getId,
+                        java.util.Comparator.nullsLast(Long::compareTo)))
+                .map(lot -> purchaseBatchLotService.toDraft(
+                        lot.getId(), lot.getBatchNumber(), lot.getManufacturingDate(),
+                        lot.getExpiryDate(), lot.getQuantity()))
+                .toList();
     }
 
     private List<PurchaseSerialDraft> toSerialDrafts(List<GrnItemSerial> serials) {

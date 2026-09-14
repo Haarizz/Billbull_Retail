@@ -85,7 +85,6 @@ public class SalaryPaymentController {
             HttpServletRequest httpRequest) {
         modulePermissionService.requireCanCreate(MODULE);
         auditLogService.logAllowedAccess("/api/payroll/pay/bulk", "POST", httpRequest);
-        service.processBulkPayment(request);
-        return ResponseEntity.ok("Bulk payment processed successfully");
+        return ResponseEntity.ok(service.processBulkPayment(request));
     }
 }

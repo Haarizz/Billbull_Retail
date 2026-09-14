@@ -82,6 +82,7 @@ import {
   type TopSellingItem,
   type SlowMovingItem,
   type TodayBill,
+  type PosTodaySnapshot,
   type PurchaseAnalytics,
   type AccountingSnapshot,
   type Notification,
@@ -198,6 +199,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
   const [topSellingItems, setTopSellingItems] = useState<TopSellingItem[]>([]);
   const [slowMovingItems, setSlowMovingItems] = useState<SlowMovingItem[]>([]);
   const [todayBills, setTodayBills] = useState<TodayBill[]>([]);
+  const [posSnapshot, setPosSnapshot] = useState<PosTodaySnapshot | null>(null);
   const [purchaseAnalytics, setPurchaseAnalytics] =
     useState<PurchaseAnalytics | null>(null);
   const [accountingSnapshot, setAccountingSnapshot] =
@@ -318,6 +320,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
         topItemsRes,
         slowItemsRes,
         billsRes,
+        posTodayRes,
         purchaseRes,
         accountingRes,
         notificationsRes,
@@ -332,6 +335,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
         billbullDashboardService.getTopSellingItems(dateFilter, branchFilter, appliedAdvancedFilters),
         billbullDashboardService.getSlowMovingItems(branchFilter, appliedAdvancedFilters),
         billbullDashboardService.getTodayBills(branchFilter, appliedAdvancedFilters),
+        billbullDashboardService.getPosToday(branchFilter),
         billbullDashboardService.getPurchaseAnalytics(dateFilter, branchFilter, appliedAdvancedFilters),
         billbullDashboardService.getAccountingSnapshot(dateFilter, branchFilter, appliedAdvancedFilters),
         billbullDashboardService.getNotifications(),
@@ -352,6 +356,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
       if (slowItemsRes.success)
         setSlowMovingItems(slowItemsRes.data || []);
       if (billsRes.success) setTodayBills(billsRes.data || []);
+      if (posTodayRes.success) setPosSnapshot(posTodayRes.data || null);
       if (purchaseRes.success)
         setPurchaseAnalytics(purchaseRes.data || null);
       if (accountingRes.success)
@@ -649,8 +654,21 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
     },
   ];
 
-  // Live POS snapshot for today, derived from the bills already loaded
+  // Live POS snapshot for today. The backend endpoint is authoritative — it counts only
+  // POS-originated invoices booked on the business date. todayBills is a last-10-invoices
+  // list of any date/channel, so it is only a fallback for when that call fails.
   const posToday = React.useMemo(() => {
+    if (posSnapshot) {
+      const lastBillAt = safeDate(posSnapshot.lastBillAt);
+      return {
+        net: posSnapshot.netSales,
+        billCount: posSnapshot.billCount,
+        refundCount: posSnapshot.returnCount,
+        avgBill: posSnapshot.avgBill,
+        lastBillLabel: lastBillAt ? format(lastBillAt, "HH:mm") : "—",
+      };
+    }
+
     const bills = todayBills ?? [];
     const sales = bills.filter((b) => b.status !== "Refund");
     const refunds = bills.filter((b) => b.status === "Refund");
@@ -660,6 +678,8 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
       0
     );
     const lastBillAt = bills.reduce<Date | null>((latest, b) => {
+      // A date-only value has no real time on it — it would render as a bogus "00:00".
+      if (typeof b.billTime === "string" && !b.billTime.includes("T")) return latest;
       const d = safeDate(b.billTime);
       if (!d) return latest;
       return !latest || d > latest ? d : latest;
@@ -671,7 +691,7 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
       avgBill: sales.length > 0 ? net / sales.length : 0,
       lastBillLabel: lastBillAt ? format(lastBillAt, "HH:mm") : "—",
     };
-  }, [todayBills]);
+  }, [posSnapshot, todayBills]);
 
   const unreadNotifications = notifications.filter((n) => !n.isRead).length;
   const selectedPeriodLabel: Record<DateFilter, string> = {
@@ -1933,10 +1953,10 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <CardTitle className="text-sm">
-                        Today&apos;s Bills
+                        Recent Bills
                       </CardTitle>
                       <CardDescription className="text-xs">
-                        Live list of today&apos;s invoices and receipts.
+                        The latest invoices and receipts across all branches.
                       </CardDescription>
                     </div>
                     <Button

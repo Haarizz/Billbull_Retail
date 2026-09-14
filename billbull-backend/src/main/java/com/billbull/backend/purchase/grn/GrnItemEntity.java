@@ -42,6 +42,10 @@ public class GrnItemEntity extends BaseEntity {
 	@OneToMany(mappedBy = "grnItem", cascade = CascadeType.ALL, orphanRemoval = true)
 	private List<GrnItemSerial> serials = new ArrayList<>();
 
+	/** Batch/expiry lots captured at receiving; consumed when the GRN posts stock. */
+	@OneToMany(mappedBy = "grnItem", cascade = CascadeType.ALL, orphanRemoval = true)
+	private List<GrnItemBatch> batchLots = new ArrayList<>();
+
 	@ManyToOne(fetch = FetchType.LAZY)
 	@JoinColumn(name = "product_id", nullable = false)
 	private Product product;
@@ -212,5 +216,13 @@ public class GrnItemEntity extends BaseEntity {
 
 	public void setSerials(List<GrnItemSerial> serials) {
 		this.serials = serials;
+	}
+
+	public List<GrnItemBatch> getBatchLots() {
+		return batchLots;
+	}
+
+	public void setBatchLots(List<GrnItemBatch> batchLots) {
+		this.batchLots = batchLots;
 	}
 }

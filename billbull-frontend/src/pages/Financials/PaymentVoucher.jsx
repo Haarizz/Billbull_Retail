@@ -396,31 +396,49 @@ const PaymentVoucher = () => {
     // ------------------------------------------------------------------
     // Export
     // ------------------------------------------------------------------
-    const handleExportExcel = () => {
-        exportToExcel(
-            filtered.map((r) => ({
-                ...r,
-                amount: r.amount.toLocaleString(),
-                date: r.date ? formatDisplayDate(r.date) : ''
-            })),
-            TABLE_COLUMNS,
-            'Payment_Vouchers',
-            { companyProfile: company, branch: activeBranch?.name || '' }
-        );
+    // Both exporters are async and reject on failure. Awaiting them inside a try/catch is
+    // what turns a failed export into a visible message instead of a button that does nothing.
+    const buildExportRows = () => filtered.map((r) => ({
+        ...r,
+        amount: r.amount.toLocaleString(),
+        date: r.date ? formatDisplayDate(r.date) : ''
+    }));
+
+    const handleExportExcel = async () => {
+        if (filtered.length === 0) {
+            toast.error('Nothing to export — no vouchers match the current filters.');
+            return;
+        }
+        try {
+            await exportToExcel(
+                buildExportRows(),
+                TABLE_COLUMNS,
+                'Payment_Vouchers',
+                { companyProfile: company, branch: activeBranch?.name || '' }
+            );
+        } catch (err) {
+            console.error('Excel export failed', err);
+            toast.error(`Excel export failed: ${err?.message || 'unknown error'}`);
+        }
     };
 
-    const handleExportPdf = () => {
-        exportToPDF(
-            filtered.map((r) => ({
-                ...r,
-                amount: r.amount.toLocaleString(),
-                date: r.date ? formatDisplayDate(r.date) : ''
-            })),
-            TABLE_COLUMNS,
-            'Payment Vouchers',
-            'Payment_Vouchers',
-            { companyProfile: company, branch: activeBranch?.name || '' }
-        );
+    const handleExportPdf = async () => {
+        if (filtered.length === 0) {
+            toast.error('Nothing to export — no vouchers match the current filters.');
+            return;
+        }
+        try {
+            await exportToPDF(
+                buildExportRows(),
+                TABLE_COLUMNS,
+                'Payment Vouchers',
+                'Payment_Vouchers',
+                { companyProfile: company, branch: activeBranch?.name || '' }
+            );
+        } catch (err) {
+            console.error('PDF export failed', err);
+            toast.error(`PDF export failed: ${err?.message || 'unknown error'}`);
+        }
     };
 
     // ------------------------------------------------------------------

@@ -284,7 +284,16 @@ const Ledger = () => {
     const walk = (nodes) => {
       (nodes || []).forEach((node) => {
         if (node?.code) {
-          map.set(node.code, { balanceAmount: node.balanceAmount, balanceType: node.balanceType });
+          // isGroup is carried too: rollupCoaTreeBalances promotes any node with children to a
+          // group, while the flat /api/ledger/accounts list only has the stored is_group flag.
+          // Where the two disagree (a parent account whose flag was never set), reading the flag
+          // made the KPI treat a rolled-up parent as a leaf and add the whole subtree on top of
+          // its own children.
+          map.set(node.code, {
+            balanceAmount: node.balanceAmount,
+            balanceType: node.balanceType,
+            isGroup: Boolean(node.isGroup)
+          });
         }
         walk(node.children);
       });
@@ -315,10 +324,38 @@ const Ledger = () => {
     branch: acc.branch,
     cc: acc.costCenterCode,
     balance: formatBalance(acc.balanceAmount, acc.balanceType),
+    // The account list keys its Dr/Cr arrow off `balType`; without it every row rendered the
+    // credit arrow, so a Dr account read as Cr in the one column that shows the side.
+    balType: acc.balanceType || 'Dr',
     balColor: acc.balanceType === 'Dr' ? 'text-emerald-600' : 'text-red-600',
     status: acc.status || 'active',
     description: acc.description
   });
+
+  // The one balance source for every view on this page. The COA tree is the only feed that
+  // reads posted ledger entries scoped to the active branch, and rollupCoaTreeBalances folds a
+  // group's descendants into the group row — so the account list and the KPI cards read it too
+  // rather than Account.balanceAmount. Reading that field here is what made the three views
+  // disagree about Income: it is company-wide (so it ignored the branch selector) and it is
+  // zero on every group account (so 4000 "Income" listed 0.00 while the tree showed the whole
+  // Income subtree rolled up). Accounts the tree has no node for keep their own field.
+  const accountRows = useMemo(() => accounts.map((acc) => {
+    const scoped = branchAccountBalanceByCode.get(acc.code);
+    if (!scoped) return acc;
+    const balanceType = scoped.balanceType || acc.balanceType;
+    return {
+      ...acc,
+      isGroup: Boolean(acc.isGroup) || scoped.isGroup,
+      balanceAmount: scoped.balanceAmount,
+      balanceType,
+      balance: formatBalance(scoped.balanceAmount, balanceType),
+      balType: balanceType || 'Dr',
+      balColor: balanceType === 'Dr' ? 'text-emerald-600' : 'text-red-600'
+    };
+    // formatBalance is redefined every render and only closes over `currency`, which is
+    // constant for the page — listing it here would defeat the memo for no gain.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [accounts, branchAccountBalanceByCode]);
 
   const mapCostCenterToUI = (cc) => ({
     ...cc,
@@ -682,10 +719,18 @@ const Ledger = () => {
   // --- SAVE HANDLERS ---
 
   const handleSaveCostCenter = async () => {
-    if (!ccName) return alert("Cost Center Name is required");
+    if (!ccName) return toast.error("Cost Center Name is required");
 
-    // Auto-generate code if empty e.g. CC-005
-    const codeToCheck = ccCode || `CC-${String(costCenters.length + 1).padStart(3, '0')}`;
+    // Blank code => the backend allocates it atomically on save (see LedgerService.saveCostCenter).
+    // This used to be `CC-${costCenters.length + 1}`, but `costCenters` is the branch-scoped list:
+    // a user who could see no cost centers always proposed CC-001, which collided with the seeded
+    // one and failed the save on the unique index.
+    const codeToCheck = (ccCode || '').trim();
+
+    if (codeToCheck) {
+      const isDuplicateCode = costCenters.some(cc => cc.code === codeToCheck && (!ccId || cc.id !== ccId));
+      if (isDuplicateCode) return toast.error(`Cost Center Code '${codeToCheck}' already exists.`);
+    }
 
     const newCCData = {
       id: ccId,
@@ -704,11 +749,23 @@ const Ledger = () => {
       } else {
         await api.createCostCenter(newCCData);
       }
-      await fetchData();
+
+      // Close and confirm before reloading: the save is already committed at this point, so a
+      // slow or failing list refresh must never be reported as a failed save.
       setIsCostCenterModalOpen(false);
+      toast.success(ccId ? "Cost Center updated successfully" : "Cost Center created successfully");
+      await fetchData();
     } catch (err) {
       console.error("Error saving Cost Center", err);
-      alert("Failed to save Cost Center");
+      // Surface the backend reason (e.g. 409 duplicate code) instead of a blanket failure.
+      const reason = err?.response?.data?.message || err?.response?.data?.error;
+      if (reason) {
+        toast.error(`Failed to save Cost Center: ${reason}`);
+      } else if (!err?.response) {
+        toast.error("Couldn't confirm the save — the server did not respond. Refresh the Ledger to check whether the cost center was created.");
+      } else {
+        toast.error("Failed to save Cost Center");
+      }
     }
   };
 
@@ -756,16 +813,21 @@ const Ledger = () => {
     setIsSavingAccount(true);
 
     try {
-      if (accId) {
-        await api.updateAccount(accountData);
-      } else {
-        await api.createAccount(accountData);
-      }
+      const saved = accId
+        ? await api.updateAccount(accountData)
+        : await api.createAccount(accountData);
 
       // Close and confirm before reloading: the save is already committed at this point,
       // so a slow or failing list refresh must never be reported as a failed save.
       setIsAccountModalOpen(false);
-      toast.success(accId ? "Account updated successfully" : "Account created successfully");
+      if (saved?.openingBalanceWarning) {
+        // The account exists but its opening balance never reached the ledger, so it will
+        // read 0.00 everywhere. Saying "created successfully" here is what made this look
+        // like the balance had been silently dropped.
+        toast(saved.openingBalanceWarning, { icon: '⚠️', duration: 10000 });
+      } else {
+        toast.success(accId ? "Account updated successfully" : "Account created successfully");
+      }
       await fetchData();
     } catch (err) {
       console.error("Error saving Account", err);
@@ -965,7 +1027,7 @@ const Ledger = () => {
   };
 
   const getCostCenterMetrics = (ccCode) => {
-    const linkedAccounts = accounts.filter(a => a.cc === ccCode && a.status !== 'archived');
+    const linkedAccounts = accountRows.filter(a => a.cc === ccCode && a.status !== 'archived');
     const spent = linkedAccounts
       .filter(a => a.group === 'Expenses')
       .reduce((total, acc) => total + parseBalance(acc.balance).amount, 0);
@@ -1089,23 +1151,47 @@ const Ledger = () => {
       return code.includes(q) || name.includes(q);
     };
 
-    const walk = (list) => {
-      const out = [];
-      (Array.isArray(list) ? list : []).forEach((node) => {
-        const children = walk(node?.children || []);
-        if (matches(node) || children.length > 0) {
-          out.push({ ...node, children });
-        }
-      });
-      return out;
+    const keep = (node) => {
+      // A node that matches keeps its whole subtree. Trimming it to just the matching
+      // descendants left a group showing a rolled-up balance that nothing beneath it added
+      // up to — searching "income" kept 4000 but dropped 4100 Sales, whose subtree is most
+      // of what 4000's total is made of.
+      if (matches(node)) return { ...node, children: node?.children || [] };
+      const kept = (Array.isArray(node?.children) ? node.children : []).map(keep).filter(Boolean);
+      return kept.length > 0 ? { ...node, children: kept } : null;
     };
 
-    return walk(nodes);
+    return (Array.isArray(nodes) ? nodes : []).map(keep).filter(Boolean);
   };
+
+  /** Every code in `nodes` that has children — used to force a searched tree fully open. */
+  const collectExpandableCodes = (nodes) => {
+    const codes = new Set();
+    const walk = (list) => (Array.isArray(list) ? list : []).forEach((node) => {
+      if (node?.code && node?.children?.length > 0) {
+        codes.add(node.code);
+        walk(node.children);
+      }
+    });
+    walk(nodes);
+    return codes;
+  };
+
+  const visibleCoaTree = filterCoaTree(accountTree, coaTreeSearch);
+
+  // The tree only renders children of expanded nodes, so filtering a match into the tree is
+  // not enough to show it: searching "incom" matched 4004 Delivery Income but left it invisible
+  // under the collapsed 4100 Sales. While a search is active every ancestor is forced open.
+  // Kept separate from `expandedNodes` so clearing the search restores what the user had open.
+  const coaSearchExpandedCodes = coaTreeSearch.trim()
+    ? collectExpandableCodes(visibleCoaTree)
+    : null;
 
   const renderCOATreeNode = (node, depth = 0, motion = null) => {
     const hasChildren = node.children?.length > 0;
-    const isExpanded = expandedNodes.has(node.code);
+    const isExpanded = coaSearchExpandedCodes
+      ? coaSearchExpandedCodes.has(node.code)
+      : expandedNodes.has(node.code);
     const isClosing = closingNodes.has(node.code);
     const indent = depth * 24;
     const sortedChildren = hasChildren
@@ -1204,12 +1290,15 @@ const Ledger = () => {
            actType === target || actType === singular;
   };
 
-  const filteredAccounts = accounts.filter(acc => {
+  const filteredAccounts = accountRows.filter(acc => {
     const matchesSearch = searchQuery === '' ||
       acc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       acc.code.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesGroup = filterGroup === '' || acc.group === filterGroup;
+    // Same matcher the KPI cards use. Comparing acc.group verbatim dropped any account that
+    // carries its type on accountType, or stores the group singular/lower-cased, from the
+    // filtered list while the card above still counted it — so the two could never agree.
+    const matchesGroup = filterGroup === '' || matchesAccountGroup(acc, filterGroup);
     const matchesBranch = filterBranch === '' || acc.branch === filterBranch;
     const matchesStatus = showArchived ? true : acc.status !== 'archived';
 
@@ -1235,7 +1324,6 @@ const Ledger = () => {
   const pagedAccounts = filteredAccounts.slice(accountsPage * LIST_PAGE_SIZE, (accountsPage + 1) * LIST_PAGE_SIZE);
   const pagedGl = filteredGlData.slice(glPage * LIST_PAGE_SIZE, (glPage + 1) * LIST_PAGE_SIZE);
 
-  const visibleCoaTree = filterCoaTree(accountTree, coaTreeSearch);
   const coaTreeAnimationCss = `
     @keyframes coaTreeRowEnter {
       from {
@@ -1392,27 +1480,32 @@ const glAccountOptions = accounts
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             {['Assets', 'Liabilities', 'Income', 'Expenses', 'Equity'].map((type, idx) => {
               // Group nodes roll up their children's balances, so they are excluded
-              // from the monetary total to avoid double counting.
-              const typeAccounts = accounts.filter(a =>
-                a.status !== 'archived' && !a.isGroup && matchesAccountGroup(a, type)
+              // from the monetary total to avoid double counting. `isGroup` here is the
+              // tree-resolved flag (see accountRows) — a parent whose stored is_group flag is
+              // false still rolls up in the tree, and reading the stored flag doubled the card.
+              // Archived accounts are counted. Archiving freezes an account (recordTransaction
+              // refuses to post to one) but does not zero its ledger balance, and neither the
+              // Trial Balance nor the P&L filters on status — so dropping them here left this
+              // card unable to tie to either report, or to the tree rollup below it.
+              const typeAccounts = accountRows.filter(a =>
+                !a.isGroup && matchesAccountGroup(a, type)
               );
 
-              // The "N active" caption counts what the account list shows for this
-              // group — group nodes included — so the two views cannot disagree.
-              const activeCount = accounts.filter(a =>
+              // The "N active" caption counts what the account list shows for this group when
+              // filtered to it — group nodes included, archived excluded by the status test —
+              // using that list's own group matcher, so the two views cannot disagree.
+              const activeCount = accountRows.filter(a =>
                 a.status === 'active' && matchesAccountGroup(a, type)
               ).length;
 
               let total = 0;
               typeAccounts.forEach(acc => {
-                // Prefer the branch-scoped balance from the COA tree; fall back to the
-                // account's own field only if the tree hasn't resolved this code (e.g.
-                // it's a group node not represented as a tree leaf).
-                const branchBalance = branchAccountBalanceByCode.get(acc.code);
-                const amount = parseFloat((branchBalance ? branchBalance.balanceAmount : acc.balanceAmount) || 0);
+                // accountRows already carries the branch-scoped ledger balance, the same
+                // figure the list and the tree show for this code.
+                const amount = parseFloat(acc.balanceAmount || 0);
                 if (amount === 0) return;
 
-                const balType = ((branchBalance ? branchBalance.balanceType : acc.balanceType) || acc.normalBalance || 'Dr').trim();
+                const balType = (acc.balanceType || acc.normalBalance || 'Dr').trim();
                 const isDebit = balType.toLowerCase().startsWith('dr');
                 const isCrNormal = type === 'Liabilities' || type === 'Income' || type === 'Equity';
                 

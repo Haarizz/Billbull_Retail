@@ -89,12 +89,15 @@ public class PosDeliverySettlementService {
      * write all happen inside this one transaction — nothing here trusts a value
      * computed before the lock was acquired.
      *
-     * @param fallbackBusinessDate the business date to stamp on the payment when the
-     *      invoice itself has none. Resolved by the caller from the session alone (no
-     *      invoice dependency), so it can safely be computed before the lock is taken.
+     * @param settlementBusinessDate the SETTLING session's business/trading date — the
+     *      date the cash is actually being collected on. It is authoritative for the
+     *      payment date whenever it is present; the invoice's own date is used only as a
+     *      fallback when no settling business date could be resolved at all. Resolved by
+     *      the caller from the session alone (no invoice dependency), so it can safely be
+     *      computed before the lock is taken.
      */
     @Transactional
-    public SalesInvoice settle(Long id, PosCheckoutController.DeliverySettleRequest req, LocalDate fallbackBusinessDate) {
+    public SalesInvoice settle(Long id, PosCheckoutController.DeliverySettleRequest req, LocalDate settlementBusinessDate) {
         // Pessimistic-write lock on the invoice row, held for the remainder of THIS
         // transaction — released only at commit/rollback — so two concurrent settlement
         // requests against the same delivery cannot both read the same balance-due and
@@ -167,7 +170,13 @@ public class PosDeliverySettlementService {
         // would overwrite the invoice's displayed mode with just its own leg.
         String combinedMode = plan.getCombinedPaymentMode();
         String splitGroupId = plan.getLegCount() > 1 ? UUID.randomUUID().toString() : null;
-        LocalDate paymentDate = invoice.getInvoiceDate() != null ? invoice.getInvoiceDate() : fallbackBusinessDate;
+        // The collection date is the SETTLING session's business date, not the invoice's.
+        // A delivery raised on D1 and collected on D2 is a D2 receipt: dating it D1 hides
+        // today's cash from every date-keyed cash/receipt report and back-dates the
+        // ReceiptVoucher (and therefore its GL entry) into what may be a closed period.
+        // Same bug class as the collection-session fix below — the date half of it.
+        // The invoice's own invoiceDate is never modified here.
+        LocalDate paymentDate = settlementBusinessDate != null ? settlementBusinessDate : invoice.getInvoiceDate();
         for (ResolvedPaymentAllocation allocation : plan.getAllocations()) {
             if (allocation.getAmount() <= 0.001) continue;
             if (!allocation.isReceipt()) continue; // credit stays on the customer's ledger

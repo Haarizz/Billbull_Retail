@@ -53,6 +53,14 @@ public class Account {
 
     private String status; // "active", "archived", "inactive"
 
+    /**
+     * Response-only: set when an account was created but its opening-balance journal could not
+     * be posted, so the caller can say so instead of reporting an unqualified success and then
+     * showing a 0.00 balance. Not persisted, and never read from the request body.
+     */
+    @Transient
+    private String openingBalanceWarning;
+
     public Account() {
         // ID generation handled in Service if null
     }
@@ -253,4 +261,9 @@ public class Account {
 
     public String getCashFlowSection() { return cashFlowSection; }
     public void setCashFlowSection(String cashFlowSection) { this.cashFlowSection = cashFlowSection; }
+
+    public String getOpeningBalanceWarning() { return openingBalanceWarning; }
+    public void setOpeningBalanceWarning(String openingBalanceWarning) {
+        this.openingBalanceWarning = openingBalanceWarning;
+    }
 }

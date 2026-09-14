@@ -1551,6 +1551,31 @@ public class PosSessionService {
 
     private static String safe(String v) { return v != null ? v.replace("\"", "\\\"") : ""; }
 
+    /**
+     * The sessions a cash movement may currently be added to — what the back-office
+     * "Cash Drop / Outs &gt; Add New" session picker offers.
+     *
+     * <p>Deliberately built by asking the very guards {@link #addCashMovement} enforces
+     * (OPEN status, {@link BusinessDayContinuationGate}, {@link PosSessionClosureWorkflowGate}),
+     * so the form cannot offer a session the create call would then reject. Those guards remain
+     * the control — this list is the courtesy that stops the operator discovering the problem
+     * only after pressing Create.
+     *
+     * @param branchId restrict to one branch, or null for every branch the caller can see
+     *                 (the "All Branches" selection).
+     */
+    @Transactional(readOnly = true)
+    public List<PosCashMovementSessionOption> listCashMovementEligibleSessions(Long branchId) {
+        List<PosSession> open = branchId != null
+                ? repo.findByBranchIdAndStatusOrderByOpenedAtDesc(branchId, PosSessionStatus.OPEN)
+                : repo.findByStatusOrderByOpenedAtDesc(PosSessionStatus.OPEN);
+        return open.stream()
+                .filter(s -> businessDayContinuationGate.evaluate(s).isEmpty())
+                .filter(s -> !closureWorkflowGate.isInClosureWorkflow(s))
+                .map(PosCashMovementSessionOption::from)
+                .toList();
+    }
+
     @Transactional
     public PosCashMovement addCashMovement(Long sessionId, String movementType, BigDecimal amount, String description) {
         return addCashMovement(sessionId, movementType, amount, description, null);

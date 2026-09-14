@@ -55,6 +55,18 @@ const StatusBadge = ({ status }) => {
     );
 };
 
+// A voucher line debits the account it points at, so only a real (non-group) Expense
+// ledger belongs in the line picker — an Asset/Liability/Income pick books the payment
+// on the wrong side of the P&L, and group accounts ("5000 Expenses") are headers that
+// cannot receive transactions at all. Accounts carry their group on `accountGroup` and
+// their type on `accountType`; either may be singular/plural, so both are matched.
+const isExpenseLedger = (account) => {
+    if (!account || account.isGroup === true) return false;
+    const group = String(account.accountGroup || account.group || '').toLowerCase().trim();
+    const type  = String(account.accountType || '').toLowerCase().trim();
+    return group === 'expenses' || group === 'expense' || type === 'expense' || type === 'expenses';
+};
+
 const emptyLine = () => ({ _backendId: null, glAccountId: '', glAccountName: '', description: '', category: '', costCenter: '', amount: '', taxRate: 0 });
 const emptyForm = () => ({
     date: new Date().toISOString().split('T')[0],
@@ -312,6 +324,9 @@ export default function Expenses() {
         if (savingRef.current) return;
         if (!form.vendor) { toast.error('Vendor / Payee is required'); return; }
         if (!form.date)   { toast.error('Date is required'); return; }
+        // The field is marked required and every line posts against a branch, so stop here
+        // rather than sending one request per line for the backend to reject.
+        if (!form.branchId) { toast.error('Branch / Location is required'); return; }
         const validLines = form.lines.filter(l => l.glAccountId || parseFloat(l.amount));
         if (!validLines.length) { toast.error('Add at least one expense line'); return; }
 
@@ -1000,13 +1015,20 @@ function ExpenseLineRow({ idx, line, glAccounts, costCenters, onChange, onRemove
         return () => document.removeEventListener('mousedown', h);
     }, []);
 
+    // Only expense ledgers are offerable. The account already saved on this line stays in
+    // the list whatever its group, so an older voucher posted to a non-expense account still
+    // shows its selection instead of silently reading as empty.
+    const selectableAccts = useMemo(() => glAccounts.filter(a =>
+        isExpenseLedger(a) || (line.glAccountId && String(a.id) === String(line.glAccountId))
+    ), [glAccounts, line.glAccountId]);
+
     const filteredAccts = useMemo(() => {
         const q = acctQ.toLowerCase();
-        if (!q) return glAccounts.slice(0, 60);
-        return glAccounts.filter(a =>
+        if (!q) return selectableAccts.slice(0, 60);
+        return selectableAccts.filter(a =>
             (a.name || '').toLowerCase().includes(q) || (a.code || '').toLowerCase().includes(q)
         ).slice(0, 60);
-    }, [glAccounts, acctQ]);
+    }, [selectableAccts, acctQ]);
 
     const selectedAcct = glAccounts.find(a => String(a.id) === String(line.glAccountId));
     const displayAcct  = acctOpen ? acctQ : (selectedAcct ? `${selectedAcct.code ? selectedAcct.code + ' - ' : ''}${selectedAcct.name}` : line.glAccountName || '');

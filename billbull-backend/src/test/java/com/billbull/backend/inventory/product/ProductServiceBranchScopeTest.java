@@ -57,6 +57,7 @@ class ProductServiceBranchScopeTest {
     @Mock private ZoneRepository zoneRepo;
     @Mock private LocatorRepository locatorRepo;
     @Mock private BinRepository binRepo;
+    @Mock private ProductPriceChangeRepository priceChangeRepo;
     @Mock private ProductImageStorageService imageStorage;
     @Mock private StockMovementRepository stockMovementRepo;
     @Mock private BranchRepository branchRepo;
@@ -69,7 +70,7 @@ class ProductServiceBranchScopeTest {
     @Mock private com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService;
 
     private ProductService service() {
-        return new ProductService(productRepo, pricingRepo, branchPricingRepo, taxRepo,
+        return new ProductService(productRepo, pricingRepo, branchPricingRepo, priceChangeRepo, taxRepo,
                 inventoryRepo, mediaRepo, packingRepo, barcodeRepo, brandRepo, departmentRepo,
                 subDepartmentRepo, unitRepo, warehouseRepo, zoneRepo, locatorRepo, binRepo,
                 imageStorage, stockMovementRepo, branchRepo, auditLogService,

@@ -48,6 +48,28 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
 
     List<PosSession> findByBranchIdAndStatusOrderByOpenedAtDesc(Long branchId, PosSessionStatus status);
 
+    // All-branch variant — the Cash Drop / Outs "Add New" session picker uses it when no
+    // branch is selected, so the form can only ever offer sessions a movement may be added to.
+    List<PosSession> findByStatusOrderByOpenedAtDesc(PosSessionStatus status);
+
+    /**
+     * Closed-session typeahead for POS Administration &gt; Session Denomination Corrections.
+     * A blank {@code q} returns the most recently closed sessions, so the picker is useful before
+     * the operator types anything; otherwise it matches the session id, terminal or closing
+     * cashier. Only CLOSED sessions are ever returned — an open drawer's count is not final and
+     * cannot be corrected.
+     */
+    // A blank q needs no special case: every branch degrades to LIKE '%%', which matches every
+    // row. Written that way deliberately — comparing an untyped bind parameter to '' or NULL is
+    // what makes Postgres refuse the statement with "could not determine data type of parameter".
+    @Query("SELECT s FROM PosSession s WHERE s.status = com.billbull.backend.pos.session.PosSessionStatus.CLOSED "
+            + "AND (CAST(s.id AS string) LIKE CONCAT('%', :q, '%') "
+            + "     OR LOWER(COALESCE(s.terminalId, '')) LIKE LOWER(CONCAT('%', :q, '%')) "
+            + "     OR LOWER(COALESCE(s.counterName, '')) LIKE LOWER(CONCAT('%', :q, '%')) "
+            + "     OR LOWER(COALESCE(s.closedByDisplayName, s.closedBy, '')) LIKE LOWER(CONCAT('%', :q, '%'))) "
+            + "ORDER BY s.id DESC")
+    List<PosSession> searchClosedSessions(@Param("q") String q, org.springframework.data.domain.Pageable pageable);
+
     List<PosSession> findByBranchIdAndSessionDateOrderByOpenedAtDesc(Long branchId, LocalDate sessionDate);
 
     // Day Close domain ONLY (resolveSessionRange/closeDay session grouping) — keyed on
