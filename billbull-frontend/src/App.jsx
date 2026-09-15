@@ -27,6 +27,7 @@ import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
 import AedSymbolRenderer from "./components/AedSymbolRenderer";
 import AppAlertBridge from "./components/AppAlertBridge";
+import TrialExpiryModal from "./components/common/TrialExpiryModal";
 import { logClientError, logClientEvent } from "./utils/clientLogger";
 import { clientConfig } from "./config/clientConfig";
 // import FollowUpModal from "./pages/Customer/FollowUpModal";
@@ -195,6 +196,7 @@ function App() {
                 <PermissionProvider>
                 <ErrorBoundary>
                 <NotificationProvider>
+                <TrialExpiryModal />
                 <Sidebar>
                   <Routes>
                     {/* Default redirect */}
