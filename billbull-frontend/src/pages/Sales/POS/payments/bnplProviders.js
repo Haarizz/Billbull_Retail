@@ -40,7 +40,7 @@ export const BNPL_PROVIDERS = Object.freeze([
     name: 'Tamara',
     tagline: 'Split into 3 or 4 payments',
     accent: '#34d399',
-    minimumAmount: 100,
+    minimumAmount: 0,
     plans: [
       { id: 'tamara-3', label: 'Pay in 3', installments: 3, cadence: 'Monthly', feePercent: 0 },
       { id: 'tamara-4', label: 'Pay in 4', installments: 4, cadence: 'Every 2 weeks', feePercent: 1.5 },
