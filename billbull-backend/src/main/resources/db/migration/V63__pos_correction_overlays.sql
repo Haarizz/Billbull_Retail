@@ -1,4 +1,8 @@
-CREATE TABLE pos_correction_overlays (
+-- Correction overlays for POS administration.
+--
+-- IF NOT EXISTS per the repo convention — see V62 for why (Hibernate-built schemas being
+-- baselined replay this script against an existing table).
+CREATE TABLE IF NOT EXISTS pos_correction_overlays (
     id BIGSERIAL PRIMARY KEY,
     target_type VARCHAR(50) NOT NULL,
     target_id BIGINT NOT NULL,
@@ -8,4 +12,4 @@ CREATE TABLE pos_correction_overlays (
     status VARCHAR(50) NOT NULL
 );
 
-CREATE INDEX idx_pos_correction_overlays_target ON pos_correction_overlays (target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_pos_correction_overlays_target ON pos_correction_overlays (target_type, target_id);
