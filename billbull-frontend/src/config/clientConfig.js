@@ -18,11 +18,6 @@ const defaultConfig = {
     defaultCollapsed: false,
   },
   posFirstMode: false,
-  trial: {
-    // ISO-8601 instant the free trial ends. null means "not on a trial" — no
-    // expiry warning is shown after login (see TrialExpiryModal).
-    expiresAt: null,
-  },
 };
 
 const clientOverrides = {
