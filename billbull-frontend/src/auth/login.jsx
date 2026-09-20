@@ -5,7 +5,6 @@ import { useCompany } from "../context/CompanyContext";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import billBullLogo from "../assets/billBullLogo.png";
 import { clientConfig } from "../config/clientConfig";
-import { TRIAL_NOTICE_PENDING_KEY } from "../utils/trialNotice";
 
 const Login = () => {
   const navigate = useNavigate();
@@ -50,11 +49,6 @@ const Login = () => {
       // Every login starts with the sidebar collapsed, regardless of how the
       // previous session left it. Toggling it during the session still persists.
       localStorage.setItem("sidebarCollapsed", "true");
-
-      // Trial clients see the expiry warning once per login (TrialExpiryModal clears this).
-      if (clientConfig.trial?.expiresAt) {
-        sessionStorage.setItem(TRIAL_NOTICE_PENDING_KEY, "1");
-      }
 
       refreshCompany();
       // Tell BranchProvider to reload — it mounted before the token existed

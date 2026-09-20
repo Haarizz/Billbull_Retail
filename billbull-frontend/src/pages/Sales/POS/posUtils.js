@@ -220,6 +220,37 @@ export const computePosCartTotals = (items, billDiscountAmount = 0, posSettings 
   return { items, subtotal, totalDiscount, tax, total, billDiscountAmount, taxInclusive, voidedTotal, voidedCount };
 };
 
+/**
+ * The `items` array of the main POS checkout payload (POST /api/pos/checkout).
+ *
+ * Lifted verbatim out of POSSales' handleCompleteCheckout so the projection can be
+ * characterized directly — it is a pure field mapping with no React or I/O, and it is
+ * the shape the backend posts stock and GL from. Behaviour is unchanged: every line is
+ * still emitted, voided ones flagged rather than dropped.
+ *
+ * Voided lines are still sent (flagged) so they remain on the receipt, audit log and
+ * reports. The backend excludes them from totals & stock.
+ *
+ * NOTE (existing behaviour, deliberately preserved): this differs from the component's
+ * `cartItemsToPayload` — used by the delivery / hold / layaway payloads — which drops
+ * voided lines entirely when posSettings.voidMode === 'DELETE'. Main checkout applies no
+ * such filter, so the same cart posts a different item list depending on which flow sends
+ * it. Not reconciled here; see posCheckoutPayload.characterization.test.js.
+ */
+export const buildPosCheckoutItems = (items, posSettings = null) =>
+  (items || []).map(item => ({
+    itemCode: item.code || item.productId || item.id,
+    itemName: item.name,
+    quantity: item.quantity,
+    unit: 'Each',
+    price: item.price,
+    discount: item.discount || 0,
+    taxRate: toNumber(item.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
+    batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
+    serialNumber: item.isVoided ? null : (item.serialNumber || null),
+    voided: !!item.isVoided,
+  }));
+
 export const getPosVatLabel = (currentInvoice, posSettings) => {
   if (!currentInvoice || !currentInvoice.items) return currentInvoice?.taxInclusive ? 'VAT incl.' : 'VAT';
   const rates = [...new Set(currentInvoice.items.filter(i => !i.isVoided).map(i => toNumber(i.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0))))];
