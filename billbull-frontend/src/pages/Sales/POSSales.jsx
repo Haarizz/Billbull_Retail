@@ -12,34 +12,29 @@ import { Separator } from '../../components/ui/separator';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
-import { getProducts, getProductsList, getFavouriteProducts, getRecentlySoldProducts, getTopSoldProducts, addProductFavourite, removeProductFavourite, createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';
-import { getDepartments } from '../../api/departmentsApi';
+import { createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';
 import { getUnits } from '../../api/unitsApi';
-import { getAllCustomers, createCustomer, validateDuplicateCustomer, searchCustomersAllFields, addCustomerSavedAddress } from '../../api/customerledgerApi';
-import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getSalesInvoicesPage, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
-import AsyncSearchableDropdown from '../../components/AsyncSearchableDropdown';
+import { getAllCustomers, createCustomer, validateDuplicateCustomer } from '../../api/customerledgerApi';
+import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
 import { saveSalesPayment } from '../../api/salesPaymentApi';
 import { receiptVoucherApi } from '../../api/receiptVoucherApi';
 import { fetchStatementOfAccount } from '../../api/financialsApi';
 import { getBankAccounts } from '../../api/ledgerApi';
 import {
-  registerPosTerminal, getPosSettings, getPosSettingsForBranch, savePosSettings, verifyPosSupervisorPin, verifySupervisorAuth, openPosSession, getActivePosSession,
-  verifySessionClosurePermission,
+  getPosSettings, getPosSettingsForBranch, savePosSettings, verifySupervisorAuth, openPosSession,
   getPosSessionById,
-  closePosSession, beginPosSessionClosure, cancelPosSessionClosure,
   addPosCashMovement, getPosXReport, generatePosXReport, getPosZReport, getPosDayCloseSummary, closePosDay, posCheckout,
   checkPosXReportPrintable, checkPosZReportPrintable,
-  getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, resolvePosEntry,
+  getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal,
   getDenominationLadder,
-  authorizePosVariance,
-  createLayaway, getLayaways, getLayaway, cancelLayaway, convertLayaway,
-  posCreditBalance, posBatchCheck, getPosInvoices, lookupPosInvoice,
+  createLayaway,
+  posCreditBalance, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
-  getDeliveryOrders, settleDeliveryOrder,
+  settleDeliveryOrder,
   reprintPosReceipt,
   getPosDayStatus, getPosSessionHistory,
-  transferPosSession, syncPosSession,
+  transferPosSession,
 } from '../../api/posApi';
 import { getSelectableCategories } from '../../api/posCashMovementCategoryApi';
 import { getBranchTaxConfiguration, getBranchTaxConfigurationForBranch } from '../../api/branchTaxApi';
@@ -51,7 +46,7 @@ import { ENTRY_POINT } from './SalesReturn/constants';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
 import { resolvePrintTemplate } from '../../api/printTemplateApi';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
-import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { computeLineTaxTotals } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
 import { CASH_NOTE_KEYS, CASH_COIN_KEYS, DENOM_KEYS, DENOM_LABELS, emptyDenominations, setDenominationLadder } from '../../utils/cashDenominations';
@@ -71,7 +66,6 @@ import {
   Package,
   Plus,
   Minus,
-  Trash2,
   Search,
   Percent,
   FileBarChart,
@@ -81,8 +75,6 @@ import {
   Pause,
   Play,
   DollarSign,
-  ArrowDown,
-  ArrowUp,
   Users,
   User,
   Clock,
@@ -120,9 +112,7 @@ import {
   Shield,
   Info,
   UserCheck,
-  Wrench,
   ClipboardList,
-  Stethoscope,
   PackageCheck,
   Truck,
   PieChart,
@@ -136,10 +126,7 @@ import {
   LayoutDashboard,
   Phone,
   Upload,
-  Heart,
   Coins,
-  Mail,
-  MessageCircle,
   Monitor,
 } from 'lucide-react';
 import {
@@ -160,26 +147,25 @@ import {
 
 // ─── POS sub-modules ──────────────────────────────────────────────────────────
 import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
-import { WALK_IN_CUSTOMER, POS_PRODUCT_PAGE_SIZE, CATEGORY_ICONS, STATUS_LABEL_TO_ENUM, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
-import { toNumber, mapPosProductListItem, mapPosProductAggregateItem, mapPosCustomer, cachePosProduct, getPriceFloor, computePosCartTotals, mergeSavedPosSettings } from './POS/posUtils';
+import { WALK_IN_CUSTOMER, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
+import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings } from './POS/posUtils';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
-  buildPosPrintData, buildPosA4Template, buildThermalReceiptText,
+  buildPosPrintData,
   buildDocumentPreviewHtml, buildThermalPrintHtml, buildServiceJobA4Html,
-  USE_NEW_POS_PRINT_TEMPLATE, buildDraftPrintDataFromCart, applyTaxAwareDisplayOptions,
+  USE_NEW_POS_PRINT_TEMPLATE, buildDraftPrintDataFromCart,
 } from './POS/posPrintUtils';
 import {
   ThermalMock, useA4BlobUrl, A4PreviewFrame, A4LivePreview,
-  ServiceJobA4Preview, PaperSizePicker, ImageUploadBox, A4ScaledPreview, ThermalScaledPreview,
+  ServiceJobA4Preview, PaperSizePicker, ImageUploadBox,
 } from './POS/POSPrintPreview';
 import { usePaymentManager } from './POS/payments/usePaymentManager';
 import { buildCheckoutPaymentFields, buildSettlementPaymentFields } from './POS/payments/paymentPayloadAdapter';
-import { buildPaymentBlock, buildPaymentBlockFromRecords, paymentBlockRows, matchesPaymentFilter, PAYMENT_FILTERS, reconcilePaymentBlock, paymentAuditSnapshot } from './POS/payments/paymentPresentation';
+import { buildPaymentBlock, buildPaymentBlockFromRecords, paymentBlockRows, matchesPaymentFilter, PAYMENT_FILTERS } from './POS/payments/paymentPresentation';
 import { useCheckoutCapabilities } from './POS/payments/useCheckoutCapabilities';
 import PaymentAllocationPanel from './POS/payments/PaymentAllocationPanel';
 import { PAYMENT_TYPES } from './POS/payments/paymentModel';
 import { planVoucherApplication, capVoucherAllocations } from './POS/payments/voucherRedemption';
-import CustomerPicker from './POS/CustomerPicker';
 import { formatUserDisplayName } from '../../utils/displayName';
 import { useCompany } from '../../context/CompanyContext';
 import { useBranch } from '../../context/BranchContext';
@@ -189,10 +175,7 @@ import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
 import { TradePOSTouchScreen } from './POS/TradePOS/TradePOSTouchScreen';
 import POSItemEntryContainer from '../../components/pos/ItemEntry/POSItemEntryContainer';
-import { ProductEntryMode } from '../../components/pos/ItemEntry/constants';
 import { getPosPrinters } from '../../api/posPrinterApi';
-import { getDeliveryPersons } from '../../api/employeeApi';
-import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
@@ -201,223 +184,62 @@ import { BusinessDayStatusProvider } from '../../components/pos/BusinessDayStatu
 import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
-import { buildEscPosReceiptBase64, buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
-import { getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './POS/receiptTemplates';
+import { buildEscPosDocumentBase64 } from '../../utils/escPosReceipt';
 import { mapToTemplate2Data, mapInvoiceToTxn } from './POS/receiptTemplates/billBullTaxInvoiceData';
 import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
+// ─── POS feature modules (Phase 3 in-place decomposition) ─────────────────────
+import { DELIVERY_SETTLE_METHODS } from './POS/features/delivery/deliveryConstants';
+import NewDeliveryOrder from './POS/features/delivery/NewDeliveryOrder';
+import LayawaysList from './POS/features/layaway/LayawaysList';
+import CreditBalance from './POS/features/customers/CreditBalance';
+import PriceCheck from './POS/features/products/PriceCheck';
+import ProductSearch from './POS/features/products/ProductSearch';
+import ServiceRepair from './POS/features/service/ServiceRepair';
+import SerialBatch from './POS/features/products/SerialBatch';
+import { buildPosScannerStorageKey } from './POS/device/scanner/scannerStorage';
+import { useCashDrawer } from './POS/device/cashDrawer/useCashDrawer';
+import { usePosBehaviourSettings } from './POS/features/settings/usePosBehaviourSettings';
+import { useHeldSales } from './POS/features/heldSales/useHeldSales';
+import { useLayaway } from './POS/features/layaway/useLayaway';
+import { useDelivery } from './POS/features/delivery/useDelivery';
+import { usePosPrinting } from './POS/device/printing/usePosPrinting';
+import { useTemplateSettings } from './POS/features/templateSettings/useTemplateSettings';
+import { useCheckout } from './POS/features/checkout/useCheckout';
+import { useCart } from './POS/features/cart/useCart';
+import { useProductEntry } from './POS/features/products/useProductEntry';
+import { useProductCatalog } from './POS/features/products/useProductCatalog';
+import { useSupervisorApproval } from './POS/features/approval/useSupervisorApproval';
+import { usePosSession } from './POS/features/session/usePosSession';
+import { useSessionClosure } from './POS/features/session/useSessionClosure';
+import { isClosureWorkflowError } from './POS/features/session/sessionWorkflowErrors';
+import SessionInvalidatedOverlay from './POS/features/session/SessionInvalidatedOverlay';
+import IdleLockOverlay from './POS/features/session/IdleLockOverlay';
+import CloseDayVarianceDialog from './POS/features/session/CloseDayVarianceDialog';
+import RangeExclusionConfirmDialog from './POS/features/session/RangeExclusionConfirmDialog';
+import LockPosDialog from './POS/features/session/LockPosDialog';
+import CashDropDialog from './POS/features/session/CashDropDialog';
+import LiveSessionDialog from './POS/features/session/LiveSessionDialog';
+import SupervisorPinDialog from './POS/features/session/SupervisorPinDialog';
+import CheckoutCompleteSummary from './POS/features/checkout/CheckoutCompleteSummary';
+import CheckoutCompleteActions from './POS/features/checkout/CheckoutCompleteActions';
+import CheckoutSettlementSummary from './POS/features/checkout/CheckoutSettlementSummary';
+import CheckoutPaymentHeader from './POS/features/checkout/CheckoutPaymentHeader';
+import CheckoutPaymentFooter from './POS/features/checkout/CheckoutPaymentFooter';
+import CheckoutRemarks from './POS/features/checkout/CheckoutRemarks';
+import CheckoutPaymentPreview from './POS/features/checkout/CheckoutPaymentPreview';
+import PosLockedOverlay from './POS/features/session/PosLockedOverlay';
+import SessionOwnerRequiredDialog from './POS/features/session/SessionOwnerRequiredDialog';
+import TerminalUnavailableOverlay from './POS/features/session/TerminalUnavailableOverlay';
+import PreviousBusinessDayBlockOverlay from './POS/features/session/PreviousBusinessDayBlockOverlay';
+import PosFeedbackToasts from './POS/features/notifications/PosFeedbackToasts';
+import ConfirmAction from './POS/features/notifications/ConfirmAction';
+import { buildThermalReceiptArtifacts as buildThermalReceiptArtifactsImpl } from './POS/device/printing/buildThermalReceiptArtifacts';
+import { round2Money, formatMoney2, todayInputDate, parseUTCDate } from './POS/lib/posFormatting';
+import { buildZReportExcelSections, buildXReportExcelRows } from './POS/features/reports/reportExcelBuilders';
 
-/** Tenders offered when settling a delivery balance. CREDIT is excluded: putting the amount
- *  back on the customer's account is not a settlement, it is leaving the balance outstanding. */
-const DELIVERY_SETTLE_METHODS = [
-  PAYMENT_TYPES.CASH, PAYMENT_TYPES.CARD, PAYMENT_TYPES.ONLINE,
-];
 
-/** Currency rounding to 2dp. Money comparisons are made at fils precision everywhere. */
-const round2Money = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
-/** Bare 2dp amount for inline feedback messages (the currency symbol comes from context). */
-const formatMoney2 = (n) => round2Money(n).toFixed(2);
 
-const SPECIAL_CATEGORIES = new Set(['favourites', 'recently-sold', 'top-sold']);
-// 'YYYY-MM-DD' for the browser's local calendar day — toISOString() would shift
-// the day in negative-UTC zones. Used as the layaway due-date default/floor.
-const todayInputDate = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
-const buildPosScannerStorageKey = (branchId, terminalId) => {
-  if (!branchId && !terminalId) return null;
-  return `billbull:pos:scanner:${branchId ?? 'branch'}:${terminalId || 'shared'}`;
-};
-
-function DeliveryPersonSelect({ options = [], value, onChange, loading = false, error = '' }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState('');
-  const [highlighted, setHighlighted] = useState(0);
-  const wrapperRef = useRef(null);
-
-  const selected = useMemo(
-    () => options.find(person => String(person.employeeCode) === String(value)) || null,
-    [options, value]
-  );
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return options;
-    return options.filter(person => [
-      person.name,
-      person.employeeCode,
-      person.phone,
-    ].some(part => String(part || '').toLowerCase().includes(q)));
-  }, [options, search]);
-
-  useEffect(() => {
-    const handleClickAway = (event) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
-        setOpen(false);
-        setSearch('');
-      }
-    };
-    document.addEventListener('mousedown', handleClickAway);
-    return () => document.removeEventListener('mousedown', handleClickAway);
-  }, []);
-
-  useEffect(() => {
-    setHighlighted(0);
-  }, [search, options.length]);
-
-  const commitSelection = (person) => {
-    if (!person) return;
-    onChange(person.employeeCode);
-    setSearch('');
-    setOpen(false);
-  };
-
-  const handleKeyDown = (event) => {
-    if (!open && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
-      setOpen(true);
-      return;
-    }
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      setHighlighted(index => Math.min(index + 1, Math.max(filtered.length - 1, 0)));
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      setHighlighted(index => Math.max(index - 1, 0));
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      commitSelection(filtered[highlighted]);
-    } else if (event.key === 'Escape') {
-      setOpen(false);
-      setSearch('');
-    }
-  };
-
-  return (
-    <div ref={wrapperRef} className="relative">
-      <div className={`flex items-center border rounded-xl bg-white overflow-hidden focus-within:border-[#327F74] ${error ? 'border-red-300' : 'border-gray-200'}`}>
-        <Search className="h-4 w-4 text-gray-400 ml-3 shrink-0" />
-        <input
-          type="text"
-          value={open ? search : (selected ? `${selected.name} (${selected.employeeCode})` : '')}
-          onFocus={() => setOpen(true)}
-          onChange={(event) => { setSearch(event.target.value); setOpen(true); }}
-          onKeyDown={handleKeyDown}
-          placeholder={loading ? 'Loading delivery persons...' : 'Search delivery person'}
-          className="flex-1 min-w-0 px-2 py-2.5 text-sm focus:outline-none"
-          role="combobox"
-          aria-expanded={open}
-        />
-        {selected && (
-          <button
-            type="button"
-            onClick={() => { onChange(''); setSearch(''); setOpen(false); }}
-            className="p-2 text-gray-400 hover:text-gray-700"
-            aria-label="Clear delivery person"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={() => setOpen(prev => !prev)}
-          className="p-2 text-gray-400 hover:text-gray-700"
-          aria-label="Open delivery person list"
-        >
-          <ChevronDown className="h-4 w-4" />
-        </button>
-      </div>
-      {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
-      {open && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-xl shadow-xl max-h-56 overflow-y-auto">
-          {loading ? (
-            <div className="px-3 py-3 text-xs text-gray-500">Loading delivery persons...</div>
-          ) : filtered.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-gray-500">No active delivery persons found</div>
-          ) : filtered.map((person, index) => (
-            <button
-              type="button"
-              key={person.employeeCode || person.id}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => commitSelection(person)}
-              className={`w-full text-left px-3 py-2.5 border-b border-gray-50 last:border-b-0 hover:bg-emerald-50 ${index === highlighted ? 'bg-emerald-50' : 'bg-white'}`}
-            >
-              <div className="text-sm font-semibold text-gray-900 truncate">{person.name || 'Unnamed employee'}</div>
-              <div className="text-xs text-gray-500 flex items-center gap-2">
-                <span>{person.employeeCode || '-'}</span>
-                <span>{person.phone || '-'}</span>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const parseUTCDate = (ts) => {
-  if (!ts) return null;
-  if (ts instanceof Date) return isNaN(ts.getTime()) ? null : ts;
-  if (typeof ts === 'number') {
-    const d = new Date(ts);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  let s = String(ts);
-  const tIdx = s.indexOf('T');
-  if (tIdx !== -1 && !s.endsWith('Z')) {
-    const timePart = s.slice(tIdx);
-    if (!timePart.includes('+') && !timePart.includes('-')) {
-      s += 'Z';
-    }
-  }
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? null : d;
-};
-
-// Backend 403 reason strings for terminal-unavailable are always exactly "Terminal is {STATUS}"
-// (PosTerminalService.terminalUnavailable) — parsed here so the dialog can branch per-status
-// instead of showing one undifferentiated message for every cause. See
-// BillBull-POS-Terminal-Archive-Lifecycle-Review.html Part 08/10.
-const TERMINAL_UNAVAILABLE_STATUS_CONFIG = {
-  ARCHIVED: {
-    title: 'Terminal Archived',
-    message: 'This terminal has been archived by an administrator. It can be restored — your sales history and settings will be preserved — or you can register this device as a new terminal.',
-    allowRegisterNew: true,
-    registerLabel: 'Register as New Terminal',
-    hint: 'Ask an admin to restore it from Console > Terminals & Counters if you\'d rather keep this device\'s history than register fresh.',
-  },
-  BLOCKED: {
-    title: 'Terminal Blocked',
-    message: 'This terminal has been blocked by an administrator. Registering a new terminal is not available while a block is in effect.',
-    allowRegisterNew: false,
-    hint: 'Contact an administrator to resolve this before using this device.',
-  },
-  MAINTENANCE: {
-    title: 'Terminal Under Maintenance',
-    message: 'This terminal is temporarily unavailable for maintenance. Registering a new terminal is not available until maintenance ends.',
-    allowRegisterNew: false,
-    hint: 'Try again shortly, or contact an administrator.',
-  },
-  DECOMMISSIONED: {
-    title: 'Terminal Permanently Retired',
-    message: 'This terminal has been permanently retired and cannot be restored. Register this device as a new terminal to continue.',
-    allowRegisterNew: true,
-    registerLabel: 'Register as New Terminal',
-    hint: null,
-  },
-};
-const TERMINAL_UNAVAILABLE_FALLBACK = {
-  title: 'Terminal Not Available',
-  message: 'This device\'s previously-registered terminal was archived, blocked, decommissioned, or is in maintenance.',
-  allowRegisterNew: true,
-  registerLabel: 'Register as New Terminal',
-  hint: 'Ask an admin to restore it from Console > Terminals & Counters, or register this device as a brand-new terminal below (consumes a new terminal slot).',
-};
-function resolveTerminalUnavailableConfig(rawMessage) {
-  const match = typeof rawMessage === 'string' ? rawMessage.match(/^Terminal is (\w+)$/) : null;
-  const status = match ? match[1] : null;
-  return { status, ...(TERMINAL_UNAVAILABLE_STATUS_CONFIG[status] || TERMINAL_UNAVAILABLE_FALLBACK) };
-}
 
 export default function POSSales() {
   const renderCountRef = React.useRef(0);
@@ -458,21 +280,39 @@ export default function POSSales() {
   const [analyticsTab, setAnalyticsTab] = useState('pipeline');
   const [analyticsData, setAnalyticsData] = useState(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [currentSession, setCurrentSession] = useState(null);
   const [openSessionDropdownId, setOpenSessionDropdownId] = useState(null);
-  // Phase 12 - Session synchronization lock state
-  const [sessionInvalidated, setSessionInvalidated] = useState(false);
-  const [sessionInvalidReason, setSessionInvalidReason] = useState(null);
-
-  // Branch's currently resolved Business Day (day-status). Used ONLY to decide whether a
-  // session belongs to an earlier Business Day — never to label a session's own date.
-  const [currentBusinessDay, setCurrentBusinessDay] = useState(null);
   // The session the backend has refused for continuation (PREVIOUS_DAY_SESSION_OPEN), kept
   // with the server's own wording so re-raising the block never invents a second message.
   // Survives navigating to the closure screen and back: loading a stale session *for
   // closure* must not make it usable for selling again.
   const [prevDayBlockedSessionId, setPrevDayBlockedSessionId] = useState(null);
   const [prevDayBlockedMsg, setPrevDayBlockedMsg] = useState(null);
+  // Declared above usePosSession, which reads the heartbeat interval from it.
+  const [posSettings, setPosSettings] = useState(null);
+
+  // ── POS session / terminal lifecycle ───────────────────────────────────────
+  // Implementation lives in POS/features/session/usePosSession.js: the single owner of
+  // currentSession, currentTerminal and currentBusinessDay, terminal registration, session
+  // resume, the sync poll, heartbeat, branch-changed re-resolution and the mount-time init.
+  // Called here, above the first reader of currentSession (isSessionActive, just below).
+  // The work it hands back to POSSales — the init settings loader, the block modals, the
+  // discovery reset and the invalidated-session reset — is declared much further down
+  // (the reset writes useCheckout's setters), so it is late-bound through this ref and
+  // assigned below useCheckout. Session OPEN/TRANSFER stays here; the closure workflow is
+  // useSessionClosure.
+  const sessionLifecycleHandlersRef = useRef(null);
+  const {
+    currentSession, setCurrentSession,
+    currentTerminal, setCurrentTerminal,
+    currentBusinessDay,
+    sessionInvalidated, sessionInvalidReason, acknowledgeSessionInvalidation,
+    terminalRegistrationError,
+    terminalLockedBy, clearTerminalLock,
+    openSessionsBlock, dismissOpenSessionsBlock,
+    posInitLoading,
+    businessDayRefreshRef,
+    resumeTerminalSession,
+  } = usePosSession({ posSettings, handlersRef: sessionLifecycleHandlersRef });
 
   // True when this terminal has a live POS session. Session-bound features
   // (X/Z report, cash drop/out, customer management) are locked until this is
@@ -501,94 +341,15 @@ export default function POSSales() {
   const canContinueSelling = isSessionActive && !sessionAwaitingClosure && !sessionBlockedByPreviousDay;
   const { hasAnyRole } = usePermissions();
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
-  const [posSettings, setPosSettings] = useState(null);
-  // Behavior-settings editor (Console → Behavior tab)
-  const [settingsDraft, setSettingsDraft] = useState(null);
-  const [settingsSaving, setSettingsSaving] = useState(false);
-  const [settingsSavedFlash, setSettingsSavedFlash] = useState(false);
-  // Filled by BusinessDayStatusProvider (rendered below this component's body),
-  // so a Business Day schedule change can re-poll the status immediately.
-  const businessDayRefreshRef = useRef(null);
-  const [currentTerminal, setCurrentTerminal] = useState(null);
-  const [terminalLockedBy, setTerminalLockedBy] = useState(null);
-  // Set when the previous business date is still open past configured operating hours
-  // and the caller owns none of those open sessions — blocks POS entry with an
-  // informational popup listing the unclosed session(s) until Day Close runs.
-  const [openSessionsBlock, setOpenSessionsBlock] = useState(null); // { currentBusinessDate, openSessions } | null
 
-  // Phase 12 - Session Synchronization (Polling)
-  useEffect(() => {
-    // Once this terminal has closed the session itself, stop polling — the
-    // X-Report screen keeps `currentSession` around (status CLOSED) so the
-    // cashier can still Print/Export/History the just-closed report, and the
-    // sync check would otherwise treat "closed by us" the same as "closed/
-    // transferred remotely" and boot them out mid-review (see "Session No
-    // Longer Available" overlay).
-    if (!currentSession || currentSession.status === 'CLOSED' || !currentTerminal?.terminalId || sessionInvalidated) return;
-    let aborted = false;
-
-    const poll = async () => {
-      if (aborted || !currentSession || currentSession.status === 'CLOSED' || !currentTerminal?.terminalId || sessionInvalidated) return;
-      
-      // Do not poll if we are viewing a session from a DIFFERENT terminal
-      // (e.g. clicking "Go to Close Session" on the PREVIOUS_DAY_SESSION_OPEN modal
-      // to close a stale session left open on another machine). Polling here would
-      // immediately invalidate the session with "TRANSFERRED" since terminalId doesn't match.
-      if (currentSession.terminalId && currentSession.terminalId !== currentTerminal.terminalId) {
-        if (!aborted && currentSession && !sessionInvalidated) {
-          setTimeout(poll, 5000);
-        }
-        return;
-      }
-      
-      try {
-        const terminalId = currentTerminal.terminalId;
-        if (terminalId) {
-          const res = await syncPosSession(currentSession.id, terminalId);
-          if (res && res.sessionValid === false) {
-            setSessionInvalidated(true);
-            setSessionInvalidReason(res.message || 'This session has been transferred to another terminal.');
-            setCurrentSession(null);
-            setCurrentInvoice({ items: [], subtotal: 0, totalDiscount: 0, tax: 0, total: 0, billDiscountAmount: 0 });
-            setSelectedCustomer(WALK_IN_CUSTOMER.id);
-            setShowPaymentDialog(false);
-            setShowCloseSessionDialog(false);
-            setShowCashDropDialog(false);
-            setShowCustomerSelector(false);
-            setCheckoutPhase('payment');
-            setCheckoutError(null);
-          }
-        }
-      } catch (err) {
-        // Ignore network failures, allow it to retry on next tick
-      }
-      if (!aborted && currentSession && !sessionInvalidated) {
-        setTimeout(poll, 5000);
-      }
-    };
-
-    const timer = setTimeout(poll, 5000);
-    return () => {
-      aborted = true;
-      clearTimeout(timer);
-    };
-  }, [currentSession, currentTerminal, sessionInvalidated]);
-  // Set when this device's cached terminal_id was rejected (403 — terminal is ARCHIVED,
-  // BLOCKED, DECOMMISSIONED, or in MAINTENANCE). Surfaces the reason instead of silently
-  // leaving currentTerminal null, which previously let handleStartSession fabricate a
-  // fake, unregistered terminalId and open an orphaned "phantom" session (see
-  // docs/pos-terminal-branch-switch-investigation-2026-07-24.html follow-up).
-  const [terminalRegistrationError, setTerminalRegistrationError] = useState(null);
-  // Guards state updates in registerTerminalAndResumeSession, which can be invoked from either
-  // the mount-time init effect or the branch-changed listener below, both of which may outlive
-  // an unmount. Must set current = true on (re-)mount, not just clear it on cleanup — StrictMode
-  // (dev only) mounts every effect, fires its cleanup immediately, then mounts again, so a
-  // cleanup-only assignment left this permanently false for the rest of the real session.
-  const posTerminalMountedRef = useRef(true);
-  useEffect(() => {
-    posTerminalMountedRef.current = true;
-    return () => { posTerminalMountedRef.current = false; };
-  }, []);
+  // Behavior-settings editor (Console → Behavior tab). Declared after usePosSession
+  // because the save handler re-polls through the businessDayRefreshRef it returns.
+  const {
+    settingsDraft, setSettingsDraft,
+    settingsSaving, setSettingsSaving,
+    settingsSavedFlash, setSettingsSavedFlash,
+    beginEditSettings, handleSaveSettings,
+  } = usePosBehaviourSettings({ posSettings, setPosSettings, businessDayRefreshRef });
   const [isIdleLocked, setIsIdleLocked] = useState(false);
   const [showTakeoverDialog, setShowTakeoverDialog] = useState(false);
   // Logged-in POS user shown as "Cashier" on the receipt (§2A). Prefers the
@@ -601,31 +362,36 @@ export default function POSSales() {
     const raw = sessionStorage.getItem('user') || '';
     return formatUserDisplayName(raw.includes('@') ? raw.split('@')[0] : raw);
   }, []);
-  const [posInitLoading, setPosInitLoading] = useState(true);
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [checkoutError, setCheckoutError] = useState(null);
-  // Supervisor PIN dialog for void
-  const [showSupervisorPin, setShowSupervisorPin] = useState(false);
-  const [supervisorPinValue, setSupervisorPinValue] = useState('');
-  // Only used when supervisorApprovalMode === 'PASSWORD' — identifies who is authorizing,
-  // since verifySupervisorAuth (unlike verifyPosSupervisorPin) checks a specific account.
-  const [supervisorPinEmail, setSupervisorPinEmail] = useState('');
-  const [supervisorPinError, setSupervisorPinError] = useState('');
+  // ── Supervisor approval queue ──────────────────────────────────────────────
+  // Implementation lives in POS/features/approval/useSupervisorApproval.js: the PIN dialog
+  // credential state, the five pending-request slots and the dispatcher that resumes the
+  // interrupted action once a supervisor is verified. Called here, at the top of the
+  // component, because businessDayClosureFlowActive below already reads showSupervisorPin;
+  // the dispatcher's continuations (processPayment, handleCloseDay, the cart editors) are
+  // handed to it at submit time instead of as arguments, which is what the original
+  // component-scope closures did and what keeps them out of the temporal dead zone.
+  //
+  // Session closure is NOT owned here: the FORCE_CLOSE_SESSION branch writes through
+  // closureAuthGrantRef/forceCloseContextRef, which stay POSSales-owned. forceCloseReason and
+  // forceCloseAuditAcknowledged, which it also reads, come from useSessionClosure.
+  const {
+    showSupervisorPin,
+    supervisorPinValue, setSupervisorPinValue,
+    supervisorPinEmail, setSupervisorPinEmail,
+    supervisorPinError, setSupervisorPinError,
+    pendingVoidItemId,
+    pendingPriceOverride,
+    pendingLayawayAbortAction,
+    pendingSupervisorAction,
+    requestApproval,
+    requireLayawayApproval,
+    cancelApproval,
+    submitSupervisorApproval,
+  } = useSupervisorApproval();
   const [handoverBusy, setHandoverBusy] = useState(false);
   const [handoverEmail, setHandoverEmail] = useState('');
   const [handoverPassword, setHandoverPassword] = useState('');
   const [handoverError, setHandoverError] = useState('');
-  const [pendingVoidItemId, setPendingVoidItemId] = useState(null);
-  // Price-override approval pending supervisor sign-off. Serializable request object
-  // (never a closure) describing what to do once approved — see handleSupervisorPinSubmit.
-  //   { type: 'ADD_ITEM', product, quantity, batch, serial, expiry, overrides, minPrice, attemptedPrice }
-  //   { type: 'UPDATE_PRICE', itemId, newPrice, itemName, minPrice }
-  const [pendingPriceOverride, setPendingPriceOverride] = useState(null);
-  const [pendingLayawayAbortAction, setPendingLayawayAbortAction] = useState(null);
-  // Generic supervisor action for future reuse (replaces dedicated pending flags)
-  const [pendingSupervisorAction, setPendingSupervisorAction] = useState(null);
-  // true = action is a full cart clear (should also reset layaway conversion state)
-  const [pendingLayawayAbortIsFullClear, setPendingLayawayAbortIsFullClear] = useState(false);
   // X-Report / Z-Report live data
   const [xReportData, setXReportData] = useState(null);
   const [xReportLoading, setXReportLoading] = useState(false);
@@ -662,7 +428,6 @@ export default function POSSales() {
   const [rangeOverride, setRangeOverride] = useState({ startSessionId: '', endSessionId: '' });
   const [showAdvancedRange, setShowAdvancedRange] = useState(false);
   const [advancedRangeUnlocked, setAdvancedRangeUnlocked] = useState(false);
-  const [pendingUnlockAdvancedRange, setPendingUnlockAdvancedRange] = useState(false);
   // Populated when close-day is rejected with SESSION_RANGE_EXCLUSION_UNCONFIRMED —
   // holds the excluded-session list so the supervisor can review before confirming.
   const [rangeExclusionConfirm, setRangeExclusionConfirm] = useState(null);
@@ -675,20 +440,14 @@ export default function POSSales() {
   // remedies, never one modal wording both.
   const [closureRequiredMsg, setClosureRequiredMsg] = useState(null);
   const [closureRequiredId, setClosureRequiredId] = useState(null);
-  // Supervisor-authorized "Cancel Closure". Credentials are verified server-side against a
-  // supervisor role — this dialog only collects them, it never decides anything.
-  const [showCancelClosureDialog, setShowCancelClosureDialog] = useState(false);
-  const [cancelClosureUsername, setCancelClosureUsername] = useState('');
-  const [cancelClosurePassword, setCancelClosurePassword] = useState('');
-  const [cancelClosureReason, setCancelClosureReason] = useState('');
-  const [cancelClosureError, setCancelClosureError] = useState('');
-  const [cancelClosureLoading, setCancelClosureLoading] = useState(false);
   // Session Roaming Phase 11 — discovery response from openSession's Phase 7 structured 409.
   const [discoveryResponse, setDiscoveryResponse] = useState(null);
   const [discoveryBusy, setDiscoveryBusy] = useState(false);
   const [discoveryError, setDiscoveryError] = useState(null);
   const [discoverySupervisorPin, setDiscoverySupervisorPin] = useState('');
-  const [showCloseSessionDialog, setShowCloseSessionDialog] = useState(false);
+  // Closure target. Stays here rather than in useSessionClosure: loadXReport, the supervisor
+  // dispatcher's FORCE_CLOSE_SESSION branch, the terminal-card menu and
+  // businessDayClosureFlowActive all read or write it.
   const [sessionToClose, setSessionToClose] = useState(null);
   // The session the Session Owner Verification modal is currently authorizing.
   // Captured at click time so authorization always targets the terminal card
@@ -699,33 +458,12 @@ export default function POSSales() {
   // than the session owner (the owner's verified credentials are the authority, not the
   // logged-in user). Cleared once consumed.
   const closureAuthGrantRef = useRef(null);
-  const [closeSessionError, setCloseSessionError] = useState('');
-  // The server's refusal, verbatim: expected / counted / variance / threshold. Every number the
-  // approval panel shows comes from here, so the figure a supervisor authorizes is exactly the
-  // one the close was evaluated against. The frontend computes none of it.
-  const [varianceApproval, setVarianceApproval] = useState(null);
-  const [varianceApprovalBusy, setVarianceApprovalBusy] = useState(false);
-  const [varianceApprovalError, setVarianceApprovalError] = useState('');
-  const [varianceSupervisorUser, setVarianceSupervisorUser] = useState('');
-  const [varianceSupervisorPassword, setVarianceSupervisorPassword] = useState('');
-  const [varianceApprovalReason, setVarianceApprovalReason] = useState('');
   // Held in a ref, never in state or storage: the grant is single-use and short-lived, and a
   // reload must re-derive the situation from the server rather than replay a stale token.
   const varianceGrantRef = useRef(null);
   // Force Close context carried from the Supervisor Approval modal to the close call,
   // so the recorded reason survives the X-Report step in between.
   const forceCloseContextRef = useRef(null);
-  const [closureAction, setClosureAction] = useState(null); // 'NORMAL_CLOSE' or 'FORCE_CLOSE'
-  const [forceCloseReason, setForceCloseReason] = useState('');
-  const [forceCloseAuditAcknowledged, setForceCloseAuditAcknowledged] = useState(false);
-  const [showSessionOwnerRequiredDialog, setShowSessionOwnerRequiredDialog] = useState(false);
-  const [closeSessionTab, setCloseSessionTab] = useState('cash'); // 'cash' | 'card'
-
-  const [showCashierAuthDialog, setShowCashierAuthDialog] = useState(false);
-  const [cashierAuthUsername, setCashierAuthUsername] = useState('');
-  const [cashierAuthPassword, setCashierAuthPassword] = useState('');
-  const [cashierAuthError, setCashierAuthError] = useState('');
-  const [cashierAuthLoading, setCashierAuthLoading] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
@@ -733,11 +471,9 @@ export default function POSSales() {
   // sales/cash figures without navigating away (X-Report is the full page version).
   const [showLiveSessionDialog, setShowLiveSessionDialog] = useState(false);
 
-  // Session opening/closing states
+  // Session opening states. Closing-count state lives in useSessionClosure.
   const [openingCash, setOpeningCash] = useState('');
   const [denominations, setDenominations] = useState(emptyDenominations);
-  const [closingDenominations, setClosingDenominations] = useState(emptyDenominations);
-  const [cardSettlementAmount, setCardSettlementAmount] = useState('');
 
   const [xReportVarianceRemarks, setXReportVarianceRemarks] = useState('');
   const [xReportCardBatchNo, setXReportCardBatchNo] = useState('');
@@ -746,32 +482,63 @@ export default function POSSales() {
   const [xReportSupervisorName, setXReportSupervisorName] = useState('');
   const [xReportClosingRemarks, setXReportClosingRemarks] = useState('');
 
+  // ── Session closure workflow ───────────────────────────────────────────────
+  // Implementation lives in POS/features/session/useSessionClosure.js: Session Owner
+  // Verification, the Close Session dialog (count, card settlement, error), variance
+  // approval, the Force Close fields and Cancel Closure. Called here, below the X-Report
+  // declaration fields the close request carries and above the first render-time reader of
+  // closingDenominations (getReportClosingDenominations). Lifecycle stays in usePosSession;
+  // sessionToClose, the four closure refs and the previous-day/closure-required blocks stay
+  // here. loadXReport, loadDaySummary and syncPosData are declared far below, so they are
+  // late-bound through sessionClosureLoadersRef (assigned beside syncPosDataRef).
+  const sessionClosureLoadersRef = useRef(null);
+  const {
+    showCancelClosureDialog, setShowCancelClosureDialog,
+    cancelClosureUsername, setCancelClosureUsername,
+    cancelClosurePassword, setCancelClosurePassword,
+    cancelClosureReason, setCancelClosureReason,
+    cancelClosureError,
+    cancelClosureLoading,
+    openCancelClosureDialog, handleCancelClosureSubmit,
+    showCloseSessionDialog, setShowCloseSessionDialog,
+    closeSessionError, setCloseSessionError,
+    closeSessionTab, setCloseSessionTab,
+    closingDenominations, setClosingDenominations,
+    cardSettlementAmount, setCardSettlementAmount,
+    proceedToCloseSessionDialog, handleCloseSession,
+    varianceApproval, setVarianceApproval,
+    varianceApprovalBusy,
+    varianceApprovalError, setVarianceApprovalError,
+    varianceSupervisorUser, setVarianceSupervisorUser,
+    varianceSupervisorPassword, setVarianceSupervisorPassword,
+    varianceApprovalReason, setVarianceApprovalReason,
+    handleAuthorizeVariance,
+    setClosureAction,
+    forceCloseReason, setForceCloseReason,
+    forceCloseAuditAcknowledged, setForceCloseAuditAcknowledged,
+    showSessionOwnerRequiredDialog, setShowSessionOwnerRequiredDialog,
+    handleDayCloseNormalClose, handleTradingEndedCloseSession,
+    showCashierAuthDialog, setShowCashierAuthDialog,
+    cashierAuthUsername, setCashierAuthUsername,
+    cashierAuthPassword, setCashierAuthPassword,
+    cashierAuthError, setCashierAuthError,
+    cashierAuthLoading,
+    handleCashierAuthSubmit,
+  } = useSessionClosure({
+    currentSession, setCurrentSession,
+    sessionToClose, setSessionToClose,
+    closureAuthGrantRef, varianceGrantRef, forceCloseContextRef, cashierAuthTargetRef,
+    report: {
+      xReportVarianceRemarks, xReportCardBatchNo, xReportCardVerified,
+      xReportCashierName, xReportSupervisorName, xReportClosingRemarks,
+      pendingXAutoPrintRef, zReportDate,
+    },
+    setCurrentView, setSessionNowMs, businessDayRefreshRef,
+    loadersRef: sessionClosureLoadersRef,
+  });
+
   // Cart Focus Col 3 tab
   const [rightPanelTab, setRightPanelTab] = useState('functions');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [deliveryNotes, setDeliveryNotes] = useState('');
-  const [deliveryDriver, setDeliveryDriver] = useState('');
-  const [deliveryCharge, setDeliveryCharge] = useState('');
-  // Delivery modal
-  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
-  const [deliveryModalTab, setDeliveryModalTab] = useState('existing');
-  const [deliveryCustomerId, setDeliveryCustomerId] = useState('');
-  const [deliveryCustomerSearch, setDeliveryCustomerSearch] = useState('');
-  const [deliveryNewName, setDeliveryNewName] = useState('');
-  const [deliveryNewMobile, setDeliveryNewMobile] = useState('');
-  const [deliveryNewEmail, setDeliveryNewEmail] = useState('');
-  const [deliveryDate, setDeliveryDate] = useState('');
-  const [deliveryTimeSlot, setDeliveryTimeSlot] = useState('');
-  const [deliveryInstructions, setDeliveryInstructions] = useState('');
-  const [deliveryPersons, setDeliveryPersons] = useState([]);
-  const [deliveryPersonsLoading, setDeliveryPersonsLoading] = useState(false);
-  const [deliveryValidationErrors, setDeliveryValidationErrors] = useState({});
-  // Saved shipping-address picker for the delivery modal (QA-028 pattern reused from CustomerShippingPanel)
-  const [deliveryShowAddressPicker, setDeliveryShowAddressPicker] = useState(false);
-  const [deliveryShowAddAddressModal, setDeliveryShowAddAddressModal] = useState(false);
-  const [deliveryNewAddress, setDeliveryNewAddress] = useState({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
-  const [deliveryAddressSaving, setDeliveryAddressSaving] = useState(false);
-  const [deliveryAddressError, setDeliveryAddressError] = useState('');
 
   // Quick Customer Creation Modal State
   const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
@@ -795,15 +562,6 @@ export default function POSSales() {
   const [quickProductLoading, setQuickProductLoading] = useState(false);
   const [quickProductError, setQuickProductError] = useState(null);
 
-  // Delivery settle modal
-  const [showDeliverySettleModal, setShowDeliverySettleModal] = useState(false);
-  const [deliverySettleSearch, setDeliverySettleSearch] = useState('');
-  const [deliverySettlePersonFilter, setDeliverySettlePersonFilter] = useState('All Persons');
-  const [deliverySettleSelected, setDeliverySettleSelected] = useState(null);
-  const [deliveryOrders, setDeliveryOrders] = useState([]);
-  const [deliveryOrdersLoading, setDeliveryOrdersLoading] = useState(false);
-  const [deliveryOutLoading, setDeliveryOutLoading] = useState(false);
-  const [deliverySettleLoading, setDeliverySettleLoading] = useState(false);
   const [customerHistory, setCustomerHistory] = useState([]);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
   // Customer History pane — invoice preview modal
@@ -815,24 +573,19 @@ export default function POSSales() {
   // Online payment mode — bank account linking for reconciliation/reporting
   const [checkoutOnlineBankAccounts, setCheckoutOnlineBankAccounts] = useState([]);
   const [checkoutOnlineBankAccountsLoading, setCheckoutOnlineBankAccountsLoading] = useState(false);
-  const [checkoutRemarks, setCheckoutRemarks] = useState('');
   // E-bill options (embedded in checkout)
 
   // Receipt sharing — 'payment' shows the checkout form, 'complete' shows the
   // payment-done screen in the SAME overlay (avoids simultaneous unmount+mount).
-  const [checkoutPhase, setCheckoutPhase] = useState('payment'); // 'payment' | 'complete'
   // While a settlement is in flight we FREEZE the A4 preview html so clearInvoice()
   // (which empties the cart) cannot null the live iframe's blob src in the same
   // commit that the phase switch unmounts that iframe — that race is what threw
   // "Failed to execute 'removeChild' on 'Node'" on Settle Payment.
-  const [checkoutSettling, setCheckoutSettling] = useState(false);
   // True while post-payment side-effects (receipt printing, cash drawer, layaway
   // conversion) run AFTER the payment itself has already been confirmed by the
   // backend and the success screen is showing. Drives the subtle "Printing
   // receipt…" indicator on the complete screen so the cashier isn't blocked on
   // the checkout form waiting for the printer round-trip (perceived-latency fix).
-  const [checkoutFinalizing, setCheckoutFinalizing] = useState(false);
-  const checkoutPreviewFreezeRef = useRef('');
   // ZATCA QR data URL for the checkout A4 preview (used only when QR is enabled
   // and no company stamp occupies that slot — "stamp if uploaded, else QR").
   const [checkoutPreviewQrDataUrl, setCheckoutPreviewQrDataUrl] = useState(null);
@@ -843,94 +596,19 @@ export default function POSSales() {
   // and the transient success/failure toast it raises.
   const [receiptShareChannel, setReceiptShareChannel] = useState(null);
   const [receiptShareFeedback, setReceiptShareFeedback] = useState(null);
-  const [lastPaidInvoice, setLastPaidInvoice] = useState(null);
 
-  // Pre-fill the share dialog from the customer on the settled sale. A walk-in
-  // has neither, so the cashier gets an empty field to type into.
-  const receiptShareInitialValue = useMemo(() => {
-    const cust = lastPaidInvoice?.customer;
-    if (!cust || cust.id === WALK_IN_CUSTOMER.id) return '';
-    return (receiptShareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
-  }, [lastPaidInvoice, receiptShareChannel]);
-
-  // The three send paths are unchanged — WhatsApp still opens wa.me, Email still
-  // calls sendSalesInvoiceEmail with the same payload. Throwing here keeps the
-  // dialog open so the cashier can retry.
-  const handleReceiptShareSend = useCallback(async (value) => {
-    if (!lastPaidInvoice) return;
-    const summary = `Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`;
-    if (receiptShareChannel === 'whatsapp') {
-      const digits = value.replace(/\D/g, '');
-      window.open(`https://wa.me/${digits}?text=${encodeURIComponent(summary)}`, '_blank');
-      setReceiptShareFeedback({ type: 'success', message: 'WhatsApp opened with the receipt message.' });
-      return;
-    }
-    if (receiptShareChannel === 'sms') {
-      // No SMS gateway is wired up yet; this keeps the previous stub behaviour
-      // (which used alert()) and only swaps the notice for the standard toast.
-      setReceiptShareFeedback({ type: 'success', message: `${summary} — SMS queued for ${value}.` });
-      return;
-    }
-    if (receiptShareChannel === 'email') {
-      if (!lastPaidInvoice?.invoice?.id) throw new Error('Invoice is not available to email yet.');
-      await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, {
-        toEmail: value,
-        subject: `Receipt ${lastPaidInvoice.id}`,
-        htmlBody: `<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>`,
-      });
-      setReceiptShareFeedback({ type: 'success', message: `Receipt emailed to ${value}.` });
-    }
-  }, [lastPaidInvoice, receiptShareChannel]);
-
-  useEffect(() => {
-    if (!receiptShareFeedback) return undefined;
-    const t = setTimeout(() => setReceiptShareFeedback(null), 3500);
-    return () => clearTimeout(t);
-  }, [receiptShareFeedback]);
-
-  // Touch screen POS states
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [favouriteProductIds, setFavouriteProductIds] = useState(new Set());
-  const [favouriteTogglePending, setFavouriteTogglePending] = useState(new Set());
-  const [currentInvoice, setCurrentInvoice] = useState({
-    items: [],
-    subtotal: 0,
-    totalDiscount: 0,
-    tax: 0,
-    total: 0,
-    billDiscountAmount: 0,
-  });
-  const currentInvoiceRef = useRef(null);
-  // addToInvoice is redefined fresh every render (it closes over posSettings,
-  // e.g. taxInclusive). handleUnifiedEntry below is memoized with an empty
-  // dep array so its own closure is frozen from the first render — calling
-  // addToInvoice directly there would permanently use the mount-time tax
-  // mode. Route through this ref, kept current every render, instead.
-  const addToInvoiceRef = useRef(null);
-  // Same frozen-closure problem, same fix: handleUnifiedEntry reads the live
-  // POS settings, the Product Entry Mode controller and the feedback toaster
-  // through refs kept current on every render.
-  const posSettingsRef = useRef(null);
-  const handleProductSelectionRef = useRef(null);
-  const showFeedbackRef = useRef(null);
-  // handleUnifiedEntry is frozen at mount, so the voucher-scan handler is reached through a
-  // ref for the same reason addToInvoiceRef exists.
-  const applyScannedVoucherRef = useRef(null);
-  posSettingsRef.current = posSettings;
+  // ── Cart ───────────────────────────────────────────────────────────────────
+  // Implementation lives in POS/features/cart/useCart.js. The single authoritative live
+  // cart object; destructured under its original names so every consumer (the JSX, both
+  // prop bags and all four feature hooks) reads the same state through the same binding.
+  const {
+    currentInvoice, setCurrentInvoice, currentInvoiceRef,
+    recalculateInvoice, resetCartState,
+    removeFromInvoice, applyVoid, cartItemsToPayload,
+  } = useCart({ posSettings });
   // True when the Quick Customer modal was launched from the Checkout credit
   // panel, so the newly created customer is auto-selected as the credit buyer.
   const quickCustomerCreditCtxRef = useRef(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [posProducts, setPosProducts] = useState([]);
-  const [posProductPage, setPosProductPage] = useState(0);
-  const [posProductTotalPages, setPosProductTotalPages] = useState(0);
-  const [posProductTotalElements, setPosProductTotalElements] = useState(0);
-  const [posProductsLoading, setPosProductsLoading] = useState(false);
-  const [posProductsLoadingMore, setPosProductsLoadingMore] = useState(false);
-  const [posProductsError, setPosProductsError] = useState('');
-  const [posDepartments, setPosDepartments] = useState([]);
-  const productCacheRef = useRef(new Map());
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('cash');
   const [selectedCustomer, setSelectedCustomer] = useState(WALK_IN_CUSTOMER.id);
   const [posCustomers, setPosCustomers] = useState([]);
@@ -953,12 +631,15 @@ export default function POSSales() {
   // Cart Focus mode: barcode scan + keypad panel
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeScanFeedback, setBarcodeScanFeedback] = useState(null);
+  // The feedback toaster. It touches only the state setter above and setTimeout, so it is
+  // stable for the life of the screen and every caller - the voucher handlers just below,
+  // useProductEntry's frozen callbacks and the JSX - can hold it directly. Each call
+  // schedules its own clear; an earlier timer can still clear a later message early.
+  const showFeedback = useCallback((type, message) => {
+    setBarcodeScanFeedback({ type, message });
+    setTimeout(() => setBarcodeScanFeedback(null), 2500);
+  }, []);
   const barcodeInputRef = useRef(null);
-  // Live autocomplete for the Cart Focus scan/search box — shows a "select item"
-  // dropdown of matching products as the cashier types, so a name/code/barcode
-  // search works even when the Items Panel is hidden.
-  const [barcodeSuggestions, setBarcodeSuggestions] = useState([]);
-  const [barcodeSuggestionsLoading, setBarcodeSuggestionsLoading] = useState(false);
   const [invoiceCounter, setInvoiceCounter] = useState(0);
   // Real next invoice number previewed from the backend numbering sequence
   // (GET /api/sales-invoices/next-number). POS checkout posts through the same
@@ -966,8 +647,27 @@ export default function POSSales() {
   // used for the checkout header + receipt preview instead of a fabricated
   // client-side counter. Null until fetched; callers fall back gracefully.
   const [previewInvoiceNo, setPreviewInvoiceNo] = useState(null);
-  const [lastScannedItem, setLastScannedItem] = useState(null);
   const [posActionMode, setPosActionMode] = useState('none');
+
+  // ── Product catalog / search ────────────────────────────────────────────────
+  // Implementation lives in POS/features/products/useProductCatalog.js. Owns the grid's
+  // product list/paging/search, categories, favourites, the Search Products modal and the
+  // Cart Focus type-ahead suggestions, plus the single productCacheRef that useProductEntry
+  // below reads/writes on its own scan-resolve path.
+  const {
+    posProducts, posProductPage, posProductTotalPages, posProductTotalElements,
+    posProductsLoading, posProductsLoadingMore, posProductsError,
+    loadPosProducts, loadMorePosProducts,
+    searchQuery, setSearchQuery,
+    productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
+    favouriteProductIds, toggleFavourite,
+    productCacheRef,
+    barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
+    showProductSearch, setShowProductSearch,
+    productSearchQuery, setProductSearchQuery,
+    productSearchResults, setProductSearchResults, productSearchLoading,
+  } = useProductCatalog({ currentTerminal, currentSession, barcodeInput, posActionMode });
+
   // Classic layout inline numpad
   const [classicNumpadMode, setClassicNumpadMode] = useState('none');
   const [classicNumpadValue, setClassicNumpadValue] = useState('');
@@ -1003,7 +703,6 @@ export default function POSSales() {
   // X/Z report output format: 'a4' | '80mm' | '58mm'. One view-model, two renderers.
   const [reportPrintMode, setReportPrintMode] = useState('a4');
   const [cashDropFeedback, setCashDropFeedback] = useState(null);
-  const [printFeedback, setPrintFeedback] = useState(null);
   const [showCouponsDialog, setShowCouponsDialog] = useState(false);
   const [couponCode, setCouponCode] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState(null);
@@ -1031,40 +730,13 @@ export default function POSSales() {
   const [showPriceCheck, setShowPriceCheck] = useState(false);
   const [priceCheckQuery, setPriceCheckQuery] = useState('');
   const [priceCheckResult, setPriceCheckResult] = useState(null);
-  // Search Products modal — dedicated multi-result lookup by item code, barcode, or
-  // product name (substring match anywhere, backed by the same server-side LIKE
-  // search as the items grid) so cashiers can find and add items even when the Items
-  // Panel is hidden in Cart Focus.
-  const [showProductSearch, setShowProductSearch] = useState(false);
-  const [productSearchQuery, setProductSearchQuery] = useState('');
-  const [productSearchResults, setProductSearchResults] = useState([]);
-  const [productSearchLoading, setProductSearchLoading] = useState(false);
   // Credit Balance modal
   const [showCreditBalance, setShowCreditBalance] = useState(false);
   const [creditBalanceQuery, setCreditBalanceQuery] = useState('');
   const [creditBalanceResult, setCreditBalanceResult] = useState(null);
-  // Layaways list modal
-  const [showLayawaysList, setShowLayawaysList] = useState(false);
-  const [layawaysFilterStatus, setLayawaysFilterStatus] = useState('All');
-  const [layawaysFilterCustomer, setLayawaysFilterCustomer] = useState('');
-  const [layawaysFilterNo, setLayawaysFilterNo] = useState('');
-  const [selectedLayawayId, setSelectedLayawayId] = useState(null);
-  const [layawaysList, setLayawaysList] = useState([]);
-  const [layawaysLoading, setLayawaysLoading] = useState(false);
-  const [layawaysError, setLayawaysError] = useState(null);
-  const [selectedLayawayDetail, setSelectedLayawayDetail] = useState(null);
-  const [layawayBusyId, setLayawayBusyId] = useState(null);
-  // Conversion: when a layaway is loaded into the cart for settlement, remember
-  // which layaway it came from (mark-converted after checkout) and the deposit
-  // already collected (pre-credited against the balance to settle).
-  const [activeLayawayId, setActiveLayawayId] = useState(null);
-  const [activeLayawayDeposit, setActiveLayawayDeposit] = useState(0);
   // Save Layaway
   const [saveLayawayBusy, setSaveLayawayBusy] = useState(false);
   const [saveLayawayError, setSaveLayawayError] = useState(null);
-  // Hold (persisted, session-scoped)
-  const [heldSales, setHeldSales] = useState([]);
-  const [holdBusy, setHoldBusy] = useState(false);
   // Confirmation modal (replaces window.confirm for delete/cancel actions)
   const [confirmAction, setConfirmAction] = useState(null); // { title, message, onConfirm, busy }
   // Save Layaway modal
@@ -1161,204 +833,122 @@ export default function POSSales() {
     autoFocusOnPOS: true,
     notes: '',
   }), [currentTerminal?.terminalId, currentTerminal?.terminalName]);
-  const [tplReceiptHeader, setTplReceiptHeader] = useState('Thank you for shopping with us!');
-  // Template 2's Arabic title override for the POS Receipt tab (no-tax checkout
-  // path). Template 1's header field above already covers English for both.
-  const [tplReceiptHeaderAr, setTplReceiptHeaderAr] = useState('فاتورة مبيعات');
-  const [tplReceiptFooter, setTplReceiptFooter] = useState('Returns accepted within 7 days with receipt.');
-  const [tplReceiptPaper, setTplReceiptPaper] = useState('80mm');
-  const [tplReceiptShowLogo, setTplReceiptShowLogo] = useState(true);
-  const [tplReceiptShowTrn, setTplReceiptShowTrn] = useState(true);
-  const [tplReceiptShowBarcode, setTplReceiptShowBarcode] = useState(true);
-  const [tplInvoiceHeader, setTplInvoiceHeader] = useState('TAX INVOICE');
-  // Template 2's Arabic title override for the Tax Invoice tab — default matches
-  // Template 2's current hardcoded Arabic title so hasTax=true output is unchanged.
-  const [tplInvoiceHeaderAr, setTplInvoiceHeaderAr] = useState('فاتورة ضريبية');
-  const [tplInvoiceFooter, setTplInvoiceFooter] = useState('All prices inclusive of VAT at 5%.');
-  const [tplInvoicePaper, setTplInvoicePaper] = useState('A4');
-  const [tplReturnHeader, setTplReturnHeader] = useState('SALES RETURN / CREDIT NOTE');
-  const [tplReturnFooter, setTplReturnFooter] = useState('Refund processed within 3–5 business days.');
-  const [tplReturnPaper, setTplReturnPaper] = useState('A4');
-  // Phase 3 cutover (USE_NEW_POS_PRINT_TEMPLATE): resolved branch-scoped PrintTemplate
-  // rows, fetched once per session when the flag is on. buildPosA4Template's fabricated
-  // in-memory template remains the fallback whenever these are null — see
+  // ── Print-template / designer settings ─────────────────────────────────────
+  // Implementation lives in POS/features/templateSettings/useTemplateSettings.js.
+  // Destructured under the existing names so the POSConsole prop bag, the designer
+  // JSX and every print call site stay untouched.
+  const {
+    tplReceiptHeader, setTplReceiptHeader, tplReceiptHeaderAr, setTplReceiptHeaderAr,
+    tplReceiptFooter, setTplReceiptFooter, tplReceiptPaper, setTplReceiptPaper,
+    tplReceiptShowLogo, setTplReceiptShowLogo, tplReceiptShowTrn, setTplReceiptShowTrn,
+    tplReceiptShowBarcode, setTplReceiptShowBarcode, tplInvoiceHeader, setTplInvoiceHeader,
+    tplInvoiceHeaderAr, setTplInvoiceHeaderAr, tplInvoiceFooter, setTplInvoiceFooter,
+    tplInvoicePaper, setTplInvoicePaper, tplReturnHeader, setTplReturnHeader,
+    tplReturnFooter, setTplReturnFooter, tplReturnPaper, setTplReturnPaper,
+    tplJobCardFooter, setTplJobCardFooter, tplJobCardPaper, setTplJobCardPaper,
+    tplOutletName, setTplOutletName, tplOutletTrn, setTplOutletTrn,
+    tplOutletAddress, setTplOutletAddress, tplOutletPhone, setTplOutletPhone,
+    tplLogoDataUrl, setTplLogoDataUrl, tplStampDataUrl, setTplStampDataUrl,
+    tplReceiptShowStamp, setTplReceiptShowStamp, tplInvoiceShowLogo, setTplInvoiceShowLogo,
+    tplInvoiceShowCompanyDetails, setTplInvoiceShowCompanyDetails, tplInvoiceShowTrn, setTplInvoiceShowTrn,
+    tplInvoiceShowCustomerDetails, setTplInvoiceShowCustomerDetails, tplInvoiceShowTerms, setTplInvoiceShowTerms,
+    tplInvoiceShowNotes, setTplInvoiceShowNotes, tplInvoiceShowBankDetails, setTplInvoiceShowBankDetails,
+    tplInvoiceShowQRCode, setTplInvoiceShowQRCode, tplInvoiceShowStamp, setTplInvoiceShowStamp,
+    tplInvoiceQrPlacement, setTplInvoiceQrPlacement, tplInvoiceShowSignature, setTplInvoiceShowSignature,
+    tplInvoiceShowGrandTotalBanner, setTplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode, setTplInvoiceColItemCode,
+    tplInvoiceColItemImage, setTplInvoiceColItemImage, tplInvoiceColBarcode, setTplInvoiceColBarcode,
+    tplInvoiceColBatchNo, setTplInvoiceColBatchNo, tplInvoiceColDiscount, setTplInvoiceColDiscount,
+    tplInvoiceColVatPct, setTplInvoiceColVatPct, tplInvoiceColVatAmt, setTplInvoiceColVatAmt,
+    tplReceiptShowCompanyDetails, setTplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, setTplReceiptShowCustomerDetails,
+    tplReceiptColItemCode, setTplReceiptColItemCode, tplReceiptColItemImage, setTplReceiptColItemImage,
+    tplReceiptColBatchNo, setTplReceiptColBatchNo, tplReceiptColDiscount, setTplReceiptColDiscount,
+    tplReceiptColVatPct, setTplReceiptColVatPct, tplReceiptColVatAmt, setTplReceiptColVatAmt,
+    tplReceiptShowGrandTotalBanner, setTplReceiptShowGrandTotalBanner, tplReceiptShowTerms, setTplReceiptShowTerms,
+    tplReceiptShowNotes, setTplReceiptShowNotes, tplReceiptShowBankDetails, setTplReceiptShowBankDetails,
+    tplReceiptShowQRCode, setTplReceiptShowQRCode, tplReceiptShowSignature, setTplReceiptShowSignature,
+    tplReturnShowLogo, setTplReturnShowLogo, tplReturnShowTrn, setTplReturnShowTrn,
+    tplReturnShowStamp, setTplReturnShowStamp, tplReturnShowCompanyDetails, setTplReturnShowCompanyDetails,
+    tplReturnShowCustomerDetails, setTplReturnShowCustomerDetails, tplReturnColItemCode, setTplReturnColItemCode,
+    tplReturnColBatchNo, setTplReturnColBatchNo, tplReturnColDiscount, setTplReturnColDiscount,
+    tplReturnColVatPct, setTplReturnColVatPct, tplReturnColVatAmt, setTplReturnColVatAmt,
+    tplReturnShowGrandTotalBanner, setTplReturnShowGrandTotalBanner, tplReturnShowTerms, setTplReturnShowTerms,
+    tplReturnShowNotes, setTplReturnShowNotes, tplReturnShowQRCode, setTplReturnShowQRCode,
+    tplReturnShowSignature, setTplReturnShowSignature, tplReturnShowCreditBalance, setTplReturnShowCreditBalance,
+    tplJobCardShowLogo, setTplJobCardShowLogo, tplJobCardShowTrn, setTplJobCardShowTrn,
+    tplJobCardShowStamp, setTplJobCardShowStamp, tplJobCardShowCompanyDetails, setTplJobCardShowCompanyDetails,
+    tplJobCardShowCustomerDetails, setTplJobCardShowCustomerDetails, tplJobCardShowSerialNumber, setTplJobCardShowSerialNumber,
+    tplJobCardShowWarranty, setTplJobCardShowWarranty, tplJobCardShowTechnician, setTplJobCardShowTechnician,
+    tplJobCardShowExpectedDate, setTplJobCardShowExpectedDate, tplJobCardShowCustomerSignature, setTplJobCardShowCustomerSignature,
+    tplJobCardShowTerms, setTplJobCardShowTerms, receiptTemplateId, setReceiptTemplateId,
+    t2ShowLogo, setT2ShowLogo, t2ShowCompanyDetails, setT2ShowCompanyDetails,
+    t2ShowTrn, setT2ShowTrn, t2ShowArabic, setT2ShowArabic,
+    t2ShowCustomerDetails, setT2ShowCustomerDetails, t2ShowAccountBalance, setT2ShowAccountBalance,
+    t2ShowDelivery, setT2ShowDelivery, t2ShowVatSummary, setT2ShowVatSummary,
+    t2ShowPaymentDetails, setT2ShowPaymentDetails, t2ShowLoyalty, setT2ShowLoyalty,
+    t2ShowQRCode, setT2ShowQRCode, t2ShowFooterText, setT2ShowFooterText,
+    t2ShowBarcode, setT2ShowBarcode, t2ReceiptShowLogo, setT2ReceiptShowLogo,
+    t2ReceiptShowCompanyDetails, setT2ReceiptShowCompanyDetails, t2ReceiptShowTrn, setT2ReceiptShowTrn,
+    t2ReceiptShowArabic, setT2ReceiptShowArabic, t2ReceiptShowCustomerDetails, setT2ReceiptShowCustomerDetails,
+    t2ReceiptShowAccountBalance, setT2ReceiptShowAccountBalance, t2ReceiptShowDelivery, setT2ReceiptShowDelivery,
+    t2ReceiptShowVatSummary, setT2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails, setT2ReceiptShowPaymentDetails,
+    t2ReceiptShowLoyalty, setT2ReceiptShowLoyalty, t2ReceiptShowQRCode, setT2ReceiptShowQRCode,
+    t2ReceiptShowFooterText, setT2ReceiptShowFooterText, t2ReceiptShowBarcode, setT2ReceiptShowBarcode,
+    t2InvoiceShowLogo, setT2InvoiceShowLogo, t2InvoiceShowCompanyDetails, setT2InvoiceShowCompanyDetails,
+    t2InvoiceShowTrn, setT2InvoiceShowTrn, t2InvoiceShowArabic, setT2InvoiceShowArabic,
+    t2InvoiceShowCustomerDetails, setT2InvoiceShowCustomerDetails, t2InvoiceShowAccountBalance, setT2InvoiceShowAccountBalance,
+    t2InvoiceShowDelivery, setT2InvoiceShowDelivery, t2InvoiceShowVatSummary, setT2InvoiceShowVatSummary,
+    t2InvoiceShowPaymentDetails, setT2InvoiceShowPaymentDetails, t2InvoiceShowLoyalty, setT2InvoiceShowLoyalty,
+    t2InvoiceShowQRCode, setT2InvoiceShowQRCode, t2InvoiceShowFooterText, setT2InvoiceShowFooterText,
+    t2InvoiceShowBarcode, setT2InvoiceShowBarcode,
+    effectiveOutletTrn,
+    receiptArtifactTemplateSettings,
+    applyPrintTemplateConfig,
+  } = useTemplateSettings({ branches, company });
+
   // resolvedPosInvoiceTemplate below, which every print call site now goes through.
   const [resolvedPosInvoiceTemplate, setResolvedPosInvoiceTemplate] = useState(null);
   const [resolvedPosCreditNoteTemplate, setResolvedPosCreditNoteTemplate] = useState(null);
 
-  // Effective-template resolvers used by every A4 print call site: prefer the real,
-  // branch-scoped PrintTemplate (Phase 3 cutover) when the flag is on and one resolved
-  // successfully; otherwise fall back to buildPosA4Template's fabricated in-memory
-  // template exactly as before. footerNote/opts/category match buildPosA4Template's
-  // own signature so calling code doesn't need to branch. hasTax defaults to true
-  // (the historical always-Tax-Invoice behavior) — callers that know the actual
-  // sale's tax state pass it explicitly to get the Tax Invoice/Sales Invoice split
-  // that buildPosPrintData's title already applies to the printed data.
-  const resolveInvoiceA4Template = useCallback((footerNote, opts, hasTax = true) => {
-    if (USE_NEW_POS_PRINT_TEMPLATE && resolvedPosInvoiceTemplate) {
-      return applyTaxAwareDisplayOptions(resolvedPosInvoiceTemplate, hasTax);
-    }
-    // Fallback path (flag off or DB template unresolved): the fabricated in-memory
-    // template must be tax-aware too, so a no-tax A4 never leaks VAT columns/rows
-    // or TRN regardless of which template source is in play.
-    return applyTaxAwareDisplayOptions(buildPosA4Template(footerNote, opts), hasTax);
-  }, [resolvedPosInvoiceTemplate]);
+  // The tplInvoice* designer flags an A4 print applies. Assembled here because these
+  // flags are general POS configuration (each is also read by the designer JSX and the
+  // POSConsole prop bag), not print-owned state. Same 18 keys, same order, as the six
+  // inline literals this replaced.
+  const invoiceTemplateOptions = useMemo(() => ({
+    showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails,
+    showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails,
+    showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes,
+    showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode,
+    showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature,
+    showGrandTotalBanner: tplInvoiceShowGrandTotalBanner,
+    colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage,
+    colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo,
+    colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct,
+    colVatAmt: tplInvoiceColVatAmt,
+  }), [
+    tplInvoiceShowLogo, tplInvoiceShowCompanyDetails, tplInvoiceShowTrn,
+    tplInvoiceShowCustomerDetails, tplInvoiceShowTerms, tplInvoiceShowNotes,
+    tplInvoiceShowBankDetails, tplInvoiceShowQRCode, tplInvoiceShowStamp,
+    tplInvoiceShowSignature, tplInvoiceShowGrandTotalBanner, tplInvoiceColItemCode,
+    tplInvoiceColItemImage, tplInvoiceColBarcode, tplInvoiceColBatchNo,
+    tplInvoiceColDiscount, tplInvoiceColVatPct, tplInvoiceColVatAmt,
+  ]);
 
-  const resolveCreditNoteA4Template = useCallback((footerNote, opts) => {
-    if (USE_NEW_POS_PRINT_TEMPLATE && resolvedPosCreditNoteTemplate) return resolvedPosCreditNoteTemplate;
-    return buildPosA4Template(footerNote, opts, 'Sales Return');
-  }, [resolvedPosCreditNoteTemplate]);
-  const [tplJobCardFooter, setTplJobCardFooter] = useState('We are not responsible for data loss during repair.');
-  const [tplJobCardPaper, setTplJobCardPaper] = useState('A4');
-  const [tplOutletName, setTplOutletName] = useState('BillBull Trading LLC');
-  const [tplOutletTrn, setTplOutletTrn] = useState('');
-  const [tplOutletAddress, setTplOutletAddress] = useState('Shop 12, Dubai Mall, Downtown Dubai');
-  const [tplOutletPhone, setTplOutletPhone] = useState('+971 4 123 4567');
-  const [tplLogoDataUrl, setTplLogoDataUrl] = useState(null);
-  const [tplStampDataUrl, setTplStampDataUrl] = useState(null);
-
-  // Company TRN printed in EVERY POS receipt/A4 header. The POS Print Templates tab
-  // keeps its own free-text TRN field (tplOutletTrn) that ships with a sample value;
-  // merchants routinely clear it, and the POS was the one print surface that never
-  // fell back to the real company record — so every POS print (80mm + A4, sale,
-  // reprint, delivery order, delivery settlement) silently lost the company TRN.
-  // Mirror branchPrintProfile.buildDocumentHeaderProfile's rule instead: the active
-  // branch's TRN wins when set, the company profile's TRN fills the gap.
-  const effectiveOutletTrn = useMemo(() => {
-    const typed = (tplOutletTrn || '').trim();
-    if (typed) return typed;
-    const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
-    const branch = activeBranchIdRaw && activeBranchIdRaw !== 'ALL'
-      ? (branches || []).find(b => String(b?.id) === String(activeBranchIdRaw))
-      : null;
-    return (branch?.trnNumber || company?.trn || '').trim();
-  }, [tplOutletTrn, branches, company]);
-  const [tplReceiptShowStamp, setTplReceiptShowStamp] = useState(false);
-  const [tplInvoiceShowLogo, setTplInvoiceShowLogo] = useState(true);
-  const [tplInvoiceShowCompanyDetails, setTplInvoiceShowCompanyDetails] = useState(true);
-  const [tplInvoiceShowTrn, setTplInvoiceShowTrn] = useState(true);
-  const [tplInvoiceShowCustomerDetails, setTplInvoiceShowCustomerDetails] = useState(true);
-  const [tplInvoiceShowTerms, setTplInvoiceShowTerms] = useState(true);
-  const [tplInvoiceShowNotes, setTplInvoiceShowNotes] = useState(true);
-  const [tplInvoiceShowBankDetails, setTplInvoiceShowBankDetails] = useState(false);
-  const [tplInvoiceShowQRCode, setTplInvoiceShowQRCode] = useState(false);
-  const [tplInvoiceShowStamp, setTplInvoiceShowStamp] = useState(false);
-  // QR / stamp / footer-image placement on the receipt: 'before' | 'after' the footer text.
-  const [tplInvoiceQrPlacement, setTplInvoiceQrPlacement] = useState('before');
-  const [tplInvoiceShowSignature, setTplInvoiceShowSignature] = useState(false);
-  const [tplInvoiceShowGrandTotalBanner, setTplInvoiceShowGrandTotalBanner] = useState(true);
-  const [tplInvoiceColItemCode, setTplInvoiceColItemCode] = useState(true);
-  const [tplInvoiceColItemImage, setTplInvoiceColItemImage] = useState(false);
-  const [tplInvoiceColBarcode, setTplInvoiceColBarcode] = useState(false);
-  const [tplInvoiceColBatchNo, setTplInvoiceColBatchNo] = useState(true);
-  const [tplInvoiceColDiscount, setTplInvoiceColDiscount] = useState(true);
-  const [tplInvoiceColVatPct, setTplInvoiceColVatPct] = useState(true);
-  const [tplInvoiceColVatAmt, setTplInvoiceColVatAmt] = useState(true);
-  // Receipt A4 extras
-  const [tplReceiptShowCompanyDetails, setTplReceiptShowCompanyDetails] = useState(true);
-  const [tplReceiptShowCustomerDetails, setTplReceiptShowCustomerDetails] = useState(true);
-  const [tplReceiptColItemCode, setTplReceiptColItemCode] = useState(true);
-  const [tplReceiptColItemImage, setTplReceiptColItemImage] = useState(false);
-  const [tplReceiptColBatchNo, setTplReceiptColBatchNo] = useState(true);
-  const [tplReceiptColDiscount, setTplReceiptColDiscount] = useState(true);
-  const [tplReceiptColVatPct, setTplReceiptColVatPct] = useState(true);
-  const [tplReceiptColVatAmt, setTplReceiptColVatAmt] = useState(true);
-  const [tplReceiptShowGrandTotalBanner, setTplReceiptShowGrandTotalBanner] = useState(true);
-  const [tplReceiptShowTerms, setTplReceiptShowTerms] = useState(true);
-  const [tplReceiptShowNotes, setTplReceiptShowNotes] = useState(false);
-  const [tplReceiptShowBankDetails, setTplReceiptShowBankDetails] = useState(false);
-  const [tplReceiptShowQRCode, setTplReceiptShowQRCode] = useState(false);
-  const [tplReceiptShowSignature, setTplReceiptShowSignature] = useState(false);
-  // Return A4 extras
-  const [tplReturnShowLogo, setTplReturnShowLogo] = useState(true);
-  const [tplReturnShowTrn, setTplReturnShowTrn] = useState(true);
-  const [tplReturnShowStamp, setTplReturnShowStamp] = useState(false);
-  const [tplReturnShowCompanyDetails, setTplReturnShowCompanyDetails] = useState(true);
-  const [tplReturnShowCustomerDetails, setTplReturnShowCustomerDetails] = useState(true);
-  const [tplReturnColItemCode, setTplReturnColItemCode] = useState(true);
-  const [tplReturnColBatchNo, setTplReturnColBatchNo] = useState(true);
-  const [tplReturnColDiscount, setTplReturnColDiscount] = useState(true);
-  const [tplReturnColVatPct, setTplReturnColVatPct] = useState(true);
-  const [tplReturnColVatAmt, setTplReturnColVatAmt] = useState(true);
-  const [tplReturnShowGrandTotalBanner, setTplReturnShowGrandTotalBanner] = useState(true);
-  const [tplReturnShowTerms, setTplReturnShowTerms] = useState(true);
-  const [tplReturnShowNotes, setTplReturnShowNotes] = useState(false);
-  const [tplReturnShowQRCode, setTplReturnShowQRCode] = useState(false);
-  const [tplReturnShowSignature, setTplReturnShowSignature] = useState(false);
-  const [tplReturnShowCreditBalance, setTplReturnShowCreditBalance] = useState(false);
-  // Job Card A4 extras
-  const [tplJobCardShowLogo, setTplJobCardShowLogo] = useState(true);
-  const [tplJobCardShowTrn, setTplJobCardShowTrn] = useState(true);
-  const [tplJobCardShowStamp, setTplJobCardShowStamp] = useState(false);
-  const [tplJobCardShowCompanyDetails, setTplJobCardShowCompanyDetails] = useState(true);
-  const [tplJobCardShowCustomerDetails, setTplJobCardShowCustomerDetails] = useState(true);
-  const [tplJobCardShowSerialNumber, setTplJobCardShowSerialNumber] = useState(true);
-  const [tplJobCardShowWarranty, setTplJobCardShowWarranty] = useState(true);
-  const [tplJobCardShowTechnician, setTplJobCardShowTechnician] = useState(true);
-  const [tplJobCardShowExpectedDate, setTplJobCardShowExpectedDate] = useState(true);
-  const [tplJobCardShowCustomerSignature, setTplJobCardShowCustomerSignature] = useState(true);
-  const [tplJobCardShowTerms, setTplJobCardShowTerms] = useState(true);
-  // Which receipt template (Template 1 "native" vs Template 2 "billbull-ar")
-  // drives the actual checkout print — persisted alongside the rest of
-  // printTemplateConfig so the Print Templates designer's saved selection is
-  // what the till prints at checkout, not just the designer's own test print.
-  const [receiptTemplateId, setReceiptTemplateId] = useState(DEFAULT_RECEIPT_TEMPLATE_ID);
-
-  // ── Template 2 (Arabic/bilingual) Show/Hide toggles ─────────────────────────
-  // Template 2 renders its own sections (Account Balance, Delivery, Loyalty,
-  // bilingual Arabic text) that Template 1 doesn't have, so it carries its OWN
-  // independent toggle state rather than reusing Template 1's. Selecting
-  // Template 2 in the designer swaps the toggle list AND its saved values.
-  // Persisted alongside the rest of printTemplateConfig. Defaults preserve the
-  // current Template 2 output (everything on except QR, which stays opt-in).
-  const [t2ShowLogo, setT2ShowLogo] = useState(true);
-  const [t2ShowCompanyDetails, setT2ShowCompanyDetails] = useState(true);
-  const [t2ShowTrn, setT2ShowTrn] = useState(true);
-  const [t2ShowArabic, setT2ShowArabic] = useState(true);
-  const [t2ShowCustomerDetails, setT2ShowCustomerDetails] = useState(true);
-  const [t2ShowAccountBalance, setT2ShowAccountBalance] = useState(true);
-  const [t2ShowDelivery, setT2ShowDelivery] = useState(true);
-  const [t2ShowVatSummary, setT2ShowVatSummary] = useState(true);
-  const [t2ShowPaymentDetails, setT2ShowPaymentDetails] = useState(true);
-  const [t2ShowLoyalty, setT2ShowLoyalty] = useState(true);
-  const [t2ShowQRCode, setT2ShowQRCode] = useState(false);
-  const [t2ShowFooterText, setT2ShowFooterText] = useState(true);
-  const [t2ShowBarcode, setT2ShowBarcode] = useState(true);
-
-  // ── Template 2 toggles, split per sub-tab ────────────────────────────────
-  // The single t2Show* set above still drives the Print Templates designer
-  // (both sub-tabs' Live Preview/Test Print, wired through POSConsole's tplCfg)
-  // and stays untouched so that plumbing doesn't need to change. At real
-  // checkout, Template 2 needs an INDEPENDENT toggle set per sub-tab (POS
-  // Receipt vs Tax Invoice) so a no-tax sale doesn't inherit the tax-invoice
-  // tab's Show/Hide choices. Same fields, same defaults as t2Show* above.
-  const [t2ReceiptShowLogo, setT2ReceiptShowLogo] = useState(true);
-  const [t2ReceiptShowCompanyDetails, setT2ReceiptShowCompanyDetails] = useState(true);
-  const [t2ReceiptShowTrn, setT2ReceiptShowTrn] = useState(true);
-  const [t2ReceiptShowArabic, setT2ReceiptShowArabic] = useState(true);
-  const [t2ReceiptShowCustomerDetails, setT2ReceiptShowCustomerDetails] = useState(true);
-  const [t2ReceiptShowAccountBalance, setT2ReceiptShowAccountBalance] = useState(true);
-  const [t2ReceiptShowDelivery, setT2ReceiptShowDelivery] = useState(true);
-  const [t2ReceiptShowVatSummary, setT2ReceiptShowVatSummary] = useState(true);
-  const [t2ReceiptShowPaymentDetails, setT2ReceiptShowPaymentDetails] = useState(true);
-  const [t2ReceiptShowLoyalty, setT2ReceiptShowLoyalty] = useState(true);
-  const [t2ReceiptShowQRCode, setT2ReceiptShowQRCode] = useState(false);
-  const [t2ReceiptShowFooterText, setT2ReceiptShowFooterText] = useState(true);
-  const [t2ReceiptShowBarcode, setT2ReceiptShowBarcode] = useState(true);
-
-  const [t2InvoiceShowLogo, setT2InvoiceShowLogo] = useState(true);
-  const [t2InvoiceShowCompanyDetails, setT2InvoiceShowCompanyDetails] = useState(true);
-  const [t2InvoiceShowTrn, setT2InvoiceShowTrn] = useState(true);
-  const [t2InvoiceShowArabic, setT2InvoiceShowArabic] = useState(true);
-  const [t2InvoiceShowCustomerDetails, setT2InvoiceShowCustomerDetails] = useState(true);
-  const [t2InvoiceShowAccountBalance, setT2InvoiceShowAccountBalance] = useState(true);
-  const [t2InvoiceShowDelivery, setT2InvoiceShowDelivery] = useState(true);
-  const [t2InvoiceShowVatSummary, setT2InvoiceShowVatSummary] = useState(true);
-  const [t2InvoiceShowPaymentDetails, setT2InvoiceShowPaymentDetails] = useState(true);
-  const [t2InvoiceShowLoyalty, setT2InvoiceShowLoyalty] = useState(true);
-  const [t2InvoiceShowQRCode, setT2InvoiceShowQRCode] = useState(false);
-  const [t2InvoiceShowFooterText, setT2InvoiceShowFooterText] = useState(true);
-  const [t2InvoiceShowBarcode, setT2InvoiceShowBarcode] = useState(true);
+  // ── Print orchestration / device boundary ──────────────────────────────────
+  // Implementation lives in POS/device/printing/usePosPrinting.js. Document
+  // generation (buildThermalReceiptArtifacts and the receipt builders) stays here —
+  // see that module's header for why.
+  const {
+    printFeedback, setPrintFeedback,
+    notifyPrintFallback,
+    printThermalReceiptWithConfiguredPrinter,
+    resolveInvoiceA4Template,
+    resolveCreditNoteA4Template,
+    resolveInvoiceA4TemplateFor,
+  } = usePosPrinting({
+    printerConfigs, currentTerminal,
+    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
+    invoiceTemplateOptions, tplInvoiceFooter,
+  });
 
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
   const togglePanelButton = (id) => setHiddenPanelButtons(prev => {
@@ -1396,32 +986,36 @@ export default function POSSales() {
       .catch(() => { setCashDropCategories([]); setCashDropCategoryRequired(false); });
   }, [showCashDropDialog, cashDropType]);
 
-
-  const productCategories = useMemo(() => ([
-    {
-      id: 'all',
-      name: 'All Items',
-      icon: Package,
-      departmentId: null,
-      count: selectedCategory === 'all' ? posProductTotalElements : null
-    },
-    ...posDepartments.map((department, index) => ({
-      id: String(department.id),
-      name: department.name || department.departmentName || `Department ${index + 1}`,
-      icon: CATEGORY_ICONS[index % CATEGORY_ICONS.length],
-      departmentId: department.id,
-      count: selectedCategory === String(department.id) ? posProductTotalElements : null
-    }))
-  ]), [posDepartments, posProductTotalElements, selectedCategory]);
-
-  const horizontalCategories = useMemo(() => ([
-    { id: 'all', name: 'All Items', icon: Package },
-    { id: 'favourites', name: 'Favourites ❤️', icon: Heart },
-    { id: 'recently-sold', name: 'Recently Sold', icon: Clock },
-    { id: 'top-sold', name: 'Top Sold', icon: TrendingUp },
-  ]), []);
-
   const customerOptions = useMemo(() => [WALK_IN_CUSTOMER, ...posCustomers], [posCustomers]);
+
+  // syncPosData is defined below and depends on the loadHeldSales useHeldSales returns,
+  // so both hooks reach it late through this ref.
+  const syncPosDataRef = useRef(null);
+
+  // ── Layaways ────────────────────────────────────────────────────────────────
+  // Implementation lives in POS/features/layaway/useLayaway.js. Called BEFORE
+  // useHeldSales so startLayawayConversion can be passed to it directly rather than
+  // through a ref. saveCurrentLayaway stays in POSSales — see the hook's header note.
+  // Declared here (rather than immediately before useHeldSales, further down) because
+  // activeLayawayDeposit feeds checkoutEffectiveDue/checkoutPaymentFields directly below —
+  // referencing it in a useMemo before this hook runs throws "Cannot access before
+  // initialization".
+  const {
+    showLayawaysList, setShowLayawaysList,
+    layawaysFilterStatus, setLayawaysFilterStatus,
+    layawaysFilterCustomer, setLayawaysFilterCustomer,
+    layawaysFilterNo, setLayawaysFilterNo,
+    selectedLayawayId, setSelectedLayawayId,
+    layawaysList, layawaysLoading, layawaysError,
+    selectedLayawayDetail, layawayBusyId,
+    activeLayawayId, setActiveLayawayId,
+    activeLayawayDeposit, setActiveLayawayDeposit,
+    loadLayaways, startLayawayConversion, handleCancelLayaway,
+  } = useLayaway({
+    currentSession, currentTerminal, posSettings,
+    recalculateInvoice, setCurrentInvoice, customerOptions, setSelectedCustomer,
+    setConfirmAction, syncPosDataRef,
+  });
 
   // ══ Checkout Payment Manager ═══════════════════════════════════════════════
   // Amount the cashier has to collect: cart total + shipping, less any layaway deposit
@@ -1439,6 +1033,12 @@ export default function POSSales() {
   const checkoutPayment = usePaymentManager({
     invoiceTotal: checkoutEffectiveDue,
   });
+
+  // Owned here (not inside useDelivery) because deliverySettleBalance below derives from it
+  // and useDelivery takes clearDeliverySettleLines (itself derived from deliverySettleBalance)
+  // as an input — so the state can't originate inside the hook without a circular
+  // "hook needs a value that needs the hook" dependency. Passed into useDelivery further down.
+  const [deliverySettleSelected, setDeliverySettleSelected] = useState(null);
 
   // Balance still owed on the delivery order the cashier has open, and the Payment Manager
   // that settles it. Same manager, selectors and validation as checkout -- one settlement
@@ -1554,7 +1154,6 @@ export default function POSSales() {
         : `Voucher ${voucher.voucherNumber} applied ${formatMoney2(plan.amount)}`,
     };
   }, [addCheckoutLine]);
-  applyScannedVoucherRef.current = applyScannedVoucher;
 
   /**
    * Backing out of the payment screen drops the tenders taken there — but keeps a voucher
@@ -1576,10 +1175,10 @@ export default function POSSales() {
     const line = (checkoutPaymentLinesRef.current || []).find((l) => l.id === lineId);
     removeCheckoutLine(lineId);
     if (line) {
-      showFeedbackRef.current?.('success',
+      showFeedback('success',
         `Voucher ${line.metadata?.voucherNumber || line.reference} removed`);
     }
-  }, [removeCheckoutLine]);
+  }, [removeCheckoutLine, showFeedback]);
 
   // Keeps applied vouchers inside the bill as the cart changes.
   //
@@ -1595,13 +1194,13 @@ export default function POSSales() {
       const name = line?.metadata?.voucherNumber || line?.reference;
       if (adj.action === 'remove') {
         removeCheckoutLine(adj.id);
-        showFeedbackRef.current?.('error', `Voucher ${name} removed — the sale no longer needs it`);
+        showFeedback('error', `Voucher ${name} removed — the sale no longer needs it`);
       } else {
         updateCheckoutLine(adj.id, { amount: adj.amount });
-        showFeedbackRef.current?.('success', `Voucher ${name} reduced to ${formatMoney2(adj.amount)}`);
+        showFeedback('success', `Voucher ${name} reduced to ${formatMoney2(adj.amount)}`);
       }
     });
-  }, [checkoutEffectiveDue, removeCheckoutLine, updateCheckoutLine]);
+  }, [checkoutEffectiveDue, removeCheckoutLine, updateCheckoutLine, showFeedback]);
 
   // Single source of truth for "who is this sale's customer". A credit allocation names the
   // account it is charged to; if that pick never mirrored back onto selectedCustomer, the
@@ -1622,6 +1221,14 @@ export default function POSSales() {
     () => customerOptions.find(c => c.id === effectiveCustomerId) || WALK_IN_CUSTOMER,
     [customerOptions, effectiveCustomerId]
   );
+
+  // Owned here (not inside useCheckout) because checkoutThermalHtml below reads them to
+  // decide whether to return the frozen preview, and useCheckout takes checkoutThermalHtml
+  // as an input — so the hook can't be the one creating this state without a circular
+  // "hook needs the memo that needs the hook" dependency. Passed into useCheckout as
+  // `previewFreeze` further down.
+  const [checkoutSettling, setCheckoutSettling] = useState(false);
+  const checkoutPreviewFreezeRef = useRef('');
 
   const checkoutThermalHtml = useMemo(() => {
     if (checkoutSettling) return checkoutPreviewFreezeRef.current;
@@ -1894,11 +1501,7 @@ export default function POSSales() {
     tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, tplStampDataUrl]);
   const checkoutA4BlobUrl = useA4BlobUrl(checkoutA4Html);
 
-  // Heartbeat — keeps the terminal ACTIVE on the server
-  useHeartbeat(
-    currentTerminal?.terminalId,
-    (posSettings?.heartbeatIntervalSeconds ?? 60) * 1000,
-  );
+  // Heartbeat moved into usePosSession (terminal keep-alive is lifecycle-owned).
 
   // Idle timeout — auto-lock the screen when no activity
   useIdleTimeout({
@@ -2045,91 +1648,6 @@ export default function POSSales() {
     return list.slice(0, 30);
   }, [customerOptions, customerSearchQuery]);
 
-  useEffect(() => { currentInvoiceRef.current = currentInvoice; }, [currentInvoice]);
-
-  // Lazily load configured bank accounts the first time the cashier opens any flow that
-  // allocates payments — checkout, layaway deposit, or delivery settlement all render
-  // PaymentAllocationPanel, and its Online modal needs them to offer a receiving account.
-  // excludeCash drops Cash in Hand / Petty Cash: money arriving by bank transfer must not
-  // land on a cash account, or the session's drawer count expects notes that were never taken.
-  const needsBankAccounts = showPaymentDialog || showSaveLayaway || showDeliverySettleModal;
-  useEffect(() => {
-    if (!needsBankAccounts) return;
-    if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;
-    let cancelled = false;
-    setCheckoutOnlineBankAccountsLoading(true);
-    getBankAccounts({ excludeCash: true })
-      .then(data => { if (!cancelled) setCheckoutOnlineBankAccounts(Array.isArray(data) ? data : []); })
-      .catch(err => { console.warn('Failed to load bank accounts', err); if (!cancelled) setCheckoutOnlineBankAccounts([]); })
-      .finally(() => { if (!cancelled) setCheckoutOnlineBankAccountsLoading(false); });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsBankAccounts]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
-  // Search Products modal — live, debounced lookup as the cashier types. Reuses the
-  // paginated product list endpoint, which already matches item code, SKU, barcode,
-  // and product name anywhere in the string (not just a prefix).
-  useEffect(() => {
-    if (!showProductSearch) return undefined;
-    const query = productSearchQuery.trim();
-    if (!query) {
-      setProductSearchResults([]);
-      setProductSearchLoading(false);
-      return undefined;
-    }
-    const controller = new AbortController();
-    setProductSearchLoading(true);
-    const timer = setTimeout(async () => {
-      try {
-        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
-        const data = await getProductsList(0, 30, query, controller.signal, null, null, null, true, posBranchId);
-        const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
-        mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
-        setProductSearchResults(mapped);
-      } catch (error) {
-        if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
-        console.error('Product search failed', error);
-        setProductSearchResults([]);
-      } finally {
-        setProductSearchLoading(false);
-      }
-    }, 300);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [productSearchQuery, showProductSearch]);
-
-  // Cart Focus scan/search box — live "select item" suggestions as the cashier
-  // types. Suppressed while the same field is repurposed as a qty/discount/price
-  // numpad (posActionMode !== 'none'), where its value is a number, not a search.
-  useEffect(() => {
-    const query = barcodeInput.trim();
-    if (posActionMode !== 'none' || !query) {
-      setBarcodeSuggestions([]);
-      setBarcodeSuggestionsLoading(false);
-      return undefined;
-    }
-    const controller = new AbortController();
-    setBarcodeSuggestionsLoading(true);
-    const timer = setTimeout(async () => {
-      try {
-        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
-        const data = await getProductsList(0, 8, query, controller.signal, null, null, null, true, posBranchId);
-        const mapped = Array.isArray(data?.content) ? data.content.map(mapPosProductListItem) : [];
-        mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
-        setBarcodeSuggestions(mapped);
-      } catch (error) {
-        if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
-        setBarcodeSuggestions([]);
-      } finally {
-        setBarcodeSuggestionsLoading(false);
-      }
-    }, 250);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [barcodeInput, posActionMode]);
 
   // Customer History pane — fetch the full invoice (with line items) for preview.
   // The history list only carries summary fields, so this pulls the complete
@@ -2172,30 +1690,6 @@ export default function POSSales() {
     loadPosCustomers();
   }, [loadPosCustomers]);
 
-  useEffect(() => {
-    let cancelled = false;
-    getDepartments()
-      .then(data => {
-        if (!cancelled) setPosDepartments(Array.isArray(data) ? data : []);
-      })
-      .catch(error => {
-        if (cancelled) return;
-        console.error('Failed to load POS departments', error);
-        setPosDepartments([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Registers (or resumes) this device's terminal for the CURRENTLY ACTIVE branch and, if one
-  // exists, restores the open session on it. Terminal identity is per-branch — the same device
-  // holds an independent terminal in every branch it's used in — so the cached terminal_id is
-  // scoped by branch, not global (see docs/pos-terminal-branch-switch-investigation-2026-07-24.html).
-  // Invoked on initial POS mount and again whenever the active branch changes, so a live branch
-  // switch reconnects the correct branch's terminal/session immediately rather than only on the
-  // next full remount.
   /** Raise the single "Previous Day Not Closed" flow for every path that can hit it
    *  (Start Session, Continue Session, day-status at mount). The server message is
    *  the only copy of the wording; the session id is read out of it so
@@ -2224,343 +1718,50 @@ export default function POSSales() {
     setClosureRequiredMsg(cleanMsg);
   }, []);
 
-  const openCancelClosureDialog = () => {
-    setCancelClosureUsername('');
-    setCancelClosurePassword('');
-    setCancelClosureReason('');
-    setCancelClosureError('');
-    setShowCancelClosureDialog(true);
+  // ── POS initialization: settings half ──
+  // usePosSession owns the mount-time init sequence (this loader → terminal registration →
+  // session resume → posInitLoading=false) and its cancellation flag. The settings, branch
+  // tax, layout and print-template seeding it runs first stay here, unchanged; isCancelled()
+  // reads that flag exactly where the original effect read `cancelled`. Reached through
+  // sessionLifecycleHandlersRef (assigned below useCheckout).
+  const loadInitialPosSettings = async (isCancelled) => {
+    // Load POS settings
+    const settings = await getPosSettings().catch(() => null);
+    if (!isCancelled() && settings) {
+      setPosSettings(settings);
+      // Tax Enabled / Tax Mode / Branch Default VAT Rate live in BranchTaxConfiguration
+      // now, not PosSettings — merge them into the same client-side posSettings object
+      // so the rest of the POS UI (which reads posSettings.taxInclusive /
+      // branchDefaultVatRate) keeps working unchanged. Source of truth and editing both
+      // belong to Branch Settings > Tax Configuration; this is read-only here. Resolve
+      // against the Branch Selector's active branch (not the ambiguous "current branch"
+      // endpoint) so switching branches on this terminal picks up that branch's own Tax
+      // Enabled / Tax Mode / VAT rate instead of the cashier's home/HQ branch.
+      const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
+      const activeBranchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL'
+        ? Number(activeBranchIdRaw)
+        : null;
+      (activeBranchId ? getBranchTaxConfigurationForBranch(activeBranchId) : getBranchTaxConfiguration()).then(taxConfig => {
+        if (!isCancelled() && taxConfig) {
+          setPosSettings(prev => ({ ...(prev || {}), ...taxConfig }));
+        }
+      }).catch(() => {});
+      // Seed layout state from persisted settings
+      if (settings.defaultLayout) setPosTemplate(settings.defaultLayout);
+      if (settings.layoutHideCategoryPanel != null) setHideCategoriesPanel(settings.layoutHideCategoryPanel);
+      if (settings.layoutHideItemsPanel != null) setHideItemsPanel(settings.layoutHideItemsPanel);
+      if (settings.layoutHiddenPanelButtons) {
+        setHiddenPanelButtons(new Set(settings.layoutHiddenPanelButtons.split(',').filter(Boolean)));
+      }
+      // Seed print template state from persisted JSON blob
+      if (settings.printTemplateConfig) {
+        try {
+          const tpl = JSON.parse(settings.printTemplateConfig);
+          applyPrintTemplateConfig(tpl);
+        } catch (e) { /* stale/malformed config — fall through to defaults */ }
+      }
+    }
   };
-
-  /** Cancel a started closure. Supervisor authorization is enforced by the backend; a
-   *  non-supervisor's credentials come back 403 and the session stays locked. */
-  const handleCancelClosureSubmit = async () => {
-    const targetId = currentSession?.id;
-    if (!targetId) return;
-    setCancelClosureLoading(true);
-    setCancelClosureError('');
-    try {
-      const updated = await cancelPosSessionClosure(targetId, {
-        reason: cancelClosureReason || undefined,
-        usernameOrEmail: cancelClosureUsername || undefined,
-        password: cancelClosurePassword || undefined,
-      });
-      setCurrentSession(prev => (prev?.id === targetId ? { ...prev, ...updated } : prev));
-      setShowCancelClosureDialog(false);
-      setCancelClosureUsername('');
-      setCancelClosurePassword('');
-      setCancelClosureReason('');
-    } catch (err) {
-      setCancelClosureError(err?.response?.data?.message || err.message
-        || 'Could not cancel the closure. A supervisor must authorize this.');
-    } finally {
-      setCancelClosureLoading(false);
-    }
-  };
-
-  /** True when an axios error is the backend's close-workflow refusal. */
-  const isClosureWorkflowError = (err) => {
-    const msg = err?.response?.data?.message || err?.response?.data;
-    return err?.response?.status === 409 && typeof msg === 'string'
-      && msg.includes('SESSION_CLOSING_WORKFLOW');
-  };
-
-  const registerTerminalAndResumeSession = useCallback(async () => {
-    const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
-    const activeBranchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL' ? activeBranchIdRaw : 'default';
-
-    const nav = window.navigator;
-    let fp = localStorage.getItem('billbull:pos:device_fingerprint');
-    if (!fp) {
-      fp = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
-      localStorage.setItem('billbull:pos:device_fingerprint', fp);
-    }
-    const terminalIdKey = `billbull:pos:terminal_id:${activeBranchId}`;
-    const cachedTerminalId = localStorage.getItem(terminalIdKey) || null;
-    const deviceInfo = `${nav.userAgent.split('(')[1]?.split(')')[0] || 'Unknown'} – ${screen.width}×${screen.height}`;
-
-    let regResult = null;
-    try {
-      regResult = await registerPosTerminal({ terminalId: cachedTerminalId, deviceFingerprint: fp, deviceInfo });
-    } catch (err) {
-      if (posTerminalMountedRef.current && err?.response?.status === 403) {
-        setTerminalRegistrationError(
-          err.response?.data?.message || err.response?.data
-            || 'This device\'s registered terminal is no longer active.'
-        );
-      }
-      return;
-    }
-    if (!posTerminalMountedRef.current || !regResult?.terminal) return;
-    setTerminalRegistrationError(null);
-    setCurrentTerminal(regResult.terminal);
-    localStorage.setItem(terminalIdKey, regResult.terminal.terminalId);
-
-    // Try to resume an existing open session for this terminal
-    const termId = regResult.terminal.terminalId;
-    try {
-      const active = await getActivePosSession(termId);
-      if (posTerminalMountedRef.current && active?.id) {
-        setCurrentSession(active);
-      }
-    } catch (err) {
-      const activeErrMsg = err?.response?.data?.message || err?.response?.data;
-      if (err.response?.status === 409 && typeof activeErrMsg === 'string'
-          && activeErrMsg.includes('PREVIOUS_DAY_SESSION_OPEN') && posTerminalMountedRef.current) {
-        // The existing session belongs to a previous Business Day, so the backend
-        // refuses to hand it back for "Continue Session". Same blocking flow as
-        // Start Session — never a second, differently-worded warning. The refused session
-        // is never adopted as the active selling session.
-        setCurrentSession(null);
-        showPreviousDayBlock(activeErrMsg);
-      } else if (isClosureWorkflowError(err) && posTerminalMountedRef.current) {
-        // The session has entered its close workflow, so the backend refuses to hand it
-        // back for "Continue Session". Load it through the ungated by-id endpoint anyway:
-        // the dashboard needs the session to render "Close Session Required", and the
-        // X-Report / Close Session screen needs it to finish the closure. This is the
-        // whole point of the session staying OPEN in the database.
-        const closingId = Number(String(activeErrMsg).match(/Session ID\s*:\s*(\d+)/)?.[1]) || null;
-        if (closingId) {
-          try {
-            const closingSession = await getPosSessionById(closingId);
-            if (posTerminalMountedRef.current) setCurrentSession(closingSession);
-          } catch {
-            // Non-fatal — the block modal below still routes the cashier to closure.
-          }
-        }
-        if (posTerminalMountedRef.current) showClosureRequiredBlock(activeErrMsg, closingId);
-      } else if (err.response?.status === 409 && posTerminalMountedRef.current) {
-        setTerminalLockedBy(activeErrMsg || 'Another active cashier');
-      }
-    }
-
-    // Business-date / operating-hours check: if the previous business date is still
-    // open past configured operating hours and this cashier owns none of the unclosed
-    // sessions, block POS entry with an informational popup naming them.
-    try {
-      const dayStatus = await getPosDayStatus(termId);
-      if (posTerminalMountedRef.current) {
-        setOpenSessionsBlock(dayStatus?.blocked ? dayStatus : null);
-        // Server-resolved Business Day — the same value BusinessDayContinuationGate
-        // compares against, so the dashboard can classify an already-loaded session
-        // (e.g. after a browser refresh) without a second date calculation of its own.
-        setCurrentBusinessDay(dayStatus?.candidateBusinessDay || dayStatus?.currentBusinessDate || null);
-        // Proactive form of the same rule the backend enforces on every continuation
-        // call: this terminal's existing session belongs to a previous Business Day,
-        // so raise "Previous Day Not Closed" at mount instead of waiting for the
-        // cashier to hit a refused endpoint. The message is built server-side, so the
-        // modal and the API refusal always read identically.
-        const prevDayBlock = dayStatus?.previousBusinessDaySession;
-        if (prevDayBlock?.message) {
-          setCurrentSession(null);
-          showPreviousDayBlock(prevDayBlock.message, prevDayBlock.sessionId);
-        }
-      }
-    } catch {
-      // Non-blocking — day-status is a UX convenience layered on top of the
-      // authoritative server-side guards already enforced in openSession/closeDay.
-    }
-  }, [showPreviousDayBlock]);
-
-  // Re-run terminal/session resolution whenever the active branch changes while POS stays
-  // mounted — without this, switching branches leaves the previous branch's terminal/session in
-  // memory until the page is remounted.
-  useEffect(() => {
-    const handleBranchChanged = () => {
-      setCurrentTerminal(null);
-      setCurrentSession(null);
-      setTerminalLockedBy(null);
-      setOpenSessionsBlock(null);
-      // Session Roaming Phase 11 — dismiss any open discovery dialog when the
-      // branch switches so stale cross-branch data doesn't linger.
-      setDiscoveryResponse(null);
-      setDiscoveryBusy(false);
-      setDiscoveryError(null);
-      setDiscoverySupervisorPin('');
-      registerTerminalAndResumeSession();
-    };
-    window.addEventListener('billbull:branch-changed', handleBranchChanged);
-    return () => window.removeEventListener('billbull:branch-changed', handleBranchChanged);
-  }, [registerTerminalAndResumeSession]);
-
-  // ── POS initialization: load settings + register terminal + resume session ──
-  useEffect(() => {
-    let cancelled = false;
-    const init = async () => {
-      try {
-        // Load POS settings
-        const settings = await getPosSettings().catch(() => null);
-        if (!cancelled && settings) {
-          setPosSettings(settings);
-          // Tax Enabled / Tax Mode / Branch Default VAT Rate live in BranchTaxConfiguration
-          // now, not PosSettings — merge them into the same client-side posSettings object
-          // so the rest of the POS UI (which reads posSettings.taxInclusive /
-          // branchDefaultVatRate) keeps working unchanged. Source of truth and editing both
-          // belong to Branch Settings > Tax Configuration; this is read-only here. Resolve
-          // against the Branch Selector's active branch (not the ambiguous "current branch"
-          // endpoint) so switching branches on this terminal picks up that branch's own Tax
-          // Enabled / Tax Mode / VAT rate instead of the cashier's home/HQ branch.
-          const activeBranchIdRaw = sessionStorage.getItem('activeBranchId');
-          const activeBranchId = activeBranchIdRaw && activeBranchIdRaw !== 'ALL'
-            ? Number(activeBranchIdRaw)
-            : null;
-          (activeBranchId ? getBranchTaxConfigurationForBranch(activeBranchId) : getBranchTaxConfiguration()).then(taxConfig => {
-            if (!cancelled && taxConfig) {
-              setPosSettings(prev => ({ ...(prev || {}), ...taxConfig }));
-            }
-          }).catch(() => {});
-          // Seed layout state from persisted settings
-          if (settings.defaultLayout) setPosTemplate(settings.defaultLayout);
-          if (settings.layoutHideCategoryPanel != null) setHideCategoriesPanel(settings.layoutHideCategoryPanel);
-          if (settings.layoutHideItemsPanel != null) setHideItemsPanel(settings.layoutHideItemsPanel);
-          if (settings.layoutHiddenPanelButtons) {
-            setHiddenPanelButtons(new Set(settings.layoutHiddenPanelButtons.split(',').filter(Boolean)));
-          }
-          // Seed print template state from persisted JSON blob
-          if (settings.printTemplateConfig) {
-            try {
-              const tpl = JSON.parse(settings.printTemplateConfig);
-              if (tpl.outletName != null) setTplOutletName(tpl.outletName);
-              if (tpl.outletTrn != null) setTplOutletTrn(tpl.outletTrn);
-              if (tpl.outletAddress != null) setTplOutletAddress(tpl.outletAddress);
-              if (tpl.outletPhone != null) setTplOutletPhone(tpl.outletPhone);
-              if (tpl.logoDataUrl != null) setTplLogoDataUrl(tpl.logoDataUrl);
-              if (tpl.stampDataUrl != null) setTplStampDataUrl(tpl.stampDataUrl);
-              if (tpl.receiptHeader != null) setTplReceiptHeader(tpl.receiptHeader);
-              if (tpl.receiptHeaderAr != null) setTplReceiptHeaderAr(tpl.receiptHeaderAr);
-              if (tpl.receiptFooter != null) setTplReceiptFooter(tpl.receiptFooter);
-              if (tpl.receiptPaper != null) setTplReceiptPaper(tpl.receiptPaper);
-              if (tpl.receiptShowLogo != null) setTplReceiptShowLogo(tpl.receiptShowLogo);
-              if (tpl.receiptShowTrn != null) setTplReceiptShowTrn(tpl.receiptShowTrn);
-              if (tpl.receiptShowStamp != null) setTplReceiptShowStamp(tpl.receiptShowStamp);
-              if (tpl.receiptShowBarcode != null) setTplReceiptShowBarcode(tpl.receiptShowBarcode);
-              if (tpl.receiptShowCompanyDetails != null) setTplReceiptShowCompanyDetails(tpl.receiptShowCompanyDetails);
-              if (tpl.receiptShowCustomerDetails != null) setTplReceiptShowCustomerDetails(tpl.receiptShowCustomerDetails);
-              if (tpl.receiptColItemCode != null) setTplReceiptColItemCode(tpl.receiptColItemCode);
-              if (tpl.receiptColItemImage != null) setTplReceiptColItemImage(tpl.receiptColItemImage);
-              if (tpl.receiptColBatchNo != null) setTplReceiptColBatchNo(tpl.receiptColBatchNo);
-              if (tpl.receiptColDiscount != null) setTplReceiptColDiscount(tpl.receiptColDiscount);
-              if (tpl.receiptColVatPct != null) setTplReceiptColVatPct(tpl.receiptColVatPct);
-              if (tpl.receiptColVatAmt != null) setTplReceiptColVatAmt(tpl.receiptColVatAmt);
-              if (tpl.receiptShowGrandTotalBanner != null) setTplReceiptShowGrandTotalBanner(tpl.receiptShowGrandTotalBanner);
-              if (tpl.receiptShowTerms != null) setTplReceiptShowTerms(tpl.receiptShowTerms);
-              if (tpl.receiptShowNotes != null) setTplReceiptShowNotes(tpl.receiptShowNotes);
-              if (tpl.receiptShowBankDetails != null) setTplReceiptShowBankDetails(tpl.receiptShowBankDetails);
-              if (tpl.receiptShowQRCode != null) setTplReceiptShowQRCode(tpl.receiptShowQRCode);
-              if (tpl.receiptShowSignature != null) setTplReceiptShowSignature(tpl.receiptShowSignature);
-              if (tpl.invoiceHeader != null) setTplInvoiceHeader(tpl.invoiceHeader);
-              if (tpl.invoiceHeaderAr != null) setTplInvoiceHeaderAr(tpl.invoiceHeaderAr);
-              if (tpl.invoiceFooter != null) setTplInvoiceFooter(tpl.invoiceFooter);
-              if (tpl.invoicePaper != null) setTplInvoicePaper(tpl.invoicePaper);
-              if (tpl.invoiceShowLogo != null) setTplInvoiceShowLogo(tpl.invoiceShowLogo);
-              if (tpl.invoiceShowCompanyDetails != null) setTplInvoiceShowCompanyDetails(tpl.invoiceShowCompanyDetails);
-              if (tpl.invoiceShowTrn != null) setTplInvoiceShowTrn(tpl.invoiceShowTrn);
-              if (tpl.invoiceShowCustomerDetails != null) setTplInvoiceShowCustomerDetails(tpl.invoiceShowCustomerDetails);
-              if (tpl.invoiceShowStamp != null) setTplInvoiceShowStamp(tpl.invoiceShowStamp);
-              if (tpl.invoiceShowSignature != null) setTplInvoiceShowSignature(tpl.invoiceShowSignature);
-              if (tpl.invoiceShowGrandTotalBanner != null) setTplInvoiceShowGrandTotalBanner(tpl.invoiceShowGrandTotalBanner);
-              if (tpl.invoiceShowTerms != null) setTplInvoiceShowTerms(tpl.invoiceShowTerms);
-              if (tpl.invoiceShowNotes != null) setTplInvoiceShowNotes(tpl.invoiceShowNotes);
-              if (tpl.invoiceShowBankDetails != null) setTplInvoiceShowBankDetails(tpl.invoiceShowBankDetails);
-              if (tpl.invoiceShowQRCode != null) setTplInvoiceShowQRCode(tpl.invoiceShowQRCode);
-              if (tpl.invoiceQrPlacement != null) setTplInvoiceQrPlacement(tpl.invoiceQrPlacement);
-              if (tpl.invoiceColItemCode != null) setTplInvoiceColItemCode(tpl.invoiceColItemCode);
-              if (tpl.invoiceColItemImage != null) setTplInvoiceColItemImage(tpl.invoiceColItemImage);
-              if (tpl.invoiceColBarcode != null) setTplInvoiceColBarcode(tpl.invoiceColBarcode);
-              if (tpl.invoiceColBatchNo != null) setTplInvoiceColBatchNo(tpl.invoiceColBatchNo);
-              if (tpl.invoiceColDiscount != null) setTplInvoiceColDiscount(tpl.invoiceColDiscount);
-              if (tpl.invoiceColVatPct != null) setTplInvoiceColVatPct(tpl.invoiceColVatPct);
-              if (tpl.invoiceColVatAmt != null) setTplInvoiceColVatAmt(tpl.invoiceColVatAmt);
-              if (tpl.returnHeader != null) setTplReturnHeader(tpl.returnHeader);
-              if (tpl.returnFooter != null) setTplReturnFooter(tpl.returnFooter);
-              if (tpl.returnPaper != null) setTplReturnPaper(tpl.returnPaper);
-              if (tpl.returnShowLogo != null) setTplReturnShowLogo(tpl.returnShowLogo);
-              if (tpl.returnShowTrn != null) setTplReturnShowTrn(tpl.returnShowTrn);
-              if (tpl.returnShowStamp != null) setTplReturnShowStamp(tpl.returnShowStamp);
-              if (tpl.returnShowCompanyDetails != null) setTplReturnShowCompanyDetails(tpl.returnShowCompanyDetails);
-              if (tpl.returnShowCustomerDetails != null) setTplReturnShowCustomerDetails(tpl.returnShowCustomerDetails);
-              if (tpl.returnColItemCode != null) setTplReturnColItemCode(tpl.returnColItemCode);
-              if (tpl.returnColBatchNo != null) setTplReturnColBatchNo(tpl.returnColBatchNo);
-              if (tpl.returnColDiscount != null) setTplReturnColDiscount(tpl.returnColDiscount);
-              if (tpl.returnColVatPct != null) setTplReturnColVatPct(tpl.returnColVatPct);
-              if (tpl.returnColVatAmt != null) setTplReturnColVatAmt(tpl.returnColVatAmt);
-              if (tpl.returnShowGrandTotalBanner != null) setTplReturnShowGrandTotalBanner(tpl.returnShowGrandTotalBanner);
-              if (tpl.returnShowTerms != null) setTplReturnShowTerms(tpl.returnShowTerms);
-              if (tpl.returnShowNotes != null) setTplReturnShowNotes(tpl.returnShowNotes);
-              if (tpl.returnShowQRCode != null) setTplReturnShowQRCode(tpl.returnShowQRCode);
-              if (tpl.returnShowSignature != null) setTplReturnShowSignature(tpl.returnShowSignature);
-              if (tpl.returnShowCreditBalance != null) setTplReturnShowCreditBalance(tpl.returnShowCreditBalance);
-              if (tpl.jobCardFooter != null) setTplJobCardFooter(tpl.jobCardFooter);
-              if (tpl.jobCardPaper != null) setTplJobCardPaper(tpl.jobCardPaper);
-              if (tpl.jobCardShowLogo != null) setTplJobCardShowLogo(tpl.jobCardShowLogo);
-              if (tpl.jobCardShowTrn != null) setTplJobCardShowTrn(tpl.jobCardShowTrn);
-              if (tpl.jobCardShowStamp != null) setTplJobCardShowStamp(tpl.jobCardShowStamp);
-              if (tpl.jobCardShowCompanyDetails != null) setTplJobCardShowCompanyDetails(tpl.jobCardShowCompanyDetails);
-              if (tpl.jobCardShowCustomerDetails != null) setTplJobCardShowCustomerDetails(tpl.jobCardShowCustomerDetails);
-              if (tpl.jobCardShowSerialNumber != null) setTplJobCardShowSerialNumber(tpl.jobCardShowSerialNumber);
-              if (tpl.jobCardShowWarranty != null) setTplJobCardShowWarranty(tpl.jobCardShowWarranty);
-              if (tpl.jobCardShowTechnician != null) setTplJobCardShowTechnician(tpl.jobCardShowTechnician);
-              if (tpl.jobCardShowExpectedDate != null) setTplJobCardShowExpectedDate(tpl.jobCardShowExpectedDate);
-              if (tpl.jobCardShowCustomerSignature != null) setTplJobCardShowCustomerSignature(tpl.jobCardShowCustomerSignature);
-              if (tpl.jobCardShowTerms != null) setTplJobCardShowTerms(tpl.jobCardShowTerms);
-              if (tpl.receiptTemplateId != null) setReceiptTemplateId(tpl.receiptTemplateId);
-              // Template 2 (Arabic) independent Show/Hide toggles
-              if (tpl.t2ShowLogo != null) setT2ShowLogo(tpl.t2ShowLogo);
-              if (tpl.t2ShowCompanyDetails != null) setT2ShowCompanyDetails(tpl.t2ShowCompanyDetails);
-              if (tpl.t2ShowTrn != null) setT2ShowTrn(tpl.t2ShowTrn);
-              if (tpl.t2ShowArabic != null) setT2ShowArabic(tpl.t2ShowArabic);
-              if (tpl.t2ShowCustomerDetails != null) setT2ShowCustomerDetails(tpl.t2ShowCustomerDetails);
-              if (tpl.t2ShowAccountBalance != null) setT2ShowAccountBalance(tpl.t2ShowAccountBalance);
-              if (tpl.t2ShowDelivery != null) setT2ShowDelivery(tpl.t2ShowDelivery);
-              if (tpl.t2ShowVatSummary != null) setT2ShowVatSummary(tpl.t2ShowVatSummary);
-              if (tpl.t2ShowPaymentDetails != null) setT2ShowPaymentDetails(tpl.t2ShowPaymentDetails);
-              if (tpl.t2ShowLoyalty != null) setT2ShowLoyalty(tpl.t2ShowLoyalty);
-              if (tpl.t2ShowQRCode != null) setT2ShowQRCode(tpl.t2ShowQRCode);
-              if (tpl.t2ShowFooterText != null) setT2ShowFooterText(tpl.t2ShowFooterText);
-              if (tpl.t2ShowBarcode != null) setT2ShowBarcode(tpl.t2ShowBarcode);
-              // Template 2 toggles, split per sub-tab (POS Receipt vs Tax Invoice)
-              if (tpl.t2ReceiptShowLogo != null) setT2ReceiptShowLogo(tpl.t2ReceiptShowLogo);
-              if (tpl.t2ReceiptShowCompanyDetails != null) setT2ReceiptShowCompanyDetails(tpl.t2ReceiptShowCompanyDetails);
-              if (tpl.t2ReceiptShowTrn != null) setT2ReceiptShowTrn(tpl.t2ReceiptShowTrn);
-              if (tpl.t2ReceiptShowArabic != null) setT2ReceiptShowArabic(tpl.t2ReceiptShowArabic);
-              if (tpl.t2ReceiptShowCustomerDetails != null) setT2ReceiptShowCustomerDetails(tpl.t2ReceiptShowCustomerDetails);
-              if (tpl.t2ReceiptShowAccountBalance != null) setT2ReceiptShowAccountBalance(tpl.t2ReceiptShowAccountBalance);
-              if (tpl.t2ReceiptShowDelivery != null) setT2ReceiptShowDelivery(tpl.t2ReceiptShowDelivery);
-              if (tpl.t2ReceiptShowVatSummary != null) setT2ReceiptShowVatSummary(tpl.t2ReceiptShowVatSummary);
-              if (tpl.t2ReceiptShowPaymentDetails != null) setT2ReceiptShowPaymentDetails(tpl.t2ReceiptShowPaymentDetails);
-              if (tpl.t2ReceiptShowLoyalty != null) setT2ReceiptShowLoyalty(tpl.t2ReceiptShowLoyalty);
-              if (tpl.t2ReceiptShowQRCode != null) setT2ReceiptShowQRCode(tpl.t2ReceiptShowQRCode);
-              if (tpl.t2ReceiptShowFooterText != null) setT2ReceiptShowFooterText(tpl.t2ReceiptShowFooterText);
-              if (tpl.t2ReceiptShowBarcode != null) setT2ReceiptShowBarcode(tpl.t2ReceiptShowBarcode);
-              if (tpl.t2InvoiceShowLogo != null) setT2InvoiceShowLogo(tpl.t2InvoiceShowLogo);
-              if (tpl.t2InvoiceShowCompanyDetails != null) setT2InvoiceShowCompanyDetails(tpl.t2InvoiceShowCompanyDetails);
-              if (tpl.t2InvoiceShowTrn != null) setT2InvoiceShowTrn(tpl.t2InvoiceShowTrn);
-              if (tpl.t2InvoiceShowArabic != null) setT2InvoiceShowArabic(tpl.t2InvoiceShowArabic);
-              if (tpl.t2InvoiceShowCustomerDetails != null) setT2InvoiceShowCustomerDetails(tpl.t2InvoiceShowCustomerDetails);
-              if (tpl.t2InvoiceShowAccountBalance != null) setT2InvoiceShowAccountBalance(tpl.t2InvoiceShowAccountBalance);
-              if (tpl.t2InvoiceShowDelivery != null) setT2InvoiceShowDelivery(tpl.t2InvoiceShowDelivery);
-              if (tpl.t2InvoiceShowVatSummary != null) setT2InvoiceShowVatSummary(tpl.t2InvoiceShowVatSummary);
-              if (tpl.t2InvoiceShowPaymentDetails != null) setT2InvoiceShowPaymentDetails(tpl.t2InvoiceShowPaymentDetails);
-              if (tpl.t2InvoiceShowLoyalty != null) setT2InvoiceShowLoyalty(tpl.t2InvoiceShowLoyalty);
-              if (tpl.t2InvoiceShowQRCode != null) setT2InvoiceShowQRCode(tpl.t2InvoiceShowQRCode);
-              if (tpl.t2InvoiceShowFooterText != null) setT2InvoiceShowFooterText(tpl.t2InvoiceShowFooterText);
-              if (tpl.t2InvoiceShowBarcode != null) setT2InvoiceShowBarcode(tpl.t2InvoiceShowBarcode);
-            } catch (e) { /* stale/malformed config — fall through to defaults */ }
-          }
-        }
-
-        if (!cancelled) {
-          await registerTerminalAndResumeSession();
-        }
-      } catch (e) {
-        console.warn('POS init error', e);
-      } finally {
-        if (!cancelled) setPosInitLoading(false);
-      }
-    };
-    init();
-    return () => { cancelled = true; };
-  }, []);
 
   // Correct posSettings once the terminal's actual branch is known. The initial fetch above
   // (getPosSettings, ambient) resolves branch from this tab's Branch Selector state, which can
@@ -2710,162 +1911,6 @@ export default function POSSales() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentView, consoleTab, currentTerminal]);
-
-  const loadPosProducts = useCallback(async (page = 0, append = false, signal = undefined) => {
-    const hasSearch = Boolean(debouncedSearchQuery);
-    const isSpecial = !hasSearch && SPECIAL_CATEGORIES.has(selectedCategory);
-
-    if (append) {
-      setPosProductsLoadingMore(true);
-    } else {
-      setPosProductsLoading(true);
-      setPosProductsError('');
-      setPosProducts([]);
-    }
-
-    try {
-      let data;
-
-      if (isSpecial) {
-        if (selectedCategory === 'favourites') {
-          data = await getFavouriteProducts(page, POS_PRODUCT_PAGE_SIZE, signal);
-        } else if (selectedCategory === 'recently-sold') {
-          data = await getRecentlySoldProducts(page, POS_PRODUCT_PAGE_SIZE, signal);
-        } else if (selectedCategory === 'top-sold') {
-          data = await getTopSoldProducts(page, POS_PRODUCT_PAGE_SIZE, signal);
-        }
-      } else {
-        const departmentId = (hasSearch || selectedCategory === 'all') ? null : Number(selectedCategory);
-        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
-        data = await getProductsList(
-          page,
-          POS_PRODUCT_PAGE_SIZE,
-          debouncedSearchQuery,
-          signal,
-          null,
-          Number.isFinite(departmentId) ? departmentId : null,
-          null,
-          true,
-          posBranchId
-        );
-      }
-
-      const mapped = Array.isArray(data?.content)
-        ? data.content.map(mapPosProductListItem)
-        : [];
-
-      mapped.forEach(product => cachePosProduct(productCacheRef.current, product));
-
-      // When searching, fall back to resolve endpoint if no products found
-      if (mapped.length === 0 && !append && debouncedSearchQuery && !isSpecial) {
-        try {
-          const resolved = await resolvePosEntry(debouncedSearchQuery);
-          if (signal?.aborted) return;
-          if (resolved?.type === 'PRODUCT' && resolved.product) {
-            const resolvedProduct = mapPosProductAggregateItem(resolved.product, debouncedSearchQuery);
-            if (resolved.pinnedBatchNumber) resolvedProduct._pinnedBatch = resolved.pinnedBatchNumber;
-            cachePosProduct(productCacheRef.current, resolvedProduct);
-            setPosProducts([resolvedProduct]);
-            setPosProductPage(0);
-            setPosProductTotalPages(1);
-            setPosProductTotalElements(1);
-            return;
-          }
-        } catch {
-          // silent — keep empty grid
-        }
-      }
-
-      // Load favourite IDs in background when switching to favourites tab
-      if (selectedCategory === 'favourites' && mapped.length > 0) {
-        setFavouriteProductIds(new Set(mapped.map(p => p.id)));
-      }
-
-      setPosProducts(prev => append ? [...prev, ...mapped] : mapped);
-      setPosProductPage(data?.page ?? page);
-      setPosProductTotalPages(data?.totalPages ?? 0);
-      setPosProductTotalElements(data?.totalElements ?? mapped.length);
-    } catch (error) {
-      if (error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return;
-      console.error('Failed to load POS products', error);
-      if (!append) {
-        try {
-          const fallbackProducts = await getProducts();
-          if (signal?.aborted) return;
-          const fallbackMapped = Array.isArray(fallbackProducts)
-            ? fallbackProducts.map(product => mapPosProductAggregateItem(product)).filter(p => p.availableInPos !== false)
-            : [];
-
-          fallbackMapped.forEach(product => cachePosProduct(productCacheRef.current, product));
-          setPosProducts(fallbackMapped);
-          setPosProductPage(0);
-          setPosProductTotalPages(1);
-          setPosProductTotalElements(fallbackMapped.length);
-          setPosProductsError('');
-          return;
-        } catch (fallbackError) {
-          if (fallbackError?.name === 'CanceledError' || fallbackError?.code === 'ERR_CANCELED') return;
-          console.error('Fallback POS product load failed', fallbackError);
-          setPosProducts([]);
-        }
-      }
-      setPosProductsError('Products could not be loaded.');
-    } finally {
-      if (append) {
-        setPosProductsLoadingMore(false);
-      } else {
-        setPosProductsLoading(false);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearchQuery, selectedCategory]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    loadPosProducts(0, false, controller.signal);
-    return () => controller.abort();
-  }, [loadPosProducts]);
-
-  const loadMorePosProducts = () => {
-    if (posProductsLoading || posProductsLoadingMore || posProductPage + 1 >= posProductTotalPages) return;
-    loadPosProducts(posProductPage + 1, true);
-  };
-
-  const toggleFavourite = useCallback(async (productId) => {
-    if (favouriteTogglePending.has(productId)) return;
-    setFavouriteTogglePending(prev => new Set([...prev, productId]));
-    const isFav = favouriteProductIds.has(productId);
-    // Optimistic update
-    setFavouriteProductIds(prev => {
-      const next = new Set(prev);
-      if (isFav) next.delete(productId); else next.add(productId);
-      return next;
-    });
-    try {
-      if (isFav) {
-        await removeProductFavourite(productId);
-        // Remove from grid if currently on favourites tab
-        if (selectedCategory === 'favourites') {
-          setPosProducts(prev => prev.filter(p => p.id !== productId));
-        }
-      } else {
-        await addProductFavourite(productId);
-      }
-    } catch {
-      // Revert optimistic update on failure
-      setFavouriteProductIds(prev => {
-        const next = new Set(prev);
-        if (isFav) next.add(productId); else next.delete(productId);
-        return next;
-      });
-    } finally {
-      setFavouriteTogglePending(prev => {
-        const next = new Set(prev);
-        next.delete(productId);
-        return next;
-      });
-    }
-  }, [favouriteProductIds, favouriteTogglePending, selectedCategory]);
 
   const formatCurrency = (amount) => <CurrencyAmount amount={amount} />;
   const formatCurrencyStr = (amount) => `${activeCurrency} ${Number(amount || 0).toFixed(2)}`;
@@ -3084,152 +2129,6 @@ export default function POSSales() {
     setDiscoverySupervisorPin('');
   };
 
-  /**
-   * Obtains a supervisor's authorization for the variance the server just refused on, then
-   * retries the close with the resulting grant.
-   *
-   * Sends the counted denominations so the server re-derives expected and counted itself — the
-   * grant is bound to figures it computed, not to any number this page supplied.
-   */
-  const handleAuthorizeVariance = async () => {
-    if (!varianceApproval) return;
-    const targetSession = sessionToClose || currentSession;
-    if (!targetSession?.id) return;
-    if (!varianceSupervisorUser || !varianceSupervisorPassword) {
-      setVarianceApprovalError('Enter the supervisor username and password.');
-      return;
-    }
-    if (!varianceApprovalReason.trim()) {
-      setVarianceApprovalError('A reason is required to authorize a cash variance.');
-      return;
-    }
-    setVarianceApprovalBusy(true);
-    setVarianceApprovalError('');
-    try {
-      const result = await authorizePosVariance(targetSession.id, {
-        usernameOrEmail: varianceSupervisorUser,
-        password: varianceSupervisorPassword,
-        reason: varianceApprovalReason.trim(),
-        closingDenominations,
-      });
-      if (!result?.authorized) {
-        // Not closed, and no cash fact touched. The panel stays open with the reason.
-        setVarianceApprovalError(result?.message || 'Authorization was refused.');
-        return;
-      }
-      varianceGrantRef.current = result.varianceApprovalToken
-        ? { sessionId: targetSession.id, token: result.varianceApprovalToken }
-        : null;
-      // Credentials are never retained beyond the request that used them.
-      setVarianceSupervisorUser('');
-      setVarianceSupervisorPassword('');
-      setVarianceApproval(null);
-      await handleCloseSession();
-    } catch (err) {
-      const msg = err?.response?.data?.message || err?.message;
-      setVarianceApprovalError(typeof msg === 'string' && msg ? msg : 'Authorization failed. Please try again.');
-    } finally {
-      setVarianceApprovalBusy(false);
-    }
-  };
-
-  const handleCloseSession = async () => {
-    const targetSession = sessionToClose || currentSession;
-    if (targetSession) {
-      if (targetSession.status === 'CLOSED') {
-        setShowCloseSessionDialog(false);
-        setSessionToClose(null);
-        if (targetSession.id === currentSession?.id) {
-          setCurrentView('x-report');
-        } else {
-          loadDaySummary(zReportDate);
-        }
-        return;
-      }
-      setCloseSessionError('');
-      try {
-        if (targetSession.id && typeof targetSession.id === 'number') {
-          const grant = closureAuthGrantRef.current;
-          const forceCtx = forceCloseContextRef.current?.sessionId === targetSession.id
-            ? forceCloseContextRef.current : null;
-          // A force close keeps its supervisor-stated reason on the session record.
-          const notes = forceCtx?.reason
-            ? [`Force Close: ${forceCtx.reason}`, xReportVarianceRemarks].filter(Boolean).join(' — ')
-            : xReportVarianceRemarks;
-          const closed = await closePosSession(targetSession.id, {
-            // Quantities only. The server validates them against the drawer's denomination
-            // ladder and derives Counted Cash; a total posted from here would be unverifiable.
-            closingDenominations,
-            notes,
-            cardBatchNo: xReportCardBatchNo,
-            cardSettlementVerified: xReportCardVerified,
-            cardClosingCash: cardSettlementAmount !== '' ? (parseFloat(cardSettlementAmount) || 0) : null,
-            closingCashierName: xReportCashierName,
-            closingSupervisorName: xReportSupervisorName || forceCtx?.supervisor || null,
-            closingRemarks: xReportClosingRemarks,
-            // Proof that the session owner's credentials were verified for THIS session.
-            closureAuthToken: grant?.sessionId === targetSession.id ? grant.token : undefined,
-            // Present only after a supervisor authorized this exact count. The server consumes
-            // it once; a second tab retrying the same close is refused again.
-            varianceApprovalToken: varianceGrantRef.current?.sessionId === targetSession.id
-              ? varianceGrantRef.current.token : undefined,
-          });
-          // The grant is single-use server-side; drop it either way.
-          closureAuthGrantRef.current = null;
-          forceCloseContextRef.current = null;
-
-          if (targetSession.id === currentSession?.id) {
-            setCurrentSession(closed);
-            // Arm the X-Report auto-print
-            pendingXAutoPrintRef.current = targetSession.id;
-          }
-        } else {
-          if (targetSession.id === currentSession?.id) {
-            setCurrentSession({ ...currentSession, status: 'CLOSED' });
-          }
-        }
-      } catch (err) {
-        // The session is NOT closed if the server refused. Previously this fell through
-        // and marked it closed locally, so the close silently didn't stick and Day Close
-        // kept asking to close it again — surface the reason and stay in the dialog.
-        console.warn('Close session API error', err);
-        const data = err?.response?.data;
-        // A discrepancy over the branch threshold is an exception, not a failure: the server
-        // hands back the exact financial state it is refusing on, and the dialog switches to
-        // the approval panel instead of just showing red text the cashier cannot act on.
-        if (data?.code === 'VARIANCE_APPROVAL_REQUIRED') {
-          varianceGrantRef.current = null;
-          setVarianceApproval(data);
-          setVarianceApprovalError('');
-          setCloseSessionError('');
-          return;
-        }
-        const msg = data?.message || data?.error || err?.message;
-        setCloseSessionError(typeof msg === 'string' && msg ? msg : 'Failed to close the session. Please try again.');
-        return;
-      }
-      setShowCloseSessionDialog(false);
-      setSessionToClose(null);
-      varianceGrantRef.current = null;
-      setVarianceApproval(null);
-      setVarianceSupervisorUser('');
-      setVarianceSupervisorPassword('');
-      setVarianceApprovalReason('');
-      setSessionNowMs(Date.now());
-      // Re-evaluate the Business Day immediately: this close may have been the last
-      // session pending closure, and the overlay must not keep naming a session that
-      // is now closed for up to a full poll interval.
-      businessDayRefreshRef.current?.();
-      if (targetSession.id === currentSession?.id) {
-        setCurrentView('x-report');
-      } else {
-        loadDaySummary(zReportDate);
-        setCurrentView('z-report');
-      }
-      syncPosData();
-    }
-  };
-
   // Keeps cardSettlementVerified (the flag actually persisted by handleCloseSession)
   // in sync with the terminal settlement amount typed into the Close Session modal's
   // Card Settlement tab, so a cashier who enters a matching settlement doesn't also
@@ -3241,67 +2140,6 @@ export default function POSSales() {
     const isSettled = cardSettlementAmount !== '' && Math.abs(settled - sessionCardTotal) < 0.01;
     setXReportCardVerified(isSettled);
   }, [cardSettlementAmount, showCloseSessionDialog, xReportData]);
-
-  const proceedToCloseSessionDialog = () => {
-    setCloseSessionError('');
-    setCardSettlementAmount('');
-    setShowCloseSessionDialog(true);
-    loadXReport();
-  };
-
-  // Day Close Flow: Validates ownership before allowing entry into the X-Report UI
-  const handleDayCloseNormalClose = (target = null) => {
-    // If called directly via onClick, target may be a React SyntheticEvent. Ignore it.
-    const explicitTarget = (target && target.nativeEvent) ? null : target;
-    const targetSession = explicitTarget || sessionToClose || currentSession;
-    
-    if (targetSession?.status === 'active' || targetSession?.status === 'OPEN'
-        || targetSession?.status === 'SUSPENDED') {
-      // Any authorized user may *initiate* a normal close. The Session Owner
-      // Verification modal is itself the gate: the credentials typed there are
-      // checked against the target session by /authorize-closure. So we never
-      // pre-check "logged-in user === session owner" here.
-      // Starting a fresh normal close — drop anything left over from an earlier
-      // (possibly abandoned) close attempt.
-      closureAuthGrantRef.current = null;
-      forceCloseContextRef.current = null;
-      cashierAuthTargetRef.current = targetSession;
-      if (explicitTarget) setSessionToClose(explicitTarget);
-      setShowCashierAuthDialog(true);
-      // Prefill with the session's own owner, not the logged-in user.
-      setCashierAuthUsername(targetSession?.cashier || targetSession?.openedBy || '');
-      setCashierAuthPassword('');
-      setCashierAuthError('');
-    }
-  };
-
-  /**
-   * "Close Session" from the Trading-Period-Ended overlay.
-   *
-   * The overlay lists sessions straight off `day-status.sessionsRequiringClosure`,
-   * so the entry is a wire DTO (sessionId/terminalId/…), not one of the session
-   * objects the rest of this screen passes around. Normalise it and hand it to the
-   * one existing closure entry point — Session Owner Verification, then
-   * begin-closure, then the X-Report/denomination screen — rather than opening a
-   * second, parallel close path. The overlay is suppressed for the duration by
-   * `businessDayClosureFlowActive` below, so the denomination UI is never covered.
-   */
-  const handleTradingEndedCloseSession = (pending) => {
-    if (!pending?.sessionId) return;
-    const target = {
-      id: pending.sessionId,
-      status: pending.status || 'OPEN',
-      terminalId: pending.terminalId,
-      terminalName: pending.terminalName,
-      counterName: pending.counterName,
-      openedBy: pending.openedBy,
-      cashier: pending.openedBy,
-      openedAt: pending.openedAt,
-    };
-    setClosureAction('NORMAL_CLOSE');
-    setSessionToClose(target);
-    handleDayCloseNormalClose(target);
-  };
 
   /**
    * "Open Day Close" from the Trading-Period-Ended overlay, shown once every
@@ -3338,251 +2176,28 @@ export default function POSSales() {
     || currentView === 'x-report' || currentView === 'z-report',
   );
 
-  const handleCashierAuthSubmit = async () => {
-    if (!cashierAuthUsername || !cashierAuthPassword) {
-      setCashierAuthError('Please enter email/username and password');
-      return;
-    }
-    setCashierAuthLoading(true);
-    setCashierAuthError('');
-    try {
-      const targetSession = cashierAuthTargetRef.current || sessionToClose || currentSession;
-      const response = await verifySessionClosurePermission(targetSession.id, cashierAuthUsername, cashierAuthPassword);
-      if (response.authorized) {
-        closureAuthGrantRef.current = response.authorizationToken
-          ? { sessionId: targetSession.id, token: response.authorizationToken }
-          : null;
-        // Owner verification successful — START the closure workflow before navigating.
-        // This, and only this, is what persists the closure: begin-closure stamps
-        // closingStartedAt server-side, which is what the backend gate reads to refuse
-        // further selling. Without it, walking back to the dashboard would leave the
-        // session freely sellable — the bypass this flow exists to close.
-        //
-        // Note this is NOT an X-Report call. Generating an X-Report is informational and
-        // deliberately leaves the till operational; conflating the two would lock a session
-        // the moment anyone glanced at a mid-shift report.
-        //
-        // The grant is passed so a non-owner (Day Close closing another cashier's session)
-        // is authorized by the credentials just verified. The backend verifies it without
-        // consuming it, so the close call still has it to spend.
-        try {
-          const started = await beginPosSessionClosure(targetSession.id, {
-            closureAuthToken: closureAuthGrantRef.current?.token,
-          });
-          setCurrentSession(prev => (prev?.id === targetSession.id ? { ...prev, ...started } : prev));
-        } catch (beginErr) {
-          // Do not navigate into a closure we failed to start — that is exactly the
-          // inconsistent half-state this change removes. The auth dialog stays open with
-          // the server's reason (Business Day block, not authorized, not OPEN, …).
-          setCashierAuthError(beginErr?.response?.data?.message || beginErr.message
-            || 'Could not start the closure workflow for this session.');
-          return;
-        }
-        setShowCashierAuthDialog(false);
-        cashierAuthTargetRef.current = null;
-        setCashierAuthUsername('');
-        setCashierAuthPassword('');
-        setCurrentView('x-report');
-      } else {
-        setCashierAuthError(response.message || 'Not authorized to close this session');
-      }
-    } catch (err) {
-      setCashierAuthError(err.response?.data?.message || err.message || 'Authorization failed');
-    } finally {
-      setCashierAuthLoading(false);
-    }
-  };
+  // ── Product entry ──────────────────────────────────────────────────────────
+  // Implementation lives in POS/features/products/useProductEntry.js. Everything from a
+  // scanned/typed/tapped value to a cart line: unified entry parsing + resolution, the
+  // Product Entry Mode decision, the Item Entry dialog and addToInvoice itself. It writes
+  // through the cart boundary above; useCart remains the single cart owner. The
+  // supervisor-approval queue is owned by useSupervisorApproval — entry only enqueues an
+  // ADD_ITEM request through requestApproval, and the dispatcher below sends it back
+  // through the addToInvoice returned here.
+  const {
+    addToInvoice,
+    handleUnifiedEntry, handleBarcodeScan, handleProductSelection, handleEditItem,
+    lastScannedItem, setLastScannedItem,
+    isItemEntryOpen, selectedProductForEntry, itemEntryAction, itemEntryContext,
+    itemEntryInitialValues, closeItemEntry, handleItemEntryConfirm,
+  } = useProductEntry({
+    posSettings, currentRenderCount,
+    setCurrentInvoice, currentInvoiceRef, recalculateInvoice,
+    requestApproval,
+    productCacheRef, setBarcodeInput, setSearchQuery, setSelectedCustomer,
+    applyScannedVoucher, showFeedback,
+  });
 
-  // Returns { ok, reason }. Callers can surface `reason` when ok === false so
-  // the cashier learns why an add was refused (one-batch-one-unit enforcement).
-  const addToInvoice = (product, quantity = 1, pinnedBatchNumber = null, pinnedSerialNumber = null, pinnedExpiry = null, overrides = {}) => {
-    window.__CURRENT_ADD_TO_INVOICE = addToInvoice; // track the latest reference
-    console.log(`\n======================================================`);
-    console.log(`[addToInvoice EXECUTION]`);
-    console.log(`- Caller Context Render ID: ${currentRenderCount}`);
-    console.log(`- Captured posSettings:`, posSettings);
-    console.log(`- Captured taxInclusive:`, posSettings?.taxInclusive);
-    console.log(`- addToInvoice Reference Match:`, window.__CURRENT_ADD_TO_INVOICE === addToInvoice ? 'LATEST' : 'STALE (from an older render!)');
-    console.log(`======================================================\n`);
-    // A serialized unit is always qty 1 and never merges (a serial is unique by
-    // definition). A pinned batch is also a single scanned physical unit.
-    const isPinned = !!pinnedBatchNumber || !!pinnedSerialNumber;
-    // In this system a batch/serial-controlled product is stored one-physical-
-    // unit-per-batch-number. A grid add without a scanned batch therefore can't
-    // legitimately bump quantity (each extra unit needs its own distinct batch).
-    // We add a single qty-1 line and refuse to merge/re-add; extra units must be
-    // scanned. Non-controlled products keep the normal merge-by-id behaviour.
-    const isBatchControlled = !isPinned && (Boolean(product.isBatch) || Boolean(product.isSerial));
-    const defaultQtyToAdd = (pinnedSerialNumber || isBatchControlled) ? 1 : Math.max(1, Number(quantity) || 1);
-    const qtyToAdd = overrides.isAbsoluteQuantity ? defaultQtyToAdd : defaultQtyToAdd; 
-    const unitPrice = overrides.price !== undefined ? toNumber(overrides.price, 0) : toNumber(product.price, 0);
-    const unitDiscount = overrides.discount !== undefined ? toNumber(overrides.discount, 0) : toNumber(product.defaultDiscount, 0);
-    const unitDiscountType = overrides.discountType || 'percent'; // currently always percent in model but extensible
-    const unitTaxRate = overrides.taxRate !== undefined ? overrides.taxRate : resolveLineTaxRate(product, posSettings?.branchDefaultVatRate, posSettings?.taxEnabled !== false);
-
-    // Supervisor price-override gate — only active when the admin has turned it on
-    // (Behavior tab > Price Override). Mirrors PosCheckoutController §2.4's floor check
-    // exactly, including applying the line discount before comparing to the floor, so a
-    // full-price item discounted below minimum at add-time is caught here too, not just
-    // at checkout. `overrides.approved` marks the post-approval retry dispatched from
-    // handleSupervisorPinSubmit, so it isn't re-gated.
-    if (!overrides.approved && posSettings?.requirePriceOverrideApproval) {
-      const floor = getPriceFloor(product.minPrice, product.cost);
-      const effectivePrice = unitPrice * (1 - unitDiscount / 100);
-      if (floor != null && effectivePrice < floor) {
-        setPendingPriceOverride({
-          type: 'ADD_ITEM',
-          product, quantity, batch: pinnedBatchNumber, serial: pinnedSerialNumber, expiry: pinnedExpiry,
-          overrides, itemName: product.name, minPrice: floor, attemptedPrice: effectivePrice,
-        });
-        setSupervisorPinValue('');
-        setSupervisorPinError('');
-        setShowSupervisorPin(true);
-        return { ok: false, reason: 'supervisor-approval-required' };
-      }
-    }
-
-    // Block re-adding a batch-controlled product from the grid (its line already
-    // holds one physical unit; another unit means another batch → must be scanned).
-    if (isBatchControlled) {
-      const already = (currentInvoiceRef.current?.items || [])
-        .some(item => item.productId === product.id || item.id === product.id);
-      if (already) {
-        return { ok: false, reason: `${product.name} is batch-tracked — scan a specific batch to add another unit.` };
-      }
-    }
-
-    setCurrentInvoice(prev => {
-      // A pinned line (scanned batch or serial) represents one specific physical
-      // unit, so it always gets its own cart row (with a composite id) and never
-      // stacks onto an existing line. Batch-controlled grid lines also never merge.
-      const existingItem = (isPinned || isBatchControlled)
-        ? null
-        : prev.items.find(item => item.id === product.id);
-      let newItems;
-
-      if (existingItem) {
-        newItems = prev.items.map(item => {
-          if (item.id === product.id) {
-            const mergedQuantity = overrides.isAbsoluteQuantity ? qtyToAdd : item.quantity + qtyToAdd;
-            const mergedPrice = overrides.price !== undefined ? unitPrice : item.price;
-            const mergedDiscount = overrides.discount !== undefined ? unitDiscount : item.discount;
-            const mergedTaxRate = overrides.taxRate !== undefined ? unitTaxRate : item.taxRate;
-            return {
-              ...item,
-              quantity: mergedQuantity,
-              price: mergedPrice,
-              discount: mergedDiscount,
-              taxRate: mergedTaxRate,
-              notes: overrides.notes !== undefined ? overrides.notes : item.notes,
-              total: mergedQuantity * mergedPrice * (1 - mergedDiscount / 100)
-            };
-          }
-          return item;
-        });
-      } else {
-        // Add new item to the TOP of the list. Pinned lines use a composite id
-        // so every existing item.id-keyed cart op (qty/discount/remove/void/
-        // React key) keeps targeting exactly one row. productId carries the real
-        // product id; the checkout payload reads item.code for the item code.
-        const pinKey = pinnedSerialNumber ? `S:${pinnedSerialNumber}` : pinnedBatchNumber;
-        newItems = [{
-          id: isPinned ? `${product.id}::${pinKey}` : product.id,
-          productId: product.id,
-          name: product.name,
-          // Arabic name: the Product master persists it as `localName` (Jackson
-          // serializes it under that key); `nameAr` kept as a fallback alias.
-          nameAr: product.localName || product.nameAr || '',
-          barcode: product.barcode || product.code || product.id,
-          code: product.code || '',
-          image: product.image || null,
-          price: unitPrice,
-          minPrice: product.minPrice != null && product.minPrice !== '' ? toNumber(product.minPrice) : null,
-          maxPrice: product.maxPrice != null && product.maxPrice !== '' ? toNumber(product.maxPrice) : null,
-          retailPrice: product.retailPrice != null && product.retailPrice !== '' ? toNumber(product.retailPrice) : null,
-          cost: product.cost != null && product.cost !== '' ? toNumber(product.cost) : null,
-          quantity: qtyToAdd,
-          discount: unitDiscount,
-          taxRate: unitTaxRate,
-          notes: overrides.notes || '',
-          total: unitPrice * qtyToAdd * (1 - unitDiscount / 100),
-          pinnedBatchNumber: pinnedBatchNumber || null,
-          serialNumber: pinnedSerialNumber || null,
-          expiryDate: pinnedExpiry || product.expiryDate || null,
-          // Lock qty on batch/serial lines — each line is exactly one physical
-          // unit. The cart UI disables +/- for lines flagged batchControlled.
-          batchControlled: isPinned || isBatchControlled,
-        }, ...prev.items];
-      }
-
-      return recalculateInvoice(newItems);
-    });
-    return { ok: true };
-  };
-  addToInvoiceRef.current = addToInvoice;
-
-  /**
-   * Helper wrapper around addToInvoice that accepts a rich initial payload.
-   * Recommended for new Item Entry workflows to ensure single-transaction mutations.
-   */
-  const createInvoiceLine = useCallback((payload) => {
-    if (!payload || !payload.product) {
-      return { ok: false, reason: 'Missing product payload' };
-    }
-    
-    return addToInvoiceRef.current(
-      payload.product,
-      payload.quantity || 1,
-      payload.batch || null,
-      payload.serial || null,
-      payload.expiry || null,
-      {
-        price: payload.price,
-        discount: payload.discount,
-        discountType: payload.discountType,
-        taxRate: payload.tax,
-        notes: payload.notes,
-        isAbsoluteQuantity: true // If passed through wrapper, assume it's the exact final line qty
-      }
-    );
-  }, []);
-
-  /**
-   * Helper wrapper to mutate an existing invoice row.
-   * Internally leverages addToInvoice's merge logic with overrides.
-   */
-  const updateInvoiceLine = useCallback((payload) => {
-    if (!payload || !payload.invoiceLine) {
-      return { ok: false, reason: 'Missing invoiceLine payload' };
-    }
-    
-    // To cleanly target the existing line in addToInvoice, we pass the invoiceLine
-    // structured identically to how the grid passes it (id/productId).
-    const fakeProduct = {
-      id: payload.invoiceLine.productId || payload.invoiceLine.id,
-      name: payload.invoiceLine.name,
-      code: payload.invoiceLine.code,
-      barcode: payload.invoiceLine.barcode,
-      isBatch: payload.invoiceLine.batchControlled,
-      isSerial: payload.invoiceLine.serialNumber ? 1 : 0
-    };
-
-    return addToInvoiceRef.current(
-      fakeProduct,
-      payload.quantity,
-      payload.invoiceLine.pinnedBatchNumber || null,
-      payload.invoiceLine.serialNumber || null,
-      payload.invoiceLine.expiryDate || null,
-      {
-        price: payload.price,
-        discount: payload.discount,
-        discountType: payload.discountType,
-        taxRate: payload.tax,
-        notes: payload.notes,
-        isAbsoluteQuantity: true
-      }
-    );
-  }, []);
 
   const updateQuantity = (itemId, newQuantity) => {
     if (newQuantity <= 0) {
@@ -3618,13 +2233,12 @@ export default function POSSales() {
       const floor = target ? getPriceFloor(target.minPrice, target.cost) : null;
       const effectivePrice = target ? toNumber(target.price, 0) * (1 - toNumber(discount, 0) / 100) : null;
       if (floor != null && effectivePrice != null && effectivePrice < floor) {
-        setPendingPriceOverride({
-          type: 'UPDATE_DISCOUNT',
-          itemId, newDiscount: discount, itemName: target?.name, minPrice: floor, attemptedPrice: effectivePrice,
+        requestApproval({
+          priceOverride: {
+            type: 'UPDATE_DISCOUNT',
+            itemId, newDiscount: discount, itemName: target?.name, minPrice: floor, attemptedPrice: effectivePrice,
+          },
         });
-        setSupervisorPinValue('');
-        setSupervisorPinError('');
-        setShowSupervisorPin(true);
         return;
       }
     }
@@ -3649,13 +2263,12 @@ export default function POSSales() {
       const floor = target ? getPriceFloor(target.minPrice, target.cost) : null;
       const effectivePrice = target ? newPrice * (1 - toNumber(target.discount, 0) / 100) : newPrice;
       if (floor != null && effectivePrice < floor) {
-        setPendingPriceOverride({
-          type: 'UPDATE_PRICE',
-          itemId, newPrice, itemName: target?.name, minPrice: floor, attemptedPrice: effectivePrice,
+        requestApproval({
+          priceOverride: {
+            type: 'UPDATE_PRICE',
+            itemId, newPrice, itemName: target?.name, minPrice: floor, attemptedPrice: effectivePrice,
+          },
         });
-        setSupervisorPinValue('');
-        setSupervisorPinError('');
-        setShowSupervisorPin(true);
         return;
       }
     }
@@ -3665,13 +2278,6 @@ export default function POSSales() {
           ? { ...item, price: newPrice, total: item.quantity * newPrice * (1 - item.discount / 100) }
           : item
       );
-      return recalculateInvoice(newItems);
-    });
-  };
-
-  const removeFromInvoice = (itemId) => {
-    setCurrentInvoice(prev => {
-      const newItems = prev.items.filter(item => item.id !== itemId);
       return recalculateInvoice(newItems);
     });
   };
@@ -3693,29 +2299,12 @@ export default function POSSales() {
         requireLayawayApproval(() => applyVoid(itemId), false);
         return;
       }
-      setPendingVoidItemId(itemId);
-      setSupervisorPinValue('');
-      setSupervisorPinError('');
-      setShowSupervisorPin(true);
+      requestApproval({ voidItemId: itemId });
       return;
     }
     applyVoid(itemId);
   };
 
-  const applyVoid = (itemId) => {
-    // DELETE mode physically removes the line; VOID mode (default) keeps it
-    // marked so it stays visible on the receipt / audit log / reports.
-    if (posSettings?.voidMode === 'DELETE') {
-      removeFromInvoice(itemId);
-      return;
-    }
-    setCurrentInvoice(prev => {
-      const newItems = prev.items.map(item =>
-        item.id === itemId ? { ...item, isVoided: true } : item
-      );
-      return recalculateInvoice(newItems);
-    });
-  };
 
   // Supervisor approval mode: PIN (numeric keypad) or PASSWORD (manager login).
   const supervisorApprovalMode = posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN';
@@ -3738,17 +2327,12 @@ export default function POSSales() {
       }
       setHandoverEmail('');
       setHandoverPassword('');
-      setTerminalLockedBy(null);
+      clearTerminalLock();
 
       // Handover unlocks the terminal but the ongoing session (owned by the
       // previous cashier) still exists — resume it rather than falling through
       // to "Start Session".
-      if (currentTerminal?.terminalId) {
-        try {
-          const active = await getActivePosSession(currentTerminal.terminalId);
-          if (active?.id) setCurrentSession(active);
-        } catch { /* no active session to resume */ }
-      }
+      await resumeTerminalSession();
 
       showFeedback(
         `Shift handover authorized by ${result.supervisorName}. Terminal unlocked.`,
@@ -3759,155 +2343,6 @@ export default function POSSales() {
     } finally {
       setHandoverBusy(false);
     }
-  };
-
-  const handleSupervisorPinSubmit = async () => {
-    if (pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION') {
-      try {
-        if (!supervisorPinEmail || !supervisorPinValue) {
-          setSupervisorPinError('Enter supervisor email/username and password.');
-          return;
-        }
-        if (!forceCloseReason || forceCloseReason === '') {
-          setSupervisorPinError('Please select a force close reason.');
-          return;
-        }
-        if (!forceCloseAuditAcknowledged) {
-          setSupervisorPinError('Please confirm that you understand this action will be recorded in the audit trail.');
-          return;
-        }
-        const targetSession = sessionToClose || currentSession;
-        const response = await verifySessionClosurePermission(targetSession.id, supervisorPinEmail, supervisorPinValue);
-        if (response.authorized) {
-          // Same shape as the normal-close flow: the verified supervisor's grant
-          // authorizes the eventual close, so the logged-in cashier can perform it.
-          closureAuthGrantRef.current = response.authorizationToken
-            ? { sessionId: targetSession.id, token: response.authorizationToken }
-            : null;
-          forceCloseContextRef.current = { sessionId: targetSession.id, reason: forceCloseReason, supervisor: supervisorPinEmail };
-          setShowSupervisorPin(false);
-          setPendingSupervisorAction(null);
-          setSupervisorPinValue('');
-          setSupervisorPinEmail('');
-          setSupervisorPinError('');
-          // Land on the X-Report for the target session — identical to Normal Close.
-          // The supervisor authorizes here; the count/settlement and the actual
-          // closure still happen on the X-Report page.
-          setCurrentView('x-report');
-        } else {
-          setSupervisorPinError(response.message || 'Not authorized to force close this session.');
-        }
-      } catch (err) {
-        setSupervisorPinError(err.response?.data?.message || err.message || 'Authorization failed');
-      }
-      return;
-    }
-
-    // ARCHFIX S5: verified server-side — the PIN/password is never shipped to the client.
-    // PASSWORD mode authenticates a specific supervisor account (needs email + password);
-    // PIN mode just checks the branch-wide PIN against the BCrypt hash.
-    let valid = false;
-    let failureReason = null;
-    try {
-      if (supervisorApprovalMode === 'PASSWORD') {
-        if (!supervisorPinEmail || !supervisorPinValue) {
-          setSupervisorPinError('Enter supervisor email/username and password.');
-          return;
-        }
-        const result = await verifySupervisorAuth({
-          email: supervisorPinEmail,
-          password: supervisorPinValue,
-          terminalId: currentTerminal?.terminalId || '',
-          lockedBy: cashierDisplayName || '',
-        });
-        valid = !!result?.valid;
-        failureReason = result?.reason || null;
-      } else {
-        valid = supervisorPinValue ? await verifyPosSupervisorPin(supervisorPinValue) : false;
-      }
-    } catch {
-      setSupervisorPinError('Could not verify approval. Please try again.');
-      return;
-    }
-    if (valid) {
-      setShowSupervisorPin(false);
-      if (pendingUnlockAdvancedRange) {
-        setAdvancedRangeUnlocked(true);
-        setShowAdvancedRange(true);
-        setPendingUnlockAdvancedRange(false);
-      }
-      if (pendingVoidItemId) {
-        applyVoid(pendingVoidItemId);
-        setPendingVoidItemId(null);
-      }
-      if (pendingPriceOverride) {
-        const req = pendingPriceOverride;
-        setPendingPriceOverride(null);
-        if (req.type === 'ADD_ITEM') {
-          // Resumption of an add that already passed through handleProductSelection
-          // (and, in dialog mode, was already confirmed) — not a new selection, so
-          // it must not be re-routed through the Product Entry Mode decision.
-          addToInvoice(req.product, req.quantity, req.batch, req.serial, req.expiry, { ...req.overrides, approved: true });
-        } else if (req.type === 'UPDATE_PRICE') {
-          updateItemPrice(req.itemId, req.newPrice, true);
-        } else if (req.type === 'UPDATE_DISCOUNT') {
-          updateDiscount(req.itemId, req.newDiscount, true);
-        } else if (req.type === 'CHECKOUT') {
-          // Re-run checkout with the just-verified credentials attached so the backend's
-          // §2.4 gate (PosCheckoutController) can independently confirm and bypass it —
-          // never trust the client-side verify above alone for a money-moving action.
-          processPayment(
-            supervisorApprovalMode === 'PASSWORD'
-              ? { email: supervisorPinEmail, password: supervisorPinValue }
-              : { pin: supervisorPinValue }
-          );
-        }
-      }
-      if (pendingLayawayAbortAction) {
-        const action = pendingLayawayAbortAction;
-        const isFullClear = pendingLayawayAbortIsFullClear;
-        setPendingLayawayAbortAction(null);
-        setPendingLayawayAbortIsFullClear(false);
-        action();
-        // Full clear aborts the conversion; void/remove keeps layaway active.
-        if (isFullClear) {
-          setActiveLayawayId(null);
-          setActiveLayawayDeposit(0);
-        }
-      }
-      if (pendingSupervisorAction) {
-        const action = pendingSupervisorAction;
-        setPendingSupervisorAction(null);
-        if (action.type === 'DAY_CLOSE') {
-          handleCloseDay(action.payload?.acknowledgeExclusions);
-        } else if (action.type === 'DELIVERY_SETTLEMENT') {
-          action.retry(
-            supervisorApprovalMode === 'PASSWORD'
-              ? { email: supervisorPinEmail, password: supervisorPinValue }
-              : { pin: supervisorPinValue }
-          );
-        }
-      }
-      setSupervisorPinValue('');
-      setSupervisorPinEmail('');
-      setSupervisorPinError('');
-    } else {
-      setSupervisorPinError(failureReason || (
-        supervisorApprovalMode === 'PASSWORD'
-          ? 'Incorrect password. Please try again.'
-          : 'Incorrect PIN. Please try again.'
-      ));
-    }
-  };
-
-  // Gate Clear / Remove / Void actions behind supervisor approval when a layaway
-  // conversion is in progress, so reserved items can't be silently dumped.
-  const requireLayawayApproval = (action, isFullClear = false) => {
-    setPendingLayawayAbortAction(() => action);
-    setPendingLayawayAbortIsFullClear(isFullClear);
-    setSupervisorPinValue('');
-    setSupervisorPinError('');
-    setShowSupervisorPin(true);
   };
 
   // RemovalBehavior (VOID vs DELETE) governs how a *single* removed line is
@@ -3940,80 +2375,7 @@ export default function POSSales() {
   };
 
   // ── Behavior settings (Console → Behavior tab) ─────────────────────────────
-  const beginEditSettings = () => {
-    setSettingsDraft({
-      requireSupervisorForVoid: !!posSettings?.requireSupervisorForVoid,
-      requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
-      supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
-      requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
-      // Write-only — the backend never returns the raw PIN (see supervisorPinSet on posSettings).
-      supervisorPin: '',
-      voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',
-      productEntryMode: posSettings?.productEntryMode || 'DIRECT_ADD',
-      cartViewMode: posSettings?.cartViewMode === 'DETAILED' ? 'DETAILED' : 'MINIMAL',
-      cartShowBarcode: posSettings?.cartShowBarcode !== false,
-      cartShowProductCode: posSettings?.cartShowProductCode !== false,
-      cartShowBatchNumber: posSettings?.cartShowBatchNumber !== false,
-      cartShowSerialNumber: !!posSettings?.cartShowSerialNumber,
-      cartShowExpiryDate: !!posSettings?.cartShowExpiryDate,
-      cashDrawerTriggers: posSettings?.cashDrawerTriggers ?? 'CASH_PAYMENT,CHANGE_RETURN,CASH_DROP,CASH_OUT,MANUAL_OPEN',
-      operatingHoursEnabled: !!posSettings?.operatingHoursEnabled,
-      operatingStartTime: posSettings?.operatingStartTime || '',
-      operatingEndTime: posSettings?.operatingEndTime || '',
-      businessDayExtensionMinutes: posSettings?.businessDayExtensionMinutes ?? 0,
-    });
-    // Refresh the stored settings alongside opening the editor, so the server-computed
-    // Business Day schedule lock (businessDayScheduleLocked — sessions opened or closed since
-    // this screen loaded) is current when the admin starts editing. The draft above is
-    // seeded from the copy already in hand; only the read-only lock projection is at stake,
-    // and the backend re-checks it under a row lock on save regardless.
-    getPosSettings()
-      .then(fresh => { if (fresh) setPosSettings(prev => mergeSavedPosSettings(prev, fresh)); })
-      .catch(err => console.warn('Could not refresh POS settings before editing', err));
-  };
-
-  const handleSaveSettings = async () => {
-    if (!settingsDraft) return;
-    if (settingsDraft.operatingHoursEnabled && (!settingsDraft.operatingStartTime || !settingsDraft.operatingEndTime)) {
-      window.alert('Business Day Start Time and End Time are required when the Business Day Window is enabled.');
-      return;
-    }
-    if (settingsDraft.creditVoucherExpiryMode === 'MANUAL' && !settingsDraft.creditVoucherExpiryDate) {
-      window.alert('Choose the date credit vouchers should expire on.');
-      return;
-    }
-    setSettingsSaving(true);
-    try {
-      const payload = { ...(posSettings || {}), ...settingsDraft };
-      // The number/date inputs yield '' when cleared, which is not a number or a date.
-      // The backend re-validates all of this; normalising here just avoids sending it a
-      // body it would reject for a type error rather than for the real problem.
-      if (payload.creditVoucherExpiryMonths === '') payload.creditVoucherExpiryMonths = null;
-      if (payload.creditVoucherExpiryDate === '') payload.creditVoucherExpiryDate = null;
-      console.log('SAVING POS SETTINGS PAYLOAD:', payload);
-      const saved = await savePosSettings(payload);
-      setPosSettings(prev => mergeSavedPosSettings(prev, saved || payload));
-      setSettingsDraft(null);
-      // Start/end/extension feed the server-resolved Business Day phase. Without an
-      // immediate re-poll the chip and banner would keep showing the old window
-      // (and the old countdown) until the next 60s poll.
-      businessDayRefreshRef.current?.();
-      setSettingsSavedFlash(true);
-      setTimeout(() => setSettingsSavedFlash(false), 2000);
-    } catch (err) {
-      console.warn('Failed to save POS settings', err);
-      // A rejection must never be applied optimistically: the backend refuses a Business Day
-      // schedule change while sessions are open or in closure, and quietly honoring it locally
-      // would leave the POS running a window the server does not agree with. Surface the
-      // server's own message and drop the draft, so the fields visibly return to the stored
-      // (still authoritative) values rather than silently reverting without explanation.
-      const serverMessage = err?.response?.data?.message || err?.response?.data?.error;
-      window.alert(serverMessage || 'Could not save POS settings. Please try again.');
-      setSettingsDraft(null);
-    } finally {
-      setSettingsSaving(false);
-    }
-  };
+  // Implementation lives in POS/features/settings/usePosBehaviourSettings.js.
 
   // markGenerated=true stamps this terminal as having completed its X-Report (the
   // deliberate "Generate X Report" action). The dashboard preview passes false so
@@ -4142,10 +2504,14 @@ export default function POSSales() {
       setShowAdvancedRange(true);
       return;
     }
-    setPendingUnlockAdvancedRange(true);
-    setSupervisorPinValue('');
-    setSupervisorPinError('');
-    setShowSupervisorPin(true);
+    requestApproval({ unlockAdvancedRange: true });
+  };
+
+  // Approval continuation for the gate above — the dispatcher calls this once a
+  // supervisor is verified.
+  const unlockAdvancedRange = () => {
+    setAdvancedRangeUnlocked(true);
+    setShowAdvancedRange(true);
   };
 
   const handleCloseDay = async (acknowledgeExclusions = false) => {
@@ -4167,11 +2533,10 @@ export default function POSSales() {
     }
 
     if (posSettings?.requireSupervisorForDayClose && !hasAnyRole('SUPERVISOR', 'ROLE_SUPERVISOR', 'MANAGER', 'ROLE_MANAGER', 'ADMIN', 'ROLE_ADMIN', 'BRANCH_ADMIN', 'ROLE_BRANCH_ADMIN')) {
-      setPendingSupervisorAction({ type: 'DAY_CLOSE', payload: { acknowledgeExclusions } });
-      setSupervisorPinValue('');
-      setSupervisorPinEmail('');
-      setSupervisorPinError('');
-      setShowSupervisorPin(true);
+      requestApproval({
+        supervisorAction: { type: 'DAY_CLOSE', payload: { acknowledgeExclusions } },
+        resetEmail: true,
+      });
       return;
     }
 
@@ -4213,18 +2578,12 @@ export default function POSSales() {
   // posUtils.computePosCartTotals so it can be unit-tested; this reads the live
   // posSettings (every cart mutation re-runs it, so a scan always uses the
   // current mode, never a mount-time snapshot).
-  const recalculateInvoice = (items, billDiscountAmount = 0) =>
-    computePosCartTotals(items, billDiscountAmount, posSettings);
 
+  // Workspace reset: the cart, the order-level shipping charge and the tenders. The cart
+  // half lives in useCart; the other two are not cart state, which is why this composite
+  // stays here.
   const clearInvoice = () => {
-    setCurrentInvoice({
-      items: [],
-      subtotal: 0,
-      totalDiscount: 0,
-      tax: 0,
-      total: 0,
-      billDiscountAmount: 0,
-    });
+    resetCartState();
     // Shipping is an order-level charge, not a cart line — clear it with the cart.
     setShippingCharge(0);
     // Abandoning the cart abandons its tenders too. A voucher applied to a cart that is then
@@ -4233,101 +2592,58 @@ export default function POSSales() {
     checkoutPayment.clearLines();
   };
 
-  // Map live cart lines to the backend item shape shared by checkout + layaway.
-  // (Voided lines are dropped — a layaway only reserves what's actually being sold.)
-  const cartItemsToPayload = useCallback((items) => {
-    const isDeleteMode = posSettings?.voidMode === 'DELETE';
-    return items
-      .filter(item => !isDeleteMode || !item.isVoided)
-      .map(item => ({
-        itemCode: item.code || item.productId || item.id,
-        itemName: item.name,
-        quantity: item.quantity,
-        unit: 'Each',
-        price: item.price,
-        discount: item.discount || 0,
-        taxRate: toNumber(item.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
-        batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
-        serialNumber: item.isVoided ? null : (item.serialNumber || null),
-        voided: !!item.isVoided,
-      }));
-  }, [posSettings?.voidMode, posSettings?.branchDefaultVatRate]);
 
   // ── Delivery ───────────────────────────────────────────────────────────────
 
-  const loadDeliveryOrders = useCallback(async () => {
-    const branchId = currentTerminal?.branchId || null;
-    setDeliveryOrdersLoading(true);
-    try {
-      const data = await getDeliveryOrders(branchId);
-      setDeliveryOrders(Array.isArray(data) ? data.map(inv => ({
-        id: inv.id,
-        customer: inv.customerName || 'Walk-in Customer',
-        invoice: inv.invoiceNumber,
-        mobile: '',
-        person: inv.posDriverName || '',
-        invoiceAmt: toNumber(inv.invoiceTotal) - toNumber(inv.deliveryCharge),
-        deliveryCharge: toNumber(inv.deliveryCharge),
-        paidAmt: toNumber(inv.amountPaid),
-      })) : []);
-    } catch (err) {
-      console.warn('Failed to load delivery orders', err);
-      setDeliveryOrders([]);
-    } finally {
-      setDeliveryOrdersLoading(false);
-    }
-  }, [currentTerminal?.branchId]);
+  // Implementation lives in POS/features/delivery/useDelivery.js. Everything is
+  // destructured back under its original name so existing consumers are untouched;
+  // handleOutForDelivery and the settlement handler stay below (print-coupled).
+  const {
+    deliveryAddress, setDeliveryAddress, deliveryNotes, setDeliveryNotes,
+    deliveryDriver, setDeliveryDriver, deliveryCharge, setDeliveryCharge,
+    showDeliveryModal, setShowDeliveryModal, deliveryModalTab, setDeliveryModalTab,
+    deliveryCustomerId, setDeliveryCustomerId, deliveryCustomerSearch, setDeliveryCustomerSearch,
+    deliveryNewName, setDeliveryNewName, deliveryNewMobile, setDeliveryNewMobile,
+    deliveryNewEmail, setDeliveryNewEmail, deliveryDate, setDeliveryDate,
+    deliveryTimeSlot, setDeliveryTimeSlot, deliveryInstructions, setDeliveryInstructions,
+    deliveryValidationErrors, setDeliveryValidationErrors,
+    deliveryPersons, deliveryPersonsLoading, selectedDeliveryPerson,
+    deliveryShowAddressPicker, setDeliveryShowAddressPicker,
+    deliveryShowAddAddressModal, setDeliveryShowAddAddressModal,
+    deliveryNewAddress, setDeliveryNewAddress,
+    deliveryAddressSaving, deliveryAddressError, setDeliveryAddressError,
+    handleSaveDeliveryNewAddress,
+    showDeliverySettleModal, setShowDeliverySettleModal,
+    deliverySettleSearch, setDeliverySettleSearch,
+    deliverySettlePersonFilter, setDeliverySettlePersonFilter,
+    deliveryOrders, deliveryOrdersLoading, loadDeliveryOrders,
+    deliveryOutLoading, setDeliveryOutLoading,
+    deliverySettleLoading, setDeliverySettleLoading,
+    openDeliveryModal, validateDeliveryOrder,
+  } = useDelivery({
+    currentTerminal, currentInvoice, selectedCustomerData,
+    setPosCustomers, clearDeliverySettleLines,
+    deliverySettleSelected, setDeliverySettleSelected,
+  });
 
-  const loadDeliveryPersons = useCallback(async () => {
-    setDeliveryPersonsLoading(true);
-    try {
-      const data = await getDeliveryPersons();
-      setDeliveryPersons(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.warn('Failed to load delivery persons', err);
-      setDeliveryPersons([]);
-    } finally {
-      setDeliveryPersonsLoading(false);
-    }
-  }, []);
-
+  // Lazily load configured bank accounts the first time the cashier opens any flow that
+  // allocates payments — checkout, layaway deposit, or delivery settlement all render
+  // PaymentAllocationPanel, and its Online modal needs them to offer a receiving account.
+  // excludeCash drops Cash in Hand / Petty Cash: money arriving by bank transfer must not
+  // land on a cash account, or the session's drawer count expects notes that were never taken.
+  const needsBankAccounts = showPaymentDialog || showSaveLayaway || showDeliverySettleModal;
   useEffect(() => {
-    if (showDeliverySettleModal) {
-      setDeliverySettleSearch('');
-      setDeliverySettlePersonFilter('All Persons');
-      setDeliverySettleSelected(null);
-      clearDeliverySettleLines();
-      loadDeliveryOrders();
-    }
-  }, [showDeliverySettleModal]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (showDeliveryModal) {
-      loadDeliveryPersons();
-      setDeliveryValidationErrors({});
-    }
-  }, [showDeliveryModal, loadDeliveryPersons]);
-
-  const selectedDeliveryPerson = useMemo(
-    () => deliveryPersons.find(person => String(person.employeeCode) === String(deliveryDriver)) || null,
-    [deliveryPersons, deliveryDriver]
-  );
-
-  const validateDeliveryOrder = useCallback(() => {
-    const errors = {};
-    if (currentInvoice.items.length === 0) errors.items = 'Add at least one item before dispatching.';
-    if (!deliveryCustomerId) errors.customer = 'Customer is required.';
-    if (!deliveryAddress.trim()) errors.address = 'Delivery address is required.';
-    if (!deliveryDate) errors.date = 'Delivery date is required.';
-    if (!deliveryTimeSlot) errors.timeSlot = 'Time slot is required.';
-    if (!deliveryDriver) errors.deliveryDriver = 'Assign a delivery person.';
-    setDeliveryValidationErrors(errors);
-    if (Object.keys(errors).length > 0) {
-      alert('Please complete the required delivery details before sending the order out for delivery.');
-      return false;
-    }
-    return true;
-  }, [currentInvoice.items.length, deliveryAddress, deliveryCustomerId, deliveryDate, deliveryDriver, deliveryTimeSlot]);
+    if (!needsBankAccounts) return;
+    if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;
+    let cancelled = false;
+    setCheckoutOnlineBankAccountsLoading(true);
+    getBankAccounts({ excludeCash: true })
+      .then(data => { if (!cancelled) setCheckoutOnlineBankAccounts(Array.isArray(data) ? data : []); })
+      .catch(err => { console.warn('Failed to load bank accounts', err); if (!cancelled) setCheckoutOnlineBankAccounts([]); })
+      .finally(() => { if (!cancelled) setCheckoutOnlineBankAccountsLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsBankAccounts]);
 
   const handleOutForDelivery = useCallback(async () => {
     if (!validateDeliveryOrder()) return;
@@ -4386,7 +2702,7 @@ export default function POSSales() {
 
       try {
         if (tplInvoicePaper === 'A4') {
-          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(savedInvoice));
+          const template = resolveInvoiceA4TemplateFor(savedInvoice);
           const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
           const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
           printHtml(await generatePrintHtmlAsync(template, data, options));
@@ -4459,90 +2775,17 @@ export default function POSSales() {
     currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder,
     tplInvoiceShowBankDetails, tplInvoicePaper]);
 
-  // Open the New Delivery Order dialog, pre-seeding the customer + default
-  // address from whoever is already selected on the POS bill (a walk-in seeds
-  // nothing). The cashier can still change either field in the dialog.
-  const openDeliveryModal = useCallback(() => {
-    setDeliveryModalTab('existing');
-    const cust = selectedCustomerData;
-    const isReal = cust && cust.id !== WALK_IN_CUSTOMER.id;
-    if (isReal) {
-      setDeliveryCustomerId(String(cust.id));
-      if (cust.address) setDeliveryAddress(prev => (prev?.trim() ? prev : cust.address));
-    } else {
-      setDeliveryCustomerId('');
-    }
-    setShowDeliveryModal(true);
-  }, [selectedCustomerData]);
-
-  // Add a new saved shipping address for the customer selected in the delivery
-  // modal, then select it as the active delivery address. Mirrors
-  // CustomerShippingPanel.handleSaveNewAddress (QA-028) — same endpoint/shape,
-  // adapted to update posCustomers instead of a single selectedCustomer prop.
-  const handleSaveDeliveryNewAddress = useCallback(async () => {
-    if (!deliveryCustomerId) return;
-    if (!deliveryNewAddress.name.trim() || !deliveryNewAddress.address1.trim()) {
-      setDeliveryAddressError('Address label and address are required');
-      return;
-    }
-    setDeliveryAddressSaving(true);
-    setDeliveryAddressError('');
-    try {
-      const updatedAddresses = await addCustomerSavedAddress(deliveryCustomerId, {
-        name: deliveryNewAddress.name.trim(),
-        address1: deliveryNewAddress.address1.trim(),
-        city: deliveryNewAddress.city.trim(),
-        country: deliveryNewAddress.country.trim(),
-        // Stash contact details on address2 — entity has no dedicated contact fields.
-        address2: [deliveryNewAddress.contactName, deliveryNewAddress.contactPhone]
-          .filter(v => v && v.trim()).join(' · '),
-      });
-
-      setPosCustomers(prev => prev.map(c =>
-        String(c.id) === String(deliveryCustomerId) ? { ...c, savedAddresses: updatedAddresses } : c
-      ));
-
-      const added = updatedAddresses[updatedAddresses.length - 1];
-      if (added) {
-        setDeliveryAddress([added.address1, added.address2, added.city, added.country].filter(Boolean).join(', '));
-      }
-      setDeliveryValidationErrors(prev => ({ ...prev, address: '' }));
-      setDeliveryNewAddress({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
-      setDeliveryShowAddAddressModal(false);
-    } catch (err) {
-      console.error(err);
-      setDeliveryAddressError('Failed to save address. Please try again.');
-    } finally {
-      setDeliveryAddressSaving(false);
-    }
-  }, [deliveryCustomerId, deliveryNewAddress]);
 
   // ── Hold (persisted, session-scoped) ───────────────────────────────────────
   const sessionId = currentSession?.id && typeof currentSession.id === 'number' ? currentSession.id : null;
-
-  const loadHeldSales = useCallback(async () => {
-    if (!sessionId) { setHeldSales([]); return; }
-    try {
-      // A "Hold" is a zero-deposit layaway (hold=true). The quick-recall pills show
-      // this session's open holds; full layaways live in the Layaways list.
-      const branchId = currentTerminal?.branchId || currentSession?.branchId || null;
-      const all = await getLayaways({ branchId, status: 'ACTIVE' });
-      const holds = (all || [])
-        .filter(l => l.hold === true && l.posSessionId === sessionId)
-        .map(l => ({
-          id: l.id,
-          label: l.layawayNumber,
-          total: l.saleTotal || 0,
-          itemCount: (l.items || []).length,
-          customerName: l.customerName,
-        }));
-      setHeldSales(holds);
-    } catch (err) {
-      console.warn('Held sales load failed', err);
-    }
-  }, [sessionId, currentTerminal, currentSession]);
-
-  useEffect(() => { loadHeldSales(); }, [loadHeldSales]);
+  // Implementation lives in POS/features/heldSales/useHeldSales.js.
+  const {
+    heldSales, holdBusy, loadHeldSales, holdInvoice, recallInvoice, deleteHeldBill,
+  } = useHeldSales({
+    sessionId, currentSession, currentTerminal, currentInvoice, selectedCustomerData, posSettings,
+    cartItemsToPayload, clearInvoice, setConfirmAction,
+    syncPosDataRef, startLayawayConversion,
+  });
 
   const syncPosData = useCallback(async () => {
     if (productCacheRef.current) {
@@ -4560,108 +2803,14 @@ export default function POSSales() {
       console.warn('POS data sync encountered an error:', err);
     }
   }, [loadPosCustomers, loadPosProducts, loadXReport, loadHeldSales, currentSession?.status]);
+  // Late-bound for useHeldSales: hold/delete re-sync POS data after mutating a hold,
+  // but syncPosData itself depends on the loadHeldSales that hook returns.
+  syncPosDataRef.current = syncPosData;
+  // Late-bound for useSessionClosure (called ~2,500 lines up). The first point at which all
+  // three loaders are initialised. Its handlers snapshot this on entry, never during render.
+  sessionClosureLoadersRef.current = { loadXReport, loadDaySummary, syncPosData };
 
-  // Hold = a zero-deposit layaway. Reuses the layaway reservation workflow (stock is
-  // reserved, it shows in the Layaways list) but takes no deposit and allows Walk-in.
-  const holdInvoice = async () => {
-    if (currentInvoice.items.length === 0 || holdBusy) return;
-    if (!sessionId) { alert('Open a POS session before holding a bill.'); return; }
-    setHoldBusy(true);
-    try {
-      const isWalkIn = !selectedCustomerData || selectedCustomerData.id === WALK_IN_CUSTOMER.id;
-      await createLayaway({
-        hold: true,
-        customerCode: isWalkIn ? 'WALK-IN' : (selectedCustomerData.code || selectedCustomerData.id),
-        customerName: isWalkIn ? 'Walk-in Customer' : selectedCustomerData.name,
-        customerPhone: isWalkIn ? null : (selectedCustomerData.phone || null),
-        branchId: currentTerminal?.branchId || currentSession?.branchId || null,
-        branchName: currentTerminal?.branchName || currentSession?.branchName || null,
-        branchCode: currentTerminal?.branchCode || null,
-        sessionId,
-        terminalId: currentTerminal?.terminalId || null,
-        counterName: currentTerminal?.counterName || null,
-        depositRequired: false,
-        depositAmount: 0,
-        reserveStockRequested: true,
-        billDiscountAmount: currentInvoice.billDiscountAmount || 0,
-        taxInclusive: posSettings?.taxInclusive === true,
-        items: cartItemsToPayload(currentInvoice.items),
-      });
-      clearInvoice();
-      await loadHeldSales();
-      syncPosData();
-    } catch (err) {
-      alert(err?.response?.data?.message || 'Failed to hold the bill.');
-    } finally {
-      setHoldBusy(false);
-    }
-  };
 
-  // Recall a held bill: load its hold-layaway back into the live cart for completion
-  // (checkout marks the hold converted, releasing its reservation).
-  const recallInvoice = async (id) => {
-    try {
-      await startLayawayConversion(id);
-      await loadHeldSales();
-    } catch (err) {
-      alert(err?.response?.data?.message || 'Failed to recall the held bill.');
-    }
-  };
-
-  // Delete a held bill: cancel the underlying layaway (releases reserved stock)
-  // and refresh the held-sales list so the pill disappears.
-  const deleteHeldBill = (id) => {
-    const heldBill = heldSales.find(h => h.id === id);
-    setConfirmAction({
-      title: 'Delete Held Bill',
-      message: `Delete ${heldBill?.label || 'this held bill'}? Reserved stock will be released.`,
-      onConfirm: async () => {
-        setConfirmAction(prev => ({ ...prev, busy: true }));
-        try {
-          await cancelLayaway(id, currentSession?.id ?? null);
-          await loadHeldSales();
-          syncPosData();
-          setConfirmAction(null);
-        } catch (err) {
-          const status = err?.response?.status;
-          setConfirmAction(prev => ({
-            ...prev, busy: false,
-            error: status === 403
-              ? 'You do not have permission to delete a held bill (supervisor required).'
-              : (err?.response?.data?.message || 'Failed to delete held bill.'),
-          }));
-        }
-      },
-    });
-  };
-
-  // ── Layaways ────────────────────────────────────────────────────────────────
-  const loadLayaways = useCallback(async () => {
-    setLayawaysLoading(true);
-    setLayawaysError(null);
-    try {
-      const params = {};
-      const branchId = currentTerminal?.branchId || currentSession?.branchId;
-      if (branchId) params.branchId = branchId;
-      if (layawaysFilterStatus && layawaysFilterStatus !== 'All') {
-        params.status = STATUS_LABEL_TO_ENUM[layawaysFilterStatus] || layawaysFilterStatus;
-      }
-      if (layawaysFilterCustomer.trim()) params.customer = layawaysFilterCustomer.trim();
-      if (layawaysFilterNo.trim()) params.number = layawaysFilterNo.trim();
-      setLayawaysList(await getLayaways(params));
-    } catch (err) {
-      setLayawaysError(err?.response?.data?.message || 'Failed to load layaways.');
-      setLayawaysList([]);
-    } finally {
-      setLayawaysLoading(false);
-    }
-  }, [currentTerminal, currentSession, layawaysFilterStatus, layawaysFilterCustomer, layawaysFilterNo]);
-
-  // Load list + detail when the modal opens / selection changes.
-  useEffect(() => {
-    if (showLayawaysList) loadLayaways();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showLayawaysList]);
 
   // Fetch real POS invoices when the reprint modal opens.
   useEffect(() => {
@@ -4690,15 +2839,6 @@ export default function POSSales() {
     })();
     return () => { cancelled = true; };
   }, [reprintSelectedInvoice, reprintInvoices, tplInvoiceShowBankDetails]);
-
-  useEffect(() => {
-    if (!selectedLayawayId) { setSelectedLayawayDetail(null); return; }
-    let cancelled = false;
-    getLayaway(selectedLayawayId)
-      .then(d => { if (!cancelled) setSelectedLayawayDetail(d); })
-      .catch(() => { if (!cancelled) setSelectedLayawayDetail(null); });
-    return () => { cancelled = true; };
-  }, [selectedLayawayId]);
 
   const saveCurrentLayaway = async (print = false) => {
     if (currentInvoice.items.length === 0 || saveLayawayBusy) return;
@@ -4792,102 +2932,11 @@ export default function POSSales() {
     }
   };
 
-  // Convert: load the layaway's items + customer into the live cart, pre-credit the
-  // deposit, and tag the cart so checkout marks the layaway converted afterwards.
-  const startLayawayConversion = async (layawayId) => {
-    try {
-      const ly = await getLayaway(layawayId);
-      if (ly.status && ly.status !== 'ACTIVE' && ly.status !== 'PARTIALLY_PAID' && ly.status !== 'READY_TO_CONVERT') {
-        alert(`This layaway is ${ly.status.toLowerCase().replace(/_/g, ' ')} and cannot be converted.`);
-        return;
-      }
-      const items = (ly.items || []).map(it => ({
-        id: it.pinnedBatchNumber ? `${it.itemCode}::${it.pinnedBatchNumber}` : it.itemCode,
-        productId: it.itemCode,
-        name: it.itemName,
-        barcode: it.itemCode,
-        code: it.itemCode,
-        image: null,
-        price: it.price || 0,
-        quantity: it.quantity || 0,
-        discount: it.discount || 0,
-        taxRate: it.taxRate != null ? it.taxRate : (posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
-        total: (it.price || 0) * (it.quantity || 0) * (1 - (it.discount || 0) / 100),
-        pinnedBatchNumber: it.pinnedBatchNumber || null,
-        serialNumber: it.serialNumber || null,
-        expiryDate: it.expiryDate || null,
-        isVoided: !!it.voided,
-      }));
-      // Compute bill discount needed so the cart total matches the stored saleTotal exactly.
-      const tempInvoice = recalculateInvoice(items, 0);
-      const storedTotal = ly.saleTotal || 0;
-      const storedBillDiscount = ly.billDiscountAmount || 0;
-      // Prefer the stored billDiscountAmount; if the recalculated total still doesn't
-      // match saleTotal (e.g. items were saved differently), derive the diff as extra discount.
-      const derivedBillDiscount = Math.max(0, (tempInvoice.subtotal - tempInvoice.totalDiscount + (tempInvoice.taxInclusive ? 0 : tempInvoice.tax)) - storedTotal);
-      const billDiscountAmount = storedBillDiscount > 0 ? storedBillDiscount : derivedBillDiscount;
-      setCurrentInvoice(recalculateInvoice(items, billDiscountAmount));
-      // Select the layaway's customer if we have it loaded.
-      const match = customerOptions.find(c =>
-        (c.code && c.code === ly.customerCode) || c.id === ly.customerCode);
-      if (match) setSelectedCustomer(match.id);
-      setActiveLayawayId(ly.id);
-      setActiveLayawayDeposit(ly.depositAmount || 0);
-      setShowLayawaysList(false);
-      setSelectedLayawayId(null);
-    } catch (err) {
-      alert(err?.response?.data?.message || 'Failed to load layaway for conversion.');
-    }
-  };
 
-  const handleCancelLayaway = (layawayId) => {
-    const lay = (layawaysList || []).find(l => l.id === layawayId);
-    setConfirmAction({
-      title: 'Cancel Layaway',
-      message: `Cancel ${lay?.layawayNumber || 'this layaway'}? Reserved stock will be released.`,
-      onConfirm: async () => {
-        setConfirmAction(prev => ({ ...prev, busy: true }));
-        setLayawayBusyId(layawayId);
-        try {
-          await cancelLayaway(layawayId, currentSession?.id ?? null);
-          if (selectedLayawayId === layawayId) setSelectedLayawayId(null);
-          await loadLayaways();
-          syncPosData();
-          setConfirmAction(null);
-        } catch (err) {
-          const status = err?.response?.status;
-          setConfirmAction(prev => ({
-            ...prev, busy: false,
-            error: status === 403
-              ? 'You do not have permission to cancel a layaway (supervisor required).'
-              : (err?.response?.data?.message || 'Failed to cancel layaway.'),
-          }));
-        } finally {
-          setLayawayBusyId(null);
-        }
-      },
-    });
-  };
 
   // ── Cash drawer control ────────────────────────────────────────────────────
-  // Opens the physical drawer only for events enabled in POS settings
-  // (cashDrawerTriggers). Trigger keys must match the backend vocabulary in
-  // PosSettings.cashDrawerTriggers (CASH_PAYMENT, RECEIPT_PRINT, CHANGE_RETURN,
-  // CASH_SETTLEMENT, CASH_DROP, CASH_OUT, MANUAL_OPEN).
-  const isDrawerTriggerEnabled = useCallback((trigger) => {
-    const raw = posSettings?.cashDrawerTriggers;
-    if (raw == null) return false;
-    return String(raw).split(',').map(t => t.trim()).includes(trigger);
-  }, [posSettings]);
-
-  const openCashDrawer = useCallback((trigger) => {
-    // MANUAL_OPEN is an explicit cashier action — always allowed.
-    if (trigger !== 'MANUAL_OPEN' && !isDrawerTriggerEnabled(trigger)) return;
-    // No web API to pulse a physical drawer; the driver/agent listens for this.
-    // Surface the kick so hardware integrations (or future bridge) can react.
-    window.dispatchEvent(new CustomEvent('pos:open-cash-drawer', { detail: { trigger } }));
-  }, [isDrawerTriggerEnabled]);
-
+  // Implementation lives in POS/device/cashDrawer/useCashDrawer.js.
+  const { openCashDrawer } = useCashDrawer(posSettings);
   // ── Detailed cart view ──────────────────────────────────────────────────────
   // When cartViewMode = DETAILED, surface the per-field details enabled in POS
   // settings for each cart line. Returns [{ label, value }] for fields that are
@@ -4997,290 +3046,24 @@ export default function POSSales() {
     scannerStorageKey,
   ]);
 
-  const buildThermalReceiptArtifacts = useCallback(async ({
-    full: fullArg,
-    isReprint = false,
-    cashGiven = null,
-    changeAmount = null,
-    // Allocation-driven payment block (POS/payments/paymentPresentation) — one row per
-    // tender in the order the cashier took them, plus the totals footer. Every renderer
-    // prints the same rows from it. Null when reprinting a historical invoice that has
-    // no recorded allocations, where the cashGiven fallback still applies.
-    paymentBlock = null,
-    customerNameOverride = null,
-    customerPhone = null,
-    customerEmail = null,
-    // TRN + address of the selected customer. Neither is persisted on
-    // SalesInvoice (it stores only customerCode/customerName), so callers pass
-    // them from the live customer object; when they don't, they're resolved
-    // below from the loaded customer list by code — see resolvedCustomer*.
-    customerTrn = null,
-    customerAddress = null,
-    creditPreviousBalance = null,
-    creditInvoiceCredit = null,
-    creditAmountPaid = null,
-    creditUpdatedBalance = null,
-    cashierNameOverride = null,
-    depositApplied = null,
-    balanceDue = null,
-    shippingCharge = null,
-    // Per-call override of the CREDIT ACCOUNT block visibility. Normally the block
-    // follows the tplInvoiceShowBankDetails template toggle, but specific workflows
-    // pin it: a Delivery Order print (Out for Delivery) hides it (null → suppressed),
-    // while a Delivery Settlement print shows it. null = defer to template toggle.
-    showCreditBalanceOverride = null,
-  }) => {
-    // Customer name (client item 3): the printed receipt must show the SAME
-    // customer the checkout preview shows. The preview reads the selected customer
-    // object directly (customer.name), while the print path was reading it off the
-    // round-tripped backend invoice — which reads "Walk-in Customer" whenever the
-    // saved customerName came back blank. When the caller passes the live selected
-    // name, override it onto a shallow copy so BOTH the ESC/POS and HTML builders
-    // (which read invoice.customerName) print the real customer, not "Walk-in".
-    const full = (customerNameOverride && customerNameOverride.trim())
-      ? { ...fullArg, customerName: customerNameOverride.trim() }
-      : fullArg;
-    // Customer contact block (Name / Mobile / Email / TRN / Address): only the
-    // code + name round-trip on the invoice, so everything else is read off the
-    // loaded customer record. Callers that hold the live `customer` object pass
-    // it explicitly; reprints (and any site that doesn't) fall back to this
-    // lookup by code so a reprint prints the same block the original sale did.
-    // `address` is mapPosCustomer's default *shipping* address (its own
-    // preference chain already falls back to billing) — the customer's address
-    // on file, distinct from the sale's own DELIVERY ADDRESS section.
-    // Falls back to an exact name match when customerCode is blank (seen on some
-    // older/edge-case invoices) — only when exactly one loaded customer shares that
-    // name, so an ambiguous name never attaches the wrong customer's contact block.
-    const custRecForPrint = full.customerCode
-      ? customerOptions.find(c => c.code === full.customerCode || c.id === full.customerCode)
-      : (() => {
-          const name = (full.customerName || '').trim().toLowerCase();
-          if (!name || name === 'walk-in customer') return null;
-          const matches = customerOptions.filter(c => (c.name || '').trim().toLowerCase() === name);
-          return matches.length === 1 ? matches[0] : null;
-        })();
-    const resolvedCustomerPhone = customerPhone || custRecForPrint?.phone || full.customerPhone || null;
-    const resolvedCustomerEmail = customerEmail || custRecForPrint?.email || full.customerEmail || null;
-    const resolvedCustomerTrn = customerTrn || custRecForPrint?.trn || full.customerTrn || null;
-    const resolvedCustomerAddress = customerAddress || custRecForPrint?.address || full.customerAddress || null;
-    // Tax-registered sales keep today's Tax Invoice template untouched; a
-    // no-tax sale (e.g. a zero-rated/exempt walk-in) prints the POS Receipt
-    // tab's own header/footer/TRN/VAT-summary config instead. Computed here
-    // (not hoisted to the caller) because `full` — and therefore its tax
-    // total — is only known once the customerName override above is applied.
-    // Read BOTH field names: a round-tripped backend invoice carries `taxTotal`
-    // (SalesInvoice entity), while a live cart/draft object carries `tax`. Reading
-    // only `full.tax` yielded NaN>0=false on every posted invoice, so the real
-    // print/reprint always fell back to the POS Receipt tab config regardless of
-    // tax — diverging from the checkout preview (which reads currentInvoice.tax)
-    // and from buildPosPrintData/the A4 sites (which already read taxTotal).
-    const hasTax = isTaxInvoiceDocument(full);
-    // Credit/Account Balance toggle is per-sub-tab too (POS Receipt tab's
-    // tplReceiptShowBankDetails vs Tax Invoice tab's tplInvoiceShowBankDetails) —
-    // same rule as activeShowLogo etc. below. Previously this always read the
-    // Tax Invoice tab's toggle even for a no-tax POS Receipt print, so enabling
-    // "Credit Balance" on the POS Receipt tab never showed up at checkout/print.
-    const resolvedShowCreditBalance = showCreditBalanceOverride != null
-      ? showCreditBalanceOverride
-      : (hasTax ? tplInvoiceShowBankDetails : tplReceiptShowBankDetails);
-    const activeHeader = hasTax ? tplInvoiceHeader : tplReceiptHeader;
-    const activeHeaderAr = hasTax ? tplInvoiceHeaderAr : tplReceiptHeaderAr;
-    const activeFooter = hasTax ? tplInvoiceFooter : tplReceiptFooter;
-    // A no-tax sale never shows TRN/VAT summary, regardless of the (disabled)
-    // POS Receipt tab toggle state — these aren't just defaulted off, they're
-    // structurally irrelevant once hasTax is false, so force them here rather
-    // than trusting whatever tplReceiptShowTrn/tplReceiptColVatAmt happen to hold.
-    const activeShowTrn = hasTax ? tplInvoiceShowTrn : false;
-    const activeShowVatSummary = hasTax ? tplInvoiceColVatAmt : false;
-    const activeShowFooterText = hasTax ? tplInvoiceShowTerms : tplReceiptShowTerms;
-    const activeShowLogo = hasTax ? tplInvoiceShowLogo : tplReceiptShowLogo;
-    const activeShowCompanyDetails = hasTax ? tplInvoiceShowCompanyDetails : tplReceiptShowCompanyDetails;
-    const activeShowCustomerDetails = hasTax ? tplInvoiceShowCustomerDetails : tplReceiptShowCustomerDetails;
-    const activeShowQRCode = hasTax ? tplInvoiceShowQRCode : tplReceiptShowQRCode;
-    const activeShowPaymentDetails = hasTax ? tplInvoiceColDiscount : tplReceiptColDiscount;
-    const activeShowLoyaltyPoints = hasTax ? tplInvoiceShowNotes : tplReceiptShowNotes;
-    const activeT2 = hasTax
-      ? {
-          hasTax: true,
-          showLogo: t2InvoiceShowLogo, showCompanyDetails: t2InvoiceShowCompanyDetails, showTrn: t2InvoiceShowTrn,
-          showArabic: t2InvoiceShowArabic, showCustomerDetails: t2InvoiceShowCustomerDetails,
-          showAccountBalance: t2InvoiceShowAccountBalance, showDelivery: t2InvoiceShowDelivery,
-          showVatSummary: t2InvoiceShowVatSummary, showPaymentDetails: t2InvoiceShowPaymentDetails,
-          showLoyalty: t2InvoiceShowLoyalty, showQRCode: t2InvoiceShowQRCode,
-          showFooterText: t2InvoiceShowFooterText, showBarcode: t2InvoiceShowBarcode,
-        }
-      : {
-          // hasTax:false drops ALL tax content (Taxable/VAT rows, per-line VAT
-          // label, Customer TRN, VAT summary) in both the canvas (ESC/POS) and
-          // HTML renderers. showTrn/showVatSummary also forced off — see
-          // activeShowTrn note above; same rule applies to Template 2's no-tax path.
-          hasTax: false,
-          showLogo: t2ReceiptShowLogo, showCompanyDetails: t2ReceiptShowCompanyDetails, showTrn: false,
-          showArabic: t2ReceiptShowArabic, showCustomerDetails: t2ReceiptShowCustomerDetails,
-          showAccountBalance: t2ReceiptShowAccountBalance, showDelivery: t2ReceiptShowDelivery,
-          showVatSummary: false, showPaymentDetails: t2ReceiptShowPaymentDetails,
-          showLoyalty: t2ReceiptShowLoyalty, showQRCode: t2ReceiptShowQRCode,
-          showFooterText: t2ReceiptShowFooterText, showBarcode: t2ReceiptShowBarcode,
-        };
-    const qrContent = buildQrContent(buildPosPrintData(full, activeFooter), tplOutletName);
-
-    // Only the raw qrContent *string* is needed here — the ESC/POS path has the
-    // printer render its own QR natively (GS ( k), so no rasterised QR image is
-    // built on this path. (The QR *image* is only meaningful to an HTML renderer;
-    // the checkout A4/preview sites build their own via generatePrintHtmlAsync.)
-    const escPosOpts = {
-      companyName: tplOutletName,
-      trn: effectiveOutletTrn,
-      header: activeHeader,
-      footer: activeFooter,
-      showTrn: activeShowTrn,
-      isReprint,
-      logoDataUrl: tplLogoDataUrl,
-      showLogo: activeShowLogo,
-      showCompanyDetails: activeShowCompanyDetails,
-      outletAddress: tplOutletAddress,
-      outletPhone: tplOutletPhone,
-      showServiceCharge: tplInvoiceShowGrandTotalBanner,
-      showVatSummary: activeShowVatSummary,
-      // No-tax sale ⇒ suppress ALL tax content on the ESC/POS (raw thermal) path
-      // too, matching the HTML preview and text fallback.
-      hasTax,
-      showPaymentDetails: activeShowPaymentDetails,
-      showQRCode: activeShowQRCode,
-      qrContent: activeShowQRCode ? qrContent : null,
-      // Social/stamp image + placement — same values the HTML preview below gets,
-      // so a merchant-uploaded social image prints (and suppresses the QR) on the
-      // ESC/POS path too, honouring the configured before/after-footer placement.
-      stampDataUrl: activeShowQRCode ? tplStampDataUrl : null,
-      qrPlacement: tplInvoiceQrPlacement,
-      showCustomerDetails: activeShowCustomerDetails,
-      showFooterText: activeShowFooterText,
-      cashierName: cashierNameOverride || cashierDisplayName,
-      terminalId: full.posTerminalId || currentTerminal?.terminalId,
-      counterName: full.posCounterName || currentTerminal?.counterName,
-      // Template 2 (bilingual canvas) reads these extras; Template 1's ESC/POS
-      // builder ignores them, so it's safe to always pass them on the shared bag.
-      branchName: full.branchName || currentTerminal?.branchName || currentSession?.branchName || '',
-      saleType: full.salesType || full.saleType || '',
-      showBarcode: tplReceiptShowBarcode !== false,
-      showLoyaltyPoints: activeShowLoyaltyPoints,
-      deliveryAddress: full.shippingAddress || null,
-      cashGiven,
-      changeAmount,
-      paymentBlock,
-      depositApplied,
-      balanceDue,
-      shippingCharge,
-      customerPhone: resolvedCustomerPhone,
-      customerEmail: resolvedCustomerEmail,
-      customerTrn: resolvedCustomerTrn,
-      customerAddress: resolvedCustomerAddress,
-      showCreditBalance: resolvedShowCreditBalance,
-      creditPreviousBalance,
-      creditInvoiceCredit,
-      creditAmountPaid,
-      creditUpdatedBalance,
-      currency: activeCurrency,
-    };
-
-    // Template 2 (Arabic/bilingual) carries its OWN independent Show/Hide
-    // toggles, now split per sub-tab (activeT2 already resolved above by
-    // hasTax). When it's the active template, override the shared opts bag's
-    // toggle flags with the activeT2 values so the real checkout print honours
-    // the Template 2 designer settings for the sub-tab that applies to THIS
-    // invoice — not always the Tax Invoice tab's. These keys are consumed by
-    // the bilingual canvas renderer (ESC/POS).
-    if (receiptTemplateId === 'billbull-ar') {
-      escPosOpts.showLogo = activeT2.showLogo;
-      escPosOpts.showCompanyDetails = activeT2.showCompanyDetails;
-      escPosOpts.showTrn = activeT2.showTrn;
-      escPosOpts.showArabic = activeT2.showArabic;
-      escPosOpts.showCustomerDetails = activeT2.showCustomerDetails;
-      escPosOpts.showVatSummary = activeT2.showVatSummary;
-      escPosOpts.showPaymentDetails = activeT2.showPaymentDetails;
-      escPosOpts.showLoyaltyPoints = activeT2.showLoyalty;
-      escPosOpts.showDelivery = activeT2.showDelivery;
-      escPosOpts.showFooterText = activeT2.showFooterText;
-      escPosOpts.showBarcode = activeT2.showBarcode;
-      escPosOpts.showQRCode = activeT2.showQRCode;
-      escPosOpts.qrContent = activeT2.showQRCode ? qrContent : null;
-      escPosOpts.stampDataUrl = activeT2.showQRCode ? tplStampDataUrl : null;
-      // Template 2 has its own independent Account Balance toggle — don't AND it
-      // with Template 1's (unrelated) resolvedShowCreditBalance, or enabling ONLY
-      // the Template 2 toggle (leaving Template 1's off, its default) silently
-      // suppresses the section again.
-      escPosOpts.showCreditBalance = activeT2.showAccountBalance;
-    }
-    // documentTitle/documentTitleAr drive Template 2's canvas (ESC/POS) title;
-    // Template 1 ignores these keys (it reads `header` instead), so it's safe
-    // to always set them on the shared opts bag.
-    escPosOpts.documentTitle = activeHeader;
-    escPosOpts.documentTitleAr = activeHeaderAr;
-    // Whichever template is SAVED in Print Templates (Template 1 "native" vs
-    // Template 2 "billbull-ar") drives the actual checkout print — not just the
-    // designer's own Test Print. Both builders share the same
-    // (paperSize, invoice, opts) signature, so this is a straight swap.
-    const activeReceiptTemplate = getReceiptTemplate(receiptTemplateId);
-    const buildReceiptEscPosBase64 = activeReceiptTemplate.buildEscPosBase64 || buildEscPosReceiptBase64;
-    const escPosPromise = buildReceiptEscPosBase64(tplInvoicePaper, full, escPosOpts).catch((err) => {
-      console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
-      return null;
-    });
-
-    const escPosBase64 = await escPosPromise;
-
-    // NOTE (perf): this builder previously also rendered the full receipt HTML
-    // (Template 1 buildThermalReceiptHtml / Template 2 buildTemplate2Html) plus a
-    // rasterised QR data-URL purely to feed it. Nothing consumed that `html` — every
-    // call site here destructures only { text, escPosBase64 }, and the checkout
-    // preview / A4 sites build their own HTML from their own memos. Rendering it on
-    // the print critical path was pure dead work on every sale and every reprint, so
-    // it is gone. `text` below is still built: it is the real ESC/POS→text/GDI
-    // compatibility fallback payload AND the print-job audit payload.
-    const text = buildThermalReceiptText(tplInvoicePaper, full, {
-      companyName: tplOutletName,
-      trn: effectiveOutletTrn,
-      documentTitle: activeHeader,
-      footer: activeFooter,
-      showTrn: activeShowTrn,
-      cashierName: cashierNameOverride || cashierDisplayName,
-      terminalId: full.posTerminalId || currentTerminal?.terminalId,
-      counterName: full.posCounterName || currentTerminal?.counterName,
-      cashGiven,
-      changeAmount,
-      depositApplied,
-      balanceDue,
-      shippingCharge,
-      customerPhone: resolvedCustomerPhone,
-      customerEmail: resolvedCustomerEmail,
-      customerTrn: resolvedCustomerTrn,
-      customerAddress: resolvedCustomerAddress,
-      showCustomerDetails: activeShowCustomerDetails,
-      // Match the HTML/ESC-POS path: no tax content on a no-tax sale.
-      hasTax,
-      currency: activeCurrency,
-    });
-    return { text, escPosBase64 };
-  }, [
-    activeCurrency, cashierDisplayName, currentTerminal?.counterName, currentTerminal?.terminalId,
-    tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter, tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoicePaper,
-    tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails, tplInvoiceShowCustomerDetails,
-    tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo, tplInvoiceShowNotes, tplInvoiceShowQRCode,
-    tplInvoiceShowStamp, tplInvoiceShowTerms, tplInvoiceShowTrn, tplLogoDataUrl, tplOutletAddress,
-    tplOutletName, tplOutletPhone, effectiveOutletTrn, tplStampDataUrl, receiptTemplateId,
-    tplReceiptShowBarcode, currentTerminal?.branchName, currentSession?.branchName,
-    tplReceiptHeader, tplReceiptHeaderAr, tplReceiptFooter, tplReceiptShowTrn, tplReceiptColVatAmt, tplReceiptShowTerms,
-    tplReceiptShowLogo, tplReceiptShowCompanyDetails, tplReceiptShowCustomerDetails, tplReceiptShowQRCode,
-    tplReceiptColDiscount, tplReceiptShowNotes, customerOptions,
-    t2ShowLogo, t2ShowCompanyDetails, t2ShowTrn, t2ShowArabic, t2ShowCustomerDetails, t2ShowAccountBalance, t2ShowDelivery,
-    t2ShowVatSummary, t2ShowPaymentDetails, t2ShowLoyalty, t2ShowQRCode, t2ShowFooterText, t2ShowBarcode,
-    t2ReceiptShowLogo, t2ReceiptShowCompanyDetails, t2ReceiptShowTrn, t2ReceiptShowArabic, t2ReceiptShowCustomerDetails,
-    t2ReceiptShowAccountBalance, t2ReceiptShowDelivery, t2ReceiptShowVatSummary, t2ReceiptShowPaymentDetails,
-    t2ReceiptShowLoyalty, t2ReceiptShowQRCode, t2ReceiptShowFooterText, t2ReceiptShowBarcode,
-    t2InvoiceShowLogo, t2InvoiceShowCompanyDetails, t2InvoiceShowTrn, t2InvoiceShowArabic, t2InvoiceShowCustomerDetails,
-    t2InvoiceShowAccountBalance, t2InvoiceShowDelivery, t2InvoiceShowVatSummary, t2InvoiceShowPaymentDetails,
-    t2InvoiceShowLoyalty, t2InvoiceShowQRCode, t2InvoiceShowFooterText, t2InvoiceShowBarcode,
-  ]);
+  // ── Thermal receipt artifacts ──────────────────────────────────────────────
+  // Generation lives in POS/device/printing/buildThermalReceiptArtifacts.js as a pure
+  // async function. This wrapper only injects the two explicit context objects that
+  // replaced its 83-entry closure dependency array, so all six call sites are unchanged.
+  const buildThermalReceiptArtifacts = useCallback(
+    (args) => buildThermalReceiptArtifactsImpl({
+      ...args,
+      templateSettings: receiptArtifactTemplateSettings,
+      posContext: {
+        activeCurrency, cashierDisplayName, customerOptions,
+        currentTerminal, currentSession,
+      },
+    }),
+    [
+      receiptArtifactTemplateSettings, activeCurrency, cashierDisplayName,
+      customerOptions, currentTerminal, currentSession,
+    ],
+  );
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
   // logo control, so it's always attempted first. If the Windows queue's driver
@@ -5290,391 +3073,140 @@ export default function POSSales() {
   // (never silent), telling the operator to install the vendor or Generic/
   // Text-Only driver. A missing printer or a send that fails in BOTH modes still
   // throws. notifyPrintFallback reports hard failures via the dismissible toast.
-  const notifyPrintFallback = useCallback((message) => {
-    setPrintFeedback({ type: 'error', message });
-    setTimeout(() => setPrintFeedback(null), 6000);
-  }, []);
-
-  const printThermalReceiptWithConfiguredPrinter = useCallback(async ({
-    full,
-    text,
-    escPosBase64,
-    title = 'BillBull POS Receipt',
-  }) => {
-    const printer = resolvePrinterForContext(printerConfigs, {
-      deviceType: 'RECEIPT_PRINTER',
-      branchId: full.branchId || currentTerminal?.branchId || null,
-      terminalId: full.posTerminalId || currentTerminal?.terminalId || null,
-    });
-    if (!printer) {
-      throw new Error('No receipt printer is configured for this terminal. Set one up in Settings → Devices.');
-    }
-    if (!escPosBase64) {
-      throw new Error('Could not build the ESC/POS receipt for this sale.');
-    }
-    const result = await sendEscPosReceiptToConfiguredPrinter(printer, { dataBase64: escPosBase64, receiptText: text, title });
-    if (result?.fallbackUsed) {
-      setPrintFeedback({
-        type: 'warning',
-        message: `Receipt printed in text compatibility mode — "${printer.deviceName || printer.systemPrinterName}" rejected raw ESC/POS (${result.escPosError || 'driver error'}). Install the printer's vendor driver or "Generic / Text Only" for full print quality.`,
-      });
-      setTimeout(() => setPrintFeedback(null), 10000);
-      return { mode: 'agent-text-fallback', printer };
-    }
-    return { mode: 'agent-escpos', printer };
-  }, [currentTerminal?.branchId, currentTerminal?.terminalId, printerConfigs]);
 
   // overrideCreds, when present, carries a supervisor PIN ({pin}) or credentials
   // ({email,password}) already confirmed via the supervisor-approval dialog (see
   // handleSupervisorPinSubmit's 'CHECKOUT' branch) — attached to the checkout payload so the
   // backend's §2.4 price-override gate (PosCheckoutController) can verify and bypass it,
   // instead of only the pos_price_override role-permission check.
-  const processPayment = async (overrideCreds = null) => {
-    if (currentInvoice.items.length === 0 || checkoutLoading) return;
-    // Refuse to post a payment the server would not record. Reaching here means the button
-    // was driven by something other than a click (a stale render, a keyboard shortcut), so
-    // fail loudly rather than posting a sale whose tender would be silently dropped.
-    if (!checkoutCompatibility.canSettle) {
-      setCheckoutError(checkoutCompatibility.message
-        || 'Server compatibility could not be verified. Payment was not taken.');
-      return;
-    }
-    if (checkoutPayment.paymentLines.length === 0) {
-      setCheckoutError('Add at least one payment before settling.');
-      return;
-    }
-    // Last cheap point to catch a payment that does not add up. Reaching here with an
-    // inconsistent block would post figures the receipt and the ledger then disagree about,
-    // so refuse and say exactly which identity failed rather than continuing silently.
-    const preflight = reconcilePaymentBlock(buildPaymentBlock(checkoutPayment.paymentLines, {
-      invoiceTotal: checkoutEffectiveDue,
-    }));
-    if (!preflight.consistent) {
-      const detail = preflight.findings.filter(f => f.severity === 'error').map(f => f.message).join(' ');
-      console.error('POS settlement blocked — payment does not reconcile', {
-        invoiceTotal: checkoutEffectiveDue,
-        audit: paymentAuditSnapshot(buildPaymentBlock(checkoutPayment.paymentLines, {
-          invoiceTotal: checkoutEffectiveDue,
-        })),
-      });
-      setCheckoutError(`Payment does not reconcile and was not taken. ${detail}`);
-      return;
-    }
-    setCheckoutLoading(true);
-    setCheckoutError(null);
-    // Freeze the A4 preview on its current render BEFORE we touch the cart, so the
-    // clearInvoice()/phase-switch below can't tear the live iframe src out from
-    // under React (the removeChild crash). Snapshot the latest html into the ref
-    // in case the memo hasn't run yet this render.
-    if (checkoutThermalHtml) checkoutPreviewFreezeRef.current = checkoutThermalHtml;
-    setCheckoutSettling(true);
-    try {
-      // Shipping is an untaxed flat add on top of the product total (not a cart line).
-      const shippingChargeNum = Number(shippingCharge) || 0;
-      const grandTotal = (currentInvoice.total || 0) + shippingChargeNum;
-      const depositSnapshot = activeLayawayDeposit > 0 ? activeLayawayDeposit : 0;
-      const effectiveDueAmt = Math.max(0, grandTotal - depositSnapshot);
+  // ── Checkout orchestration ─────────────────────────────────────────────────
+  // Implementation lives in POS/features/checkout/useCheckout.js, which documents the
+  // full load-bearing sequence (payment-confirmed boundary, backgrounded finalisation).
+  const {
+    checkoutLoading,
+    checkoutError, setCheckoutError,
+    checkoutPhase, setCheckoutPhase,
+    checkoutFinalizing, setCheckoutFinalizing,
+    lastPaidInvoice,
+    checkoutRemarks, setCheckoutRemarks,
+    processPayment,
+  } = useCheckout({
+    payment: { checkoutPayment, checkoutPaymentFields, checkoutEffectiveDue, checkoutCompatibility },
+    cart: { currentInvoice, clearInvoice, setInvoiceCounter, checkoutThermalHtml },
+    previewFreeze: { checkoutSettling, setCheckoutSettling, checkoutPreviewFreezeRef },
+    customerCtx: { selectedCustomerData, customerOptions },
+    sessionCtx: { currentSession, currentTerminal, posSettings },
+    layaway: { activeLayawayId, activeLayawayDeposit, setActiveLayawayId, setActiveLayawayDeposit },
+    shipping: { shippingCharge, shippingAddress, deliveryAddress, deliveryDriver, deliveryNotes },
+    printing: {
+      resolveInvoiceA4TemplateFor, printThermalReceiptWithConfiguredPrinter,
+      buildThermalReceiptArtifacts, openCashDrawer,
+    },
+    a4Template: {
+      tplInvoicePaper, tplInvoiceFooter, tplInvoiceHeader, tplReceiptHeader,
+      tplInvoiceShowStamp, tplOutletName, tplOutletAddress, tplOutletPhone,
+      tplLogoDataUrl, tplStampDataUrl, tplInvoiceShowBankDetails, effectiveOutletTrn, company,
+    },
+    errorRouting: {
+      isClosureWorkflowError, showClosureRequiredBlock, setShowPaymentDialog,
+      requestApproval,
+    },
+    posReset: {
+      syncPosData, setReceivedAmount, setSelectedCardType,
+      setSelectedCreditCustomer, setLastScannedItem,
+    },
+  });
 
-      // Every payment figure comes from the cashier's allocations — one projection, so the
-      // amounts posted are exactly the ones the Remaining-To-Allocate panel was showing.
-      // Each allocation becomes its own backend payment record (Payment row + Receipt
-      // Voucher + GL posting), which is what makes several cards, or a cash overpayment
-      // alongside a credit balance, expressible at all.
-      const {
-        paymentAllocations, paymentMode, combinedPaymentMode,
-        changeDue, paidAmount, creditBalance, creditAppliedAmount,
-        cashTaken,
-      } = checkoutPaymentFields;
-
-      // The payment block every renderer prints, and the same rows the success screen
-      // shows — built once from the allocations that were actually settled.
-      const settledPaymentBlock = buildPaymentBlock(checkoutPayment.paymentLines, {
-        invoiceTotal: effectiveDueAmt,
-      });
-
-      const customer = selectedCustomerData;
-
-      // Credit account "Previous Balance" must be read BEFORE posCheckout() posts
-      // this invoice below — otherwise the lookup returns the balance AFTER this
-      // sale was added to the ledger, which is the Updated Balance, not Previous.
-      let creditPrevBalAuto = null;
-      if (tplInvoiceShowBankDetails && customer?.id !== 'walk-in') {
-        creditPrevBalAuto = 0;
-        const custCodeForBalance = customer?.code || customer?.id;
-        if (custCodeForBalance) {
-          try {
-            const cr = await posCreditBalance(custCodeForBalance);
-            if (cr?.found && cr.outstanding != null) creditPrevBalAuto = parseFloat(cr.outstanding) || 0;
-          } catch (_) { /* keep the 0 fallback so the section still renders */ }
-        }
-      }
-
-      // Voided lines are still sent (flagged) so they remain on the receipt,
-      // audit log and reports. The backend excludes them from totals & stock.
-      const items = currentInvoice.items
-        .map(item => ({
-          itemCode: item.code || item.productId || item.id,
-          itemName: item.name,
-          quantity: item.quantity,
-          unit: 'Each',
-          price: item.price,
-          discount: item.discount || 0,
-          taxRate: toNumber(item.taxRate, posSettings?.taxEnabled === false ? 0 : toNumber(posSettings?.branchDefaultVatRate, 0)),
-          batchNumber: item.isVoided ? null : (item.pinnedBatchNumber || null),
-          serialNumber: item.isVoided ? null : (item.serialNumber || null),
-          voided: !!item.isVoided,
-        }));
-
-      const payload = {
-        customerCode: customer.id !== 'walk-in' ? (customer.code || customer.id) : 'WALK-IN',
-        customerName: customer.name,
-        paymentMode,
-        combinedPaymentMode,
-        // Ordered tender allocations — the backend's source of truth for the payment
-        // (PosCheckoutRequest.paymentAllocations). Each becomes its own Payment row,
-        // Receipt Voucher and GL posting. The legacy per-mode scalars are not sent: the
-        // backend ignores them whenever allocations are present, and they cannot express
-        // several cards, repeated tenders of one type, or a cash overpayment alongside a
-        // credit balance — all of which the allocation UI allows.
-        paymentAllocations,
-        sessionId: currentSession?.id || null,
-        terminalId: currentTerminal?.terminalId || null,
-        counterName: currentTerminal?.counterName || null,
-        branchId: currentTerminal?.branchId || null,
-        branchName: currentTerminal?.branchName || null,
-        branchCode: currentTerminal?.branchCode || null,
-        billDiscountAmount: currentInvoice.billDiscountAmount || 0,
-        shippingAddress: deliveryAddress || shippingAddress || null,
-        shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
-        taxInclusive: !!posSettings?.taxInclusive,
-        driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
-        deliveryNotes: deliveryNotes || null,
-        items,
-        supervisorOverridePin: overrideCreds?.pin || undefined,
-        supervisorOverrideEmail: overrideCreds?.email || undefined,
-        supervisorOverridePassword: overrideCreds?.password || undefined,
-      };
-
-      // ── PAYMENT CONFIRMED HERE ────────────────────────────────────────────
-      // posCheckout resolving is the backend's authoritative confirmation that
-      // the sale posted (GL, stock, receivable all committed). Everything below
-      // — cash drawer, receipt printing, layaway conversion — is a post-success
-      // side-effect that does NOT gate whether the payment succeeded. So we show
-      // the success screen the moment this resolves and run those side-effects in
-      // the background, instead of making the cashier wait on the printer round-
-      // trip (the bulk of the old 3–5 s). No false success: this only runs after
-      // the await above resolves; a rejection skips straight to catch().
-      const savedInvoice = await posCheckout(payload);
-
-      // Credit account posting for THIS invoice — same formula for every payment
-      // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
-      // already collected), Amount Paid is what was actually received against it now.
-      // A fully-settled cash/card/online/mixed sale nets to 0 (balance unchanged);
-      // an unpaid or partially-paid Credit sale carries the remainder forward.
-      const creditInvoiceCreditAuto = creditPrevBalAuto != null ? effectiveDueAmt : null;
-      const creditAmountPaidAuto = creditPrevBalAuto != null ? creditAppliedAmount : null;
-      const creditUpdatedBalanceAuto = creditPrevBalAuto != null
-        ? creditPrevBalAuto + creditInvoiceCreditAuto - creditAmountPaidAuto
-        : null;
-
-      const paid = {
-        id: savedInvoice.invoiceNumber,
-        total: savedInvoice.invoiceTotal,
-        items: currentInvoice.items.length,
-        invoice: savedInvoice,
-        changeAmount: changeDue,
-        customer,
-        paymentMode,
-        depositAmount: depositSnapshot,
-        paidAmount,
-        creditBalance,
-        // The same block the receipt prints, so the success screen and the paper the
-        // customer walks away with cannot state different figures.
-        paymentBlock: settledPaymentBlock,
-        // Snapshotted here so the "Print Receipt" / "Last Receipt" reprint actions
-        // (which reuse lastPaidInvoice) show the same correct figures instead of
-        // re-querying the customer's balance, which by then already reflects this
-        // invoice and would be mislabeled as "previous".
-        creditPreviousBalance: creditPrevBalAuto,
-        creditInvoiceCredit: creditInvoiceCreditAuto,
-        creditAmountPaid: creditAmountPaidAuto,
-        creditUpdatedBalance: creditUpdatedBalanceAuto,
-      };
-
-      // Snapshot everything the background finalize needs into locals BEFORE the
-      // state resets below wipe the React state it was reading from (customer,
-      // amounts, layaway id). savedInvoice/paid/changeDue etc. are already locals.
-      const layawayIdSnapshot = activeLayawayId;
-      const printPaper = tplInvoicePaper;
-
-      // ── Show success immediately, then finalize in the background ───────────
-      // The payment is already confirmed (posCheckout resolved). Commit the
-      // success state + clear the cart NOW so the cashier sees "Payment Complete"
-      // without waiting on the printer. checkoutFinalizing drives the subtle
-      // "Printing receipt…" indicator on the complete screen until printing ends.
-      setLastPaidInvoice(paid);
-      setCheckoutFinalizing(true);
-      setInvoiceCounter(c => c + 1);
-      clearInvoice();
-      syncPosData();
-      setReceivedAmount('');
-      setSelectedCardType('');
-      setSelectedCreditCustomer('');
-      setLastScannedItem(null);
-      setCheckoutRemarks('');
-      // Drop the allocations so the next sale starts from an empty payment panel.
-      checkoutPayment.clearLines();
-      if (layawayIdSnapshot) { setActiveLayawayId(null); setActiveLayawayDeposit(0); }
-      // Transition the checkout overlay to the "complete" screen in-place.
-      // Deferred to a separate React commit (queueMicrotask) so the state
-      // resets above (clearInvoice, clearLines, etc.) are committed
-      // and painted BEFORE React unmounts the payment form subtree and mounts
-      // the complete screen. Without this, React 18's automatic batching
-      // tries to reconcile DOM changes inside the payment-form buttons (e.g.
-      // indicator divs) while simultaneously unmounting those buttons — which
-      // throws "Failed to execute 'removeChild' on 'Node'".
-      queueMicrotask(() => setCheckoutPhase('complete'));
-
-      // Post-success side-effects: cash drawer, receipt print, layaway convert.
-      // Fire-and-forget — the success screen is already up; failures here surface
-      // as a non-blocking notice (the sale itself is safely posted). NOT awaited,
-      // so the checkout handler's finally{} releases checkoutLoading right away.
-      void (async () => {
-        try {
-          // Cash drawer — open on cash settlement, and again if change is due.
-          if (cashTaken) {
-            openCashDrawer('CASH_SETTLEMENT');
-            openCashDrawer('CASH_PAYMENT');
-          }
-          if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
-
-          try {
-            if (printPaper === 'A4') {
-              const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(savedInvoice));
-              const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
-              const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-              printHtml(await generatePrintHtmlAsync(template, data, options));
-              openCashDrawer('RECEIPT_PRINT');
-            } else {
-              // Credit account fields ALL come from the single pre-checkout snapshot
-              // (creditPrevBalAuto, read at line ~3280 BEFORE posCheckout posted this
-              // invoice) so Previous Balance + Invoice Credit − Amount Paid = Updated
-              // Balance holds internally. Do NOT re-query posCreditBalance here: after
-              // checkout the ledger already includes this invoice, so the re-queried
-              // value is the NEW balance — passing it as "Previous Balance" while the
-              // other three fields stay on the pre-sale snapshot made the printed math
-              // contradict itself (Previous showed the post-sale balance, Updated the
-              // pre-sale one).
-
-              const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-                full: savedInvoice,
-                cashGiven: paid.paidAmount,
-                changeAmount: changeDue,
-                paymentBlock: settledPaymentBlock,
-                // Print the actual selected customer's name (client item 3) — the same
-                // `customer` object the checkout preview rendered. Walk-in stays null so
-                // the builders fall back to "Walk-in Customer" only for a genuine walk-in.
-                customerNameOverride: (customer && customer.id !== 'walk-in') ? customer.name : null,
-                customerPhone: customer?.phone,
-                customerEmail: customer?.email,
-                customerTrn: customer?.trn,
-                customerAddress: customer?.address,
-                creditPreviousBalance: creditPrevBalAuto,
-                creditInvoiceCredit: creditInvoiceCreditAuto,
-                creditAmountPaid: creditAmountPaidAuto,
-                creditUpdatedBalance: creditUpdatedBalanceAuto,
-                depositApplied: depositSnapshot > 0 ? depositSnapshot : null,
-                balanceDue: depositSnapshot > 0 ? effectiveDueAmt : null,
-                shippingCharge: shippingChargeNum > 0 ? shippingChargeNum : null,
-              });
-              await printThermalReceiptWithConfiguredPrinter({
-                full: savedInvoice,
-                text,
-                escPosBase64,
-                title: `Receipt ${savedInvoice.invoiceNumber || ''}`.trim(),
-              });
-              openCashDrawer('RECEIPT_PRINT');
-            }
-          } catch (autoPrintErr) {
-            console.warn('Automatic receipt print failed', autoPrintErr);
-            alert(`Sale saved, but the receipt didn't print: ${autoPrintErr?.message || 'printer error'}. Use "Print Receipt" to retry.`);
-          }
-
-          // If this checkout settled a layaway, stamp it converted (releases its
-          // reservations; the sale re-reserved its own batches). Best-effort — the
-          // sale already posted, so a failure here just leaves the layaway open.
-          if (layawayIdSnapshot) {
-            try {
-              await convertLayaway(layawayIdSnapshot, {
-                invoiceId: savedInvoice.id,
-                invoiceNumber: savedInvoice.invoiceNumber,
-              });
-            } catch (convErr) {
-              console.warn('Layaway mark-converted failed', convErr);
-            }
-          }
-        } finally {
-          setCheckoutFinalizing(false);
-        }
-      })();
-    } catch (err) {
-      // Settle failed — the cart is untouched (clearInvoice only runs on success).
-      // Do NOT unfreeze the preview here: flipping checkoutSettling false in the
-      // same render that mounts the error banner swaps the live iframe's blob src
-      // while React is reconciling, which races the iframe's external DOM mutation
-      // and throws "Failed to execute 'removeChild' on 'Node'". The freeze is
-      // released safely when the payment dialog closes (effect on showPaymentDialog),
-      // so the cashier can read the error / retry against the still-frozen preview.
-      // The allocations are deliberately left intact on every failure path — the cashier
-      // retries the same payment rather than re-entering every tender from scratch.
-      const isNetworkFailure = !err?.response;
-      const msg = err?.response?.data?.message || err?.response?.data || err?.message || 'Checkout failed. Please try again.';
-      const msgStr = isNetworkFailure
-        ? 'Could not reach the server. The sale was NOT recorded — check the connection and settle again. Your payment entries have been kept.'
-        : (typeof msg === 'string' ? msg : 'Checkout failed. Please try again.');
-      // Backend §2.4 gate (PosCheckoutController) rejected a below-minimum line because the
-      // cashier lacks the pos_price_override permission — route into the same supervisor-
-      // approval dialog used at cart-add time instead of a dead-end error, so the checkout can
-      // be retried with a verified PIN/password attached (see processPayment's overrideCreds).
-      if (isClosureWorkflowError(err)) {
-        // The session entered its close workflow (its X-Report was generated, possibly on
-        // another tab/terminal) while this sale was being rung up. There is no supervisor
-        // override for this — unlike BUSINESS_DAY_CLOSED below — because no credential can
-        // un-issue a numbered X-Report. Route the cashier to finish the closure; the cart
-        // is left intact, as on every other failure path.
-        setShowPaymentDialog(false);
-        showClosureRequiredBlock(msgStr);
-      } else if (err?.response?.status === 403 && msgStr.includes('pos_price_override')) {
-        setPendingPriceOverride({ type: 'CHECKOUT' });
-        setSupervisorPinValue('');
-        setSupervisorPinEmail('');
-        setSupervisorPinError('');
-        setShowSupervisorPin(true);
-      } else if (err?.response?.status === 423
-                 && err?.response?.data?.code === 'BUSINESS_DAY_CLOSED'
-                 && err?.response?.data?.supervisorAuthorizationAvailable) {
-        // The Business Day closed while this sale was being rung up. Route into the
-        // SAME supervisor-approval dialog the price-override gate uses — retrying
-        // attaches the verified credentials to this one checkout (see processPayment's
-        // overrideCreds). Deliberately per-transaction: releasing this sale grants the
-        // till nothing afterwards, so the next checkout is refused again unless a
-        // supervisor authorizes that one too.
-        setPendingPriceOverride({
-          type: 'BUSINESS_DAY_CLOSED',
-          closedAt: err.response.data.closedAt,
-          nextStartAt: err.response.data.nextStartAt,
-        });
-        setSupervisorPinValue('');
-        setSupervisorPinEmail('');
-        setSupervisorPinError('');
-        setShowSupervisorPin(true);
-      } else {
-        setCheckoutError(msgStr);
-      }
-    } finally {
-      setCheckoutLoading(false);
-    }
+  // Late-bound for usePosSession (called at the top of the component). Assigned during
+  // render, here, because this is the first point at which every binding it closes over is
+  // initialised — setCheckoutPhase/setCheckoutError come from useCheckout just above. The
+  // hook reads it only from effects, async continuations and event handlers, all of which
+  // run after this render has finished.
+  sessionLifecycleHandlersRef.current = {
+    loadInitialPosSettings,
+    showPreviousDayBlock,
+    showClosureRequiredBlock,
+    resetDiscovery: handleDiscoveryDismiss,
+    // Session invalidated by the sync poll: the cart, customer, open dialogs and checkout
+    // phase are reset in exactly the order the poll effect used to write them.
+    resetForInvalidatedSession: () => {
+      setCurrentInvoice({ items: [], subtotal: 0, totalDiscount: 0, tax: 0, total: 0, billDiscountAmount: 0 });
+      setSelectedCustomer(WALK_IN_CUSTOMER.id);
+      setShowPaymentDialog(false);
+      setShowCloseSessionDialog(false);
+      setShowCashDropDialog(false);
+      setShowCustomerSelector(false);
+      setCheckoutPhase('payment');
+      setCheckoutError(null);
+    },
   };
+
+  // Approval continuation for a full-clear layaway abort: dropping the whole cart abandons
+  // the conversion, so the layaway tagging is dropped with it. A void/remove abort leaves
+  // the conversion active and never reaches here.
+  const clearLayawayConversion = () => {
+    setActiveLayawayId(null);
+    setActiveLayawayDeposit(0);
+  };
+
+  // Supervisor-approval dispatcher entry point. useSupervisorApproval owns the queue and
+  // every branch of the decision; POSSales only binds the continuations, which is why this
+  // sits below useCheckout — processPayment and handleCloseDay must already be declared.
+  // The continuations stay owned by their domains: the cart editors, product entry,
+  // checkout, Day Close and (through the two refs) session closure.
+  const handleSupervisorPinSubmit = () => submitSupervisorApproval({
+    supervisorApprovalMode, currentTerminal, cashierDisplayName,
+    forceCloseReason, forceCloseAuditAcknowledged, sessionToClose, currentSession,
+    closureAuthGrantRef, forceCloseContextRef, setCurrentView,
+    unlockAdvancedRange,
+    applyVoid, addToInvoice, updateItemPrice, updateDiscount,
+    processPayment,
+    clearLayawayConversion,
+    handleCloseDay,
+  });
+
+  // Pre-fill the share dialog from the customer on the settled sale. A walk-in
+  // has neither, so the cashier gets an empty field to type into.
+  const receiptShareInitialValue = useMemo(() => {
+    const cust = lastPaidInvoice?.customer;
+    if (!cust || cust.id === WALK_IN_CUSTOMER.id) return '';
+    return (receiptShareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
+  }, [lastPaidInvoice, receiptShareChannel]);
+
+  // The three send paths are unchanged — WhatsApp still opens wa.me, Email still
+  // calls sendSalesInvoiceEmail with the same payload. Throwing here keeps the
+  // dialog open so the cashier can retry.
+  const handleReceiptShareSend = useCallback(async (value) => {
+    if (!lastPaidInvoice) return;
+    const summary = `Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`;
+    if (receiptShareChannel === 'whatsapp') {
+      const digits = value.replace(/\D/g, '');
+      window.open(`https://wa.me/${digits}?text=${encodeURIComponent(summary)}`, '_blank');
+      setReceiptShareFeedback({ type: 'success', message: 'WhatsApp opened with the receipt message.' });
+      return;
+    }
+    if (receiptShareChannel === 'sms') {
+      // No SMS gateway is wired up yet; this keeps the previous stub behaviour
+      // (which used alert()) and only swaps the notice for the standard toast.
+      setReceiptShareFeedback({ type: 'success', message: `${summary} — SMS queued for ${value}.` });
+      return;
+    }
+    if (receiptShareChannel === 'email') {
+      if (!lastPaidInvoice?.invoice?.id) throw new Error('Invoice is not available to email yet.');
+      await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, {
+        toEmail: value,
+        subject: `Receipt ${lastPaidInvoice.id}`,
+        htmlBody: `<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>`,
+      });
+      setReceiptShareFeedback({ type: 'success', message: `Receipt emailed to ${value}.` });
+    }
+  }, [lastPaidInvoice, receiptShareChannel]);
+
+  useEffect(() => {
+    if (!receiptShareFeedback) return undefined;
+    const t = setTimeout(() => setReceiptShareFeedback(null), 3500);
+    return () => clearTimeout(t);
+  }, [receiptShareFeedback]);
 
   const handleCashDrop = async () => {
     // Cash drop / cash out are session-bound — refuse if no session is open even
@@ -5787,7 +3319,7 @@ export default function POSSales() {
           : i));
         const companyOptions = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
-          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
+          const template = resolveInvoiceA4TemplateFor(full);
           const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
           const html = await generatePrintHtmlAsync(template, data, companyOptions);
           if (reprintPrintMode === 'pdf') {
@@ -5848,310 +3380,6 @@ export default function POSSales() {
   };
 
   const filteredProducts = posProducts;
-
-  const showFeedback = (type, message) => {
-    setBarcodeScanFeedback({ type, message });
-    setTimeout(() => setBarcodeScanFeedback(null), 2500);
-  };
-  showFeedbackRef.current = showFeedback;
-
-  /**
-   * Unified search/scan handler. One input both filters the grid (as you type)
-   * and — on Enter / scanner submit — resolves the value to a single action:
-   *   • exact barcode / code / SKU  → add product to cart
-   *   • exact batch / serial number → add product, pinning that scanned unit
-   *   • exact customer id/mobile/etc → set the customer
-   *   • no exact match              → leave the text in the grid filter
-   * Supports an "N*VALUE" / "NxVALUE" quantity prefix.
-   */
-  const handleUnifiedEntry = useCallback(async (raw, { fromGrid = false } = {}) => {
-    console.log(`\n======================================================`);
-    console.log(`[handleUnifiedEntry EXECUTION - BARCODE SCANNER PATH]`);
-    console.log(`- Captured Render ID: ${currentRenderCount}`);
-    console.log(`- Captured posSettings:`, posSettings);
-    console.log(`- Captured taxInclusive:`, posSettings?.taxInclusive);
-    console.log(`- Captured addToInvoice Reference Match:`, window.__CURRENT_ADD_TO_INVOICE === addToInvoice ? 'LATEST' : 'STALE (from an older render!)');
-    console.log(`======================================================\n`);
-    const trimmed = (raw || '').trim();
-    if (!trimmed) return;
-
-    // Parse quantity prefix: "3*VALUE" or "3xVALUE"
-    let qty = 1;
-    let value = trimmed;
-    const prefixMatch = trimmed.match(/^(\d+)[*x](.+)$/i);
-    if (prefixMatch) {
-      qty = Math.max(1, parseInt(prefixMatch[1], 10));
-      value = prefixMatch[2].trim();
-    }
-
-    const clearInputs = () => {
-      setBarcodeInput('');
-      if (fromGrid) setSearchQuery('');
-    };
-
-    // Fast path: a previously-seen product in the in-memory cache (no batch pin).
-    // Batch/serial-controlled products skip the cache and always go through the
-    // backend resolver so a scanned barcode can still pin the exact unit and the
-    // one-batch-one-unit rule is enforced rather than silently merging quantity.
-    const cached = productCacheRef.current.get(value.toLowerCase());
-    if (cached && !cached.isBatch && !cached.isSerial) {
-      if (cached.availableInPos === false) {
-        showFeedback('error', 'This product is disabled for POS sales.');
-        clearInputs();
-        return;
-      }
-      const res = handleProductSelectionRef.current(cached, { quantity: qty });
-      if (res && res.ok === false) {
-        showFeedback('error', res.reason || 'Could not add this item.');
-        clearInputs();
-        return;
-      }
-      // OPEN_ENTRY_DIALOG took over — nothing is in the cart yet, so no
-      // "added" toast and no last-scanned banner until the cashier confirms.
-      if (res?.deferred) {
-        clearInputs();
-        return;
-      }
-      setLastScannedItem({ name: cached.name, nameAr: cached.nameAr || '', barcode: cached.barcode || cached.id, qty, total: cached.price * qty });
-      showFeedback('success', qty > 1 ? `${cached.name} ×${qty} added` : `${cached.name} added`);
-      clearInputs();
-      return;
-    }
-
-    let result;
-    try {
-      result = await resolvePosEntry(value);
-    } catch (error) {
-      console.error('Failed to resolve POS entry', error);
-      showFeedback('error', `Lookup failed: ${value}`);
-      return;
-    }
-
-    // A batch/serial unit that exists but can't be sold (reserved / consumed /
-    // sold). The backend already refuses to add it — surface its reason so the
-    // cashier knows why, and never fall through to the grid-filter branch.
-    if (result?.type === 'BLOCKED') {
-      showFeedback('error', result.message || 'This unit is not available for sale.');
-      setBarcodeInput('');
-      return;
-    }
-
-    // A Credit Voucher is a payment instrument, never a cart line: it gets no quantity, no
-    // stock movement, no VAT and no revenue. Applying it records a VOUCHER allocation on the
-    // sale's Payment Manager — the same allocation the checkout panel would create — and the
-    // backend redeems it under a row lock at settlement.
-    if (result?.type === 'VOUCHER') {
-      const outcome = applyScannedVoucherRef.current?.(result.voucher)
-        || { ok: false, message: 'Voucher could not be applied.' };
-      // Voucher failures always speak about the voucher. "No product found" for a voucher the
-      // customer is holding tells the cashier nothing they can act on.
-      showFeedback(outcome.ok ? 'success' : 'error', outcome.message);
-      clearInputs();
-      return;
-    }
-
-    if (result?.type === 'CUSTOMER' && result.customer) {
-      const c = result.customer;
-      setSelectedCustomer(String(c.id ?? c.code));
-      showFeedback('customer', `Customer set: ${c.name || c.code}`);
-      clearInputs();
-      return;
-    }
-
-    if (result?.type === 'PRODUCT' && result.product) {
-      const product = mapPosProductAggregateItem(result.product, value);
-      cachePosProduct(productCacheRef.current, product);
-      const pinnedBatchNumber = result.pinnedBatchNumber || null;
-      const pinnedSerialNumber = result.pinnedSerialNumber || null;
-      const pinnedExpiry = result.pinnedExpiry || null;
-      const cartItems = currentInvoiceRef.current?.items || [];
-
-      // A scanned serial is a single unique unit. The same serial can never be
-      // sold twice on one bill, so block the duplicate outright (no qty bump).
-      if (pinnedSerialNumber) {
-        if (cartItems.some(i => i.serialNumber === pinnedSerialNumber)) {
-          showFeedback('error', `Serial number ${pinnedSerialNumber} already exists in cart`);
-          clearInputs();
-          return;
-        }
-        const serialRes = handleProductSelectionRef.current(product, { quantity: 1, serial: pinnedSerialNumber });
-        if (serialRes && serialRes.ok === false) {
-          showFeedback('error', serialRes.reason || 'Could not add this item.');
-          clearInputs();
-          return;
-        }
-        if (serialRes?.deferred) {
-          clearInputs();
-          return;
-        }
-        setLastScannedItem({
-          name: product.name, nameAr: product.nameAr || '',
-          barcode: pinnedSerialNumber, qty: 1, total: product.price,
-        });
-        showFeedback('success', `${product.name} — serial ${pinnedSerialNumber}`);
-        clearInputs();
-        return;
-      }
-
-      // A pinned batch is one physical unit — force qty 1 for that line.
-      const effectiveQty = pinnedBatchNumber ? 1 : qty;
-      // Prevent the same physical batch unit from being added twice.
-      if (pinnedBatchNumber && cartItems.some(i => i.pinnedBatchNumber === pinnedBatchNumber)) {
-        showFeedback('error', `Batch ${pinnedBatchNumber} already exists in cart`);
-        clearInputs();
-        return;
-      }
-      // addToInvoice enforces one-batch-one-unit for batch/serial products added
-      // without a pin (e.g. resolved by product code) — surface its refusal.
-      const addRes = handleProductSelectionRef.current(product, {
-        quantity: effectiveQty,
-        batch: pinnedBatchNumber,
-        expiry: pinnedExpiry,
-      });
-      if (addRes && addRes.ok === false) {
-        showFeedback('error', addRes.reason || 'Could not add this item.');
-        clearInputs();
-        return;
-      }
-      if (addRes?.deferred) {
-        clearInputs();
-        return;
-      }
-      setLastScannedItem({
-        name: product.name,
-        nameAr: product.nameAr || '',
-        barcode: pinnedBatchNumber || product.barcode || product.id,
-        qty: effectiveQty,
-        total: product.price * effectiveQty,
-      });
-      showFeedback('success', pinnedBatchNumber
-        ? `${product.name} — batch ${pinnedBatchNumber}`
-        : (effectiveQty > 1 ? `${product.name} ×${effectiveQty} added` : `${product.name} added`));
-      clearInputs();
-      return;
-    }
-
-    // No exact match. From the grid input we keep the text so the grid filters;
-    // from a dedicated scan we surface a not-found message.
-    if (fromGrid) {
-      showFeedback('error', `No exact match — showing results for "${value}"`);
-    } else {
-      showFeedback('error', `No product found: ${value}`);
-      setBarcodeInput('');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Back-compat alias: existing scan/keypad call sites add-to-cart.
-  const handleBarcodeScan = handleUnifiedEntry;
-
-  /* ─── Product Entry Mode: the single decision point ────────────────────────
-   * Every way a product can enter the cart — grid/touch click, barcode scan,
-   * keyboard Enter from the search box, scan suggestions, favourites/quick
-   * products — routes through handleProductSelection. Nothing else may call
-   * addToInvoice for a *new* selection, otherwise the configured mode gets
-   * bypassed (which is exactly the bug this replaces). Templates receive
-   * handleProductSelection/handleEditItem as props and stay presentational.
-   * ─────────────────────────────────────────────────────────────────────── */
-  const [isItemEntryOpen, setIsItemEntryOpen] = useState(false);
-  const [selectedProductForEntry, setSelectedProductForEntry] = useState(null);
-  const [itemEntryAction, setItemEntryAction] = useState('add'); // 'add' | 'edit'
-  // Carries the scan-resolved unit (batch/serial/expiry) plus qty locking into
-  // the dialog, and back out again when the cashier confirms.
-  const [itemEntryContext, setItemEntryContext] = useState(null);
-
-  const closeItemEntry = useCallback(() => {
-    setIsItemEntryOpen(false);
-    setSelectedProductForEntry(null);
-    setItemEntryContext(null);
-  }, []);
-
-  /**
-   * Resolves the configured Product Entry Mode and acts on it.
-   * DIRECT_ADD        → adds straight to the cart (qty 1 unless a scan said otherwise)
-   * OPEN_ENTRY_DIALOG → opens the Item Entry dialog; nothing is added until confirm
-   *
-   * Returns addToInvoice's `{ ok, reason }` in DIRECT_ADD mode so callers can
-   * surface refusals, or `{ ok: true, deferred: true }` when the dialog took
-   * over — `deferred` tells scan callers to skip their "added" feedback.
-   *
-   * DIRECT_ADD is the default everywhere (backend, POS Settings, here); there is
-   * deliberately no OPEN_ENTRY_DIALOG fallback.
-   */
-  const handleProductSelection = useCallback((product, options = {}) => {
-    if (!product) return { ok: false, reason: 'No product selected' };
-    const { quantity = 1, batch = null, serial = null, expiry = null } = options;
-    const entryMode = posSettingsRef.current?.productEntryMode || ProductEntryMode.DIRECT_ADD;
-
-    if (entryMode !== ProductEntryMode.OPEN_ENTRY_DIALOG) {
-      return addToInvoiceRef.current(product, quantity, batch, serial, expiry);
-    }
-
-    // A scan that already resolved a specific batch/serial still opens the
-    // dialog — the unit is preselected and locked, price/discount stay editable.
-    const isControlledUnit = Boolean(batch || serial || product.isBatch || product.isSerial);
-    setItemEntryAction('add');
-    setSelectedProductForEntry(product);
-    setItemEntryContext({
-      batch,
-      serial,
-      expiry,
-      // One physical unit per batch/serial line — qty is fixed at 1.
-      quantity: isControlledUnit ? 1 : quantity,
-      lockQuantity: isControlledUnit,
-    });
-    setIsItemEntryOpen(true);
-    return { ok: true, deferred: true };
-  }, []);
-  // handleUnifiedEntry is frozen at mount (empty dep array), so it reaches the
-  // live handler through a ref — same reason addToInvoiceRef exists.
-  handleProductSelectionRef.current = handleProductSelection;
-
-  /** Opens the Item Entry dialog on an existing cart row. */
-  const handleEditItem = useCallback((itemId) => {
-    const item = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
-    if (!item) return;
-    setItemEntryAction('edit');
-    setSelectedProductForEntry(item);
-    setItemEntryContext({ lockQuantity: Boolean(item.batchControlled) });
-    setIsItemEntryOpen(true);
-  }, []);
-
-  const handleItemEntryConfirm = useCallback((payload) => {
-    if (itemEntryAction === 'edit') {
-      updateInvoiceLine(payload);
-      closeItemEntry();
-      return;
-    }
-    // Re-attach the scan-pinned unit so the confirmed line lands on the exact
-    // batch/serial the cashier scanned.
-    const res = createInvoiceLine({
-      ...payload,
-      batch: itemEntryContext?.batch || null,
-      serial: itemEntryContext?.serial || null,
-      expiry: itemEntryContext?.expiry || null,
-    });
-    if (res && res.ok === false) {
-      // The price floor sent this to the supervisor-PIN gate. The pending
-      // override already carries the whole line, so hand off and get out of the
-      // way rather than stacking dialogs.
-      if (res.reason === 'supervisor-approval-required') {
-        closeItemEntry();
-        return;
-      }
-      showFeedbackRef.current?.('error', res.reason || 'Could not add this item.');
-      return;
-    }
-    closeItemEntry();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemEntryAction, itemEntryContext, createInvoiceLine, updateInvoiceLine, closeItemEntry]);
-
-  // Stable object so POSItemEntryContainer's data-fetch effect doesn't re-run
-  // (and reset the form) on every parent render.
-  const itemEntryInitialValues = useMemo(
-    () => ({ quantity: itemEntryContext?.quantity ?? 1 }),
-    [itemEntryContext]
-  );
 
   const resetFocusMode = () => {
     setPosActionMode('none');
@@ -7195,96 +4423,6 @@ export default function POSSales() {
   });
 
   // ── Z-Report: Excel flat rows ─────────────────────────────────────────────
-  const buildZReportExcelSections = () => {
-    const zSummary = zReportData?.summary || {};
-    const zSessions = zReportData?.sessions || [];
-    const zInvoices = zReportData?.invoices || [];
-    const fmt = (n) => Number(Number(n).toFixed(2));
-    const totalSalesV = fmt(zSummary.totalSales ?? 0);
-    const cashSalesV = fmt(zSummary.cashSales ?? 0);
-    const cardSalesV = fmt(zSummary.cardSales ?? 0);
-    const creditSalesV = fmt(zSummary.creditSales ?? 0);
-    const totalTaxV = fmt(zSummary.totalTax ?? 0);
-    const salesExTaxV = fmt(zSummary.salesAmountExTax ?? 0);
-    const discountV = fmt(zSummary.totalDiscount ?? 0);
-    const itemsSold = zSummary.totalItemsSold ?? 0;
-    const invoiceCount = zSummary.invoiceCount ?? 0;
-    const openingCash = fmt(zSessions.reduce((s, ss) => s + Number(ss.openingCash ?? 0), 0));
-    // Backend-authoritative: the sum of the per-session figures frozen at each close.
-    const expectedCash = fmt(zSummary.expectedCash ?? 0);
-    // Consolidated Cash Position — additive, informational-only (see buildZReportViewModel).
-    const cashPosition = zSummary.cashPosition || {};
-    const cpOpeningCash = fmt(cashPosition.openingCash ?? openingCash);
-    const cpCashSales = fmt(cashPosition.cashSales ?? cashSalesV);
-    const cpReceiptsTotal = fmt(cashPosition.customerReceiptsTotal ?? 0);
-    const cpAdvancesTotal = fmt(cashPosition.customerAdvancesTotal ?? 0);
-    const cpDropIn = fmt(cashPosition.cashDropIn ?? 0);
-    const cpDropOut = fmt(cashPosition.cashDropOut ?? 0);
-    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-    // netCashPosition removed: it summed back-office cash onto a drawer figure, producing
-    // a number that reconciled against nothing. The underlying rows survive, scoped as
-    // non-drawer cash and totalled separately.
-    const cpReceiptRows = Array.isArray(cashPosition.customerReceiptRows) ? cashPosition.customerReceiptRows : [];
-    const cpAdvanceRows = Array.isArray(cashPosition.customerAdvanceRows) ? cashPosition.customerAdvanceRows : [];
-    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
-    const creditInvoices = zInvoices.filter(inv => inv.paymentMode?.toLowerCase().includes('credit') && !inv.paymentMode?.toLowerCase().includes('card'));
-    const creditTotal = fmt(creditInvoices.reduce((s, inv) => s + Number(inv.invoiceTotal || 0), 0));
-    const invNums = zInvoices.map(i => i.invoiceNumber).filter(Boolean).sort();
-
-    return [
-      // Sales summary rows tagged with section header
-      { Section: 'Sales Summary', Description: 'Gross Sales', Count: '', Amount: totalSalesV },
-      { Section: '', Description: 'Total Discount', Count: '', Amount: discountV },
-      { Section: '', Description: 'Net Sales Before VAT', Count: '', Amount: salesExTaxV },
-      { Section: '', Description: 'VAT Amount (5%)', Count: '', Amount: totalTaxV },
-      { Section: '', Description: 'Net Sales Including VAT', Count: '', Amount: totalSalesV },
-      { Section: 'Payment / Tender', Description: 'Cash', Count: zSummary.cashInvoiceCount ?? 0, Amount: cashSalesV },
-      { Section: '', Description: 'Card', Count: zSummary.cardInvoiceCount ?? 0, Amount: cardSalesV },
-      { Section: '', Description: 'Credit', Count: zSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
-      { Section: '', Description: 'Total Collected', Count: invoiceCount, Amount: totalSalesV },
-      { Section: 'Cash Drawer', Description: 'Opening Cash / Float', Count: '', Amount: openingCash },
-      { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
-      { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
-      // Consolidated Cash Position — additive, informational only (see buildZReportViewModel).
-      { Section: 'Consolidated Cash Position', Description: 'Opening Cash', Count: '', Amount: cpOpeningCash },
-      { Section: '', Description: 'Cash Sales', Count: '', Amount: cpCashSales },
-      { Section: '', Description: 'Customer Receipts (Cash)', Count: cpReceiptRows.length, Amount: cpReceiptsTotal },
-      { Section: '', Description: 'Customer Advances (Cash)', Count: cpAdvanceRows.length, Amount: cpAdvancesTotal },
-      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cpDropIn },
-      { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
-      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cpDropOut },
-      ...cpReceiptRows.map((r, i) => ({ Section: i === 0 ? 'Customer Receipts Detail' : '', Description: r.customerName || '—', Count: r.receivedBy || '—', Amount: fmt(r.receivedAmount ?? 0) })),
-      ...cpAdvanceRows.map((r, i) => ({ Section: i === 0 ? 'Customer Advances Detail' : '', Description: r.customerName || '—', Count: r.paidBy || '—', Amount: fmt(r.paidAmount ?? 0) })),
-      ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
-      { Section: 'VAT / Tax', Description: 'VAT 5% — Taxable Amount', Count: '', Amount: salesExTaxV },
-      { Section: '', Description: 'VAT 5% — Tax Amount', Count: '', Amount: totalTaxV },
-      { Section: '', Description: 'Total Inc. VAT', Count: '', Amount: totalSalesV },
-      { Section: 'Discount', Description: 'Total Discount', Count: '', Amount: discountV },
-      { Section: 'Returns / Refund', Description: 'Sales Returns', Count: zSummary.salesReturnCount ?? 0, Amount: fmt(zSummary.salesReturnTotal ?? 0) },
-      { Section: '', Description: 'Refunds Processed', Count: zSummary.refundCount ?? 0, Amount: fmt(zSummary.refundTotal ?? 0) },
-      { Section: '', Description: 'Credit Notes Issued', Count: zSummary.creditNoteCount ?? 0, Amount: fmt(zSummary.creditNoteTotal ?? 0) },
-      { Section: '', Description: 'Exchange Transactions', Count: zSummary.exchangeCount ?? 0, Amount: fmt(zSummary.exchangeTotal ?? 0) },
-      { Section: '', Description: 'Total Refunds (Tender)', Count: zSummary.totalRefundCount ?? 0, Amount: fmt(zSummary.totalRefunds ?? 0) },
-      { Section: 'Item Movement', Description: 'Total Items Sold', Count: String(itemsSold), Amount: totalSalesV },
-      { Section: '', Description: 'Total Items Returned', Count: String(zSummary.totalItemsReturned ?? 0), Amount: fmt(zSummary.salesReturnTotal ?? 0) },
-      { Section: '', Description: 'Net Quantity Sold', Count: String(zSummary.netQuantitySold ?? itemsSold), Amount: totalSalesV },
-      ...(Array.isArray(zReportData?.topSellingItems) ? zReportData.topSellingItems : []).map((it, i) => ({
-        Section: i === 0 ? 'Top Selling Items' : '',
-        Description: `${it.itemCode || '—'} — ${it.itemName || '—'}`,
-        Count: it.quantity ?? 0,
-        Amount: fmt(it.amount ?? 0),
-      })),
-      { Section: 'Customer Credit', Description: 'Credit Sales', Count: creditInvoices.length, Amount: creditTotal },
-      { Section: 'Invoice Range', Description: 'First Invoice', Count: invNums[0] || '—', Amount: '' },
-      { Section: '', Description: 'Last Invoice', Count: invNums[invNums.length - 1] || '—', Amount: '' },
-      ...(Array.isArray(zReportData?.cashierWiseSummary) ? zReportData.cashierWiseSummary : []).map((c, i) => ({
-        Section: i === 0 ? 'Cashier Wise' : '',
-        Description: c.cashier || '—',
-        Count: c.invoiceCount || 0,
-        Amount: fmt(c.netSales ?? 0),
-      })),
-    ];
-  };
 
   // ── X-Report: build A4 view-model for print/PDF ───────────────────────────
   // Delegates to the shared, pure builder in utils/posReportViewModel.js so the live
@@ -7302,92 +4440,6 @@ export default function POSSales() {
   );
 
   // ── X-Report: Excel flat rows ─────────────────────────────────────────────
-  const buildXReportExcelRows = () => {
-    const xSummary = xReportData?.summary || {};
-    const xInvoices = xReportData?.invoices || [];
-    const sess = xReportData?.session || currentSession;
-    const fmt = (n) => Number(Number(n).toFixed(2));
-    const openingCashVal = fmt(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
-    const cashSalesV = fmt(xSummary.cashSales ?? 0);
-    const cardSalesV = fmt(xSummary.cardSales ?? 0);
-    const creditSalesV = fmt(xSummary.creditSales ?? 0);
-    const totalSalesV = fmt(xSummary.totalSales ?? 0);
-    const totalTaxV = fmt(xSummary.totalTax ?? 0);
-    const salesExTaxV = fmt(xSummary.salesAmountExTax ?? 0);
-    const discountV = fmt(xSummary.totalDiscount ?? 0);
-    const cashDropIn = fmt(xSummary.cashDropIn ?? 0);
-    const cashDropOut = fmt(xSummary.cashDropOut ?? 0);
-    const invoiceCount = xSummary.invoiceCount ?? currentSession?.invoiceCount ?? 0;
-    const expectedCash = fmt(xSummary.expectedCash ?? 0);
-    const reportDenominations = getReportClosingDenominations();
-    const actualCash = fmt(calculateDenominationTotal(reportDenominations));
-    const variance = fmt(actualCash - expectedCash);
-    const refundTotal = fmt(xSummary.totalRefunds ?? 0);
-    const totalRefundCount = xSummary.totalRefundCount ?? 0;
-    const cardRefundTotal = fmt(xSummary.cardRefundSales ?? 0);
-    const cardRefundCount = xSummary.cardRefundCount ?? 0;
-    const otherSalesV = fmt(xSummary.otherSales ?? 0);
-    const totalPaidV = fmt(xSummary.totalPaid ?? totalSalesV);
-    const totalTenderCountV = xSummary.totalTenderCount ?? invoiceCount;
-    const denomKeys = DENOM_KEYS;
-    const denomLabels = DENOM_LABELS;
-    // Consolidated Cash Position — additive, informational-only (see buildXReportViewModel).
-    const cashPosition = xSummary.cashPosition || {};
-    const cpDropRows = Array.isArray(cashPosition.cashDropRows) ? cashPosition.cashDropRows : [];
-    const cpRefundsSupported = cashPosition.cashRefundsSupported === true;
-    // netCashPosition removed — see the Z-Report note.
-
-    return [
-      ...denomKeys.map((k, i) => ({
-        Section: i === 0 ? 'Denomination Count' : '',
-        Description: denomLabels[k],
-        Count: reportDenominations[k] || 0,
-        Amount: fmt((reportDenominations[k] || 0) * parseFloat(k)),
-      })),
-      { Section: 'Cash Drawer', Description: 'Opening Cash / Float', Count: '', Amount: openingCashVal },
-      { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
-      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cashDropIn },
-      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cashDropOut },
-      { Section: '', Description: 'Expected Cash in Drawer', Count: '', Amount: expectedCash },
-      { Section: '', Description: 'Actual Cash Counted', Count: '', Amount: actualCash },
-      { Section: '', Description: 'Cash Variance', Count: '', Amount: variance },
-      { Section: 'Consolidated Cash Position', Description: 'Opening Cash', Count: '', Amount: openingCashVal },
-      { Section: '', Description: 'Cash Sales', Count: '', Amount: cashSalesV },
-      { Section: '', Description: 'Customer Receipts (Cash)', Count: '', Amount: 'Not available in X-Report' },
-      { Section: '', Description: 'Customer Advances (Cash)', Count: '', Amount: 'Not available in X-Report' },
-      { Section: '', Description: 'Cash Drop In', Count: '', Amount: cashDropIn },
-      { Section: '', Description: 'Cash Refunds (Cash)', Count: '', Amount: cpRefundsSupported ? fmt(cashPosition.cashRefundsTotal ?? 0) : 'Not tracked' },
-      { Section: '', Description: 'Cash Drop Out', Count: '', Amount: cashDropOut },
-      ...cpDropRows.map((r, i) => ({ Section: i === 0 ? 'Cash Drop / Cash Out Detail' : '', Description: r.type || '—', Count: '', Amount: fmt(r.amount ?? 0) })),
-      { Section: 'Payment Tender', Description: 'Cash', Count: xSummary.cashInvoiceCount ?? 0, Amount: cashSalesV },
-      { Section: '', Description: 'Card', Count: xSummary.cardInvoiceCount ?? 0, Amount: cardSalesV },
-      { Section: '', Description: 'Credit', Count: xSummary.creditInvoiceCount ?? 0, Amount: creditSalesV },
-      ...(otherSalesV > 0 ? [{ Section: '', Description: 'Online', Count: xSummary.otherInvoiceCount ?? 0, Amount: otherSalesV }] : []),
-      { Section: '', Description: 'Total', Count: totalTenderCountV, Amount: totalPaidV },
-      { Section: 'VAT / Tax', Description: 'VAT 5% — Taxable Amount', Count: '', Amount: salesExTaxV },
-      { Section: '', Description: 'VAT 5% — Tax Amount', Count: '', Amount: totalTaxV },
-      { Section: '', Description: 'Total Inc. VAT', Count: '', Amount: totalSalesV },
-      { Section: 'Discount', Description: 'Bill Level Discount', Count: xSummary.billDiscountCount ?? 0, Amount: fmt(xSummary.billDiscount ?? 0) },
-      { Section: '', Description: 'Line Item Discount', Count: xSummary.lineDiscountCount ?? 0, Amount: fmt(xSummary.lineDiscount ?? 0) },
-      { Section: '', Description: 'Total Discount', Count: '', Amount: discountV },
-      { Section: 'Return / Refund', Description: 'Sales Returns', Count: xSummary.salesReturnCount ?? 0, Amount: fmt(xSummary.salesReturnTotal ?? 0) },
-      { Section: '', Description: 'Refunds Processed', Count: xSummary.refundCount ?? 0, Amount: fmt(xSummary.refundTotal ?? 0) },
-      { Section: '', Description: 'Credit Notes Issued', Count: xSummary.creditNoteCount ?? 0, Amount: fmt(xSummary.creditNoteTotal ?? 0) },
-      { Section: '', Description: 'Exchange Transactions', Count: xSummary.exchangeCount ?? 0, Amount: fmt(xSummary.exchangeTotal ?? 0) },
-      { Section: '', Description: 'Total Refunds (In-session)', Count: totalRefundCount, Amount: refundTotal },
-      { Section: 'Card Settlement', Description: 'Card Refunds', Count: cardRefundCount, Amount: cardRefundTotal },
-      { Section: '', Description: 'Net Card Settlement', Count: Math.max(0, (xSummary.cardInvoiceCount ?? 0) - cardRefundCount), Amount: fmt(Math.max(0, cardSalesV - cardRefundTotal)) },
-      { Section: '', Description: 'Card Machine Batch No.', Count: '', Amount: sess?.cardBatchNo || xReportCardBatchNo || '—' },
-      { Section: '', Description: 'Card Settlement Verified', Count: '', Amount: (sess?.cardSettlementVerified ?? xReportCardVerified) ? 'Yes' : 'No' },
-      { Section: 'Invoice Count', Description: 'Total Invoices', Count: invoiceCount, Amount: totalSalesV },
-      ...xInvoices.slice(0, 200).map((inv, i) => ({
-        Section: i === 0 ? 'Invoice List' : '',
-        Description: inv.invoiceNumber || `Invoice #${i + 1}`,
-        Count: inv.paymentMode || '—',
-        Amount: fmt(inv.invoiceTotal || 0),
-      })),
-    ];
-  };
 
   // ── Report print/export handlers ──────────────────────────────────────────
   // Single rendering dispatch: one view-model, renderer chosen by reportPrintMode.
@@ -7524,7 +4576,7 @@ export default function POSSales() {
 
   const handleZReportExportExcel = async () => {
     if (!(await assertZReportPrintable())) return;
-    const rows = buildZReportExcelSections();
+    const rows = buildZReportExcelSections(zReportData);
     const cols = [
       { header: 'Section', key: 'Section', width: 22 },
       { header: 'Description', key: 'Description', width: 32 },
@@ -7588,7 +4640,13 @@ export default function POSSales() {
 
   const handleXReportExportExcel = async () => {
     if (!(await assertXReportPrintable())) return;
-    const rows = buildXReportExcelRows();
+    const rows = buildXReportExcelRows({
+      xReportData,
+      currentSession,
+      closingDenominations: getReportClosingDenominations(),
+      xReportCardBatchNo,
+      xReportCardVerified,
+    });
     const cols = [
       { header: 'Section', key: 'Section', width: 22 },
       { header: 'Description', key: 'Description', width: 32 },
@@ -8248,13 +5306,12 @@ export default function POSSales() {
                                       setClosureAction('FORCE_CLOSE');
                                       closureAuthGrantRef.current = null;
                                       forceCloseContextRef.current = null;
-                                      setPendingSupervisorAction({ type: 'FORCE_CLOSE_SESSION' });
-                                      setSupervisorPinValue('');
-                                      setSupervisorPinEmail('');
-                                      setSupervisorPinError('');
                                       setForceCloseReason('');
                                       setForceCloseAuditAcknowledged(false);
-                                      setShowSupervisorPin(true);
+                                      requestApproval({
+                                        supervisorAction: { type: 'FORCE_CLOSE_SESSION' },
+                                        resetEmail: true,
+                                      });
                                     }
                                   }}
                                   className="w-full px-4 py-2 text-left hover:bg-orange-50 transition-colors flex flex-col group"
@@ -10001,77 +7058,27 @@ export default function POSSales() {
     <BusinessDayStatusProvider terminalId={currentTerminal?.terminalId} refreshRef={businessDayRefreshRef}>
     <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
       {/* ─── TERMINAL REGISTRATION REJECTED (archived / blocked / decommissioned / maintenance) ─── */}
-      {terminalRegistrationError && (() => {
-        const cfg = resolveTerminalUnavailableConfig(terminalRegistrationError);
-        return (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
-          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-amber-600 to-orange-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
-              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
-                <AlertCircle className="h-7 w-7 sm:h-10 sm:w-10 text-white" />
-              </div>
-              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">{cfg.title}</h2>
-              <p className="text-white/80 text-xs sm:text-sm font-medium">This device cannot register a session until this is resolved</p>
-            </div>
-            <div className="p-4 sm:p-8 space-y-4 sm:space-y-6">
-              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 sm:p-5 text-sm text-slate-700">
-                {cfg.message}
-              </div>
-              {cfg.hint && (
-                <p className="text-xs text-slate-500 leading-relaxed">{cfg.hint}</p>
-              )}
-              {cfg.allowRegisterNew ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
-                      localStorage.removeItem('billbull:pos:device_fingerprint');
-                      Object.keys(localStorage)
-                        .filter(k => k.startsWith('billbull:pos:terminal_id'))
-                        .forEach(k => localStorage.removeItem(k));
-                      window.location.reload();
-                    }
-                  }}
-                  className="w-full py-3 sm:py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-sm transition-all shadow-md"
-                >
-                  {cfg.registerLabel}
-                </button>
-              ) : (
-                <div className="w-full py-3 sm:py-3.5 rounded-2xl bg-slate-100 text-slate-500 font-semibold text-sm text-center border border-slate-200">
-                  Contact Administrator
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        );
-      })()}
+      {terminalRegistrationError && (
+        <TerminalUnavailableOverlay
+          reason={terminalRegistrationError}
+          onRegisterNew={() => {
+            if (window.confirm('This will assign a new independent terminal to this device.\n\nContinue?')) {
+              localStorage.removeItem('billbull:pos:device_fingerprint');
+              Object.keys(localStorage)
+                .filter(k => k.startsWith('billbull:pos:terminal_id'))
+                .forEach(k => localStorage.removeItem(k));
+              window.location.reload();
+            }
+          }}
+        />
+      )}
 
       {/* ─── IDLE LOCK OVERLAY ─── */}
       {isIdleLocked && (
-        <div className="fixed inset-0 z-[600] flex items-center justify-center bg-slate-900/90 backdrop-blur-md p-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-100 text-center p-8 space-y-4">
-            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
-              <Lock className="h-8 w-8 text-amber-600" />
-            </div>
-            <h2 className="text-xl font-bold text-gray-800">Session Locked</h2>
-            <p className="text-sm text-gray-500">This terminal was locked due to inactivity.</p>
-            <div className="flex flex-col gap-2 pt-2">
-              <button
-                onClick={() => setIsIdleLocked(false)}
-                className="w-full py-2.5 bg-amber-500 text-white rounded-xl font-semibold hover:bg-amber-600"
-              >
-                Resume My Session
-              </button>
-              <button
-                onClick={() => { setIsIdleLocked(false); setShowTakeoverDialog(true); }}
-                className="w-full py-2.5 border border-gray-200 text-gray-600 rounded-xl text-sm hover:bg-gray-50"
-              >
-                Supervisor Takeover
-              </button>
-            </div>
-          </div>
-        </div>
+        <IdleLockOverlay
+          onResume={() => setIsIdleLocked(false)}
+          onSupervisorTakeover={() => { setIsIdleLocked(false); setShowTakeoverDialog(true); }}
+        />
       )}
 
       {/* ─── SUPERVISOR TAKEOVER DIALOG ─── */}
@@ -10155,7 +7162,7 @@ export default function POSSales() {
                     setHandoverEmail('');
                     setHandoverPassword('');
                     setHandoverError('');
-                    setTerminalLockedBy(null);
+                    clearTerminalLock();
                     showFeedback('Viewing dashboard in read-only mode', 'info');
                   }}
                   className="flex-1 py-3 sm:py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-sm hover:bg-slate-50 transition-all shadow-sm"
@@ -10213,64 +7220,18 @@ export default function POSSales() {
 
       {/* ─── PREVIOUS BUSINESS DATE STILL OPEN (BLOCKS POS ENTRY) ─── */}
       {openSessionsBlock && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-slate-900/80 backdrop-blur-md p-2 sm:p-4">
-          <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-lg border border-slate-100 max-h-[95vh] overflow-y-auto">
-            <div className="bg-gradient-to-r from-amber-500 to-orange-600 p-5 sm:p-8 text-center text-white relative rounded-t-2xl sm:rounded-t-3xl">
-              <div className="w-14 h-14 sm:w-20 sm:h-20 bg-white/10 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4 border border-white/20 shadow-inner">
-                <AlertTriangle className="h-7 w-7 sm:h-10 sm:w-10 text-white" />
-              </div>
-              <h2 className="text-lg sm:text-2xl font-black tracking-tight mb-1">Previous Business Day Not Closed</h2>
-              <p className="text-white/80 text-xs sm:text-sm font-medium">
-                Business date {openSessionsBlock.currentBusinessDate} still has open session(s) past operating hours.
-              </p>
-            </div>
-            <div className="p-4 sm:p-8 space-y-3 sm:space-y-4">
-              <p className="text-xs sm:text-sm text-slate-600">
-                POS entry is blocked until a supervisor runs Day Close for the session(s) below.
-              </p>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {(openSessionsBlock.openSessions || []).map((s) => (
-                  <button
-                    key={s.sessionId}
-                    type="button"
-                    onClick={() => {
-                      // Deep-link a supervisor to the terminal that owns this session.
-                      localStorage.setItem(
-                        `billbull:pos:terminal_id:${openSessionsBlock.branchId || sessionStorage.getItem('activeBranchId') || 'default'}`,
-                        s.terminalId
-                      );
-                      window.location.reload();
-                    }}
-                    className="w-full text-left bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-2xl p-3 sm:p-4 flex items-center gap-3 shadow-sm transition-all"
-                  >
-                    <div className="w-10 h-10 bg-amber-100 border border-amber-200 text-amber-800 rounded-xl flex items-center justify-center shrink-0">
-                      <MapPin className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-bold text-slate-800 truncate">
-                        {s.counterName || 'Counter'} · {s.terminalName || s.terminalId}
-                      </p>
-                      <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
-                        <Users className="h-3 w-3 shrink-0" />{s.openedBy}
-                        <span className="text-slate-300">•</span>
-                        <Clock className="h-3 w-3 shrink-0" />
-                        {s.openedAt ? new Date(s.openedAt).toLocaleString() : '—'}
-                      </p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                onClick={() => setOpenSessionsBlock(null)}
-                className="w-full py-2.5 rounded-xl border border-slate-200 text-slate-500 font-semibold text-xs hover:bg-slate-50 hover:text-slate-700 transition-all"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        </div>
+        <PreviousBusinessDayBlockOverlay
+          block={openSessionsBlock}
+          onDismiss={dismissOpenSessionsBlock}
+          onSelectSession={(s) => {
+            // Deep-link a supervisor to the terminal that owns this session.
+            localStorage.setItem(
+              `billbull:pos:terminal_id:${openSessionsBlock.branchId || sessionStorage.getItem('activeBranchId') || 'default'}`,
+              s.terminalId
+            );
+            window.location.reload();
+          }}
+        />
       )}
 
       {/* ─── SESSION ROAMING DISCOVERY DIALOG (Phase 11) ─── */}
@@ -10792,48 +7753,10 @@ export default function POSSales() {
 
       {/* Session Owner Required Dialog */}
       {showSessionOwnerRequiredDialog && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
-            <div className="bg-gradient-to-r from-red-500 to-red-600 px-6 py-4 flex items-center gap-3">
-              <div className="p-2 bg-white/20 rounded-xl">
-                <AlertTriangle className="h-5 w-5 text-white" />
-              </div>
-              <h2 className="text-base font-bold text-white">Session Owner Required</h2>
-            </div>
-            
-            <div className="p-6 space-y-4 text-sm text-slate-600">
-              <p>
-                This session can only be closed normally by the cashier who opened it.
-              </p>
-              
-              {(() => {
-                const tgt = sessionToClose || currentSession;
-                if (!tgt) return null;
-                return (
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 grid grid-cols-2 gap-2 text-xs">
-                    <div><span className="text-slate-500">Terminal:</span> <span className="font-semibold text-slate-800">{tgt.terminalName || tgt.terminalId}</span></div>
-                    <div><span className="text-slate-500">Session:</span> <span className="font-semibold text-slate-800">{tgt.sessionNo || (tgt.id ? `SESS-${tgt.id}` : '—')}</span></div>
-                    <div className="col-span-2"><span className="text-slate-500">Cashier:</span> <span className="font-semibold text-slate-800">{tgt.cashier || tgt.openedBy || tgt.userId || '—'}</span></div>
-                  </div>
-                );
-              })()}
-              
-              <p className="text-xs">
-                To close this session as a supervisor, please use the <strong>Force Close</strong> option from the menu.
-              </p>
-            </div>
-            
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end">
-              <Button 
-                variant="default" 
-                className="w-full bg-slate-800 hover:bg-slate-700 text-white"
-                onClick={() => setShowSessionOwnerRequiredDialog(false)}
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </div>
+        <SessionOwnerRequiredDialog
+          targetSession={sessionToClose || currentSession}
+          onClose={() => setShowSessionOwnerRequiredDialog(false)}
+        />
       )}
 
       {/* Cashier Auth Dialog */}
@@ -11320,176 +8243,41 @@ export default function POSSales() {
                   </div>
                 )}
 
-                <div className="flex-1 overflow-y-auto">
-                  {/* Change Due alert */}
-                  {(lastPaidInvoice.changeAmount || 0) > 0 && (
-                    <div className="bg-emerald-50 border-b border-emerald-100 px-6 py-3 flex items-center justify-between">
-                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">Change Due</span>
-                      <span className="text-lg font-black text-emerald-700">
-                        <DirhamSymbol /> {(lastPaidInvoice.changeAmount || 0).toFixed(2)}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* 3. Accounts Receivable (Compact, aligned) */}
-                  {((lastPaidInvoice.creditBalance || 0) > 0 || (lastPaidInvoice.creditUpdatedBalance || 0) > 0) && (
-                    <div className="px-6 py-3 border-b border-gray-100">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Accounts Receivable</p>
-                      <div className="space-y-1">
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="text-gray-600 font-medium">This Invoice</span>
-                          <span className="font-bold text-[#1E293B]">
-                            <DirhamSymbol /> {(lastPaidInvoice.creditBalance || 0).toFixed(2)}
-                          </span>
-                        </div>
-                        {lastPaidInvoice.creditUpdatedBalance != null && (
-                          <div className="flex justify-between items-center text-sm">
-                            <span className="text-gray-600 font-medium">Customer Outstanding</span>
-                            <span className="font-bold text-[#1E293B]">
-                              <DirhamSymbol /> {lastPaidInvoice.creditUpdatedBalance.toFixed(2)}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 4. Payment Summary (Compact) */}
-                  {usedMethods.length > 0 && (
-                    <div className="px-6 py-3 border-b border-gray-50">
-                      <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Payment Summary</p>
-                      <div className="space-y-1">
-                        {usedMethods.map((row, i) => {
-                          const lbl = String(row.label).toLowerCase();
-                          let Icon = Banknote;
-                          if (lbl.includes('card') || lbl.includes('mastercard') || lbl.includes('visa')) Icon = CreditCard;
-                          else if (lbl.includes('online') || lbl.includes('bank') || lbl.includes('transfer')) Icon = Landmark;
-                          else if (lbl.includes('credit')) Icon = User;
-
-                          return (
-                            <div key={`${row.label}-${i}`} className="flex justify-between items-center text-sm">
-                              <div className="flex items-center gap-2 text-gray-700 font-medium">
-                                <Icon className="h-4 w-4 text-gray-400" />
-                                <span>{row.label}</span>
-                              </div>
-                              <span className="font-bold text-[#1E293B]">
-                                {formatCurrencyStr(row.amount)}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 5. Financial Details (Scrollable when expanded) */}
-                  <div className="px-6 py-3">
-                    <details className="group rounded-lg bg-gray-50 transition-all">
-                      <summary className="flex items-center justify-between px-3 py-2 text-[11px] font-bold text-gray-500 uppercase cursor-pointer list-none select-none hover:bg-gray-100 rounded-lg">
-                        <span className="group-open:hidden">▼ View Financial Details</span>
-                        <span className="hidden group-open:inline">▲ Hide Financial Details</span>
-                      </summary>
-                      <div className="px-4 py-2 space-y-1.5 border-t border-gray-100 text-sm max-h-[220px] overflow-y-auto mt-1">
-                        {lastPaidInvoice.paymentBlock && paymentRows.map((row, i) => (
-                          <div key={`detail-${row.label}-${i}`} className="flex justify-between items-end gap-3">
-                            <span className="text-gray-500">{row.label}</span>
-                            <span className={`font-bold ${row.emphasis ? 'text-emerald-600' : 'text-[#1E293B]'}`}>
-                              {formatCurrencyStr(row.amount)}
-                            </span>
-                          </div>
-                        ))}
-                        {lastPaidInvoice.paymentBlock?.hasReceivable && (
-                          <div className="flex justify-between items-center text-sm">
-                            <span className="text-gray-500">Invoice Total</span>
-                            <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.paymentBlock.invoiceTotal)}</span>
-                          </div>
-                        )}
-                        <div className="h-px bg-gray-100 my-1"></div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-500">Sale Amount</span>
-                          <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.total)}</span>
-                        </div>
-                        {lastPaidInvoice.depositAmount > 0 && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-500">Deposit Applied</span>
-                            <span className="font-bold text-[#327F74]">−{formatCurrencyStr(lastPaidInvoice.depositAmount)}</span>
-                          </div>
-                        )}
-                        {(lastPaidInvoice.creditBalance > 0 && lastPaidInvoice.creditUpdatedBalance != null) && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-500">Customer Total Outstanding</span>
-                            <span className="font-bold text-[#1E293B]">{formatCurrencyStr(lastPaidInvoice.creditUpdatedBalance)}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-500">Payment Mode</span>
-                          <span className="font-bold text-[#1E293B]">{lastPaidInvoice.paymentMode}</span>
-                        </div>
-                      </div>
-                    </details>
-                  </div>
-                </div>
+                <CheckoutCompleteSummary
+                  lastPaidInvoice={lastPaidInvoice}
+                  paymentRows={paymentRows}
+                  usedMethods={usedMethods}
+                  formatCurrencyStr={formatCurrencyStr}
+                />
 
                 {/* 6. Action Priority */}
-                <div className="px-6 pb-6 pt-4 bg-white border-t border-gray-50 shrink-0 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.02)]">
-                  {/* Primary Action */}
-                  <button type="button" onClick={closeComplete}
-                    className="w-full py-3.5 mb-3 rounded-xl bg-[#F5C742] hover:bg-[#E5B532] text-white font-black text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
-                    <ArrowRightCircle className="h-5 w-5" />New Sale
-                  </button>
-
-                  {/* Secondary Actions */}
-                  <div className="grid grid-cols-2 gap-2 mb-4">
-                    <button type="button" onClick={async () => {
-                      if (!lastPaidInvoice?.invoice?.id) return;
-                      try {
-                        const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                        if (tplInvoicePaper === 'A4') {
-                          const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
-                          const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
-                          const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                          printHtml(generateDocumentPrintHtml(template, data, options));
-                        } else {
-                          const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
-                            full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
-                          });
-                          await printThermalReceiptWithConfiguredPrinter({
-                            full, text, escPosBase64, title: `Receipt ${full.invoiceNumber || ''}`.trim(),
-                          });
-                        }
-                      } catch (err) { console.warn('POS print error', err); alert(`Print failed: ${err?.message || 'printer error'}.`); }
-                    }}
-                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors">
-                      <Printer className="h-4 w-4" />Print Receipt
-                    </button>
-                    <button type="button" onClick={() => { closeComplete(); setShowReprintModal(true); }}
-                      className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-gray-200 text-sm font-bold text-gray-700 hover:bg-gray-50 transition-colors">
-                      <RotateCcw className="h-4 w-4" />Reprint Inv.
-                    </button>
-                  </div>
-
-                  {/* Share Receipt - Tertiary (Figma style preserved) */}
-                  <div className="pt-3 border-t border-gray-100">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400 mb-2">Share Receipt</p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { key: 'sms', label: 'SMS', Icon: Smartphone, tone: 'border-green-200 bg-green-50/60 text-green-700 hover:bg-green-100 hover:border-green-300 focus-visible:ring-green-500' },
-                        { key: 'whatsapp', label: 'WhatsApp', Icon: MessageCircle, tone: 'border-green-200 bg-green-50/60 text-green-700 hover:bg-green-100 hover:border-green-300 focus-visible:ring-green-500' },
-                        { key: 'email', label: 'Email', Icon: Mail, tone: 'border-blue-200 bg-blue-50/60 text-blue-700 hover:bg-blue-100 hover:border-blue-300 focus-visible:ring-blue-500' },
-                      ].map(({ key, label, Icon, tone }) => (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => setReceiptShareChannel(key)}
-                          className={`flex flex-col items-center justify-center gap-1.5 py-2.5 rounded-xl border text-xs font-bold transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 ${tone}`}
-                        >
-                          <Icon className="h-4 w-4" aria-hidden="true" />
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <CheckoutCompleteActions
+                  onNewSale={closeComplete}
+                  onPrintReceipt={async () => {
+                    if (!lastPaidInvoice?.invoice?.id) return;
+                    try {
+                      const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
+                      if (tplInvoicePaper === 'A4') {
+                        const template = resolveInvoiceA4TemplateFor(full);
+                        const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
+                        const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
+                        printHtml(generateDocumentPrintHtml(template, data, options));
+                      } else {
+                        const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
+                          full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
+                        });
+                        await printThermalReceiptWithConfiguredPrinter({
+                          full, text, escPosBase64, title: `Receipt ${full.invoiceNumber || ''}`.trim(),
+                        });
+                      }
+                    } catch (err) { console.warn('POS print error', err); alert(`Print failed: ${err?.message || 'printer error'}.`); }
+                  }}
+                  onReprint={() => {
+                    closeComplete();
+                    setShowReprintModal(true);
+                  }}
+                  onShare={(key) => setReceiptShareChannel(key)}
+                />
               </div>
 
               {/* Share Receipt dialog — one component, three configured channels. */}
@@ -11529,85 +8317,39 @@ export default function POSSales() {
               showA4CheckoutPreview ? 'lg:w-[400px] xl:w-[500px] 2xl:w-[600px]' :
               'lg:w-[280px] xl:w-[340px] 2xl:w-[400px]'
             }`}>
-              {showA4CheckoutPreview ? (
-                checkoutA4Html ? (
-                  <A4ScaledPreview src={checkoutA4BlobUrl} fillWidth />
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
-                    <ShoppingCart className="h-10 w-10 mb-2" />
-                    <p className="text-xs">Add items to preview</p>
-                  </div>
-                )
-              ) : checkoutPreviewBlobUrl ? (
-                // User request: always use 80mm print preview in the checkout window.
-                <ThermalScaledPreview src={checkoutPreviewBlobUrl} paperSize="80mm" />
-              ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-gray-300">
-                  <ShoppingCart className="h-10 w-10 mb-2" />
-                  <p className="text-xs">Add items to preview</p>
-                </div>
-              )}
+              <CheckoutPaymentPreview
+                showA4CheckoutPreview={showA4CheckoutPreview}
+                checkoutA4Html={checkoutA4Html}
+                checkoutA4BlobUrl={checkoutA4BlobUrl}
+                checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}
+              />
             </div>
 
             {/* ══ RIGHT: Payment & Settlement ═══════════════════════ */}
             <div className="flex-1 flex flex-col bg-[#F7F7FA] overflow-hidden min-h-0">
 
               {/* Right header */}
-              <div className="bg-[#F5C742] px-3 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#1E293B] flex items-center justify-center">
-                    <CreditCard className="h-5 w-5 text-[#F5C742]" />
-                  </div>
-                  <div>
-                    <p className="text-white font-bold text-base leading-none">Checkout</p>
-                    <p className="text-[#1E293B]/60 text-[10px] mt-0.5">{currentInvoice.items.length} item{currentInvoice.items.length !== 1 ? 's' : ''}{invoiceNo ? ` · ${invoiceNo}` : ''}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <p className="text-[#1E293B]/60 text-[10px]">{depositAmt > 0 ? 'Balance Due' : 'Total Amount'}</p>
-                    <p className="text-white font-black text-2xl leading-none"><CurrencyAmount amount={depositAmt > 0 ? effectiveDue : grandTotal} /></p>
-                  </div>
-                  <button type="button" onClick={() => setShowPaymentDialog(false)} className="w-9 h-9 rounded-xl bg-black/10 hover:bg-black/20 flex items-center justify-center transition-colors">
-                    <X className="h-5 w-5 text-[#1E293B]" />
-                  </button>
-                </div>
-              </div>
+              <CheckoutPaymentHeader
+                itemCount={currentInvoice.items.length}
+                invoiceNo={invoiceNo}
+                depositAmt={depositAmt}
+                effectiveDue={effectiveDue}
+                grandTotal={grandTotal}
+                onClose={() => setShowPaymentDialog(false)}
+              />
 
               <div className="flex-1 overflow-y-auto">
                 <div className="p-4 space-y-3">
 
                   {/* ── Settlement summary (shipping and/or layaway-hold deposit) ── */}
                   {(depositAmt > 0 || shippingChargeNum > 0) && (
-                    <div className="bg-white rounded-2xl border border-[#F5C742]/50 p-4 shadow-sm">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Settlement Summary</p>
-                      <div className="space-y-1.5 text-sm">
-                        <div className="flex justify-between text-gray-600">
-                          <span>Items Total</span>
-                          <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={currentInvoice.total || 0} /></span>
-                        </div>
-                        {shippingChargeNum > 0 && (
-                          <div className="flex justify-between text-gray-600">
-                            <span>Shipping</span>
-                            <span className="font-semibold text-[#1E293B]"><CurrencyAmount amount={shippingChargeNum} /></span>
-                          </div>
-                        )}
-                        <div className="flex justify-between text-[#1E293B] border-t border-gray-100 pt-1.5">
-                          <span className="font-semibold">Order Total</span>
-                          <span className="font-semibold"><CurrencyAmount amount={grandTotal} /></span>
-                        </div>
-                        {depositAmt > 0 && (
-                          <div className="flex justify-between text-green-700">
-                            <span>Deposit Paid</span>
-                            <span className="font-semibold">− <CurrencyAmount amount={depositAmt} /></span>
-                          </div>
-                        )}
-                        <div className="flex justify-between border-t border-gray-100 pt-1.5 text-[#1E293B]">
-                          <span className="font-bold">{depositAmt > 0 ? 'Balance Due Now' : 'Total Payable'}</span>
-                          <span className="font-black text-[#F5C742]"><CurrencyAmount amount={effectiveDue} /></span>
-                        </div>
-                      </div>
-                    </div>
+                    <CheckoutSettlementSummary
+                      itemsTotal={currentInvoice.total || 0}
+                      shippingChargeNum={shippingChargeNum}
+                      grandTotal={grandTotal}
+                      depositAmt={depositAmt}
+                      effectiveDue={effectiveDue}
+                    />
                   )}
 
                   {/* ══ Progressive Payment Allocation ══════════════════════
@@ -11627,12 +8369,10 @@ export default function POSSales() {
 
 
                   {/* ── Remarks ── */}
-                  <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-sm">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase">Remarks / Reference</label>
-                    <input value={checkoutRemarks} onChange={e => setCheckoutRemarks(e.target.value)}
-                      placeholder="Tap to enter note…"
-                      className="mt-1 w-full border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-[#F5C742]" />
-                  </div>
+                  <CheckoutRemarks
+                    checkoutRemarks={checkoutRemarks}
+                    setCheckoutRemarks={setCheckoutRemarks}
+                  />
 
 
 
@@ -11640,57 +8380,20 @@ export default function POSSales() {
               </div>
 
               {/* ── Settlement footer ── */}
-              <div className="bg-white border-t-2 border-[#F5C742]/30 px-3 sm:px-5 py-4 shrink-0">
-                {/* Change due — the only figure the cashier still needs at this point
-                    (total/paid/remaining already live in the allocation panel above). */}
-                {checkoutPaymentFields.changeDue > 0 && (
-                  <div className="mb-3 flex items-center justify-between gap-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
-                    <span className="text-xs font-bold uppercase tracking-wide text-blue-700">Change Due</span>
-                    <span className="text-lg font-black text-blue-700 tabular-nums">
-                      <DirhamSymbol /> {checkoutPaymentFields.changeDue.toFixed(2)}
-                    </span>
-                  </div>
-                )}
-                {/* Error display */}
-                {checkoutError && (
-                  <div className="mb-3 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 shrink-0" />
-                    {checkoutError}
-                  </div>
-                )}
-                {/* Action buttons */}
-                {(() => {
-                  const settleReady = canSettle && currentInvoice.items.length > 0 && !checkoutLoading;
-                  return (
-                    <div className="flex items-stretch gap-3">
-                      <button type="button" onClick={() => { setShowPaymentDialog(false); setCheckoutError(null); cancelCheckoutTenders(); }}
-                        aria-label="Cancel checkout"
-                        className="flex-none w-28 sm:w-36 min-h-[64px] rounded-xl border-2 border-gray-300 bg-white text-gray-600 font-bold text-base transition-all duration-200 ease-out hover:bg-gray-100 hover:border-gray-400 hover:text-gray-800 active:scale-[0.98] focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 motion-reduce:transform-none">
-                        Cancel
-                      </button>
-                      <button type="button" onClick={() => processPayment()} disabled={!settleReady}
-                        aria-label={`Settle payment of ${effectiveDue.toFixed(2)}`}
-                        className={`flex-1 min-w-0 min-h-[64px] px-5 rounded-xl font-black flex items-center justify-center gap-3 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-4 focus-visible:ring-[#F5C742]/60 motion-reduce:transform-none ${
-                          settleReady
-                            ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] shadow-lg shadow-[#F5C742]/30 hover:shadow-xl hover:shadow-[#F5C742]/40 hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.99]'
-                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>
-                        {checkoutLoading
-                          ? <><div className="w-6 h-6 border-2 border-gray-500 border-t-transparent rounded-full animate-spin shrink-0" /><span className="text-lg">Processing…</span></>
-                          : <>
-                              <CheckCircle className="h-6 w-6 shrink-0" />
-                              <span className="text-base sm:text-lg truncate">Settle Payment</span>
-                              {/* The amount sits in its own pill so it stays readable at a
-                                  glance and never gets truncated with the label. */}
-                              <span className={`shrink-0 rounded-lg px-3 py-1 text-lg sm:text-2xl tabular-nums ${settleReady ? 'bg-white/40' : 'bg-white/50'}`}>
-                                <DirhamSymbol /> {effectiveDue.toFixed(2)}
-                              </span>
-                            </>
-                        }
-                      </button>
-                    </div>
-                  );
-                })()}
-              </div>
+              <CheckoutPaymentFooter
+                changeDue={checkoutPaymentFields.changeDue}
+                checkoutError={checkoutError}
+                canSettle={canSettle}
+                itemCount={currentInvoice.items.length}
+                checkoutLoading={checkoutLoading}
+                effectiveDue={checkoutEffectiveDue}
+                onCancel={() => {
+                  setShowPaymentDialog(false);
+                  setCheckoutError(null);
+                  cancelCheckoutTenders();
+                }}
+                onSettle={() => processPayment()}
+              />
 
             </div>
           </div>
@@ -11699,512 +8402,119 @@ export default function POSSales() {
 
       {/* Supervisor PIN Dialog */}
       {showSupervisorPin && (
-        <div className="fixed inset-0 bg-black/50 z-[300] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-[480px] flex flex-col max-h-[90vh]">
-            <div className="bg-gradient-to-r from-amber-500 to-amber-600 rounded-t-2xl px-5 py-4 shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-white/20">
-                  <Shield className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-white leading-tight">Supervisor Approval</h2>
-                  <p className="text-[11px] text-amber-100 mt-0.5 leading-tight">
-                    {pendingPriceOverride?.type === 'BUSINESS_DAY_CLOSED'
-                      ? `The Business Day has closed. ${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to authorize this pending transaction only — normal selling stays blocked.`
-                      : pendingPriceOverride?.type === 'CHECKOUT'
-                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve the below-minimum price override`
-                      : pendingPriceOverride
-                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to approve price override${pendingPriceOverride.itemName ? ` for ${pendingPriceOverride.itemName}` : ''} (below min ${pendingPriceOverride.minPrice})`
-                      : pendingSupervisorAction?.type === 'DAY_CLOSE'
-                      ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize Business Day Close' : 'Enter PIN to authorize Business Day Close')
-                      : pendingSupervisorAction?.type === 'DELIVERY_SETTLEMENT'
-                      ? `Supervisor authorization is required to settle this delivery because it was created by another user.`
-                      : pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION'
-                      ? 'Authorize force closure of this session.'
-                      : pendingLayawayAbortAction
-                      ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to clear layaway cart' : 'Enter PIN to clear layaway cart')
-                      : (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize void' : 'Enter PIN to authorize void')}
-                  </p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-4 space-y-3 overflow-y-auto">
-              {pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && sessionToClose && (
-                <div className="bg-amber-50/50 p-2.5 rounded-lg border border-amber-100">
-                  <p className="text-[9px] text-amber-800/80 font-bold mb-1 uppercase tracking-wide">Target Session</p>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
-                    <div className="flex justify-between"><span className="text-amber-700/60">Terminal</span> <span className="font-semibold text-amber-900">{sessionToClose.terminalName || sessionToClose.terminalId}</span></div>
-                    <div className="flex justify-between"><span className="text-amber-700/60">Counter</span> <span className="font-semibold text-amber-900">{sessionToClose.counterName || sessionToClose.counter || '—'}</span></div>
-                    <div className="flex justify-between"><span className="text-amber-700/60">Session</span> <span className="font-semibold text-amber-900">{sessionToClose.sessionNo || (sessionToClose.id ? `SESS-${sessionToClose.id}` : '—')}</span></div>
-                    <div className="flex justify-between"><span className="text-amber-700/60">Cashier</span> <span className="font-semibold text-amber-900">{sessionToClose.cashier || sessionToClose.openedBy || sessionToClose.userId || '—'}</span></div>
-                  </div>
-                </div>
-              )}
-
-              {pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && (
-                <div className="space-y-2">
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-0.5 block">
-                      Force Close Reason <span className="text-red-500">*</span>
-                    </label>
-                    <select
-                      value={forceCloseReason}
-                      onChange={e => { setForceCloseReason(e.target.value); setSupervisorPinError(''); }}
-                      className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 bg-white"
-                    >
-                      <option value="" disabled>Select reason... ▼</option>
-                      <option value="Cashier unavailable">Cashier unavailable</option>
-                      <option value="Cashier forgot to close session">Cashier forgot to close session</option>
-                      <option value="Terminal malfunction">Terminal malfunction</option>
-                      <option value="Shift handover">Shift handover</option>
-                      <option value="Emergency closure">Emergency closure</option>
-                      <option value="Other operational reason">Other operational reason</option>
-                    </select>
-                  </div>
-                  
-                  <div className="bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={forceCloseAuditAcknowledged}
-                        onChange={e => { setForceCloseAuditAcknowledged(e.target.checked); setSupervisorPinError(''); }}
-                        className="h-3.5 w-3.5 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
-                      />
-                      <span className="text-[11px] font-medium text-amber-900 leading-none">
-                        I understand this Force Close will be recorded in the audit trail.
-                      </span>
-                    </label>
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-3">
-                {supervisorApprovalMode === 'PASSWORD' && (
-                  <div>
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
-                      Supervisor Email / Username
-                    </label>
-                    <input
-                      type="text"
-                      value={supervisorPinEmail}
-                      onChange={e => { setSupervisorPinEmail(e.target.value); setSupervisorPinError(''); }}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
-                      autoFocus
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
-                    />
-                  </div>
-                )}
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
-                    {supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN'}
-                  </label>
-                  <input
-                    type="password"
-                    value={supervisorPinValue}
-                    onChange={e => { setSupervisorPinValue(e.target.value); setSupervisorPinError(''); }}
-                    onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
-                    autoFocus={supervisorApprovalMode !== 'PASSWORD'}
-                    maxLength={supervisorApprovalMode === 'PASSWORD' ? 64 : 8}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ${supervisorApprovalMode === 'PASSWORD' ? 'text-sm' : 'text-center text-lg tracking-[0.5em]'}`}
-                    placeholder={supervisorApprovalMode === 'PASSWORD' ? '' : '····'}
-                  />
-                  {supervisorPinError && (
-                    <p className="text-[11px] font-medium text-red-500 mt-1 flex items-center gap-1">
-                      <AlertCircle className="h-3 w-3 shrink-0" />{supervisorPinError}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {supervisorApprovalMode !== 'PASSWORD' && (
-                <div className="grid grid-cols-3 gap-2">
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'C', 0, '✓'].map(k => (
-                    <button
-                      key={k}
-                      type="button"
-                      onMouseDown={e => e.preventDefault()}
-                      onClick={() => {
-                        if (k === 'C') { setSupervisorPinValue(''); setSupervisorPinError(''); }
-                        else if (k === '✓') handleSupervisorPinSubmit();
-                        else setSupervisorPinValue(p => (p + k).slice(0, 8));
-                      }}
-                      className={`py-2 rounded-lg text-sm font-bold transition-colors ${k === '✓' ? 'bg-amber-500 hover:bg-amber-600 text-white' :
-                          k === 'C' ? 'bg-red-100 hover:bg-red-200 text-red-600' :
-                            'bg-gray-100 hover:bg-gray-200 text-[#1E293B]'
-                        }`}
-                    >{k}</button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="p-5 border-t border-gray-100 shrink-0 space-y-2">
-              {supervisorApprovalMode === 'PASSWORD' && (
-                <button
-                  type="button"
-                  onClick={handleSupervisorPinSubmit}
-                  disabled={
-                    !supervisorPinEmail || !supervisorPinValue ||
-                    (pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' && (!forceCloseReason || forceCloseReason === '' || !forceCloseAuditAcknowledged))
-                  }
-                  className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-bold transition-colors"
-                >
-                  {pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION' ? 'Authorize Force Close' : 'Authorize'}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => { setShowSupervisorPin(false); setPendingVoidItemId(null); setPendingPriceOverride(null); setSupervisorPinValue(''); setSupervisorPinEmail(''); setSupervisorPinError(''); }}
-                className="w-full py-2.5 rounded-lg border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
-              >Cancel</button>
-            </div>
-          </div>
-        </div>
+        <SupervisorPinDialog
+          pendingPriceOverride={pendingPriceOverride}
+          pendingSupervisorAction={pendingSupervisorAction}
+          pendingLayawayAbortAction={pendingLayawayAbortAction}
+          supervisorApprovalMode={supervisorApprovalMode}
+          sessionToClose={sessionToClose}
+          forceCloseReason={forceCloseReason}
+          setForceCloseReason={setForceCloseReason}
+          forceCloseAuditAcknowledged={forceCloseAuditAcknowledged}
+          setForceCloseAuditAcknowledged={setForceCloseAuditAcknowledged}
+          supervisorPinEmail={supervisorPinEmail}
+          setSupervisorPinEmail={setSupervisorPinEmail}
+          supervisorPinValue={supervisorPinValue}
+          setSupervisorPinValue={setSupervisorPinValue}
+          supervisorPinError={supervisorPinError}
+          setSupervisorPinError={setSupervisorPinError}
+          onSubmit={handleSupervisorPinSubmit}
+          onCancel={cancelApproval}
+        />
       )}
 
 
       {/* Cash Drop/Out Dialog */}
-      <Dialog open={showCashDropDialog} onOpenChange={setShowCashDropDialog}>
-        <DialogContent className="sm:max-w-md border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
-          {/* Header */}
-          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl ${cashDropType === 'in' ? 'bg-[#327F74]/10' : 'bg-red-50'}`}>
-                  {cashDropType === 'in'
-                    ? <ArrowDown className="h-5 w-5 text-[#327F74]" />
-                    : <ArrowUp className="h-5 w-5 text-red-500" />}
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-[#1E293B]">Cash Drop / Out</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">Record cash movements other than sales</p>
-                </div>
-              </div>
-              <button onClick={() => setShowCashDropDialog(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="px-6 py-5 space-y-5">
-            {/* Type dropdown */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Type</label>
-              <div className="relative">
-                <select
-                  value={cashDropType}
-                  onChange={e => setCashDropType(e.target.value)}
-                  className="w-full h-11 pl-4 pr-10 text-sm font-medium text-[#1E293B] border border-gray-200 rounded-xl bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40 cursor-pointer"
-                >
-                  <option value="in">Cash Drop (IN) - Add cash to drawer</option>
-                  <option value="out">Cash Out - Pay for expenses</option>
-                </select>
-                <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
-                  <svg className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            {/* Amount */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Amount (AED)</label>
-              <input
-                type="number"
-                value={cashDropAmount}
-                onChange={e => setCashDropAmount(e.target.value)}
-                placeholder="0.00"
-                className="w-full h-11 px-4 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40"
-              />
-            </div>
-
-            {/* Category (Phase 2 — optional unless the branch requires it) */}
-            {(cashDropCategories.length > 0 || cashDropCategoryRequired) && (
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">
-                  Category{cashDropCategoryRequired ? ' *' : ' (optional)'}
-                </label>
-                <select
-                  value={cashDropCategoryId}
-                  onChange={e => setCashDropCategoryId(e.target.value)}
-                  className="w-full h-11 pl-4 pr-10 text-sm font-medium text-[#1E293B] border border-gray-200 rounded-xl bg-white appearance-none focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40 cursor-pointer"
-                >
-                  <option value="">{cashDropCategoryRequired ? 'Select a category...' : 'Uncategorized'}</option>
-                  {cashDropCategories.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Description */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">Description / Purpose</label>
-              <input
-                type="text"
-                value={cashDropDescription}
-                onChange={e => setCashDropDescription(e.target.value)}
-                placeholder={cashDropType === 'in' ? 'e.g., Cash from admin safe' : 'e.g., Office supplies, Cleaning'}
-                className="w-full h-11 px-4 text-sm border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#327F74]/30 focus:border-[#327F74]/40"
-              />
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div className="px-6 pb-6 flex items-center justify-end gap-3">
-            <button
-              onClick={() => setShowCashDropDialog(false)}
-              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCashDrop}
-              className={`h-10 px-6 text-sm font-semibold rounded-xl flex items-center gap-2 transition-colors ${cashDropType === 'in'
-                  ? 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'
-                  : 'bg-red-500 hover:bg-red-600 text-white'
-                }`}
-            >
-              <CheckCircle className="h-4 w-4" />
-              Record {cashDropType === 'in' ? 'Cash Drop' : 'Cash Out'}
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <CashDropDialog
+        open={showCashDropDialog}
+        onOpenChange={setShowCashDropDialog}
+        cashDropType={cashDropType}
+        onCashDropTypeChange={e => setCashDropType(e.target.value)}
+        cashDropAmount={cashDropAmount}
+        onCashDropAmountChange={e => setCashDropAmount(e.target.value)}
+        cashDropCategories={cashDropCategories}
+        cashDropCategoryRequired={cashDropCategoryRequired}
+        cashDropCategoryId={cashDropCategoryId}
+        onCashDropCategoryIdChange={e => setCashDropCategoryId(e.target.value)}
+        cashDropDescription={cashDropDescription}
+        onCashDropDescriptionChange={e => setCashDropDescription(e.target.value)}
+        onClose={() => setShowCashDropDialog(false)}
+        onRecord={handleCashDrop}
+      />
 
       {/* Live Session Quick View — dashboard tile popup showing current session
           sales/cash figures, sourced from the same X-Report summary the full
           X-Report page uses so the numbers never disagree. */}
-      <Dialog open={showLiveSessionDialog} onOpenChange={setShowLiveSessionDialog}>
-        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
-          {(() => {
-            const xSummary = xReportData?.summary || {};
-            const sess = xReportData?.session || currentSession;
-            const totalSales = Number(xSummary.totalSales ?? 0);
-            const txCount = Number(xSummary.invoiceCount ?? 0);
-            const openingCash = Number(xSummary.openingCash ?? currentSession?.openingCash ?? 0);
-            const cashSales = Number(xSummary.cashSales ?? 0);
-            const cardSales = Number(xSummary.cardSales ?? 0);
-            const walletSales = Number(xSummary.walletSales ?? 0);
-            const dropIn = Number(xSummary.cashDropIn ?? 0);
-            const dropOut = Number(xSummary.cashDropOut ?? 0);
-            const expectedCash = Number(xSummary.expectedCash ?? 0);
-            const sessionStart = sess?.openedAt ? parseUTCDate(sess.openedAt) : (sess?.startTime ? parseUTCDate(sess.startTime) : null);
-            const diffMin = sessionStart ? Math.floor((sessionNowMs - sessionStart.getTime()) / 60000) : 0;
-            const durH = Math.floor(diffMin / 60);
-            const durM = diffMin % 60;
-            const duration = sessionStart ? (durH > 0 ? `${durH}h ${durM}m` : `${durM}m`) : '—';
-            const loading = xReportLoading || xReportData === null;
-
-            const rows = [
-              { label: "Today's Sales", value: <CurrencyAmount amount={totalSales} />, accent: '#327F74' },
-              { label: 'Transactions', value: txCount, accent: '#6366F1' },
-              { label: 'Cash Sales', value: <CurrencyAmount amount={cashSales} />, accent: '#1E293B' },
-              { label: 'Card Sales', value: <CurrencyAmount amount={cardSales} />, accent: '#1E293B' },
-              { label: 'Wallet Sales', value: <CurrencyAmount amount={walletSales} />, accent: '#1E293B' },
-              { label: 'Opening Cash', value: <CurrencyAmount amount={openingCash} />, accent: '#1E293B' },
-              { label: 'Cash Drop In', value: <CurrencyAmount amount={dropIn} />, accent: '#327F74' },
-              { label: 'Cash Out', value: dropOut > 0 ? <>(<CurrencyAmount amount={dropOut} />)</> : <CurrencyAmount amount={0} />, accent: '#EF4444' },
-              { label: 'Expected Cash in Drawer', value: <CurrencyAmount amount={expectedCash} />, accent: '#F5C742' },
-            ];
-
-            return (
-              <>
-                <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2.5 rounded-xl bg-[#F5C742]/15">
-                        <Activity className="h-5 w-5 text-[#b8920e]" />
-                      </div>
-                      <div>
-                        <h2 className="text-base font-bold text-[#1E293B]">Live Session</h2>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {sess?.id ? `Session #${sess.id}` : 'Current session'} · {duration} elapsed
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={loadXReport} disabled={xReportLoading} title="Refresh"
-                        className="text-gray-400 hover:text-[#327F74] transition-colors mt-0.5 disabled:opacity-40">
-                        <RefreshCw className={`h-4 w-4 ${xReportLoading ? 'animate-spin' : ''}`} />
-                      </button>
-                      <button onClick={() => setShowLiveSessionDialog(false)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
-                        <X className="h-5 w-5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="px-6 py-5">
-                  <div className="grid grid-cols-2 gap-2 text-xs text-gray-500 mb-4">
-                    <p>Cashier: <span className="text-[#1E293B] font-medium">{sess?.openedBy || '—'}</span></p>
-                    <p>Terminal: <span className="text-[#1E293B] font-medium">{sess?.terminalId || currentTerminal?.terminalId || '—'}</span></p>
-                  </div>
-                  <div className="rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
-                    {rows.map(row => (
-                      <div key={row.label} className="flex items-center justify-between px-4 py-2.5">
-                        <span className="text-sm text-gray-600">{row.label}</span>
-                        <span className="text-sm font-bold" style={{ color: row.accent }}>
-                          {loading ? <span className="inline-block h-4 w-16 bg-gray-200 rounded animate-pulse" /> : row.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="px-6 pb-6 flex items-center justify-end gap-3">
-                  <button
-                    onClick={() => setShowLiveSessionDialog(false)}
-                    className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-                  >
-                    Close
-                  </button>
-                  <button
-                    onClick={() => { setShowLiveSessionDialog(false); setCurrentView('x-report'); }}
-                    className="h-10 px-6 text-sm font-semibold rounded-xl bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] flex items-center gap-2 transition-colors"
-                  >
-                    <FileText className="h-4 w-4" />
-                    Full X-Report
-                  </button>
-                </div>
-              </>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
+      <LiveSessionDialog
+        open={showLiveSessionDialog}
+        onOpenChange={setShowLiveSessionDialog}
+        xReportData={xReportData}
+        xReportLoading={xReportLoading}
+        currentSession={currentSession}
+        currentTerminal={currentTerminal}
+        sessionNowMs={sessionNowMs}
+        onRefresh={loadXReport}
+        onClose={() => setShowLiveSessionDialog(false)}
+        onOpenFullXReport={() => {
+          setShowLiveSessionDialog(false);
+          setCurrentView('x-report');
+        }}
+      />
 
       {/* Close Day Reconciliation Variance Dialog */}
-      <Dialog open={!!closeDayVariance} onOpenChange={(open) => { if (!open) setCloseDayVariance(null); }}>
-        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
-          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-red-50">
-                  <AlertTriangle className="h-5 w-5 text-red-500" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-[#1E293B]">
-                    {closeDayVariance?.stage === 'CASH' ? 'Cash Reconciliation Failed' : 'Sales Reconciliation Failed'}
-                  </h2>
-                  <p className="text-xs text-gray-400 mt-0.5">Close day was blocked — review the variance breakdown below</p>
-                </div>
-              </div>
-              <button onClick={() => setCloseDayVariance(null)} className="text-gray-300 hover:text-gray-500 transition-colors mt-0.5">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-
-          <div className="px-6 py-5 space-y-3 max-h-[60vh] overflow-y-auto">
-            {closeDayVariance?.breakdown && Object.entries(closeDayVariance.breakdown).map(([key, value]) => {
-              const isVariance = key === 'variance';
-              const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, c => c.toUpperCase());
-              const num = Number(value);
-              return (
-                <div
-                  key={key}
-                  className={`flex items-center justify-between px-3 py-2 rounded-lg ${isVariance ? 'bg-red-50 border border-red-100' : 'bg-gray-50'}`}
-                >
-                  <span className={`text-sm ${isVariance ? 'font-semibold text-red-600' : 'text-gray-600'}`}>{label}</span>
-                  <span className={`text-sm font-mono ${isVariance ? 'font-bold text-red-600' : 'text-[#1E293B]'}`}>
-                    {Number.isFinite(num) ? num.toFixed(2) : String(value)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="px-6 pb-6 flex items-center justify-end gap-3">
-            <button
-              onClick={() => setCloseDayVariance(null)}
-              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-            >
-              Close
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <CloseDayVarianceDialog
+        open={!!closeDayVariance}
+        onOpenChange={(open) => { if (!open) setCloseDayVariance(null); }}
+        closeDayVariance={closeDayVariance}
+        onClose={() => setCloseDayVariance(null)}
+      />
 
       {/* Session Range Exclusion Confirmation — the selected/auto-resolved range
           leaves eligible sessions out of this Day Close; require explicit
           acknowledgement before resubmitting with acknowledgeExclusions=true. */}
-      <Dialog open={!!rangeExclusionConfirm} onOpenChange={(open) => { if (!open) setRangeExclusionConfirm(null); }}>
-        <DialogContent className="sm:max-w-lg border border-gray-200 shadow-2xl rounded-2xl p-0 overflow-hidden gap-0 bg-white [&>button:last-child]:hidden">
-          <div className="px-6 pt-6 pb-4 border-b border-gray-100">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-amber-50">
-                <AlertTriangle className="h-5 w-5 text-amber-500" />
-              </div>
-              <div>
-                <h2 className="text-base font-bold text-[#1E293B]">Sessions Outside Selected Range</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{rangeExclusionConfirm?.message}</p>
-              </div>
-            </div>
-          </div>
-          <div className="px-6 py-5 space-y-2 max-h-[50vh] overflow-y-auto">
-            {(rangeExclusionConfirm?.excludedSessions || []).map((s) => (
-              <div key={s.sessionId} className="flex items-center justify-between px-3 py-2 rounded-lg bg-amber-50 border border-amber-100 text-xs">
-                <span className="text-[#1E293B] font-medium">{s.sessionNo || `SESS-${s.sessionId}`} · {s.cashier || '—'}</span>
-                <span className="text-gray-500">{s.status}</span>
-              </div>
-            ))}
-          </div>
-          <div className="px-6 pb-6 flex items-center justify-end gap-3">
-            <button
-              onClick={() => setRangeExclusionConfirm(null)}
-              className="h-10 px-5 text-sm font-medium text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => handleCloseDay(true)}
-              className="h-10 px-5 text-sm font-medium text-[#1E293B] bg-[#F5C742] hover:bg-[#e6b838] rounded-xl transition-colors"
-            >
-              Close Day Anyway
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <RangeExclusionConfirmDialog
+        open={!!rangeExclusionConfirm}
+        onOpenChange={(open) => { if (!open) setRangeExclusionConfirm(null); }}
+        rangeExclusionConfirm={rangeExclusionConfirm}
+        onCancel={() => setRangeExclusionConfirm(null)}
+        onConfirm={() => handleCloseDay(true)}
+      />
 
       {/* Lock POS Dialog */}
-      <Dialog open={showLockPOS} onOpenChange={v => { if (!v) { setShowLockPOS(false); setLockPOSPin(''); } }}>
-        <DialogContent className="max-w-sm border-0 shadow-2xl bg-white">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Lock className="h-5 w-5 text-[#F5C742]" /> Lock POS</DialogTitle>
-            <DialogDescription>Enter a PIN to lock the POS terminal. Staff will need to enter this PIN to continue.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 py-3">
-            <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Set PIN (4–6 digits)</label>
-            <Input type="password" placeholder="Enter PIN…" value={lockPOSPin} onChange={e => setLockPOSPin(e.target.value)} maxLength={6} className="h-11 text-center text-xl tracking-widest border-gray-200" />
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setShowLockPOS(false)} className="border-gray-200">Cancel</Button>
-            <Button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-semibold" onClick={() => { if (lockPOSPin.length >= 4) { setPosLocked(true); setShowLockPOS(false); } }}>
-              <Lock className="h-4 w-4 mr-2" />Lock Terminal
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <LockPosDialog
+        open={showLockPOS}
+        onOpenChange={v => {
+          if (!v) {
+            setShowLockPOS(false);
+            setLockPOSPin('');
+          }
+        }}
+        pin={lockPOSPin}
+        onPinChange={e => setLockPOSPin(e.target.value)}
+        onCancel={() => setShowLockPOS(false)}
+        onLock={() => {
+          if (lockPOSPin.length >= 4) {
+            setPosLocked(true);
+            setShowLockPOS(false);
+          }
+        }}
+      />
 
       {/* POS Locked Overlay */}
       {posLocked && (
-        <div className="fixed inset-0 z-[100] bg-[#1E293B] flex flex-col items-center justify-center gap-6">
-          <div className="w-20 h-20 rounded-full bg-[#F5C742]/10 border-2 border-[#F5C742] flex items-center justify-center">
-            <Lock className="h-10 w-10 text-[#F5C742]" />
-          </div>
-          <h2 className="text-white text-2xl font-bold">POS Terminal Locked</h2>
-          <p className="text-gray-400 text-sm">Enter your PIN to unlock</p>
-          <div className="w-64 space-y-3">
-            <Input type="password" placeholder="Enter PIN..." value={unlockPin} onChange={e => setUnlockPin(e.target.value)}
-              className="text-center text-lg bg-white/10 border-white/20 text-white placeholder-gray-500" />
-            <Button className="w-full bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold"
-              onClick={() => { if (unlockPin === lockPOSPin) { setPosLocked(false); setUnlockPin(''); setLockPOSPin(''); } else { setUnlockPin(''); } }}>
-              Unlock
-            </Button>
-          </div>
-        </div>
+        <PosLockedOverlay
+          unlockPin={unlockPin}
+          onUnlockPinChange={e => setUnlockPin(e.target.value)}
+          onUnlock={() => {
+            if (unlockPin === lockPOSPin) {
+              setPosLocked(false);
+              setUnlockPin('');
+              setLockPOSPin('');
+            } else {
+              setUnlockPin('');
+            }
+          }}
+        />
       )}
 
       {/* Credit Card Balance Dialog */}
@@ -12273,7 +8583,7 @@ export default function POSSales() {
                 const full = reprintResult.invoice;
                 openCashDrawer('RECEIPT_PRINT');
                 if (tplInvoicePaper === 'A4') {
-                  const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(full));
+                  const template = resolveInvoiceA4TemplateFor(full);
                   const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                   const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                   printHtml(await generatePrintHtmlAsync(template, data, options));
@@ -12773,36 +9083,13 @@ export default function POSSales() {
         );
       })()}
 
-      {/* Cash Drop feedback toast */}
-      {cashDropFeedback && (
-        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium transition-all ${cashDropFeedback.type === 'success' ? 'bg-[#327F74] text-white' : 'bg-red-500 text-white'}`}>
-          {cashDropFeedback.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
-          {cashDropFeedback.message}
-        </div>
-      )}
-
-      {/* Share Receipt feedback toast */}
-      {receiptShareFeedback && (
-        <div
-          role="status"
-          className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[220] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium ${receiptShareFeedback.type === 'success' ? 'bg-[#327F74] text-white' : 'bg-red-500 text-white'}`}
-        >
-          {receiptShareFeedback.type === 'success' ? <CheckCircle className="h-4 w-4 shrink-0" /> : <XCircle className="h-4 w-4 shrink-0" />}
-          {receiptShareFeedback.message}
-        </div>
-      )}
-
-      {/* Print fallback toast — explains why a browser print-preview just opened
-          (no printer configured, or the configured one/agent didn't respond). */}
-      {printFeedback && (
-        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium max-w-md ${printFeedback.type === 'warning' ? 'bg-amber-500 text-gray-900' : 'bg-red-500 text-white'}`}>
-          <Printer className="h-4 w-4 shrink-0" />
-          <span>{printFeedback.message}</span>
-          <button type="button" onClick={() => setPrintFeedback(null)} className="ml-1 shrink-0 opacity-80 hover:opacity-100">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      )}
+      {/* Cash Drop / Share Receipt / Print fallback feedback toasts */}
+      <PosFeedbackToasts
+        cashDropFeedback={cashDropFeedback}
+        receiptShareFeedback={receiptShareFeedback}
+        printFeedback={printFeedback}
+        onDismissPrintFeedback={() => setPrintFeedback(null)}
+      />
 
       {/* Reprint Confirm Popup */}
       <Dialog open={reprintConfirmOpen} onOpenChange={setReprintConfirmOpen}>
@@ -13296,573 +9583,79 @@ export default function POSSales() {
       </Dialog>
 
       {/* ─── PRICE CHECK MODAL ─── */}
-      {showPriceCheck && (() => {
-        const foundProduct = priceCheckResult && priceCheckResult !== 'searching' && priceCheckResult !== 'notfound' ? priceCheckResult : null;
-        const vatRate = foundProduct ? toNumber(foundProduct.salesTax, 5) : 5;
-        const basePrice = foundProduct ? toNumber(foundProduct.price, 0) : 0;
-        const discountPct = foundProduct ? toNumber(foundProduct.defaultDiscount, 0) : 0;
-        const discountedPrice = basePrice * (1 - discountPct / 100);
-        const finalPrice = discountedPrice * (1 + vatRate / 100);
-        const doSearch = async () => {
-          const q = priceCheckQuery.trim();
-          if (!q) { setPriceCheckResult('notfound'); return; }
-          setPriceCheckResult('searching');
-          try {
-            // Try unified resolver first (handles barcode, batch, product code)
-            const resolved = await resolvePosEntry(q);
-            if (resolved?.type === 'PRODUCT' && resolved.product) {
-              setPriceCheckResult(mapPosProductAggregateItem(resolved.product, q));
-              return;
-            }
-            // Fallback: name/keyword search via product list
-            const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
-            const searchData = await getProductsList(0, 1, q, undefined, null, null, null, true, posBranchId);
-            if (Array.isArray(searchData?.content) && searchData.content.length > 0) {
-              setPriceCheckResult(mapPosProductListItem(searchData.content[0]));
-              return;
-            }
-            setPriceCheckResult('notfound');
-          } catch { setPriceCheckResult('notfound'); }
-        };
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setShowPriceCheck(false)} />
-            <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
-                <div>
-                  <div className="flex items-center gap-2.5"><Search className="h-5 w-5 text-cyan-600" /><span className="text-lg font-bold text-[#1E293B]">Price Check</span></div>
-                  <p className="text-sm text-gray-500 mt-1">Scan or search an item to check price, stock, barcode, and product details.</p>
-                </div>
-                <button onClick={() => setShowPriceCheck(false)} className="text-gray-400 hover:text-[#1E293B] transition-colors"><X className="h-6 w-6" /></button>
-              </div>
-              {/* Search */}
-              <div className="bg-white border-b border-gray-100 px-6 py-4 flex gap-3 shrink-0">
-                <div className="relative flex-1">
-                  <AsyncSearchableDropdown
-                    value={null}
-                    inputValue={priceCheckQuery}
-                    onInputChange={setPriceCheckQuery}
-                    placeholder="Scan barcode or type item name / code..."
-                    fetchOptions={async (query) => {
-                      if (!query) return [];
-                      try {
-                        const resolved = await resolvePosEntry(query);
-                        if (resolved?.type === 'PRODUCT' && resolved.product) {
-                          return [mapPosProductAggregateItem(resolved.product, query)];
-                        }
-                        const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
-                        const searchData = await getProductsList(0, 10, query, undefined, null, null, null, true, posBranchId);
-                        if (Array.isArray(searchData?.content)) {
-                          return searchData.content.map(p => mapPosProductListItem(p));
-                        }
-                      } catch { return []; }
-                      return [];
-                    }}
-                    renderOption={(opt, active) => (
-                      <div className="flex items-center gap-3 p-2">
-                        {opt.image ? (
-                          <img src={opt.image.startsWith('data:') || opt.image.startsWith('http') ? opt.image : `data:image/jpeg;base64,${opt.image}`} alt="" className="w-10 h-10 object-cover rounded" />
-                        ) : (
-                          <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center shrink-0"><Search className="h-5 w-5 text-gray-400" /></div>
-                        )}
-                        <div className="flex-1 overflow-hidden">
-                          <p className="font-bold text-sm text-gray-900 leading-tight truncate">{opt.name}</p>
-                          <p className="text-xs text-gray-500 leading-tight truncate">{opt.code} {opt.barcode ? `| ${opt.barcode}` : ''}</p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="font-bold text-[#327F74] text-sm">{opt.price} AED</p>
-                          <p className="text-[10px] text-gray-500">Stock: {opt.stock}</p>
-                        </div>
-                      </div>
-                    )}
-                    onSelect={(opt) => {
-                      if (opt) {
-                        setPriceCheckQuery(opt.name || opt.code || '');
-                        setPriceCheckResult(opt);
-                      }
-                    }}
-                    className="w-full text-base"
-                    debounceMs={300}
-                  />
-                </div>
-                <button onClick={doSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm font-semibold px-5 py-2.5 rounded-xl flex items-center gap-2 transition-colors shrink-0"><Search className="h-4 w-4" />Search</button>
-                <button onClick={() => { setPriceCheckQuery(''); setPriceCheckResult(null); }} className="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors shrink-0">Clear</button>
-              </div>
-              <div className="overflow-auto flex-1 p-6">
-                {priceCheckResult === null && (
-                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
-                    <Search className="h-12 w-12 text-gray-300 mb-4" />
-                    <p className="text-sm font-medium text-gray-500">Scan a barcode or type an item name to check price and availability.</p>
-                  </div>
-                )}
-                {priceCheckResult === 'searching' && (
-                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
-                    <div className="w-10 h-10 border-4 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin mb-4" />
-                    <p className="text-sm font-medium text-gray-500">Searching...</p>
-                  </div>
-                )}
-                {priceCheckResult === 'notfound' && (
-                  <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
-                    <AlertCircle className="h-12 w-12 text-red-300 mb-4" />
-                    <p className="text-sm font-medium text-gray-500">No item found for the scanned barcode or search keyword.</p>
-                  </div>
-                )}
-                {foundProduct && (
-                  <div className="space-y-4">
-                    <div className="bg-white border border-[#327F74]/20 rounded-2xl p-5 flex flex-col md:flex-row gap-6 shadow-sm">
-                      {/* Left: Image & Details */}
-                      <div className="flex flex-col sm:flex-row flex-1 gap-5">
-                        <div className="w-28 h-28 shrink-0 rounded-xl overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
-                          {foundProduct.image
-                            ? <img src={foundProduct.image} className="w-full h-full object-cover" alt={foundProduct.name} />
-                            : <ShoppingCart className="w-8 h-8 text-gray-300" />}
-                        </div>
-                        <div className="flex-1 flex flex-col justify-center space-y-3">
-                          <div>
-                            <h3 className="text-lg font-bold text-[#1E293B] leading-tight">{foundProduct.name}</h3>
-                            <p className="text-sm text-gray-500 mt-1">{foundProduct.departmentName || 'General Department'}</p>
-                          </div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm mt-1">
-                            <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Item Code</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.code}</span></div>
-                            <div className="flex flex-col"><span className="text-[11px] text-gray-400 font-bold uppercase tracking-wider">Barcode</span><span className="font-mono text-[#1E293B] font-semibold mt-0.5">{foundProduct.barcode}</span></div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right: Pricing & Stock */}
-                      <div className="md:w-64 shrink-0 bg-gray-50 rounded-xl p-4 flex flex-col justify-center border border-gray-100 relative">
-                        <div className="absolute -top-3 right-4">
-                          <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full shadow-sm border ${foundProduct.stock > 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                            {foundProduct.stock > 0 ? `${foundProduct.stock} in Stock` : 'Out of Stock'}
-                          </span>
-                        </div>
-
-                        <div className="text-center mt-3 mb-4">
-                          <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1">Selling Price</p>
-                          <div className="text-3xl font-black text-[#327F74] flex items-center justify-center gap-1">
-                            <DirhamSymbol /> {finalPrice.toFixed(2)}
-                          </div>
-                          <p className="text-[10px] text-gray-500 mt-1.5 font-medium">VAT {vatRate}% Included</p>
-                        </div>
-
-                        <div className="space-y-1.5 pt-3 border-t border-gray-200">
-                          <div className="flex justify-between text-[11px] font-semibold">
-                            <span className="text-gray-500">Base Price:</span>
-                            <span className="text-[#1E293B]"><DirhamSymbol /> {basePrice.toFixed(2)}</span>
-                          </div>
-                          {discountPct > 0 && (
-                            <div className="flex justify-between text-[11px] text-orange-600 font-bold">
-                              <span>Discount ({discountPct}%):</span>
-                              <span>−<DirhamSymbol /> {(basePrice - discountedPrice).toFixed(2)}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="bg-gray-50 border-t border-gray-200 px-3 sm:px-6 py-4 flex flex-wrap justify-end gap-3 shrink-0">
-                <button onClick={() => setShowPriceCheck(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
-                {foundProduct && (
-                  <button onClick={() => { handleProductSelection(foundProduct); setShowPriceCheck(false); setPriceCheckQuery(''); setPriceCheckResult(null); }}
-                    className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] font-bold text-sm px-6 py-2.5 rounded-xl flex items-center gap-2 shadow-sm transition-colors">
-                    <Plus className="h-4 w-4" />Add to Cart
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {showPriceCheck && (
+        <PriceCheck
+          showPriceCheck={showPriceCheck}
+          setShowPriceCheck={setShowPriceCheck}
+          priceCheckQuery={priceCheckQuery}
+          setPriceCheckQuery={setPriceCheckQuery}
+          priceCheckResult={priceCheckResult}
+          setPriceCheckResult={setPriceCheckResult}
+          currentTerminal={currentTerminal}
+          currentSession={currentSession}
+          handleProductSelection={handleProductSelection}
+        />
+      )}
 
       {/* ─── SEARCH PRODUCTS MODAL ─── */}
       {showProductSearch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setShowProductSearch(false)} />
-          <div className="relative bg-[#F7F7FA] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="bg-white border-b border-[#327F74]/20 px-6 py-4 flex items-start justify-between shrink-0">
-              <div>
-                <div className="flex items-center gap-2.5"><Search className="h-5 w-5 text-cyan-600" /><span className="text-lg font-bold text-[#1E293B]">Search Products</span></div>
-                <p className="text-sm text-gray-500 mt-1">Search by item code, barcode, or product name — matches anywhere in the name.</p>
-              </div>
-              <button onClick={() => setShowProductSearch(false)} className="text-gray-400 hover:text-[#1E293B] transition-colors"><X className="h-6 w-6" /></button>
-            </div>
-            <div className="bg-white border-b border-gray-100 px-6 py-4 shrink-0">
-              <div className="relative">
-                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  autoFocus
-                  type="text"
-                  value={productSearchQuery}
-                  onChange={e => setProductSearchQuery(e.target.value)}
-                  placeholder="Type an item code, barcode, or any part of a product name..."
-                  className="w-full pl-10 pr-3 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-[#F5C742] focus:bg-white"
-                />
-              </div>
-            </div>
-            <div className="overflow-auto flex-1 p-6">
-              {!productSearchQuery.trim() && (
-                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
-                  <Search className="h-12 w-12 text-gray-300 mb-4" />
-                  <p className="text-sm font-medium text-gray-500">Start typing to search the product catalogue.</p>
-                </div>
-              )}
-              {productSearchQuery.trim() && productSearchLoading && (
-                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
-                  <div className="w-10 h-10 border-4 border-[#327F74]/20 border-t-[#327F74] rounded-full animate-spin mb-4" />
-                  <p className="text-sm font-medium text-gray-500">Searching...</p>
-                </div>
-              )}
-              {productSearchQuery.trim() && !productSearchLoading && productSearchResults.length === 0 && (
-                <div className="flex flex-col items-center justify-center h-48 text-center bg-white rounded-2xl border border-gray-100 border-dashed">
-                  <AlertCircle className="h-12 w-12 text-red-300 mb-4" />
-                  <p className="text-sm font-medium text-gray-500">No products match "{productSearchQuery.trim()}".</p>
-                </div>
-              )}
-              {!productSearchLoading && productSearchResults.length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {productSearchResults.map(product => (
-                    <button
-                      key={product.id}
-                      type="button"
-                      onClick={() => {
-                        const res = handleProductSelection(product, { quantity: 1 });
-                        if (res && res.ok === false) {
-                          showFeedback('error', res.reason || 'Could not add this item.');
-                          return;
-                        }
-                        if (res?.deferred) return;
-                        showFeedback('success', `${product.name} added`);
-                      }}
-                      className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-xl hover:border-[#F5C742] hover:shadow-md transition-all text-left"
-                    >
-                      <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
-                        {product.image
-                          ? <img src={product.image} className="w-full h-full object-cover" alt={product.name} />
-                          : <Package className="w-5 h-5 text-gray-300" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-[#1E293B] leading-tight truncate">{product.name}</p>
-                        <p className="text-[11px] font-mono text-gray-400 truncate">{product.code}{product.barcode ? ` | ${product.barcode}` : ''}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-bold text-[#327F74]">{formatCurrency(product.price)}</p>
-                        <p className={`text-[10px] font-bold ${product.stock > 10 ? 'text-green-600' : product.stock > 0 ? 'text-amber-600' : 'text-red-500'}`}>
-                          {product.stock > 0 ? `${product.stock} in stock` : 'Out of stock'}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="bg-gray-50 border-t border-gray-200 px-6 py-4 flex justify-end shrink-0">
-              <button onClick={() => setShowProductSearch(false)} className="bg-white border border-gray-300 text-gray-700 font-semibold text-sm px-6 py-2.5 rounded-xl hover:bg-gray-50 transition-colors">Close</button>
-            </div>
-          </div>
-        </div>
+        <ProductSearch
+          showProductSearch={showProductSearch}
+          setShowProductSearch={setShowProductSearch}
+          productSearchQuery={productSearchQuery}
+          setProductSearchQuery={setProductSearchQuery}
+          productSearchResults={productSearchResults}
+          productSearchLoading={productSearchLoading}
+          handleProductSelection={handleProductSelection}
+          showFeedback={showFeedback}
+          formatCurrency={formatCurrency}
+        />
       )}
 
       {/* ─── CREDIT BALANCE MODAL ─── */}
-      {showCreditBalance && (() => {
-        // creditBalanceResult: null | 'searching' | 'notfound' | { found, customer, outstanding, creditLimit, advanceBalance }
-        const data = creditBalanceResult && typeof creditBalanceResult === 'object' && creditBalanceResult.found ? creditBalanceResult : null;
-        const doCreditSearch = async () => {
-          const q = creditBalanceQuery.trim();
-          if (!q) { setCreditBalanceResult('notfound'); return; }
-          setCreditBalanceResult('searching');
-          try {
-            const res = await posCreditBalance(q);
-            setCreditBalanceResult(res.found ? res : 'notfound');
-          } catch { setCreditBalanceResult('notfound'); }
-        };
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setShowCreditBalance(false)} />
-            <div className="relative bg-[#F7F7FA] rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
-                <div>
-                  <div className="flex items-center gap-2"><Star className="h-4 w-4 text-violet-600" /><span className="text-base font-semibold text-[#1E293B]">Credit Balance / Advance Check</span></div>
-                  <p className="text-xs text-gray-500 mt-0.5">Search customer to view outstanding balance, credit limit, and advance (deposit) balance.</p>
-                </div>
-                <button onClick={() => setShowCreditBalance(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
-              </div>
-              <div className="bg-white border-b border-gray-100 px-5 py-3 flex gap-2 shrink-0 overflow-visible">
-                <div className="flex-1">
-                  <CustomerPicker
-                    customers={posCustomers}
-                    value={creditBalanceQuery}
-                    onChange={async (customerId) => {
-                      setCreditBalanceQuery(customerId || '');
-                      if (!customerId) {
-                        setCreditBalanceResult(null);
-                        return;
-                      }
-                      const c = posCustomers.find(x => x.id === customerId);
-                      if (!c) return;
-                      setCreditBalanceResult('searching');
-                      try {
-                        const res = await posCreditBalance(c.code || c.mobile || String(customerId));
-                        setCreditBalanceResult(res.found ? res : 'notfound');
-                      } catch { setCreditBalanceResult('notfound'); }
-                    }}
-                    placeholder="Search or select customer..."
-                  />
-                </div>
-                <button onClick={() => { setCreditBalanceQuery(''); setCreditBalanceResult(null); }} className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50">Clear</button>
-              </div>
-              <div className="overflow-auto flex-1 p-5">
-                {creditBalanceResult === null && <div className="flex flex-col items-center justify-center h-40 text-center"><Star className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Search customer to check balance.</p></div>}
-                {creditBalanceResult === 'searching' && <div className="flex flex-col items-center justify-center h-40 text-center"><div className="w-8 h-8 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin mb-3" /><p className="text-sm text-gray-400">Searching...</p></div>}
-                {creditBalanceResult === 'notfound' && <div className="flex flex-col items-center justify-center h-40 text-center"><AlertCircle className="h-10 w-10 text-gray-300 mb-3" /><p className="text-sm text-gray-500">No customer found for the scanned card.</p></div>}
-                {data && (
-                  <div className="space-y-4">
-                    {/* Customer Card */}
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <p className="font-semibold text-[#1E293B]">{data.customer.name}</p>
-                          <p className="text-xs text-gray-500">{data.customer.code}</p>
-                        </div>
-                        <span className={`text-xs rounded px-2 py-0.5 ${data.customer.status === 'Active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{data.customer.status || '—'}</span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                        {[['Mobile', data.customer.mobile || '—'], ['Email', data.customer.email || '—'], ['Type', data.customer.groupType || '—']].map(([k, v]) => (
-                          <div key={k}><span className="text-gray-400">{k}:</span><span className="ml-1 text-[#1E293B]">{v}</span></div>
-                        ))}
-                      </div>
-                    </div>
-                    {/* KPI Cards */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {[
-                        { label: 'Outstanding', val: <CurrencyAmount amount={toNumber(data.outstanding, 0)} />, sub: 'unpaid invoices', color: 'text-red-600' },
-                        { label: 'Credit Limit', val: <CurrencyAmount amount={toNumber(data.creditLimit, 0)} />, sub: 'approved limit', color: 'text-[#327F74]' },
-                        { label: 'Advance Balance', val: <CurrencyAmount amount={toNumber(data.advanceBalance, 0)} />, sub: 'available deposit', color: 'text-violet-600' },
-                      ].map(k => (
-                        <div key={k.label} className="bg-white border border-[#327F74]/20 rounded-lg p-4 text-center shadow-sm">
-                          <p className="text-[11px] text-gray-400 mb-1">{k.label}</p>
-                          <p className={`text-lg font-bold ${k.color}`}>{k.val}</p>
-                          <p className="text-[10px] text-gray-400">{k.sub}</p>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Credit limit utilisation bar */}
-                    {toNumber(data.creditLimit, 0) > 0 && (() => {
-                      const pct = Math.min(100, (toNumber(data.outstanding, 0) / toNumber(data.creditLimit, 0)) * 100);
-                      const color = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-400' : 'bg-[#327F74]';
-                      return (
-                        <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
-                          <div className="flex justify-between text-xs text-gray-500 mb-1">
-                            <span>Credit utilisation</span>
-                            <span>{pct.toFixed(0)}%</span>
-                          </div>
-                          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${pct}%` }} />
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-              </div>
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
-                <button onClick={() => setShowCreditBalance(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Close</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {showCreditBalance && (
+        <CreditBalance
+          showCreditBalance={showCreditBalance}
+          setShowCreditBalance={setShowCreditBalance}
+          creditBalanceQuery={creditBalanceQuery}
+          setCreditBalanceQuery={setCreditBalanceQuery}
+          creditBalanceResult={creditBalanceResult}
+          setCreditBalanceResult={setCreditBalanceResult}
+          posCustomers={posCustomers}
+        />
+      )}
 
       {/* ─── LAYAWAYS LIST MODAL ─── */}
-      {showLayawaysList && (() => {
-        // Server filters the list; map entity rows to the view shape the table uses.
-        const filtered = (layawaysList || []).map(l => {
-          const eff = l.effectiveStatus || l.status;
-          const created = l.createdAt ? new Date(l.createdAt) : null;
-          return {
-            id: l.layawayNumber,
-            entityId: l.id,
-            date: created ? created.toLocaleDateString() : '—',
-            time: created ? created.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-            customer: l.customerName || l.customerCode || '—',
-            cashier: l.cashierName || '—',
-            items: (l.items || []).length,
-            saleAmt: l.saleTotal || 0,
-            deposit: l.depositAmount || 0,
-            balance: l.balanceAmount || 0,
-            due: l.dueDate || '—',
-            status: STATUS_ENUM_TO_LABEL[eff] || eff,
-            isOpen: eff === 'ACTIVE' || eff === 'PARTIALLY_PAID' || eff === 'READY_TO_CONVERT',
-            hold: !!l.hold,
-            raw: l,
-          };
-        });
-        const selected = filtered.find(l => l.entityId === selectedLayawayId) || null;
-        const statusColor = (s) => ({ Active: 'bg-green-100 text-green-700', 'Partially Paid': 'bg-blue-100 text-blue-700', 'Ready to Convert': 'bg-[#F5C742]/20 text-amber-700', 'Converted to Sale': 'bg-gray-100 text-gray-600', Cancelled: 'bg-red-100 text-red-600', Expired: 'bg-red-50 text-red-500' }[s] || 'bg-gray-100 text-gray-500');
-        return (
-          <div className="fixed inset-0 z-50 flex">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setShowLayawaysList(false)} />
-            <div className="relative ml-auto w-full max-w-5xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
-                <div>
-                  <div className="flex items-center gap-2"><Pause className="h-4 w-4 text-amber-500" /><span className="text-base font-semibold text-[#1E293B]">Layaways</span></div>
-                  <p className="text-xs text-gray-500 mt-0.5">View and manage all sales reserved using Save Layaway.</p>
-                </div>
-                <button onClick={() => setShowLayawaysList(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
-              </div>
-              {/* Filters */}
-              <div className="bg-white border-b border-gray-100 px-5 py-2.5 flex flex-wrap gap-2 items-end shrink-0">
-                <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Layaway No.</label><input value={layawaysFilterNo} onChange={e => setLayawaysFilterNo(e.target.value)} placeholder="LAY-..." className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Customer</label><input value={layawaysFilterCustomer} onChange={e => setLayawaysFilterCustomer(e.target.value)} placeholder="Name / Mobile" className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-32 focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></div>
-                <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Status</label>
-                  <select value={layawaysFilterStatus} onChange={e => setLayawaysFilterStatus(e.target.value)} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                    {['All', 'Active', 'Partially Paid', 'Ready to Convert', 'Converted to Sale', 'Cancelled', 'Expired'].map(o => <option key={o}>{o}</option>)}
-                  </select>
-                </div>
-                <button onClick={() => loadLayaways()} className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />Search</button>
-                <button onClick={() => { setLayawaysFilterStatus('All'); setLayawaysFilterCustomer(''); setLayawaysFilterNo(''); setTimeout(loadLayaways, 0); }} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
-                <button onClick={() => { setShowLayawaysList(false); setShowSaveLayaway(true); }} className="mt-auto ml-auto bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />New Layaway</button>
-              </div>
-              <div className="flex flex-col lg:flex-row flex-1 min-h-0">
-                <div className={`flex flex-col w-full min-h-0 overflow-hidden ${selected ? 'lg:w-[55%] max-h-[50vh] lg:max-h-none' : 'lg:w-full'} lg:border-r border-b lg:border-b-0 border-[#327F74]/10`}>
-                  <div className="overflow-auto flex-1">
-                    {layawaysLoading ? (
-                      <div className="flex flex-col items-center justify-center h-48 text-center"><RefreshCw className="h-8 w-8 text-gray-300 mb-3 animate-spin" /><p className="text-sm text-gray-400">Loading layaways…</p></div>
-                    ) : layawaysError ? (
-                      <div className="flex flex-col items-center justify-center h-48 text-center"><AlertTriangle className="h-8 w-8 text-red-300 mb-3" /><p className="text-sm text-red-500">{layawaysError}</p></div>
-                    ) : filtered.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-48 text-center"><Archive className="h-10 w-10 text-gray-200 mb-3" /><p className="text-sm text-gray-400">No layaways found.</p></div>
-                    ) : (
-                      <div className="overflow-x-auto">
-                      <table className="w-full min-w-[900px] text-xs">
-                        <thead className="sticky top-0 bg-[#F7F7FA] z-10 border-b border-[#327F74]/10">
-                          <tr className="text-gray-500">{['Layaway No.', 'Date & Time', 'Customer', 'Cashier', 'Items', 'Sale Amt', 'Deposit', 'Balance', 'Due Date', 'Status', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2 text-left font-medium ${i >= 4 && i <= 7 ? 'text-right' : ''} ${i === 10 ? 'text-center' : ''}`}>{h}</th>)}</tr>
-                        </thead>
-                        <tbody>
-                          {filtered.map(l => (
-                            <tr key={l.entityId} onClick={() => setSelectedLayawayId(l.entityId === selectedLayawayId ? null : l.entityId)}
-                              className={`border-b border-gray-50 cursor-pointer transition-colors ${l.status === 'Expired' ? 'bg-red-50/30' : ''} ${l.entityId === selectedLayawayId ? 'bg-[#FFF8DC] border-l-2 border-l-[#F5C742]' : 'hover:bg-white'}`}>
-                              <td className="px-3 py-2 font-semibold text-[#1E293B] whitespace-nowrap">
-                                {l.id}
-                                {l.hold && <span className="ml-1.5 text-[9px] uppercase tracking-wide rounded px-1 py-0.5 bg-purple-100 text-purple-700">Hold</span>}
-                              </td>
-                              <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{l.date}</td>
-                              <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{l.customer}</td>
-                              <td className="px-3 py-2 text-gray-500">{l.cashier}</td>
-                              <td className="px-3 py-2 text-right">{l.items}</td>
-                              <td className="px-3 py-2 text-right font-semibold"><CurrencyAmount amount={l.saleAmt} /></td>
-                              <td className="px-3 py-2 text-right text-green-700"><CurrencyAmount amount={l.deposit} /></td>
-                              <td className="px-3 py-2 text-right text-red-600"><CurrencyAmount amount={l.balance} /></td>
-                              <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{l.due}</td>
-                              <td className="px-3 py-2"><span className={`text-[10px] rounded px-1.5 py-0.5 ${statusColor(l.status)}`}>{l.status}</span></td>
-                              <td className="px-3 py-2">
-                                <div className="flex items-center justify-center gap-1">
-                                  <button onClick={e => { e.stopPropagation(); setSelectedLayawayId(l.entityId); }} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
-                                  {l.isOpen && <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-[10px] px-1.5 py-0.5 rounded" onClick={e => { e.stopPropagation(); startLayawayConversion(l.entityId); }}>Convert</button>}
-                                  {l.isOpen && <button disabled={layawayBusyId === l.entityId} className="border border-red-300 text-red-600 text-[10px] px-1.5 py-0.5 rounded hover:bg-red-50 disabled:opacity-40" onClick={e => { e.stopPropagation(); handleCancelLayaway(l.entityId); }}>{layawayBusyId === l.entityId ? '…' : 'Delete'}</button>}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {selected && (
-                  <div className="w-full lg:w-[45%] flex flex-col bg-white overflow-hidden min-h-0">
-                    <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
-                      <span className="text-xs font-semibold text-[#1E293B]">{selected.id}</span>
-                      <button onClick={() => setSelectedLayawayId(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
-                    </div>
-                    <div className="overflow-auto flex-1 p-4 space-y-3 text-xs">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                        {[['Customer', selected.customer], ['Cashier', selected.cashier], ['Sale Amount', <CurrencyAmount amount={selected.saleAmt} />], ['Deposit Paid', <CurrencyAmount amount={selected.deposit} />], ['Balance Due', <CurrencyAmount amount={selected.balance} />], ['Due Date', selected.due], ['Status', selected.status], ['Created', selected.date + ' ' + selected.time]].map(([k, v]) => (
-                          <div key={k} className="flex gap-1"><span className="text-gray-400 w-24 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
-                        ))}
-                      </div>
-                      {selected.raw?.remarks && (
-                        <div className="text-[11px] text-gray-500 bg-[#F7F7FA] rounded p-2"><span className="font-semibold text-[#1E293B]">Remarks: </span>{selected.raw.remarks}</div>
-                      )}
-                      <div className="border-t border-gray-100 pt-2">
-                        <p className="text-xs font-semibold text-[#1E293B] mb-1">Reserved Items</p>
-                        {(!selectedLayawayDetail || selectedLayawayDetail.id !== selected.entityId) ? (
-                          <p className="text-[11px] text-gray-400 py-2">Loading items…</p>
-                        ) : (
-                          <table className="w-full text-xs">
-                            <thead><tr className="text-gray-400">{['Item', 'Qty', 'Rate', 'Amount'].map(h => <th key={h} className={`py-0.5 text-left ${h !== 'Item' ? 'text-right' : ''}`}>{h}</th>)}</tr></thead>
-                            <tbody>
-                              {(selectedLayawayDetail.items || []).map((it, i) => (
-                                <tr key={i} className="border-t border-gray-50">
-                                  <td className="py-1 text-[#1E293B]">{it.itemName}{it.pinnedBatchNumber && <span className="ml-1 text-[9px] text-amber-600">[{it.pinnedBatchNumber}]</span>}</td>
-                                  <td className="py-1 text-right text-[#1E293B]">{it.quantity}</td>
-                                  <td className="py-1 text-right text-[#1E293B]"><CurrencyAmount amount={it.price || 0} /></td>
-                                  <td className="py-1 text-right text-[#1E293B]"><CurrencyAmount amount={(it.price || 0) * (it.quantity || 0) * (1 - (it.discount || 0) / 100)} /></td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
-                      </div>
-                    </div>
-                    <div className="border-t border-[#327F74]/10 p-3 flex flex-wrap gap-2 shrink-0">
-                      {selected.isOpen && <button onClick={() => startLayawayConversion(selected.entityId)} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Zap className="h-3 w-3" />Convert to Sale</button>}
-                      {selected.isOpen && <button disabled={layawayBusyId === selected.entityId} onClick={() => handleCancelLayaway(selected.entityId)} className="border border-red-300 text-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-50 flex items-center gap-1 disabled:opacity-40"><XCircle className="h-3 w-3" />{layawayBusyId === selected.entityId ? 'Cancelling…' : 'Cancel'}</button>}
-                      {selected.raw?.convertedInvoiceNumber && <span className="text-[11px] text-gray-500 self-center">Converted → {selected.raw.convertedInvoiceNumber}</span>}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="bg-white border-t border-[#327F74]/10 px-5 py-2.5 flex justify-end shrink-0">
-                <button onClick={() => setShowLayawaysList(false)} className="border border-gray-300 text-gray-600 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {showLayawaysList && (
+        <LayawaysList
+          showLayawaysList={showLayawaysList}
+          setShowLayawaysList={setShowLayawaysList}
+          layawaysFilterStatus={layawaysFilterStatus}
+          setLayawaysFilterStatus={setLayawaysFilterStatus}
+          layawaysFilterCustomer={layawaysFilterCustomer}
+          setLayawaysFilterCustomer={setLayawaysFilterCustomer}
+          layawaysFilterNo={layawaysFilterNo}
+          setLayawaysFilterNo={setLayawaysFilterNo}
+          selectedLayawayId={selectedLayawayId}
+          setSelectedLayawayId={setSelectedLayawayId}
+          layawaysList={layawaysList}
+          layawaysLoading={layawaysLoading}
+          layawaysError={layawaysError}
+          selectedLayawayDetail={selectedLayawayDetail}
+          layawayBusyId={layawayBusyId}
+          loadLayaways={loadLayaways}
+          startLayawayConversion={startLayawayConversion}
+          handleCancelLayaway={handleCancelLayaway}
+          setShowSaveLayaway={setShowSaveLayaway}
+        />
+      )}
 
       {/* ─── CONFIRM ACTION MODAL ─── */}
       {confirmAction && (
-        <div className="fixed inset-0 z-[700] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => !confirmAction.busy && setConfirmAction(null)} />
-          <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95">
-            <div className="p-6 text-center">
-              <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-                <AlertTriangle className="h-7 w-7 text-red-500" />
-              </div>
-              <h3 className="text-lg font-bold text-[#1E293B] mb-1">{confirmAction.title}</h3>
-              <p className="text-sm text-gray-500">{confirmAction.message}</p>
-              {confirmAction.error && (
-                <div className="mt-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-600 font-medium">
-                  {confirmAction.error}
-                </div>
-              )}
-            </div>
-            <div className="flex border-t border-gray-100">
-              <button
-                onClick={() => setConfirmAction(null)}
-                disabled={confirmAction.busy}
-                className="flex-1 py-3 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-40"
-              >
-                Cancel
-              </button>
-              <div className="w-px bg-gray-100" />
-              <button
-                onClick={confirmAction.onConfirm}
-                disabled={confirmAction.busy}
-                className="flex-1 py-3 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
-              >
-                {confirmAction.busy ? (
-                  <><RefreshCw className="h-3.5 w-3.5 animate-spin" />Deleting…</>
-                ) : (
-                  <><Trash2 className="h-3.5 w-3.5" />Delete</>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmAction
+          confirmAction={confirmAction}
+          setConfirmAction={setConfirmAction}
+        />
       )}
 
       {/* ─── SAVE LAYAWAY MODAL ─── */}
@@ -14164,866 +9957,54 @@ export default function POSSales() {
       </Dialog>
 
       {/* ─── SERIAL / BATCH CHECK MODAL ─── */}
-      {showSerialBatch && (() => {
-        // serialBatchResult: null | 'searching' | 'notfound' | { results, total }
-        const results = serialBatchResult && typeof serialBatchResult === 'object' ? serialBatchResult.results || [] : [];
-        const hasResults = results.length > 0;
-        const selectedItem = serialBatchSelectedItem;
-        const isConvert = serialBatchSubView === 'convert';
-        const isService = serialBatchSubView === 'service';
-        const doBatchSearch = async () => {
-          const q = serialBatchQuery.trim();
-          const inv = serialBatchInvoiceNo.trim();
-          const ic = serialBatchItemCode.trim();
-          const mob = serialBatchCustomerMobile.trim();
-          if (!q && !inv && !ic && !mob) { setSerialBatchResult('notfound'); return; }
-          setSerialBatchResult('searching');
-          setSerialBatchSelectedItem(null);
-          try {
-            const res = await posBatchCheck({ batchNumber: q, invoiceNumber: inv, itemCode: ic, customerMobile: mob });
-            setSerialBatchResult(res.total > 0 ? res : 'notfound');
-          } catch { setSerialBatchResult('notfound'); }
-        };
-        const resetBatchSearch = () => {
-          setSerialBatchQuery(''); setSerialBatchInvoiceNo(''); setSerialBatchItemCode('');
-          setSerialBatchCustomerMobile(''); setSerialBatchResult(null); setSerialBatchSelectedItem(null);
-        };
-        const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-        const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
-        return (
-          <div className="fixed inset-0 z-50 flex">
-            <div className="absolute inset-0 bg-black/50" onClick={() => setShowSerialBatch(false)} />
-            <div className="relative ml-auto w-full max-w-3xl bg-[#F7F7FA] flex flex-col shadow-2xl h-full overflow-hidden">
-              {/* Header */}
-              <div className="bg-white border-b border-[#327F74]/20 px-5 py-3 flex items-start justify-between shrink-0">
-                <div>
-                  <div className="flex items-center gap-2">
-                    {isConvert && <button onClick={() => setSerialBatchSubView('check')} className="text-gray-400 hover:text-[#327F74]"><ChevronRight className="h-4 w-4 rotate-180" /></button>}
-                    {isService && <button onClick={() => setSerialBatchSubView('check')} className="text-gray-400 hover:text-[#327F74]"><ChevronRight className="h-4 w-4 rotate-180" /></button>}
-                    <Hash className="h-4 w-4 text-teal-600" />
-                    <span className="text-base font-semibold text-[#1E293B]">{isConvert ? 'Convert to Return' : isService ? 'Create Service Job' : 'Serial / Batch Check'}</span>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-0.5">{isConvert ? 'Process return for this serial/batch item.' : isService ? 'Create a service repair job for this item.' : 'Search sold batch or serial items, view invoice details, and convert eligible items to return.'}</p>
-                </div>
-                <button onClick={() => setShowSerialBatch(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
-              </div>
-
-              {/* ── CHECK VIEW ── */}
-              {!isConvert && !isService && (
-                <>
-                  {/* Search */}
-                  <div className="bg-white border-b border-gray-100 px-5 py-3 space-y-2 shrink-0">
-                    <AsyncSearchableDropdown
-                      value={null}
-                      inputValue={serialBatchQuery}
-                      onInputChange={setSerialBatchQuery}
-                      placeholder="Scan or search batch number..."
-                      fetchOptions={async (query) => {
-                        if (!query) return [];
-                        try {
-                          const res = await posBatchCheck({ batchNumber: query, invoiceNumber: serialBatchInvoiceNo, itemCode: serialBatchItemCode, customerMobile: serialBatchCustomerMobile });
-                          if (res && res.results) {
-                            return res.results;
-                          }
-                        } catch { return []; }
-                        return [];
-                      }}
-                      renderOption={(opt, active) => (
-                        <div className="flex justify-between items-center p-2 border-b border-gray-50 last:border-0">
-                          <div>
-                            <p className="font-bold text-sm text-[#1E293B]">{opt.batchNumber}</p>
-                            <p className="text-xs text-gray-500">{opt.itemName}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-xs text-gray-700">Inv: {opt.invoiceNumber}</p>
-                            <p className="text-[10px] text-gray-400">Qty: {opt.soldQty}</p>
-                          </div>
-                        </div>
-                      )}
-                      onSelect={(opt) => {
-                        if (opt) {
-                          setSerialBatchQuery(opt.batchNumber || '');
-                          if (opt.invoiceNumber) setSerialBatchInvoiceNo(opt.invoiceNumber);
-                          if (opt.itemCode) setSerialBatchItemCode(opt.itemCode);
-                          setTimeout(() => doBatchSearch(), 50);
-                        }
-                      }}
-                      className="w-full text-sm"
-                      debounceMs={400}
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      <div className="flex-1 min-w-[140px]">
-                        <AsyncSearchableDropdown
-                          value={null}
-                          inputValue={serialBatchItemCode}
-                          onInputChange={setSerialBatchItemCode}
-                          placeholder="Item code / barcode"
-                          fetchOptions={async (query) => {
-                            if (!query) return [];
-                            try {
-                              const posBranchId = currentTerminal?.branchId || currentSession?.branchId;
-                              const res = await getProductsList(0, 5, query, undefined, null, null, null, true, posBranchId);
-                              return res?.content || [];
-                            } catch { return []; }
-                          }}
-                          renderOption={(opt) => (
-                            <div className="flex flex-col py-1">
-                              <span className="font-medium text-xs">{opt.itemName}</span>
-                              <span className="text-[10px] text-gray-500">{opt.itemCode} {opt.barcode ? `| ${opt.barcode}` : ''}</span>
-                            </div>
-                          )}
-                          onSelect={(opt) => {
-                            if (opt) {
-                              setSerialBatchItemCode(opt.itemCode || opt.barcode || '');
-                              setTimeout(() => doBatchSearch(), 50);
-                            }
-                          }}
-                          className="w-full text-xs"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-[140px]">
-                        <AsyncSearchableDropdown
-                          value={null}
-                          inputValue={serialBatchInvoiceNo}
-                          onInputChange={setSerialBatchInvoiceNo}
-                          placeholder="Invoice number"
-                          fetchOptions={async (query) => {
-                            if (!query) return [];
-                            try {
-                              const res = await getSalesInvoicesPage({ search: query, size: 5 });
-                              return res?.content || [];
-                            } catch { return []; }
-                          }}
-                          renderOption={(opt) => (
-                            <div className="flex justify-between py-1">
-                              <span className="font-medium text-xs">{opt.invoiceNumber}</span>
-                              <span className="text-[10px] text-gray-500">{opt.customerName || 'Walk-in'}</span>
-                            </div>
-                          )}
-                          onSelect={(opt) => {
-                            if (opt) {
-                              setSerialBatchInvoiceNo(opt.invoiceNumber || '');
-                              setTimeout(() => doBatchSearch(), 50);
-                            }
-                          }}
-                          className="w-full text-xs"
-                        />
-                      </div>
-                      <div className="flex-1 min-w-[120px]">
-                        <AsyncSearchableDropdown
-                          value={null}
-                          inputValue={serialBatchCustomerMobile}
-                          onInputChange={setSerialBatchCustomerMobile}
-                          placeholder="Customer mobile"
-                          fetchOptions={async (query) => {
-                            if (!query) return [];
-                            try {
-                              const res = await searchCustomersAllFields(query);
-                              return res || [];
-                            } catch { return []; }
-                          }}
-                          renderOption={(opt) => (
-                            <div className="flex flex-col py-1">
-                              <span className="font-medium text-xs">{opt.name}</span>
-                              <span className="text-[10px] text-gray-500">{opt.mobile || opt.email || ''}</span>
-                            </div>
-                          )}
-                          onSelect={(opt) => {
-                            if (opt) {
-                              setSerialBatchCustomerMobile(opt.mobile || opt.name || '');
-                              setTimeout(() => doBatchSearch(), 50);
-                            }
-                          }}
-                          className="w-full text-xs"
-                        />
-                      </div>
-                      <button onClick={doBatchSearch} className="bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1 shrink-0"><Search className="h-3 w-3" />Search</button>
-                      <button onClick={resetBatchSearch} className="border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1 shrink-0"><RotateCcw className="h-3 w-3" />Reset</button>
-                    </div>
-                  </div>
-                  <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden">
-                    {/* Results list */}
-                    <div className={`flex flex-col w-full min-h-0 overflow-hidden ${selectedItem ? 'lg:w-[45%] max-h-[50vh] lg:max-h-none border-b lg:border-b-0 lg:border-r border-[#327F74]/10' : 'lg:w-full'}`}>
-                      <div className="overflow-auto flex-1 p-5">
-                        {serialBatchResult === null && (
-                          <div className="flex flex-col items-center justify-center h-48 text-center"><Hash className="h-12 w-12 text-gray-200 mb-3" /><p className="text-sm text-gray-400">Scan or enter a batch number or invoice to search sold items.</p></div>
-                        )}
-                        {serialBatchResult === 'searching' && (
-                          <div className="flex flex-col items-center justify-center h-48 text-center"><div className="w-8 h-8 border-2 border-[#327F74] border-t-transparent rounded-full animate-spin mb-3" /><p className="text-sm text-gray-400">Searching...</p></div>
-                        )}
-                        {serialBatchResult === 'notfound' && (
-                          <div className="flex flex-col items-center justify-center h-48 text-center"><AlertCircle className="h-12 w-12 text-gray-300 mb-3" /><p className="text-sm text-gray-500">No sold batch item found.</p><p className="text-xs text-gray-400 mt-1">Try searching by invoice number or item code.</p></div>
-                        )}
-                        {hasResults && (
-                          <div className="space-y-2">
-                            {results.map((item, i) => (
-                              <div key={i} onClick={() => setSerialBatchSelectedItem(item)}
-                                className={`bg-white border rounded-lg p-3 shadow-sm cursor-pointer transition-colors ${selectedItem === item ? 'border-[#327F74] bg-[#F0FAF8]' : 'border-[#327F74]/20 hover:border-[#327F74]/50'}`}>
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <p className="font-semibold text-[#1E293B] text-sm truncate">{item.itemName}</p>
-                                    <p className="text-xs text-gray-500">{item.itemCode}{item.batchNumber ? ` · ${item.batchNumber}` : ''}</p>
-                                  </div>
-                                  <span className="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5 shrink-0">{item.status}</span>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5 mt-2 text-xs">
-                                  <div><span className="text-gray-400">Invoice: </span><span className="text-[#1E293B]">{item.invoiceNumber}</span></div>
-                                  <div><span className="text-gray-400">Date: </span><span className="text-[#1E293B]">{fmtDate(item.invoiceDate)}</span></div>
-                                  <div><span className="text-gray-400">Customer: </span><span className="text-[#1E293B]">{item.customerName || '—'}</span></div>
-                                  <div><span className="text-gray-400">Qty: </span><span className="text-[#1E293B]">{item.soldQty}</span></div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    {/* Detail panel */}
-                    {selectedItem && (
-                      <div className="flex-1 flex flex-col bg-white overflow-hidden min-h-0">
-                        <div className="px-4 py-2.5 bg-[#F7F7FA] border-b border-[#327F74]/10 flex items-center justify-between shrink-0">
-                          <span className="text-xs font-semibold text-[#1E293B]">{selectedItem.itemName}</span>
-                          <button onClick={() => setSerialBatchSelectedItem(null)} className="text-gray-400 hover:text-gray-600"><X className="h-3.5 w-3.5" /></button>
-                        </div>
-                        <div className="overflow-auto flex-1 p-4 space-y-3">
-                          <div className="bg-white border border-[#327F74]/20 rounded-lg p-3 shadow-sm">
-                            <p className="text-xs font-semibold text-[#1E293B] mb-2 flex items-center gap-1"><Package className="h-3.5 w-3.5 text-[#327F74]" />Item Details</p>
-                            <div className="space-y-0.5 text-xs">
-                              {[['Item Code', selectedItem.itemCode || '—'], ['Batch No.', selectedItem.batchNumber || '—'], ['Expiry', fmtDate(selectedItem.expiryDate)], ['Sold Qty', selectedItem.soldQty]].map(([k, v]) => (
-                                <div key={k} className="flex gap-1"><span className="text-gray-400 w-20 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="bg-white border border-[#327F74]/20 rounded-lg p-3 shadow-sm">
-                            <p className="text-xs font-semibold text-[#1E293B] mb-2 flex items-center gap-1"><FileText className="h-3.5 w-3.5 text-[#327F74]" />Invoice Details</p>
-                            <div className="space-y-0.5 text-xs">
-                              {[['Invoice No.', selectedItem.invoiceNumber], ['Date', fmtDateTime(selectedItem.invoiceCreatedAt || selectedItem.invoiceDate)], ['Customer', selectedItem.customerName || '—'], ['Cashier', selectedItem.cashierName || '—'], ['Branch', selectedItem.branchName || '—'], ['Payment', selectedItem.paymentMode || '—'], ['Item Net', <CurrencyAmount amount={selectedItem.itemNetAmount || 0} />], ['VAT', <CurrencyAmount amount={selectedItem.itemTaxAmount || 0} />]].map(([k, v]) => (
-                                <div key={k} className="flex gap-1"><span className="text-gray-400 w-20 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="border-t border-[#327F74]/10 p-3 flex flex-wrap gap-2 shrink-0">
-                          <button onClick={() => setSerialBatchSubView('convert')} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><RotateCcw className="h-3 w-3" />Convert to Return</button>
-                          <button onClick={() => setSerialBatchSubView('service')} className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Wrench className="h-3 w-3" />Create Service Job</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  {!selectedItem && (
-                    <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
-                      <button onClick={() => setShowSerialBatch(false)} className="border border-gray-300 text-gray-500 text-sm px-4 py-1.5 rounded hover:bg-gray-50">Close</button>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* ── CONVERT TO RETURN VIEW ── */}
-              {isConvert && (
-                <>
-                  <div className="overflow-auto flex-1 p-5 space-y-4">
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-2 text-xs">
-                      <p className="text-sm font-semibold text-[#1E293B] mb-2">Original Invoice &amp; Item</p>
-                      {[
-                        ['Original Invoice', selectedItem?.invoiceNumber || '—'],
-                        ['Invoice Date', selectedItem ? fmtDateTime(selectedItem.invoiceCreatedAt || selectedItem.invoiceDate) : '—'],
-                        ['Customer', selectedItem?.customerName || '—'],
-                        ['Item', selectedItem?.itemName || '—'],
-                        ['Item Code', selectedItem?.itemCode || '—'],
-                        ['Batch No.', selectedItem?.batchNumber || '—'],
-                        ['Sold Qty', selectedItem?.soldQty ?? '—'],
-                      ].map(([k, v]) => (
-                        <div key={k} className="flex gap-2 py-1 border-b border-gray-50 last:border-0"><span className="text-gray-400 w-36 shrink-0">{k}:</span><span className="text-[#1E293B] font-medium">{v}</span></div>
-                      ))}
-                    </div>
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-3">
-                      <p className="text-sm font-semibold text-[#1E293B]">Return Details</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Return Quantity (max: {selectedItem?.soldQty ?? 1})</label>
-                          <input type="number" min={1} max={selectedItem?.soldQty ?? 1} value={serialBatchReturnQty} onChange={e => setSerialBatchReturnQty(Math.min(selectedItem?.soldQty ?? 1, Math.max(1, parseInt(e.target.value) || 1)))} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Return Reason</label>
-                          <select value={serialBatchReturnReason} onChange={e => setSerialBatchReturnReason(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            <option value="">Select reason…</option>
-                            {['Damaged', 'Wrong item', 'Customer changed mind', 'Warranty claim', 'Defective item', 'Expired item', 'Other'].map(o => <option key={o}>{o}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Return Condition</label>
-                          <select value={serialBatchReturnCondition} onChange={e => setSerialBatchReturnCondition(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            <option value="">Select condition…</option>
-                            {['Resalable', 'Damaged', 'Defective', 'Warranty claim', 'Scrap', 'Needs service inspection'].map(o => <option key={o}>{o}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Refund Method</label>
-                          <select value={serialBatchRefundMethod} onChange={e => setSerialBatchRefundMethod(e.target.value)} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            {['Cash Back', 'Card Refund', 'Credit Voucher', 'Customer Credit Balance', 'Exchange Adjustment'].map(o => <option key={o}>{o}</option>)}
-                          </select>
-                        </div>
-                      </div>
-                      {serialBatchReturnCondition === 'Needs service inspection' && (
-                        <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded p-2 text-xs text-amber-700">
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                          Item condition requires service inspection. Consider creating a Service Job instead of direct refund.
-                          <button onClick={() => setSerialBatchSubView('service')} className="ml-auto text-[#327F74] underline whitespace-nowrap">Create Service Job</button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="bg-[#FFF8DC] border border-[#F5C742]/40 rounded-lg p-3 flex items-center justify-between text-sm">
-                      <span className="text-gray-600">Refund Amount (incl. VAT reversal):</span>
-                      <span className="font-bold text-[#1E293B]"><CurrencyAmount amount={((selectedItem?.itemNetAmount || 0) / (selectedItem?.soldQty || 1)) * serialBatchReturnQty} /></span>
-                    </div>
-                  </div>
-                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
-                    <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
-                    <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><RotateCcw className="h-3.5 w-3.5" />Confirm Return</button>
-                    <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Confirm &amp; Print</button>
-                  </div>
-                </>
-              )}
-
-              {/* ── CREATE SERVICE JOB VIEW ── */}
-              {isService && (
-                <>
-                  <div className="overflow-auto flex-1 p-5 space-y-3">
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-2 text-xs">
-                      <p className="text-sm font-semibold text-[#1E293B] mb-1">Pre-filled from Batch Check</p>
-                      {[
-                        ['Customer', selectedItem?.customerName || '—'],
-                        ['Item', selectedItem?.itemName || '—'],
-                        ['Batch No.', selectedItem?.batchNumber || '—'],
-                        ['Invoice Ref', selectedItem?.invoiceNumber || '—'],
-                      ].map(([k, v]) => (
-                        <div key={k} className="flex gap-2 py-1 border-b border-gray-50 last:border-0"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-                      ))}
-                    </div>
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-3">
-                      <p className="text-sm font-semibold text-[#1E293B]">Problem Details</p>
-                      <div>
-                        <label className="text-xs text-gray-500 block mb-1">Customer Reported Problem</label>
-                        <textarea placeholder="Describe the issue reported by customer..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Problem Category</label>
-                          <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            <option>Select…</option>
-                            {['Display issue', 'Battery issue', 'Charging issue', 'Software issue', 'Speaker/mic issue', 'Network issue', 'Camera issue', 'Physical damage', 'Water damage', 'Other'].map(o => <option key={o}>{o}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Service Priority</label>
-                          <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            <option>Normal</option><option>Urgent</option><option>High</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Expected Delivery Date</label>
-                          <input type="date" className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Assign Technician</label>
-                          <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            <option>Select Technician</option>
-                            {['Mohammed Al-Rashid', 'Rajan Kumar', 'Ali Hassan'].map(t => <option key={t}>{t}</option>)}
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="bg-green-50 border border-green-200 rounded p-3 flex items-start gap-2 text-xs text-green-700">
-                      <Shield className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                      Item is Under Warranty. This repair may be eligible for free service. Warranty coverage will be verified by the technician.
-                    </div>
-                  </div>
-                  <div className="bg-white border-t border-[#327F74]/10 px-5 py-3 flex flex-wrap justify-end gap-2 shrink-0">
-                    <button onClick={() => setSerialBatchSubView('check')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
-                    <button onClick={() => { setShowSerialBatch(false); setShowServiceRepair(true); setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><Wrench className="h-3.5 w-3.5" />Create Service Job</button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })()}
+      {showSerialBatch && (
+        <SerialBatch
+          setShowSerialBatch={setShowSerialBatch}
+          serialBatchQuery={serialBatchQuery}
+          setSerialBatchQuery={setSerialBatchQuery}
+          serialBatchResult={serialBatchResult}
+          setSerialBatchResult={setSerialBatchResult}
+          serialBatchSubView={serialBatchSubView}
+          setSerialBatchSubView={setSerialBatchSubView}
+          serialBatchReturnQty={serialBatchReturnQty}
+          setSerialBatchReturnQty={setSerialBatchReturnQty}
+          serialBatchReturnReason={serialBatchReturnReason}
+          setSerialBatchReturnReason={setSerialBatchReturnReason}
+          serialBatchReturnCondition={serialBatchReturnCondition}
+          setSerialBatchReturnCondition={setSerialBatchReturnCondition}
+          serialBatchRefundMethod={serialBatchRefundMethod}
+          setSerialBatchRefundMethod={setSerialBatchRefundMethod}
+          serialBatchInvoiceNo={serialBatchInvoiceNo}
+          setSerialBatchInvoiceNo={setSerialBatchInvoiceNo}
+          serialBatchItemCode={serialBatchItemCode}
+          setSerialBatchItemCode={setSerialBatchItemCode}
+          serialBatchCustomerMobile={serialBatchCustomerMobile}
+          setSerialBatchCustomerMobile={setSerialBatchCustomerMobile}
+          serialBatchSelectedItem={serialBatchSelectedItem}
+          setSerialBatchSelectedItem={setSerialBatchSelectedItem}
+          currentTerminal={currentTerminal}
+          currentSession={currentSession}
+          setShowServiceRepair={setShowServiceRepair}
+          setServiceView={setServiceView}
+          setServiceJobStep={setServiceJobStep}
+        />
+      )}
 
       {/* ─── SERVICE & REPAIR MANAGEMENT SCREEN ─── */}
-      {showServiceRepair && (() => {
-        const mockJobs = [];
-        const statusColor = (s) => ({
-          'New': 'bg-blue-100 text-blue-700', 'Inspection Pending': 'bg-amber-100 text-amber-700',
-          'Under Warranty': 'bg-green-100 text-green-700', 'Warranty Rejected': 'bg-red-100 text-red-600',
-          'Waiting for Parts': 'bg-orange-100 text-orange-700', 'Estimate Shared': 'bg-cyan-100 text-cyan-700',
-          'Pending Customer Approval': 'bg-purple-100 text-purple-700', 'Approved': 'bg-teal-100 text-teal-700',
-          'In Repair': 'bg-sky-100 text-sky-700', 'Ready for Delivery': 'bg-lime-100 text-lime-700',
-          'Delivered': 'bg-gray-100 text-gray-600', 'Cancelled': 'bg-red-50 text-red-500'
-        }[s] || 'bg-gray-100 text-gray-500');
-        const warrantyColor = (w) => w === 'Under Warranty' ? 'text-green-700' : w === 'Warranty Expired' ? 'text-red-600' : 'text-gray-500';
-        const filteredJobs = mockJobs.filter(j => {
-          if (serviceJobFilter.status !== 'All' && j.status !== serviceJobFilter.status) return false;
-          if (serviceJobFilter.customer && !j.customer.toLowerCase().includes(serviceJobFilter.customer.toLowerCase())) return false;
-          if (serviceJobFilter.jobNo && !j.no.toLowerCase().includes(serviceJobFilter.jobNo.toLowerCase())) return false;
-          if (serviceJobFilter.serial && !j.serial.toLowerCase().includes(serviceJobFilter.serial.toLowerCase())) return false;
-          if (serviceJobFilter.technician && !j.tech.toLowerCase().includes(serviceJobFilter.technician.toLowerCase())) return false;
-          if (serviceJobFilter.warranty !== 'All' && j.warranty !== serviceJobFilter.warranty) return false;
-          return true;
-        });
-        const kpis = [
-          { label: 'Open Jobs', val: '—', icon: <ClipboardList className="h-4 w-4" />, color: 'text-sky-700', bg: 'bg-sky-50' },
-          { label: 'Under Warranty', val: '—', icon: <Shield className="h-4 w-4" />, color: 'text-green-700', bg: 'bg-green-50' },
-          { label: 'Pending Approval', val: '—', icon: <AlertCircle className="h-4 w-4" />, color: 'text-purple-700', bg: 'bg-purple-50' },
-          { label: 'Ready for Delivery', val: '—', icon: <PackageCheck className="h-4 w-4" />, color: 'text-lime-700', bg: 'bg-lime-50' },
-          { label: 'Delivered Today', val: '—', icon: <Truck className="h-4 w-4" />, color: 'text-gray-600', bg: 'bg-gray-50' },
-          { label: 'Chargeable', val: '—', icon: <DollarSign className="h-4 w-4" />, color: 'text-amber-700', bg: 'bg-amber-50' },
-          { label: 'Parts Value', val: '—', icon: <Package className="h-4 w-4" />, color: 'text-[#327F74]', bg: 'bg-teal-50' },
-        ];
-        const serviceSteps = ['Customer Details', 'Item & Warranty', 'Problem Details', 'Technician & Parts', 'Estimate', 'Service Invoice', 'Delivery'];
-        const detailTabs = ['overview', 'warranty', 'diagnosis', 'parts', 'estimate', 'invoice', 'payments', 'delivery', 'activity'];
-        return (
-          <div className="fixed inset-0 z-50 flex flex-col bg-[#F7F7FA]">
-            {/* Top Bar */}
-            <div className="bg-[#1E293B] border-b border-[#327F74]/30 px-3 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white flex items-center gap-1 text-sm shrink-0"><ChevronRight className="h-4 w-4 rotate-180" />POS</button>
-                <span className="text-gray-600 hidden sm:inline">/</span>
-                <span className="text-white flex items-center gap-2 min-w-0"><Wrench className="h-4 w-4 text-[#F5C742] shrink-0" /><span className="truncate">Service &amp; Repair Management</span></span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {serviceView !== 'new-job' && <button onClick={() => { setServiceView('new-job'); setServiceJobStep(1); }} className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-1.5 rounded flex items-center gap-1"><Plus className="h-3.5 w-3.5" />New Service Job</button>}
-                {serviceView !== 'settings' && <button onClick={() => setServiceView('settings')} className="border border-gray-600 text-gray-300 text-sm px-3 py-1.5 rounded hover:border-gray-400 flex items-center gap-1"><Settings className="h-3.5 w-3.5" />Settings</button>}
-                <button onClick={() => setShowServiceRepair(false)} className="text-gray-400 hover:text-white"><X className="h-5 w-5" /></button>
-              </div>
-            </div>
-
-            {/* ─ LIST VIEW ─ */}
-            {serviceView === 'list' && (
-              <div className="flex-1 overflow-auto p-6">
-                <div className="mb-4">
-                  <h1 className="text-xl text-[#1E293B]">Service &amp; Repair Management</h1>
-                  <p className="text-xs text-gray-500">Manage warranty checks, repair intake, service jobs, spare parts usage, customer approvals, service invoices, and delivery status.</p>
-                </div>
-                {/* KPIs */}
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
-                  {kpis.map(k => (
-                    <div key={k.label} className={`${k.bg} border border-[#327F74]/10 rounded-lg p-3 flex flex-col gap-1`}>
-                      <div className={`flex items-center gap-1 ${k.color}`}>{k.icon}<span className="text-xs text-gray-500">{k.label}</span></div>
-                      <p className={`text-xl font-bold ${k.color}`}>{k.val}</p>
-                    </div>
-                  ))}
-                </div>
-                {/* Filters */}
-                <div className="bg-white border border-[#327F74]/20 rounded-lg p-3 mb-4 flex flex-wrap gap-2 items-end shadow-sm">
-                  {[
-                    { label: 'Job No.', key: 'jobNo', ph: 'SRV-...' },
-                    { label: 'Customer', key: 'customer', ph: 'Name / Mobile' },
-                    { label: 'Serial / Batch', key: 'serial', ph: 'Serial No.' },
-                    { label: 'Technician', key: 'technician', ph: 'Name' },
-                  ].map(f => (
-                    <div key={f.label} className="flex flex-col gap-0.5">
-                      <label className="text-xs text-gray-400">{f.label}</label>
-                      <input value={serviceJobFilter[f.key]} onChange={e => setServiceJobFilter(p => ({ ...p, [f.key]: e.target.value }))} placeholder={f.ph} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs w-28 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                    </div>
-                  ))}
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Status</label>
-                    <select value={serviceJobFilter.status} onChange={e => setServiceJobFilter(p => ({ ...p, status: e.target.value }))} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                      {['All', 'New', 'Inspection Pending', 'Under Warranty', 'Warranty Rejected', 'Waiting for Parts', 'Estimate Shared', 'Pending Customer Approval', 'Approved', 'In Repair', 'Ready for Delivery', 'Delivered', 'Cancelled'].map(s => <option key={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-0.5"><label className="text-xs text-gray-400">Warranty</label>
-                    <select value={serviceJobFilter.warranty} onChange={e => setServiceJobFilter(p => ({ ...p, warranty: e.target.value }))} className="border border-[#327F74]/30 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                      {['All', 'Under Warranty', 'Warranty Expired', 'No Warranty', 'Warranty Rejected'].map(s => <option key={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <button className="mt-auto bg-[#327F74] hover:bg-[#286660] text-white text-xs px-3 py-1.5 rounded flex items-center gap-1"><Search className="h-3 w-3" />Search</button>
-                  <button onClick={() => setServiceJobFilter({ status: 'All', customer: '', jobNo: '', serial: '', technician: '', warranty: 'All' })} className="mt-auto border border-gray-300 text-gray-600 text-xs px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><RotateCcw className="h-3 w-3" />Reset</button>
-                </div>
-                {/* Table */}
-                <div className="bg-white border border-[#327F74]/20 rounded-lg shadow-sm overflow-hidden">
-                  <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1000px] text-xs">
-                    <thead className="bg-[#F7F7FA] border-b border-[#327F74]/10">
-                      <tr className="text-gray-500">{['Job No.', 'Job Date', 'Customer', 'Item Name', 'Serial/Batch', 'Warranty', 'Problem', 'Technician', 'Est. Amt', 'Status', 'Delivery Date', 'Action'].map((h, i) => <th key={i} className={`px-3 py-2.5 text-left font-medium ${i === 11 ? 'text-center' : ''}`}>{h}</th>)}</tr>
-                    </thead>
-                    <tbody>
-                      {filteredJobs.map(j => (
-                        <tr key={j.no} className="border-b border-gray-50 hover:bg-[#F7F7FA]/60">
-                          <td className="px-3 py-2 font-semibold text-[#327F74] cursor-pointer hover:underline" onClick={() => setServiceView('detail')}>{j.no}</td>
-                          <td className="px-3 py-2 text-gray-500">{j.date}</td>
-                          <td className="px-3 py-2 text-[#1E293B]">{j.customer}</td>
-                          <td className="px-3 py-2 text-[#1E293B] max-w-[160px] truncate">{j.item}</td>
-                          <td className="px-3 py-2 text-gray-400 font-mono text-[10px]">{j.serial}</td>
-                          <td className="px-3 py-2"><span className={`text-[10px] font-medium ${warrantyColor(j.warranty)}`}>{j.warranty}</span></td>
-                          <td className="px-3 py-2 text-gray-500">{j.problem}</td>
-                          <td className="px-3 py-2 text-gray-500">{j.tech}</td>
-                          <td className="px-3 py-2 text-right">{j.estAmt > 0 ? <CurrencyAmount amount={j.estAmt} /> : '—'}</td>
-                          <td className="px-3 py-2"><span className={`text-[10px] rounded px-1.5 py-0.5 ${statusColor(j.status)}`}>{j.status}</span></td>
-                          <td className="px-3 py-2 text-gray-500">{j.delivery}</td>
-                          <td className="px-3 py-2">
-                            <div className="flex items-center justify-center gap-1">
-                              <button onClick={() => setServiceView('detail')} className="border border-[#327F74]/30 text-[#327F74] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#327F74]/5">View</button>
-                              <button className="border border-gray-200 text-gray-500 text-[10px] px-1.5 py-0.5 rounded hover:bg-gray-50">Edit</button>
-                              {j.status === 'Ready for Delivery' && <button className="bg-[#F5C742] text-[#1E293B] text-[10px] px-1.5 py-0.5 rounded hover:bg-[#e6b838]">Deliver</button>}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ─ NEW JOB FORM ─ */}
-            {serviceView === 'new-job' && (
-              <div className="flex-1 overflow-auto">
-                {/* Step bar */}
-                <div className="bg-white border-b border-gray-100 px-3 sm:px-6 py-3 flex items-center gap-0 shrink-0 overflow-x-auto">
-                  {serviceSteps.map((s, i) => (
-                    <React.Fragment key={s}>
-                      <div className="flex items-center gap-1.5 sm:gap-2 cursor-pointer shrink-0" onClick={() => setServiceJobStep(i + 1)}>
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${serviceJobStep > i + 1 ? 'bg-[#327F74] text-white' : serviceJobStep === i + 1 ? 'bg-[#F5C742] text-[#1E293B]' : 'bg-gray-100 text-gray-400'}`}>{serviceJobStep > i + 1 ? '✓' : i + 1}</div>
-                        <span className={`hidden md:inline text-xs whitespace-nowrap ${serviceJobStep === i + 1 ? 'font-semibold text-[#1E293B]' : 'text-gray-400'}`}>{s}</span>
-                      </div>
-                      {i < serviceSteps.length - 1 && <div className="w-6 sm:flex-1 h-px bg-gray-200 mx-1.5 sm:mx-2 shrink-0 sm:shrink" />}
-                    </React.Fragment>
-                  ))}
-                </div>
-                <div className="p-6">
-                  {/* Step 1: Customer */}
-                  {serviceJobStep === 1 && (
-                    <div className="max-w-2xl mx-auto bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-4">
-                      <div className="flex items-center gap-2 mb-1"><Users className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">A. Customer Details</p></div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {[{ l: 'Customer Name', ph: 'Full name' }, { l: 'Mobile Number', ph: '+971 XX XXX XXXX' }, { l: 'Email', ph: 'email@example.com' }, { l: 'Customer Code', ph: 'CUS-XXXXX' }, { l: 'Address', ph: 'Street, City, Emirate' }].map(f => (
-                          <div key={f.l} className={f.l === 'Address' ? 'col-span-2' : ''}>
-                            <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
-                            <input placeholder={f.ph} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                          </div>
-                        ))}
-                      </div>
-                      <button className="text-xs text-[#327F74] border border-[#327F74]/30 rounded px-2 py-1 hover:bg-[#327F74]/5 flex items-center gap-1"><Search className="h-3 w-3" />Search Existing Customer</button>
-                    </div>
-                  )}
-                  {/* Step 2: Item & Warranty */}
-                  {serviceJobStep === 2 && (
-                    <div className="max-w-2xl mx-auto space-y-4">
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
-                        <div className="flex items-center gap-2 mb-1"><Package className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">B. Product / Item Details</p></div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {[{ l: 'Invoice Number', ph: 'SI-POS-...' }, { l: 'Serial Number', ph: 'SXXXXX-XXXXX' }, { l: 'Batch Number', ph: 'BT-XXXX' }, { l: 'Item Code', ph: 'PRD-...' }, { l: 'Item Name', ph: 'Product name' }, { l: 'Brand', ph: 'Brand name' }, { l: 'Model', ph: 'Model No.' }, { l: 'Category', ph: 'Category' }].map(f => (
-                            <div key={f.l}>
-                              <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
-                              <input placeholder={f.ph} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                            </div>
-                          ))}
-                        </div>
-                        <button className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-4 py-2 rounded flex items-center gap-1"><Shield className="h-3.5 w-3.5" />Check Warranty</button>
-                      </div>
-                      {/* Warranty result */}
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-sm font-semibold text-green-800 flex items-center gap-1"><Shield className="h-4 w-4" />Warranty Check Result</p>
-                          <span className="text-xs bg-green-100 text-green-700 border border-green-300 rounded px-2 py-0.5">Free Repair Eligible</span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
-                          {[['Warranty Status', 'Under Warranty'], ['Start Date', '12 Mar 2026'], ['Expiry Date', '12 Mar 2027'], ['Warranty Period', '12 Months'], ['Covered', 'Yes'], ['Repair Charge', 'AED 0.00']].map(([k, v]) => (
-                            <div key={k} className="flex gap-1"><span className="text-green-600 w-28 shrink-0">{k}:</span><span className="text-green-800 font-medium">{renderAED(v)}</span></div>
-                          ))}
-                        </div>
-                        <p className="text-xs text-green-600 mt-2">1-year manufacturer warranty. Excludes physical/water damage.</p>
-                      </div>
-                    </div>
-                  )}
-                  {/* Step 3: Problem */}
-                  {serviceJobStep === 3 && (
-                    <div className="max-w-2xl mx-auto bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-4">
-                      <div className="flex items-center gap-2 mb-1"><Stethoscope className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">D. Problem / Complaint Details</p></div>
-                      <div>
-                        <label className="text-xs text-gray-500 block mb-0.5">Customer Reported Problem</label>
-                        <textarea placeholder="Describe the issue..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm resize-none h-20 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-0.5">Problem Category</label>
-                          <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            <option>Select…</option>
-                            {['Display issue', 'Battery issue', 'Charging issue', 'Software issue', 'Speaker/mic issue', 'Network issue', 'Camera issue', 'Physical damage', 'Water damage', 'Other'].map(o => <option key={o}>{o}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-0.5">Physical Condition</label>
-                          <input placeholder="Good / Minor scratches / Cracked..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-0.5">Service Priority</label>
-                          <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                            <option>Normal</option><option>Urgent</option><option>High</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-0.5">Expected Delivery Date</label>
-                          <input type="date" className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500 mb-2">Accessories Received</p>
-                        <div className="flex flex-wrap gap-2">
-                          {['Charger', 'Cable', 'Box', 'SIM tray', 'Memory card', 'Cover', 'Other'].map(a => (
-                            <label key={a} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                              <input type="checkbox" className="accent-[#327F74]" />{a}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {/* Step 4: Technician & Parts */}
-                  {serviceJobStep === 4 && (
-                    <div className="max-w-3xl mx-auto space-y-4">
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
-                        <div className="flex items-center gap-2 mb-1"><Wrench className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">E. Technician Diagnosis</p></div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div>
-                            <label className="text-xs text-gray-500 block mb-0.5">Technician</label>
-                            <select className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]">
-                              <option>Select…</option>
-                              {['Mohammed Al-Rashid', 'Rajan Kumar', 'Ali Hassan'].map(t => <option key={t}>{t}</option>)}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-xs text-gray-500 block mb-0.5">Labour Charge (<DirhamSymbol />)</label>
-                            <input type="number" placeholder="0.00" className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                          </div>
-                        </div>
-                        {[{ l: 'Problems Found', ph: 'Describe findings...' }, { l: 'Root Cause', ph: 'Identified root cause...' }, { l: 'Recommended Fix', ph: 'Recommended repair steps...' }].map(f => (
-                          <div key={f.l}>
-                            <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
-                            <textarea placeholder={f.ph} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                          </div>
-                        ))}
-                      </div>
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2"><Package className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">F. Parts / Spare Items</p></div>
-                          <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><Plus className="h-3 w-3" />Add Part</button>
-                        </div>
-                        <div className="overflow-x-auto">
-                        <table className="w-full min-w-[640px] text-xs">
-                          <thead><tr className="bg-[#F7F7FA] text-gray-500 border-b border-[#327F74]/10">{['Part Code', 'Part Name', 'Stock Avail.', 'Qty', 'Unit Price', 'Disc.', 'VAT', 'Net Amt', ''].map(h => <th key={h} className="px-2 py-1.5 text-left font-medium">{h}</th>)}</tr></thead>
-                          <tbody>
-                            <tr className="border-b border-gray-50">
-                              <td className="px-2 py-1.5 text-gray-400 text-[10px]">PRT-0041</td>
-                              <td className="px-2 py-1.5 text-[#1E293B]">Display Assembly</td>
-                              <td className="px-2 py-1.5"><span className="text-[10px] bg-green-100 text-green-700 rounded px-1">5 avail.</span></td>
-                              <td className="px-2 py-1.5"><input type="number" defaultValue={1} className="w-12 border border-[#327F74]/30 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-[#327F74]" /></td>
-                              <td className="px-2 py-1.5 text-right"><DirhamSymbol /> 280.00</td>
-                              <td className="px-2 py-1.5 text-right">—</td>
-                              <td className="px-2 py-1.5 text-right">5%</td>
-                              <td className="px-2 py-1.5 text-right font-semibold"><DirhamSymbol /> 294.00</td>
-                              <td className="px-2 py-1.5"><button className="text-red-400 hover:text-red-600"><Trash2 className="h-3 w-3" /></button></td>
-                            </tr>
-                          </tbody>
-                        </table>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {/* Step 5: Estimate */}
-                  {serviceJobStep === 5 && (
-                    <div className="max-w-lg mx-auto space-y-4">
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-2">
-                        <div className="flex items-center gap-2 mb-2"><DollarSign className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">G. Estimate &amp; Customer Approval</p></div>
-                        {[['Labour Charge', 'AED 0.00'], ['Parts Total', 'AED 294.00'], ['Discount', '—'], ['VAT (5%)', 'AED 14.70'], ['Total Estimated', 'AED 308.70'], ['Warranty Covered', 'AED 308.70'], ['Customer Payable', 'AED 0.00']].map(([k, v]) => (
-                          <div key={k} className={`flex justify-between py-1.5 border-b border-gray-50 last:border-0 ${k === 'Customer Payable' ? 'font-bold text-[#1E293B] border-t-2 border-[#327F74]/20 pt-2' : ''}`}>
-                            <span className="text-sm text-gray-500">{k}</span><span className="text-sm">{renderAED(v)}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm space-y-2">
-                        <p className="text-sm font-semibold text-[#1E293B] mb-2">Customer Approval</p>
-                        {[['Estimate Shared', 'Yes'], ['Customer Approved', 'Pending'], ['Approval Date', '—']].map(([k, v]) => (
-                          <div key={k} className="flex justify-between text-xs py-1 border-b border-gray-50"><span className="text-gray-500">{k}</span><span className="text-[#1E293B]">{v}</span></div>
-                        ))}
-                        <div className="flex gap-2 pt-1">
-                          <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-xs px-3 py-1.5 rounded flex items-center gap-1"><CheckCircle className="h-3 w-3" />Mark Approved</button>
-                          <button className="border border-red-300 text-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-50 flex items-center gap-1"><XCircle className="h-3 w-3" />Mark Rejected</button>
-                          <button className="border border-[#327F74]/40 text-[#327F74] text-xs px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Smartphone className="h-3 w-3" />Share Estimate</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {/* Step 6: Service Invoice */}
-                  {serviceJobStep === 6 && (
-                    <div className="max-w-lg mx-auto space-y-4">
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-2">
-                        <div className="flex items-center gap-2 mb-2"><FileText className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">H. Service Invoice</p></div>
-                        {[['Service Job No.', '—'], ['Customer', '—'], ['Labour Charge', 'AED 0.00'], ['Parts Amount', 'AED 0.00'], ['VAT', 'AED 0.00'], ['Total Invoice Amount', 'AED 0.00'], ['Warranty Covered', 'AED 0.00'], ['Customer Payable', 'AED 0.00'], ['Advance Paid', 'AED 0.00'], ['Balance Due', 'AED 0.00']].map(([k, v]) => (
-                          <div key={k} className={`flex justify-between py-1.5 border-b border-gray-50 last:border-0 text-sm ${k === 'Customer Payable' ? 'font-bold text-[#327F74]' : ''}`}>
-                            <span className="text-gray-500">{k}</span><span>{renderAED(v)}</span>
-                          </div>
-                        ))}
-                        <div className="flex gap-2 pt-2">
-                          <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-3 py-2 rounded flex items-center gap-1"><FileText className="h-3.5 w-3.5" />Generate Invoice</button>
-                          <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-3 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Print</button>
-                          <button className="border border-gray-300 text-gray-600 text-sm px-3 py-2 rounded hover:bg-gray-50 flex items-center gap-1"><DollarSign className="h-3.5 w-3.5" />Collect Payment</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {/* Step 7: Delivery */}
-                  {serviceJobStep === 7 && (
-                    <div className="max-w-lg mx-auto space-y-4">
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-5 shadow-sm space-y-3">
-                        <div className="flex items-center gap-2 mb-1"><Truck className="h-4 w-4 text-[#327F74]" /><p className="text-sm font-semibold text-[#1E293B]">I. Delivery / Completion</p></div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {[{ l: 'Ready for Delivery Date', t: 'date' }, { l: 'Delivered Date', t: 'date' }, { l: 'Delivered By', t: 'text', ph: 'Staff name' }, { l: 'Received By (Customer)', t: 'text', ph: 'Customer name' }].map(f => (
-                            <div key={f.l}>
-                              <label className="text-xs text-gray-500 block mb-0.5">{f.l}</label>
-                              <input type={f.t} placeholder={(f).ph || ''} className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                            </div>
-                          ))}
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-0.5">Delivery Remarks</label>
-                          <textarea placeholder="Any remarks..." className="w-full border border-[#327F74]/30 rounded px-2 py-1.5 text-sm resize-none h-16 focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                        </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Customer Signature</label>
-                          <div className="h-16 border border-[#327F74]/30 rounded bg-[#F7F7FA] flex items-center justify-center text-xs text-gray-400">Tap to sign</div>
-                        </div>
-                        <div className="flex gap-2">
-                          <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-4 py-2 rounded flex items-center gap-1"><PackageCheck className="h-3.5 w-3.5" />Mark Delivered</button>
-                          <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-3 py-2 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Print Delivery Receipt</button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {/* Step nav footer */}
-                <div className="bg-white border-t border-gray-100 px-3 sm:px-6 py-3 flex flex-wrap justify-between items-center gap-2 shrink-0 sticky bottom-0">
-                  <div className="flex flex-wrap gap-2">
-                    {serviceJobStep > 1 && <button onClick={() => setServiceJobStep(s => s - 1)} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">← Back</button>}
-                    <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-4 py-2 rounded hover:bg-[#327F74]/5">Save Draft</button>
-                    {serviceJobStep < serviceSteps.length ? <button onClick={() => setServiceJobStep(s => s + 1)} className="bg-[#327F74] hover:bg-[#286660] text-white text-sm px-5 py-2 rounded">Next →</button>
-                      : <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Complete Job</button>}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ─ DETAIL VIEW ─ */}
-            {serviceView === 'detail' && (
-              <div className="flex-1 overflow-auto p-6">
-                <div className="flex flex-wrap items-center gap-3 mb-4">
-                  <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back to List</button>
-                  <span className="text-[#1E293B] font-semibold">Service Job</span>
-                  <span className="text-xs bg-amber-100 text-amber-700 rounded px-2 py-0.5">—</span>
-                  <div className="sm:ml-auto flex flex-wrap gap-2">
-                    <button className="border border-[#327F74]/40 text-[#327F74] text-sm px-3 py-1.5 rounded hover:bg-[#327F74]/5 flex items-center gap-1"><Printer className="h-3.5 w-3.5" />Print Job Card</button>
-                    <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-3 py-1.5 rounded flex items-center gap-1"><FileText className="h-3.5 w-3.5" />Create Invoice</button>
-                  </div>
-                </div>
-                {/* Tabs */}
-                <div className="flex gap-0 border-b border-[#327F74]/20 mb-4 overflow-x-auto">
-                  {detailTabs.map(t => (
-                    <button key={t} onClick={() => setServiceDetailTab(t)}
-                      className={`shrink-0 px-4 py-2 text-xs capitalize border-b-2 transition-colors ${serviceDetailTab === t ? 'border-[#F5C742] text-[#1E293B] font-semibold' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
-                      {t === 'activity' ? 'Activity Log' : t}
-                    </button>
-                  ))}
-                </div>
-                {serviceDetailTab === 'overview' && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
-                      <p className="text-sm font-semibold text-[#1E293B] mb-3">Job Timeline</p>
-                      <div className="space-y-3">
-                        {[
-                          { label: 'Job Created', time: 'Pending', done: false },
-                          { label: 'Warranty Checked', time: 'Pending', done: false },
-                          { label: 'Inspection Completed', time: 'Pending', done: false },
-                          { label: 'Estimate Shared', time: 'Pending', done: false },
-                          { label: 'Customer Approved', time: 'Pending', done: false },
-                          { label: 'Repair Started', time: 'Pending', done: false },
-                          { label: 'Parts Consumed', time: 'Pending', done: false },
-                          { label: 'Invoice Generated', time: 'Pending', done: false },
-                          { label: 'Ready for Delivery', time: 'Pending', done: false },
-                          { label: 'Delivered', time: 'Pending', done: false },
-                        ].map((ev, i) => (
-                          <div key={i} className="flex items-start gap-3">
-                            <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${ev.done ? 'bg-[#327F74]' : 'bg-gray-100'}`}>
-                              {ev.done ? <CheckCircle className="h-3 w-3 text-white" /> : <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
-                            </div>
-                            <div><p className={`text-xs ${ev.done ? 'text-[#1E293B] font-medium' : 'text-gray-400'}`}>{ev.label}</p><p className="text-[10px] text-gray-400">{ev.time}</p></div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm text-xs space-y-1">
-                        <p className="text-sm font-semibold text-[#1E293B] mb-2">Customer &amp; Item</p>
-                        {[['Customer', '—'], ['Mobile', '—'], ['Item', '—'], ['Serial', '—'], ['Warranty', '—'], ['Technician', '—'], ['Priority', '—'], ['Expected Delivery', '—']].map(([k, v]) => (
-                          <div key={k} className="flex gap-2"><span className="text-gray-400 w-28 shrink-0">{k}:</span><span className="text-[#1E293B]">{v}</span></div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {serviceDetailTab !== 'overview' && (
-                  <div className="bg-white border border-[#327F74]/20 rounded-lg p-6 shadow-sm flex items-center justify-center h-48">
-                    <p className="text-sm text-gray-400 capitalize">{serviceDetailTab} details will appear here</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ─ SETTINGS VIEW ─ */}
-            {serviceView === 'settings' && (
-              <div className="flex-1 overflow-auto p-6">
-                <div className="flex items-center gap-3 mb-5">
-                  <button onClick={() => setServiceView('list')} className="border border-gray-300 text-gray-600 text-sm px-3 py-1.5 rounded hover:bg-gray-50 flex items-center gap-1"><ChevronRight className="h-3.5 w-3.5 rotate-180" />Back</button>
-                  <h1 className="text-xl text-[#1E293B]">Service &amp; Repair Settings</h1>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {[
-                    { title: '1. Warranty Rules', icon: <Shield className="h-4 w-4 text-[#327F74]" />, fields: ['Default warranty period', 'Warranty by product category', 'Warranty by brand', 'Allow warranty without invoice: Yes/No', 'Warranty validation based on invoice date'] },
-                    { title: '2. Service Charges', icon: <DollarSign className="h-4 w-4 text-[#327F74]" />, fields: ['Default inspection charge (AED)', 'Default labour charge (AED)', 'Urgent service charge (AED)', 'Minimum repair charge (AED)', 'VAT applicable: Yes/No'] },
-                    { title: '3. Approval Rules', icon: <CheckCircle className="h-4 w-4 text-[#327F74]" />, fields: ['Manager approval for warranty rejection', 'Customer approval before repair', 'Approval required for high-value parts', 'Approval required for free repair without invoice'] },
-                    { title: '4. Inventory Consumption', icon: <Package className="h-4 w-4 text-[#327F74]" />, fields: ['Consume parts on estimate approval', 'Consume parts on invoice confirmation', 'Consume parts on delivery', 'Allow negative stock: Yes/No', 'Default warehouse for service parts'] },
-                    { title: '5. Print Templates', icon: <Printer className="h-4 w-4 text-[#327F74]" />, fields: ['Job card template', 'Estimate receipt template', 'Service invoice template', 'Delivery receipt template', 'Warranty receipt template'] },
-                    { title: '6. Notification Settings', icon: <Smartphone className="h-4 w-4 text-[#327F74]" />, fields: ['SMS/WhatsApp when job created', 'Estimate shared notification', 'Customer approval received', 'Ready for delivery alert', 'Delivered confirmation'] },
-                  ].map(section => (
-                    <div key={section.title} className="bg-white border border-[#327F74]/20 rounded-lg p-4 shadow-sm">
-                      <div className="flex items-center gap-2 mb-3">{section.icon}<p className="text-sm font-semibold text-[#1E293B]">{section.title}</p></div>
-                      <div className="space-y-2">
-                        {section.fields.map(f => (
-                          <div key={f} className="flex items-center justify-between py-1 border-b border-gray-50 last:border-0">
-                            <span className="text-xs text-gray-600">{f}</span>
-                            {f.includes('Yes/No') || f.includes('Yes / No') ? (
-                              <div className="relative inline-flex h-5 w-9 items-center rounded-full bg-[#327F74]"><span className="inline-block h-4 w-4 rounded-full bg-white translate-x-4" /></div>
-                            ) : (
-                              <input placeholder="—" className="border border-[#327F74]/20 rounded px-2 py-0.5 text-xs w-28 text-right focus:outline-none focus:ring-1 focus:ring-[#327F74]" />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-4 flex flex-wrap justify-end gap-2">
-                  <button className="border border-gray-300 text-gray-600 text-sm px-4 py-2 rounded hover:bg-gray-50">Cancel</button>
-                  <button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B] text-sm px-5 py-2 rounded flex items-center gap-1"><CheckCircle className="h-3.5 w-3.5" />Save Settings</button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      {showServiceRepair && (
+        <ServiceRepair
+          showServiceRepair={showServiceRepair}
+          setShowServiceRepair={setShowServiceRepair}
+          serviceView={serviceView}
+          setServiceView={setServiceView}
+          serviceJobStep={serviceJobStep}
+          setServiceJobStep={setServiceJobStep}
+          serviceDetailTab={serviceDetailTab}
+          setServiceDetailTab={setServiceDetailTab}
+          serviceJobFilter={serviceJobFilter}
+          setServiceJobFilter={setServiceJobFilter}
+        />
+      )}
 
       {/* POS Configure & Customize Panel */}
       {showPOSConfig && (
@@ -15213,331 +10194,50 @@ export default function POSSales() {
         </div>
       )}
 
-      {/* ══ NEW DELIVERY ORDER modal ══════════════════════════════════════ */}
+      {/* ══ NEW DELIVERY ORDER modal (+ nested Add-Address) ═══════════════ */}
       {showDeliveryModal && (
-        <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-            {/* Header */}
-            <div className="bg-[#F5C742] px-5 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-white/30 flex items-center justify-center">
-                  <Truck className="h-4 w-4 text-[#1E293B]" />
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#1E293B]/70">NEW DELIVERY ORDER</p>
-                  <p className="text-sm font-black text-[#1E293B]">{currentInvoice.items.length} items • {formatCurrency(currentInvoice.total)}</p>
-                </div>
-              </div>
-              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryCustomerSearch(''); setDeliveryShowAddressPicker(false); setDeliveryShowAddAddressModal(false); }} className="text-[#1E293B]/60 hover:text-[#1E293B]">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 max-h-[65vh] overflow-y-auto">
-              {/* Unified Smart Customer Search */}
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Customer / Recipient <span className="text-red-500">*</span></label>
-                {deliveryCustomerId ? (() => {
-                  const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId));
-                  if (!c) return null;
-                  return (
-                    <div className="border border-[#327F74]/30 rounded-xl px-4 py-3 bg-[#f0faf8] flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-bold text-gray-800">{c.name}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {c.phone || c.mobile || ''} {c.email ? `· ${c.email}` : ''}
-                          {c.tier ? <span className="ml-2 text-[#327F74] font-medium">· {c.tier}</span> : null}
-                        </p>
-                      </div>
-                      <button type="button" onClick={() => { setDeliveryCustomerId(''); setDeliveryCustomerSearch(''); setDeliveryShowAddressPicker(false); }}
-                        className="text-xs text-[#327F74] hover:underline font-bold px-2 py-1 bg-white rounded-lg border border-[#327F74]/20 shadow-sm">
-                        Change
-                      </button>
-                    </div>
-                  );
-                })() : (
-                  <div className="space-y-2">
-                    <div className="relative">
-                      <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                      <input autoFocus type="text" placeholder="Search by Name, Mobile, Email, TRN..." value={deliveryCustomerSearch}
-                        onChange={e => setDeliveryCustomerSearch(e.target.value)}
-                        className="w-full pl-10 pr-3 py-2.5 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-[#327F74]" />
-                    </div>
-                    <div className="max-h-40 overflow-y-auto border border-gray-100 rounded-xl bg-white shadow-inner divide-y divide-gray-100">
-                      {customerOptions
-                        .filter(c => c.id !== WALK_IN_CUSTOMER.id)
-                        .filter(c => {
-                          const q = (deliveryCustomerSearch || '').toLowerCase();
-                          if (!q) return true;
-                          return (c.name || '').toLowerCase().includes(q) ||
-                            (c.phone || '').toLowerCase().includes(q) ||
-                            (c.mobile || '').toLowerCase().includes(q) ||
-                            (c.email || '').toLowerCase().includes(q) ||
-                            (c.trn || '').toLowerCase().includes(q);
-                        })
-                        .slice(0, 5)
-                        .map(c => (
-                          <button key={c.id} type="button"
-                            onClick={() => {
-                              setDeliveryCustomerId(String(c.id));
-                              setDeliveryValidationErrors(prev => ({ ...prev, customer: '' }));
-                              if (c.address || c.defaultShippingAddress) setDeliveryAddress(prev => prev?.trim() ? prev : (c.address || c.defaultShippingAddress));
-                            }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-50 text-left transition-colors">
-                            <div className="w-8 h-8 rounded-full bg-[#327F74]/10 text-[#327F74] flex items-center justify-center font-bold text-xs">
-                              {c.name.charAt(0)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold text-gray-800 truncate">{c.name}</p>
-                              <p className="text-xs text-gray-500 truncate">{c.phone || c.mobile || ''} {c.email ? `· ${c.email}` : ''}</p>
-                            </div>
-                          </button>
-                        ))}
-                      <div className="p-2 bg-slate-50">
-                        <button type="button" onClick={() => openQuickCustomerModal(deliveryCustomerSearch)}
-                          className="w-full py-2.5 px-3 bg-white hover:bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-700 font-bold text-xs flex items-center justify-center gap-2 shadow-sm transition-colors">
-                          <Plus className="h-4 w-4 text-emerald-600" />
-                          Create New Customer: "{deliveryCustomerSearch || 'Enter details'}"
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {deliveryValidationErrors.customer && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.customer}</p>}
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Address <span className="text-red-500">*</span></label>
-
-                {/* Saved shipping-address picker — only once a real customer is selected */}
-                {deliveryCustomerId && (() => {
-                  const c = customerOptions.find(x => String(x.id) === String(deliveryCustomerId));
-                  const savedAddresses = c?.savedAddresses || [];
-                  return (
-                    <div className="relative mb-2">
-                      <button type="button"
-                        onClick={() => setDeliveryShowAddressPicker(p => !p)}
-                        className="w-full flex items-center gap-2 border border-gray-200 rounded-xl px-3 py-2.5 text-sm text-left hover:border-[#327F74] transition-colors bg-white">
-                        <MapPin className="h-4 w-4 text-[#327F74] shrink-0" />
-                        <span className="flex-1 text-gray-600 truncate">
-                          {savedAddresses.length > 0 ? 'Choose a saved shipping address…' : 'No saved addresses for this customer'}
-                        </span>
-                        <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                      </button>
-                      {deliveryShowAddressPicker && (
-                        <div className="absolute z-10 top-full left-0 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 overflow-hidden max-h-56 overflow-y-auto">
-                          {savedAddresses.map((addr, i) => (
-                            <button key={addr.id ?? i} type="button"
-                              onClick={() => {
-                                setDeliveryAddress([addr.address1, addr.address2, addr.city, addr.country].filter(Boolean).join(', '));
-                                setDeliveryValidationErrors(prev => ({ ...prev, address: '' }));
-                                setDeliveryShowAddressPicker(false);
-                              }}
-                              className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-gray-50 border-b border-gray-50 transition-colors">
-                              <MapPin className="h-3.5 w-3.5 text-[#327F74] mt-0.5 shrink-0" />
-                              <div className="min-w-0">
-                                <p className="text-xs font-semibold text-gray-700 flex items-center gap-1 truncate">
-                                  {addr.name}
-                                  {addr.isDefault && <Star className="h-2.5 w-2.5 text-[#F5C742] fill-[#F5C742] shrink-0" />}
-                                </p>
-                                <p className="text-xs text-gray-500 truncate">{[addr.address1, addr.city, addr.country].filter(Boolean).join(', ')}</p>
-                              </div>
-                            </button>
-                          ))}
-                          <button type="button"
-                            onClick={() => { setDeliveryShowAddressPicker(false); setDeliveryAddressError(''); setDeliveryShowAddAddressModal(true); }}
-                            className="w-full px-3 py-2.5 text-xs flex items-center justify-center gap-1.5 text-[#327F74] hover:bg-[#f0faf8] border-t border-dashed border-gray-200 font-bold">
-                            <Plus className="h-3.5 w-3.5" /> Add New Address
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                <textarea rows={3} value={deliveryAddress} onChange={e => { setDeliveryAddress(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, address: '' })); }}
-                  placeholder="Building, street, area, city..."
-                  className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none ${deliveryValidationErrors.address ? 'border-red-300' : 'border-gray-200'}`} />
-                {deliveryValidationErrors.address && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.address}</p>}
-              </div>
-
-              {/* Delivery Schedule (Date & Time Slot) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Date <span className="text-red-500">*</span></label>
-                  <input type="date" value={deliveryDate} onChange={e => { setDeliveryDate(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, date: '' })); }}
-                    className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white ${deliveryValidationErrors.date ? 'border-red-300' : 'border-gray-200'}`} />
-                  {deliveryValidationErrors.date && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.date}</p>}
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Time Slot <span className="text-red-500">*</span></label>
-                  <select value={deliveryTimeSlot} onChange={e => { setDeliveryTimeSlot(e.target.value); setDeliveryValidationErrors(prev => ({ ...prev, timeSlot: '' })); }}
-                    className={`w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] bg-white ${deliveryValidationErrors.timeSlot ? 'border-red-300' : 'border-gray-200'}`}>
-                    <option value="">— Select slot —</option>
-                    <option value="Morning (9 AM - 1 PM)">Morning (9 AM - 1 PM)</option>
-                    <option value="Afternoon (1 PM - 5 PM)">Afternoon (1 PM - 5 PM)</option>
-                    <option value="Evening (5 PM - 9 PM)">Evening (5 PM - 9 PM)</option>
-                  </select>
-                  {deliveryValidationErrors.timeSlot && <p className="text-[11px] text-red-500 mt-1">{deliveryValidationErrors.timeSlot}</p>}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Special Delivery Instructions</label>
-                <input type="text" value={deliveryInstructions} onChange={e => setDeliveryInstructions(e.target.value)}
-                  placeholder="e.g. Call before arriving, leave at door..."
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74]" />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Delivery Charge (AED)</label>
-                  <div className="flex items-center border border-gray-200 rounded-xl overflow-hidden focus-within:border-[#327F74]">
-                    <span className="px-3 py-2.5 text-sm text-gray-500 bg-gray-50 border-r border-gray-200 shrink-0">AED</span>
-                    <input type="number" min="0" step="0.01" value={deliveryCharge} onChange={e => setDeliveryCharge(e.target.value)}
-                      placeholder="0.00"
-                      className="flex-1 px-3 py-2.5 text-sm focus:outline-none bg-white" />
-                  </div>
-                  <p className="text-[10px] text-gray-400 mt-0.5">Optional — leave blank if free delivery</p>
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Assign Delivery Person <span className="text-red-500">*</span></label>
-                  <DeliveryPersonSelect
-                    options={deliveryPersons}
-                    value={deliveryDriver}
-                    loading={deliveryPersonsLoading}
-                    error={deliveryValidationErrors.deliveryDriver}
-                    onChange={(employeeCode) => {
-                      setDeliveryDriver(employeeCode);
-                      setDeliveryValidationErrors(prev => ({ ...prev, deliveryDriver: '' }));
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Order Notes / Delivery Remarks</label>
-                <textarea rows={2} value={deliveryNotes} onChange={e => setDeliveryNotes(e.target.value)}
-                  placeholder="Special instructions, landmarks, contact note..."
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#327F74] resize-none" />
-              </div>
-            </div>
-
-            {parseFloat(deliveryCharge) > 0 && (
-              <div className="px-5 py-3 bg-[#FFF8E7] border-t border-[#FDE6A9] flex items-center justify-between text-sm">
-                <span className="text-gray-600">
-                  Order: <span className="font-semibold text-gray-800">{formatCurrency(currentInvoice.total)}</span>
-                  {' '}+{' '}Delivery: <span className="font-semibold text-gray-800">{formatCurrency(parseFloat(deliveryCharge) || 0)}</span>
-                </span>
-                <span className="font-bold text-[#1E293B]">= {formatCurrency(currentInvoice.total + (parseFloat(deliveryCharge) || 0))}</span>
-              </div>
-            )}
-            <div className="px-5 py-4 border-t border-gray-100 flex gap-3">
-              <button type="button" onClick={() => { setShowDeliveryModal(false); setDeliveryShowAddressPicker(false); setDeliveryShowAddAddressModal(false); }}
-                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-50 transition-colors">
-                Cancel
-              </button>
-              <button type="button"
-                disabled={deliveryOutLoading || currentInvoice.items.length === 0}
-                onClick={handleOutForDelivery}
-                className="flex-1 py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm transition-colors flex items-center justify-center gap-2">
-                <Truck className="h-4 w-4" />
-                {deliveryOutLoading ? 'Saving…' : 'Out for Delivery'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ══ Add New Shipping Address modal (nested within New Delivery Order) ══ */}
-      {showDeliveryModal && deliveryShowAddAddressModal && (
-        <div className="fixed inset-0 z-[210] bg-black/40 flex items-center justify-center p-4"
-          onClick={() => !deliveryAddressSaving && setDeliveryShowAddAddressModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-base font-bold text-gray-800">Add Shipping Address</h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  Add a new shipping address for {customerOptions.find(x => String(x.id) === String(deliveryCustomerId))?.name || 'this customer'}
-                </p>
-              </div>
-              <button type="button"
-                onClick={() => !deliveryAddressSaving && setDeliveryShowAddAddressModal(false)}
-                className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-gray-600 mb-1 block">Address Label <span className="text-red-500">*</span></label>
-                <input type="text" value={deliveryNewAddress.name}
-                  onChange={e => setDeliveryNewAddress(p => ({ ...p, name: e.target.value }))}
-                  placeholder="e.g., Home, Office, Warehouse..."
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
-              </div>
-              <div>
-                <label className="text-xs font-semibold text-gray-600 mb-1 block">Address <span className="text-red-500">*</span></label>
-                <textarea rows={3} value={deliveryNewAddress.address1}
-                  onChange={e => setDeliveryNewAddress(p => ({ ...p, address1: e.target.value }))}
-                  placeholder="Building, street, area..."
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm resize-none focus:outline-none focus:border-[#327F74]" />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 mb-1 block">City</label>
-                  <input type="text" value={deliveryNewAddress.city}
-                    onChange={e => setDeliveryNewAddress(p => ({ ...p, city: e.target.value }))}
-                    placeholder="e.g., Dubai"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Country</label>
-                  <input type="text" value={deliveryNewAddress.country}
-                    onChange={e => setDeliveryNewAddress(p => ({ ...p, country: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Person</label>
-                  <input type="text" value={deliveryNewAddress.contactName}
-                    onChange={e => setDeliveryNewAddress(p => ({ ...p, contactName: e.target.value }))}
-                    placeholder="Contact name"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Contact Phone</label>
-                  <input type="text" value={deliveryNewAddress.contactPhone}
-                    onChange={e => setDeliveryNewAddress(p => ({ ...p, contactPhone: e.target.value }))}
-                    placeholder="+971 XX XXX XXXX"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
-                </div>
-              </div>
-              {deliveryAddressError && <p className="text-[11px] text-red-500">{deliveryAddressError}</p>}
-            </div>
-
-            <div className="flex justify-end gap-2 mt-5">
-              <button type="button"
-                onClick={() => {
-                  setDeliveryNewAddress({ name: '', address1: '', city: '', country: 'UAE', contactName: '', contactPhone: '' });
-                  setDeliveryAddressError('');
-                  setDeliveryShowAddAddressModal(false);
-                }}
-                disabled={deliveryAddressSaving}
-                className="px-4 py-2 text-xs font-semibold text-gray-700 border border-gray-200 rounded-xl hover:bg-gray-50 disabled:opacity-50">
-                Cancel
-              </button>
-              <button type="button"
-                onClick={handleSaveDeliveryNewAddress}
-                disabled={deliveryAddressSaving}
-                className="px-4 py-2 text-xs font-bold text-white bg-[#327F74] hover:bg-[#2a6b61] rounded-xl disabled:opacity-60 flex items-center gap-1.5">
-                <Plus className="h-3.5 w-3.5" /> {deliveryAddressSaving ? 'Saving…' : 'Add Address'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <NewDeliveryOrder
+          customerOptions={customerOptions}
+          currentInvoice={currentInvoice}
+          formatCurrency={formatCurrency}
+          openQuickCustomerModal={openQuickCustomerModal}
+          handleOutForDelivery={handleOutForDelivery}
+          showDeliveryModal={showDeliveryModal}
+          setShowDeliveryModal={setShowDeliveryModal}
+          deliveryCustomerId={deliveryCustomerId}
+          setDeliveryCustomerId={setDeliveryCustomerId}
+          deliveryCustomerSearch={deliveryCustomerSearch}
+          setDeliveryCustomerSearch={setDeliveryCustomerSearch}
+          deliveryAddress={deliveryAddress}
+          setDeliveryAddress={setDeliveryAddress}
+          deliveryShowAddressPicker={deliveryShowAddressPicker}
+          setDeliveryShowAddressPicker={setDeliveryShowAddressPicker}
+          deliveryDate={deliveryDate}
+          setDeliveryDate={setDeliveryDate}
+          deliveryTimeSlot={deliveryTimeSlot}
+          setDeliveryTimeSlot={setDeliveryTimeSlot}
+          deliveryInstructions={deliveryInstructions}
+          setDeliveryInstructions={setDeliveryInstructions}
+          deliveryCharge={deliveryCharge}
+          setDeliveryCharge={setDeliveryCharge}
+          deliveryNotes={deliveryNotes}
+          setDeliveryNotes={setDeliveryNotes}
+          deliveryPersons={deliveryPersons}
+          deliveryPersonsLoading={deliveryPersonsLoading}
+          deliveryDriver={deliveryDriver}
+          setDeliveryDriver={setDeliveryDriver}
+          deliveryValidationErrors={deliveryValidationErrors}
+          setDeliveryValidationErrors={setDeliveryValidationErrors}
+          deliveryOutLoading={deliveryOutLoading}
+          deliveryShowAddAddressModal={deliveryShowAddAddressModal}
+          setDeliveryShowAddAddressModal={setDeliveryShowAddAddressModal}
+          deliveryNewAddress={deliveryNewAddress}
+          setDeliveryNewAddress={setDeliveryNewAddress}
+          deliveryAddressSaving={deliveryAddressSaving}
+          deliveryAddressError={deliveryAddressError}
+          setDeliveryAddressError={setDeliveryAddressError}
+          handleSaveDeliveryNewAddress={handleSaveDeliveryNewAddress}
+        />
       )}
 
       {/* ══ DELIVERY SETTLEMENT modal ═════════════════════════════════════ */}
@@ -15584,7 +10284,7 @@ export default function POSSales() {
               const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
               const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
               if (tplInvoicePaper === 'A4') {
-                const template = resolveInvoiceA4Template(tplInvoiceFooter, { showLogo: tplInvoiceShowLogo, showCompanyDetails: tplInvoiceShowCompanyDetails, showTrn: tplInvoiceShowTrn, showCustomerDetails: tplInvoiceShowCustomerDetails, showTerms: tplInvoiceShowTerms, showNotes: tplInvoiceShowNotes, showBankDetails: tplInvoiceShowBankDetails, showQRCode: tplInvoiceShowQRCode, showStamp: tplInvoiceShowStamp, showSignature: tplInvoiceShowSignature, showGrandTotalBanner: tplInvoiceShowGrandTotalBanner, colItemCode: tplInvoiceColItemCode, colItemImage: tplInvoiceColItemImage, colBarcode: tplInvoiceColBarcode, colBatchNo: tplInvoiceColBatchNo, colDiscount: tplInvoiceColDiscount, colVatPct: tplInvoiceColVatPct, colVatAmt: tplInvoiceColVatAmt }, isTaxInvoiceDocument(receiptInvoice));
+                const template = resolveInvoiceA4TemplateFor(receiptInvoice);
                 const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(receiptInvoice) ? tplInvoiceHeader : tplReceiptHeader);
                 const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
                 printHtml(await generatePrintHtmlAsync(template, data, options));
@@ -15645,11 +10345,10 @@ export default function POSSales() {
             console.error('Delivery settle failed', err);
             const errMsg = err?.response?.data?.message || err.message;
             if (err?.response?.status === 403 && errMsg === 'SUPERVISOR_AUTHORIZATION_REQUIRED') {
-                setPendingSupervisorAction({ type: 'DELIVERY_SETTLEMENT', retry: handleFinalize });
-                setSupervisorPinValue('');
-                setSupervisorPinEmail('');
-                setSupervisorPinError('');
-                setShowSupervisorPin(true);
+                requestApproval({
+                  supervisorAction: { type: 'DELIVERY_SETTLEMENT', retry: handleFinalize },
+                  resetEmail: true,
+                });
             } else {
                 alert(errMsg || 'Failed to finalize delivery. Please try again.');
             }
@@ -15791,27 +10490,13 @@ export default function POSSales() {
 
       {/* Phase 12 - Session Transferred/Invalidated Overlay */}
       {sessionInvalidated && (
-        <div className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 text-center animate-in fade-in zoom-in duration-300">
-            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Lock className="h-8 w-8 text-red-600" />
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-3">Session No Longer Available</h2>
-            <p className="text-gray-600 mb-8 leading-relaxed">
-              {sessionInvalidReason || 'Your active POS session has been transferred to another terminal or closed remotely. This terminal can no longer continue using that session.'}
-            </p>
-            <button
-              onClick={() => {
-                setSessionInvalidated(false);
-                setSessionInvalidReason(null);
-                setCurrentView('dashboard');
-              }}
-              className="w-full py-3.5 px-4 bg-gray-900 hover:bg-gray-800 text-white font-semibold rounded-xl transition-colors focus:ring-4 focus:ring-gray-200"
-            >
-              Return to Dashboard
-            </button>
-          </div>
-        </div>
+        <SessionInvalidatedOverlay
+          sessionInvalidReason={sessionInvalidReason}
+          onReturnToDashboard={() => {
+            acknowledgeSessionInvalidation();
+            setCurrentView('dashboard');
+          }}
+        />
       )}
     </div>
     </BusinessDayStatusProvider>
