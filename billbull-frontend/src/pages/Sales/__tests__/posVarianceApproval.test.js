@@ -24,17 +24,10 @@ const { closePosSession, authorizePosVariance } = await import('../../../api/pos
  * request contract is covered behaviourally and the component's financial discipline is covered
  * by reading its source. The rendered panel itself remains manual-QA only, which the Phase 5
  * report states.
- *
- * The close / authorize-variance handlers moved verbatim into useSessionClosure during the Phase 3
- * decomposition, while the approval panel JSX and varianceGrantRef stayed in POSSales. The
- * component's source is therefore both files: every assertion below runs, unchanged, against
- * their concatenation — so the negative checks (no arithmetic, no storage) now cover the hook too.
  */
 describe('POS variance approval', () => {
-  const POS_SALES = [
-    '../POSSales.jsx',
-    '../POS/features/session/useSessionClosure.js',
-  ].map((rel) => fs.readFileSync(path.resolve(__dirname, rel), 'utf8')).join('\n');
+  const POS_SALES = fs.readFileSync(
+    path.resolve(__dirname, '../POSSales.jsx'), 'utf8');
 
   beforeEach(() => {
     post.mockClear();
