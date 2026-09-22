@@ -125,6 +125,12 @@ const AccountLedgerSearchSelect = ({ accounts = [], value, onChange, disabled })
 };
 
 
+// An untouched row (no account, no amounts) is ignored rather than rejected.
+const isBlankJournalLine = (line = {}) =>
+    !String(line.accountCode || line.account || '').trim()
+    && !(parseFloat(line.debit) || 0)
+    && !(parseFloat(line.credit) || 0);
+
 const JournalVoucher = () => {
     // Username of the currently authenticated user — used to stamp
     // preparedBy on new JVs and to record who posted/approved/rejected/voided.
@@ -619,7 +625,20 @@ const JournalVoucher = () => {
         if (!formData.preparedBy || !String(formData.preparedBy).trim()) {
             errors.preparedBy = 'Prepared By is required.';
         }
-        if (Math.abs(lineTotals.difference) > 0.01) {
+        const filledLines = journalLines.filter(line => !isBlankJournalLine(line));
+        const lineProblem = filledLines.findIndex(line => {
+            const debit = parseFloat(line.debit) || 0;
+            const credit = parseFloat(line.credit) || 0;
+            const hasAccount = Boolean(String(line.accountCode || line.account || '').trim());
+            return !hasAccount || debit < 0 || credit < 0 || (debit > 0) === (credit > 0);
+        });
+        if (filledLines.length < 2) {
+            errors.lines = 'Add at least two journal lines with an account and an amount.';
+        } else if (lineProblem !== -1) {
+            errors.lines = `Line ${journalLines.indexOf(filledLines[lineProblem]) + 1}: select an account and enter either a debit or a credit amount.`;
+        } else if (lineTotals.totalDebit < 0.01) {
+            errors.lines = 'Journal total must be greater than zero.';
+        } else if (Math.abs(lineTotals.difference) > 0.01) {
             errors.lines = 'Debits and credits must balance before saving.';
         }
         return errors;
@@ -640,7 +659,7 @@ const JournalVoucher = () => {
                 narration: formData.narration,
                 preparedBy: formData.preparedBy,
                 status: 'Draft',
-                lines: journalLines.map(line => ({
+                lines: journalLines.filter(line => !isBlankJournalLine(line)).map(line => ({
                     account: line.account,
                     accountCode: line.accountCode,
                     description: line.description,
@@ -887,7 +906,7 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                         )}
 
                         {(formData.status === 'Draft' || formData.status === 'Rejected') && formData.id && (
-                            <button onClick={() => handleStatusAction('submit')} className="px-4 py-2 rounded text-xs font-bold shadow-sm flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700">
+                            <button onClick={() => handleSave('Submitted')} className="px-4 py-2 rounded text-xs font-bold shadow-sm flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700">
                                 Submit for Approval
                             </button>
                         )}
