@@ -192,6 +192,7 @@ import POSItemEntryContainer from '../../components/pos/ItemEntry/POSItemEntryCo
 import { ProductEntryMode } from '../../components/pos/ItemEntry/constants';
 import { getPosPrinters } from '../../api/posPrinterApi';
 import { getDeliveryPersons } from '../../api/employeeApi';
+import useSalesperson from './POS/features/sales/useSalesperson';
 import { useHeartbeat } from '../../hooks/useHeartbeat';
 import { useIdleTimeout } from '../../hooks/useIdleTimeout';
 import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
@@ -430,6 +431,15 @@ export default function POSSales() {
 
   const { company } = useCompany();
   const { branches } = useBranch();
+  // Salesperson attribution for the current sale — WHO the sale belongs to, as opposed to the
+  // cashier who rang it up (that stays the session owner, untouched). All of its state lives
+  // inside the hook. Declared this early so the delivery-order callback's dependency array can
+  // reference salespersonPayload without a before-initialization error.
+  const {
+    salespersonOptions, salespersonLoading, salespersonError,
+    salespersonEmployeeId, setSalespersonEmployeeId,
+    salespersonPayload, resetSalesperson,
+  } = useSalesperson();
   // Active currency CODE from the company profile (falls back to AED). Report
   // view-models emit this code as the money token; the print engine
   // (renderTextWithCurrencySymbols) rewrites it to the configured symbol/image.
@@ -4370,6 +4380,10 @@ export default function POSSales() {
         shippingAddress: deliveryAddress,
         driverName: selectedDeliveryPerson?.name || null,
         deliveryPersonEmployeeCode: deliveryDriver || null,
+        // Salesperson attribution — the SECOND checkout payload builder. A delivery order is a
+        // real invoice and must carry the same attribution as a counter sale, or delivery sales
+        // would silently land in the Unassigned bucket.
+        ...salespersonPayload,
         deliveryDate,
         deliveryTimeSlot,
         deliveryNotes: [
@@ -4457,7 +4471,7 @@ export default function POSSales() {
   }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
     deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
     currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder,
-    tplInvoiceShowBankDetails, tplInvoicePaper]);
+    tplInvoiceShowBankDetails, tplInvoicePaper, salespersonPayload]);
 
   // Open the New Delivery Order dialog, pre-seeding the customer + default
   // address from whoever is already selected on the POS bill (a walk-in seeds
@@ -5449,6 +5463,11 @@ export default function POSSales() {
         taxInclusive: !!posSettings?.taxInclusive,
         driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
         deliveryNotes: deliveryNotes || null,
+        // Salesperson attribution. Both fields are always present (null when Unassigned) so the
+        // backend never has to distinguish "not sent" from "explicitly cleared". The employee is
+        // re-resolved server-side from this id/code — nothing here is trusted as identity.
+        salespersonEmployeeId: salespersonPayload?.salespersonEmployeeId ?? null,
+        salespersonEmployeeCode: salespersonPayload?.salespersonEmployeeCode ?? null,
         items,
         supervisorOverridePin: overrideCreds?.pin || undefined,
         supervisorOverrideEmail: overrideCreds?.email || undefined,
@@ -5524,6 +5543,9 @@ export default function POSSales() {
       setCheckoutRemarks('');
       // Drop the allocations so the next sale starts from an empty payment panel.
       checkoutPayment.clearLines();
+      // Next sale starts from the session default salesperson (or Unassigned) rather than
+      // inheriting whoever the previous sale was attributed to.
+      resetSalesperson();
       if (layawayIdSnapshot) { setActiveLayawayId(null); setActiveLayawayDeposit(0); }
       // Transition the checkout overlay to the "complete" screen in-place.
       // Deferred to a separate React commit (queueMicrotask) so the state
@@ -9950,6 +9972,9 @@ export default function POSSales() {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
+    // Salesperson attribution — rendered beside the customer in the sale header.
+    salespersonOptions, salespersonLoading, salespersonError,
+    salespersonEmployeeId, setSalespersonEmployeeId,
     // Product Entry Mode is decided here, once, for every template.
     handleProductSelection, handleEditItem,
     // addToInvoice/createInvoiceLine/updateInvoiceLine are deliberately NOT
