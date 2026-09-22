@@ -31,5 +31,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT u FROM User u LEFT JOIN FETCH u.branch LEFT JOIN FETCH u.primaryRole WHERE u.linkedEmployee.id = :employeeId")
     Optional<User> findByLinkedEmployee_Id(@Param("employeeId") Long employeeId);
 
+    /**
+     * The id of the employee linked to a username, read as a scalar.
+     *
+     * <p>{@code User.linkedEmployee} is a LAZY association and {@code spring.jpa.open-in-view} is
+     * off, so reading it through {@code findByUsername(...).getLinkedEmployee()} from a controller
+     * hands back an uninitialised proxy whose session has already closed — touching any field then
+     * throws {@code LazyInitializationException}. Selecting just the id keeps the proxy inside the
+     * query. Empty when the user does not exist or has no linked employee (the implicit join is an
+     * inner join).
+     */
+    @Query("SELECT u.linkedEmployee.id FROM User u WHERE u.username = :username")
+    Optional<Long> findLinkedEmployeeIdByUsername(@Param("username") String username);
+
     List<User> findByBranchIsNull();
 }

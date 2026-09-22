@@ -75,6 +75,59 @@ public class EmployeeController {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Candidates for the POS salesperson selector, plus the caller's own linked employee so the
+     * POS can preselect it without a second round-trip.
+     *
+     * <p>Open to any authenticated user for the same reason {@code /names} and
+     * {@code /delivery-persons} are: it is a dropdown feed, and it projects to id/code/name
+     * rather than returning the Employee entity. {@code defaultEmployeeId} is null when the caller
+     * has no linked employee, or when that employee is not Active — the POS then starts blank
+     * rather than guessing.
+     *
+     * <p>Phase 1 business rule (confirmed): any authenticated POS user may attribute a sale to ANY
+     * active employee, because the cashier is not necessarily the salesperson. There is
+     * intentionally no salesperson-assignment permission; see
+     * {@code PosCheckoutController.resolveSalesperson}.
+     */
+    @GetMapping("/salespersons")
+    @PreAuthorize("isAuthenticated()")
+    public Map<String, Object> getSalespersons(Authentication authentication) {
+        // id/code/name only. Deliberately no phone or other personal data: this feed is readable
+        // by every authenticated user (not just HR), so it carries only what the picker needs.
+        List<Map<String, Object>> options = service.getActiveSalespersons().stream()
+                .map(emp -> Map.<String, Object>of(
+                        "id", emp.getId(),
+                        "employeeCode", emp.getEmployeeCode(),
+                        "name", fullName(emp)
+                ))
+                .collect(Collectors.toList());
+
+        // The caller's linked employee is the default only when it is in the Active roster above —
+        // which is exactly the "linked AND Active" rule, with no second employee lookup. Resolved by
+        // id (scalar query) rather than through User.linkedEmployee: that association is LAZY and,
+        // with open-in-view off, its proxy is already detached here.
+        Long defaultEmployeeId = null;
+        if (authentication != null && authentication.getName() != null) {
+            Long linkedId = userRepository.findLinkedEmployeeIdByUsername(authentication.getName())
+                    .orElse(null);
+            if (linkedId != null && options.stream().anyMatch(o -> linkedId.equals(o.get("id")))) {
+                defaultEmployeeId = linkedId;
+            }
+        }
+
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("options", options);
+        body.put("defaultEmployeeId", defaultEmployeeId);
+        return body;
+    }
+
+    private String fullName(Employee emp) {
+        return (emp.getFirstName() + " " +
+                (emp.getMiddleName() != null ? emp.getMiddleName() + " " : "") +
+                emp.getLastName()).trim().replaceAll("\\s+", " ");
+    }
+
     @GetMapping
     public List<Employee> getAll() {
         modulePermissionService.requireCanView("hr.employee");

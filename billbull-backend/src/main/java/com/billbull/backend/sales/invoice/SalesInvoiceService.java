@@ -65,6 +65,10 @@ import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
 @Service
 public class SalesInvoiceService {
 
+    /** SLF4J, as in the sibling SalesInvoiceHistoryService. Currently used only by the finalized
+     *  salesperson-attribution guard; the older System.out diagnostics in this class are untouched. */
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(SalesInvoiceService.class);
+
     private final SalesInvoiceRepository invoiceRepo;
     private final PostingEngineService postingEngineService;
     private final DeliveryNoteService deliveryNoteService;
@@ -502,6 +506,8 @@ public class SalesInvoiceService {
             }
         }
 
+        preserveFinalizedSalespersonAttribution(invoice, existing);
+
         SalesInvoice saved = invoiceRepo.save(invoice);
 
         // History (best-effort; the service swallows its own failures so the trail can
@@ -831,6 +837,49 @@ public class SalesInvoiceService {
         invoice.setTaxTotal(taxTotal);
         invoice.setInvoiceTotal(total);
         invoice.setBalance(total.subtract(paid));
+    }
+
+    /**
+     * Salesperson-employee attribution is immutable once an invoice is finalized.
+     *
+     * <p>It is the key commission is computed against, so an ordinary invoice edit must not be
+     * able to rewrite commission history after the fact. Guarded narrowly and deliberately: the
+     * persisted values are restored onto the incoming instance rather than the whole edit being
+     * rejected, so every other field on a finalized invoice stays exactly as editable as it is
+     * today. A DRAFT or CANCELLED invoice, or one that carries no attribution yet, stays freely
+     * assignable.
+     *
+     * <p>The legacy {@link SalesInvoice#getSalesperson()} String is untouched here — it is a
+     * separate concept with its own existing behaviour.
+     *
+     * <p>Pure, collaborator-free and package-private so it can be characterization-tested directly,
+     * the same way {@link #finalizeInvoiceTotals} is.
+     */
+    static void preserveFinalizedSalespersonAttribution(SalesInvoice invoice, SalesInvoice existing) {
+        if (invoice == null || existing == null) return;
+        if (existing.getSalespersonEmployeeId() == null) return;
+        if (existing.getStatus() == SalesInvoiceStatus.DRAFT
+                || existing.getStatus() == SalesInvoiceStatus.CANCELLED) {
+            return;
+        }
+        // Behaviour is unchanged — the persisted value always wins and the save still succeeds. The
+        // only addition is a WARN when the edit actually tried to CHANGE the attribution, so a silent
+        // restore leaves a trace. A whole-invoice round-trip that re-sends the same value (or omits
+        // it, which the back-office screen does) is the normal case and logs nothing.
+        Long attempted = invoice.getSalespersonEmployeeId();
+        if (attempted != null && !attempted.equals(existing.getSalespersonEmployeeId())) {
+            org.springframework.security.core.Authentication auth =
+                    org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+            log.warn("Salesperson change on finalized invoice ignored: invoice id={} number={} status={} "
+                            + "persistedSalespersonEmployeeId={} attemptedSalespersonEmployeeId={} user={} "
+                            + "- persisted attribution restored",
+                    existing.getId(), existing.getInvoiceNumber(), existing.getStatus(),
+                    existing.getSalespersonEmployeeId(), attempted,
+                    auth != null ? auth.getName() : "system");
+        }
+        invoice.setSalespersonEmployeeId(existing.getSalespersonEmployeeId());
+        invoice.setSalespersonEmployeeCode(existing.getSalespersonEmployeeCode());
+        invoice.setSalespersonName(existing.getSalespersonName());
     }
 
     /** Null-safe money view: treats {@code null} as zero. */

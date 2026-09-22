@@ -746,6 +746,7 @@ public class PosCheckoutController {
 
     private SalesInvoice buildInvoice(PosCheckoutRequest req) {
         Employee deliveryPerson = resolveDeliveryPerson(req);
+        Employee salesperson = resolveSalesperson(req);
         SalesInvoice inv = new SalesInvoice();
         inv.setSalesType(SalesType.POS_SALE);
         inv.setSalesChannel(isDeliveryCheckout(req) ? "Retail_Delivery" : "Retail_POS");
@@ -775,6 +776,16 @@ public class PosCheckoutController {
             inv.setPosDriverName(employeeFullName(deliveryPerson));
         } else if (req.getDriverName() != null && !req.getDriverName().isBlank()) {
             inv.setPosDriverName(req.getDriverName());
+        }
+        // Salesperson attribution. Canonical id/code/name are taken from the resolved employee
+        // record, never from anything the client typed. Left null when nothing was selected —
+        // reports bucket those as "Unassigned"; there is no sentinel employee. The legacy
+        // inv.salesperson String is deliberately untouched here and keeps its existing behaviour
+        // (SalesInvoiceService defaults it to the authenticated username).
+        if (salesperson != null) {
+            inv.setSalespersonEmployeeId(salesperson.getId());
+            inv.setSalespersonEmployeeCode(salesperson.getEmployeeCode());
+            inv.setSalespersonName(employeeFullName(salesperson));
         }
         if (req.getDeliveryDate() != null && !req.getDeliveryDate().isBlank()) {
             inv.setDueDate(LocalDate.parse(req.getDeliveryDate()));
@@ -936,6 +947,54 @@ public class PosCheckoutController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Assigned delivery person must be an active employee with the Delivery Person role.");
         }
         return employee;
+    }
+
+    /**
+     * Resolves the salesperson the sale is attributed to. Mirrors {@link #resolveDeliveryPerson}:
+     * id first, employee code as a fallback, then a server-side existence + Active check. The
+     * client's role is to name a candidate; the identity written onto the invoice comes from the
+     * employee row.
+     *
+     * <p>Unlike the delivery person, this is entirely optional — a checkout with no salesperson is
+     * valid and simply stays Unassigned. Only an explicitly supplied but unresolvable/inactive
+     * employee is an error, because silently dropping it would misattribute commission.
+     *
+     * <p>Phase 1 business rule (confirmed, intentional): any authenticated POS user may select ANY
+     * active employee — the cashier and the salesperson are different roles, and a cashier may
+     * legitimately ring up a sale for someone else. There is deliberately no check tying the
+     * chosen employee to the caller and no salesperson-assignment permission. Traceability of who
+     * made the attribution comes from the invoice's created_by_user_id and POS session owner.
+     */
+    private Employee resolveSalesperson(PosCheckoutRequest req) {
+        boolean hasId = req.getSalespersonEmployeeId() != null;
+        boolean hasCode = req.getSalespersonEmployeeCode() != null
+                && !req.getSalespersonEmployeeCode().isBlank();
+        if (!hasId && !hasCode) {
+            return null;
+        }
+
+        Employee employee = null;
+        if (hasId) {
+            employee = employeeRepository.findById(req.getSalespersonEmployeeId()).orElse(null);
+        }
+        if (employee == null && hasCode) {
+            employee = employeeRepository
+                    .findByEmployeeCodeIgnoreCase(req.getSalespersonEmployeeCode().trim())
+                    .orElse(null);
+        }
+        if (employee == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Selected salesperson could not be found.");
+        }
+        if (!isActiveEmployee(employee)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Selected salesperson must be an active employee.");
+        }
+        return employee;
+    }
+
+    private boolean isActiveEmployee(Employee employee) {
+        return employee.getStatus() != null && "active".equalsIgnoreCase(employee.getStatus().trim());
     }
 
     private boolean isDeliveryCheckout(PosCheckoutRequest req) {

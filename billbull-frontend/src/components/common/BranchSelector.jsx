@@ -35,10 +35,12 @@ const BranchSelector = () => {
         const only = activeBranch || defaultBranch || branches[0];
         if (!only) return null;
         return (
-            <div style={staticChip(only.isHeadquarters)}>
-                <Building2 size={14} />
-                <span style={{ fontWeight: 600 }}>{only.name}</span>
-                {only.code && <span style={{ opacity: 0.7 }}>· {only.code}</span>}
+            <div style={staticChip(only.isHeadquarters)} title={only.code ? `${only.name} · ${only.code}` : only.name}>
+                <Building2 size={14} style={{ flexShrink: 0 }} />
+                <span style={{ fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {only.name}
+                </span>
+                {only.code && <span style={codeBadge}>{only.code}</span>}
             </div>
         );
     }
@@ -75,11 +77,11 @@ const BranchSelector = () => {
                 disabled={switching}
                 title="Switch active branch"
             >
-                <Building2 size={14} />
+                <Building2 size={14} style={{ flexShrink: 0 }} />
                 <span title={triggerLabel} style={{ fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {triggerLabel}
                 </span>
-                <ChevronDown size={14} style={{ opacity: 0.7 }} />
+                <ChevronDown size={14} style={{ opacity: 0.7, flexShrink: 0 }} />
             </button>
 
             {open && (
@@ -112,7 +114,7 @@ const BranchSelector = () => {
                                     <span title={branch.name} style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
                                         {branch.name}
                                     </span>
-                                    {branch.code && <span style={{ opacity: 0.6, fontSize: 11 }}>· {branch.code}</span>}
+                                    {branch.code && <span style={{ opacity: 0.6, fontSize: 11, flexShrink: 0, whiteSpace: 'nowrap' }}>· {branch.code}</span>}
                                     {branch.isHeadquarters && (
                                         <span style={hqBadge}>
                                             <Star size={9} fill="currentColor" /> HQ
@@ -155,7 +157,21 @@ const staticChip = (isHq) => ({
     borderRadius: 8,
     fontSize: 13,
     color: '#1E1E1E',
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
 });
+
+const codeBadge = {
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+    fontSize: 11,
+    fontWeight: 600,
+    color: '#64748B',
+    background: 'rgba(148, 163, 184, 0.15)',
+    padding: '1px 6px',
+    borderRadius: 4,
+};
 
 const dropdownStyle = {
     position: 'absolute',

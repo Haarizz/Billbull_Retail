@@ -175,6 +175,36 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
     @com.fasterxml.jackson.annotation.JsonIgnore
     private Employee posDriverEmployee;
 
+    /**
+     * Salesperson attribution — WHO the sale belongs to for employee performance and commission,
+     * as distinct from WHO rang it up. The POS operator (cashier) stays recoverable from
+     * {@link #posSessionId} / {@link #createdByUserId}; these three carry a different fact, because
+     * Cashier 1 may be logged in while the sale belongs to Manager 1.
+     *
+     * <p>Shaped exactly like the {@code posDriverEmployee*} trio above: a real employee id plus a
+     * denormalised code and name snapshot, so reports render a row without joining {@code employees}.
+     * Resolved server-side at checkout — the client sends an id/code, never a name.
+     *
+     * <p>Deliberately separate from the legacy {@link #salesperson} String, which carries mixed
+     * semantics (defaulted to the JWT username by SalesInvoiceService when blank; an employee display
+     * name when set by the back-office invoice screen) and still backs several existing reports.
+     * Null here = "Unassigned" for the new employee-performance feature.
+     */
+    @Column(name = "salesperson_employee_id")
+    private Long salespersonEmployeeId;
+
+    @Column(name = "salesperson_employee_code", length = 100)
+    private String salespersonEmployeeCode;
+
+    @Column(name = "salesperson_name", length = 200)
+    private String salespersonName;
+
+    /** Navigable view of {@link #salespersonEmployeeId}. Read-only — writes go through the id setter. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "salesperson_employee_id", insertable = false, updatable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Employee salespersonEmployee;
+
     @Column(name = "pos_delivery_notes", length = 1000)
     private String posDeliveryNotes;
 
@@ -593,6 +623,18 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     public Employee getPosDriverEmployee() { return posDriverEmployee; }
     public void setPosDriverEmployee(Employee posDriverEmployee) { this.posDriverEmployee = posDriverEmployee; }
+
+    public Long getSalespersonEmployeeId() { return salespersonEmployeeId; }
+    public void setSalespersonEmployeeId(Long salespersonEmployeeId) { this.salespersonEmployeeId = salespersonEmployeeId; }
+
+    public String getSalespersonEmployeeCode() { return salespersonEmployeeCode; }
+    public void setSalespersonEmployeeCode(String salespersonEmployeeCode) { this.salespersonEmployeeCode = salespersonEmployeeCode; }
+
+    public String getSalespersonName() { return salespersonName; }
+    public void setSalespersonName(String salespersonName) { this.salespersonName = salespersonName; }
+
+    public Employee getSalespersonEmployee() { return salespersonEmployee; }
+    public void setSalespersonEmployee(Employee salespersonEmployee) { this.salespersonEmployee = salespersonEmployee; }
 
     public String getPosDeliveryNotes() { return posDeliveryNotes; }
     public void setPosDeliveryNotes(String posDeliveryNotes) { this.posDeliveryNotes = posDeliveryNotes; }

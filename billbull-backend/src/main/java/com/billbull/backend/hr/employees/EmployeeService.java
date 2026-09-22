@@ -14,6 +14,9 @@ public interface EmployeeService {
 
     List<Employee> getActiveDeliveryPersons();
 
+    /** Candidates for the POS salesperson selector — genuinely Active employees only. */
+    List<Employee> getActiveSalespersons();
+
     List<Employee> getPendingEmployees();
 
     // ===== CREATE / UPDATE =====

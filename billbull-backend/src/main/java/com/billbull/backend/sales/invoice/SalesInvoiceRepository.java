@@ -249,6 +249,63 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
             return sumRevenueBetween(from, to, null);
         }
 
+        // --- EMPLOYEE PERFORMANCE AGGREGATES (salesperson attribution) ---
+
+        /**
+         * One row per salesperson for a period: [employeeId, SUM(invoiceTotal), COUNT(invoices)].
+         *
+         * <p>The single query behind the whole admin performance grid — deliberately not one SUM
+         * per employee, and never a load-then-sum-in-Java.
+         *
+         * <p>Uses the same status predicate as the dashboard aggregates above (excluding CANCELLED
+         * and DRAFT) so employee sales reconcile against the existing revenue figures, and filters
+         * on invoiceDate — the POS business/trading date — not createdAt, so an overnight session's
+         * post-midnight sale lands in the trading month it belongs to.
+         *
+         * <p>Rows with no attribution (historical invoices, or sales rung up with no salesperson
+         * selected) are excluded here; callers surface them via {@link #sumUnassignedSalesBetween}.
+         */
+        @Query("SELECT si.salespersonEmployeeId, " +
+               "       COALESCE(SUM(si.invoiceTotal), 0), COUNT(si) " +
+               "FROM SalesInvoice si " +
+               "WHERE si.status NOT IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
+               "AND si.invoiceDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId) " +
+               "AND si.salespersonEmployeeId IS NOT NULL " +
+               "GROUP BY si.salespersonEmployeeId")
+        List<Object[]> sumSalesBySalesperson(@Param("from") LocalDate from,
+                                             @Param("to") LocalDate to,
+                                             @Param("branchId") Long branchId);
+
+        /** Sales that carry no salesperson attribution — the "Unassigned" bucket. */
+        @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0), COUNT(si) " +
+               "FROM SalesInvoice si " +
+               "WHERE si.status NOT IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
+               "AND si.invoiceDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId) " +
+               "AND si.salespersonEmployeeId IS NULL")
+        List<Object[]> sumUnassignedSalesBetween(@Param("from") LocalDate from,
+                                                 @Param("to") LocalDate to,
+                                                 @Param("branchId") Long branchId);
+
+        /** Same aggregate narrowed to one employee — backs the self-service endpoint. */
+        @Query("SELECT COALESCE(SUM(si.invoiceTotal), 0), COUNT(si) " +
+               "FROM SalesInvoice si " +
+               "WHERE si.status NOT IN (" +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED," +
+               "  com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT) " +
+               "AND si.invoiceDate BETWEEN :from AND :to " +
+               "AND (:branchId IS NULL OR si.branchId = :branchId) " +
+               "AND si.salespersonEmployeeId = :employeeId")
+        List<Object[]> sumSalesForSalesperson(@Param("employeeId") Long employeeId,
+                                              @Param("from") LocalDate from,
+                                              @Param("to") LocalDate to,
+                                              @Param("branchId") Long branchId);
+
         @Query("SELECT COUNT(si) FROM SalesInvoice si " +
                "WHERE si.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
                "AND si.invoiceDate BETWEEN :from AND :to " +

@@ -20,15 +20,18 @@ public class SalesInvoiceController {
     private final InvoiceCustomerContactService customerContactService;
     private final ModulePermissionService modulePermissionService;
     private final DocumentEmailSender emailSender;
+    private final SalespersonAttributionService salespersonAttributionService;
 
     public SalesInvoiceController(SalesInvoiceService service,
                                   InvoiceCustomerContactService customerContactService,
                                   ModulePermissionService modulePermissionService,
-                                  DocumentEmailSender emailSender) {
+                                  DocumentEmailSender emailSender,
+                                  SalespersonAttributionService salespersonAttributionService) {
         this.service = service;
         this.customerContactService = customerContactService;
         this.modulePermissionService = modulePermissionService;
         this.emailSender = emailSender;
+        this.salespersonAttributionService = salespersonAttributionService;
     }
 
     // QA-040: send the invoice email using the frontend-rendered HTML body
@@ -132,6 +135,12 @@ public class SalesInvoiceController {
     @PreAuthorize("isAuthenticated()")
     public SalesInvoice save(@RequestBody SalesInvoice invoice) {
         modulePermissionService.requireCanCreate("sales.invoice");
+        // Back-office salesperson attribution: canonicalise whatever the client sent against the
+        // employee record before it reaches the service. A request that carries no salesperson
+        // id/code is left Unassigned, which is exactly what every existing caller sends today —
+        // so current back-office behaviour is unchanged. The legacy `salesperson` String is
+        // untouched and keeps flowing through as before.
+        salespersonAttributionService.applyTo(invoice);
         return service.save(invoice);
     }
 

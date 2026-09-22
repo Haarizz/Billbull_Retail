@@ -2,7 +2,10 @@ package com.billbull.backend.financials.generalledger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -116,5 +119,46 @@ class JournalEntryServiceTest {
         assertEquals("2000", creditEntry.getAccountCode());
         assertEquals(BigDecimal.ZERO, creditEntry.getDebitAmount());
         assertEquals(new BigDecimal("100.00"), creditEntry.getCreditAmount());
+    }
+
+    @Test
+    void submitRejectsJournalVoucherWithoutLines() {
+        JournalVoucher jv = draftVoucher(new ArrayList<>());
+        when(journalEntryRepo.findByIdWithLinesAndBranch(200L)).thenReturn(Optional.of(jv));
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> journalEntryService.submitForApproval(200L, "test_user"));
+        assertTrue(ex.getMessage().contains("at least two lines"));
+        verify(journalEntryRepo, never()).save(any(JournalEntry.class));
+    }
+
+    @Test
+    void submitRejectsJournalVoucherLineWithoutAccount() {
+        JournalLine debit = line("1000", "100.00", "0");
+        JournalLine noAccount = line(null, "0", "100.00");
+        JournalVoucher jv = draftVoucher(new ArrayList<>(List.of(debit, noAccount)));
+        when(journalEntryRepo.findByIdWithLinesAndBranch(200L)).thenReturn(Optional.of(jv));
+
+        RuntimeException ex = assertThrows(RuntimeException.class,
+                () -> journalEntryService.submitForApproval(200L, "test_user"));
+        assertTrue(ex.getMessage().startsWith("Line 2"));
+    }
+
+    private JournalVoucher draftVoucher(List<JournalLine> lines) {
+        JournalVoucher jv = new JournalVoucher();
+        jv.setId(200L);
+        jv.setEntryNumber("JE-000200");
+        jv.setDate(LocalDate.now());
+        jv.setStatus(JournalEntry.STATUS_DRAFT);
+        jv.setLines(lines);
+        return jv;
+    }
+
+    private JournalLine line(String accountCode, String debit, String credit) {
+        JournalLine line = new JournalLine();
+        line.setAccountCode(accountCode);
+        line.setDebit(new BigDecimal(debit));
+        line.setCredit(new BigDecimal(credit));
+        return line;
     }
 }

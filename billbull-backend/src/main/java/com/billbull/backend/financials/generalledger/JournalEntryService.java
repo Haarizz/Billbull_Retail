@@ -183,8 +183,12 @@ public class JournalEntryService {
             throw new RuntimeException("Cannot post: date " + entry.getDate() + " is in a closed period.");
         }
 
-        // Validate balance
-        validateBalance(entry);
+        // Validate balance (manual JVs also need real, one-sided lines on accounts)
+        if (entry instanceof JournalVoucher) {
+            validateJournalLines(entry);
+        } else {
+            validateBalance(entry);
+        }
 
         // 🔵 SYNC TO LEDGER: Create LedgerEntry for each JournalLine
         for (JournalLine line : entry.getLines()) {
@@ -234,6 +238,7 @@ public class JournalEntryService {
         if (!JournalEntry.STATUS_DRAFT.equalsIgnoreCase(jv.getStatus())) {
             throw new RuntimeException("Only Draft journal vouchers can be submitted for approval.");
         }
+        validateJournalLines(jv);
         jv.setStatus(JournalEntry.STATUS_SUBMITTED);
         JournalVoucher saved = journalVoucherRepository.save(jv);
         auditService.logEvent("JOURNAL_VOUCHER", saved.getEntryNumber(), "SUBMITTED",
@@ -250,6 +255,7 @@ public class JournalEntryService {
         if (!approvable) {
             throw new RuntimeException("Only Submitted or PENDING_APPROVAL journal vouchers can be approved. Current: " + jv.getStatus());
         }
+        validateJournalLines(jv);
         jv.setStatus(JournalEntry.STATUS_APPROVED);
         jv.setApprovedBy(approvedBy != null ? approvedBy : "System");
         jv.setApprovedAt(LocalDateTime.now());
@@ -303,6 +309,35 @@ public class JournalEntryService {
                         "Manual entries to control account '" + account.getName() + "' are not allowed.");
             }
         }
+    }
+
+    /**
+     * Guards manual JVs moving past Draft: at least two lines, every line on an
+     * account with exactly one positive side, non-zero total, and balanced.
+     */
+    private void validateJournalLines(JournalEntry entry) {
+        List<JournalLine> lines = entry.getLines();
+        if (lines == null || lines.size() < 2) {
+            throw new RuntimeException("Journal must have at least two lines with an account and an amount.");
+        }
+        BigDecimal totalDebit = BigDecimal.ZERO;
+        for (int i = 0; i < lines.size(); i++) {
+            JournalLine line = lines.get(i);
+            boolean hasAccount = (line.getAccountCode() != null && !line.getAccountCode().isBlank())
+                    || (line.getAccount() != null && !line.getAccount().isBlank());
+            BigDecimal debit = line.getDebit() != null ? line.getDebit() : BigDecimal.ZERO;
+            BigDecimal credit = line.getCredit() != null ? line.getCredit() : BigDecimal.ZERO;
+            boolean oneSided = (debit.signum() > 0) != (credit.signum() > 0);
+            if (!hasAccount || debit.signum() < 0 || credit.signum() < 0 || !oneSided) {
+                throw new RuntimeException("Line " + (i + 1)
+                        + ": select an account and enter either a debit or a credit amount.");
+            }
+            totalDebit = totalDebit.add(debit);
+        }
+        if (totalDebit.setScale(2, RoundingMode.HALF_UP).signum() == 0) {
+            throw new RuntimeException("Journal total must be greater than zero.");
+        }
+        validateBalance(entry);
     }
 
     private void validateBalance(JournalEntry entry) {
