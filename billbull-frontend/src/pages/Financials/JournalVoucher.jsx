@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import {
     FileText, Plus, Search, Filter, Eye, MoreHorizontal, Download,
     Trash, Edit, CheckCircle2, AlertCircle, X, Save,
     ChevronLeft, PlusCircle, MinusCircle, FileSpreadsheet,
     Printer as PrintIcon, Ban, User, Clock,
-    TrendingUp, DollarSign
+    TrendingUp, DollarSign, ChevronDown, Check
 } from 'lucide-react';
 import * as ledgerApi from '../../api/ledgerApi';
 import { employeesApi } from '../../api/employeesApi';
@@ -18,7 +18,7 @@ import { printHtml } from '../../utils/printGenerator';
 import { getUsernameFromToken } from '../../api/auth';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { createRoot } from 'react-dom/client';
-import { flushSync } from 'react-dom';
+import { flushSync, createPortal } from 'react-dom';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
 import { JournalPreview } from './FinancialVoucherDesigner';
@@ -32,10 +32,40 @@ const formatAccountLedgerLabel = (account = {}) => {
     return `${code}${account.name || ''}`.trim();
 };
 
-const AccountLedgerSearchSelect = ({ accounts = [], value, onChange, disabled }) => {
+const ACCOUNT_GROUP_ORDER = ['Assets', 'Liabilities', 'Equity', 'Income', 'Expenses'];
+const MAX_ACCOUNT_RESULTS = 100;
+
+const getAccountGroupLabel = (account = {}) => account.accountGroup || account.accountType || 'Other';
+
+// An untouched row (no account, no amounts) is ignored rather than rejected.
+const isBlankJournalLine = (line = {}) =>
+    !String(line.accountCode || line.account || '').trim()
+    && !(parseFloat(line.debit) || 0)
+    && !(parseFloat(line.credit) || 0);
+
+const HighlightMatch = ({ text = '', query = '' }) => {
+    const q = query.trim();
+    if (!q) return text;
+    const index = text.toLowerCase().indexOf(q.toLowerCase());
+    if (index === -1) return text;
+    return (
+        <>
+            {text.slice(0, index)}
+            <mark className="rounded-sm bg-yellow-200/70 text-inherit">{text.slice(index, index + q.length)}</mark>
+            {text.slice(index + q.length)}
+        </>
+    );
+};
+
+const AccountLedgerSearchSelect = ({ accounts = [], value, onChange, disabled, onCreateNew, hasError }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
-    const dropdownRef = useRef(null);
+    const [activeIndex, setActiveIndex] = useState(0);
+    const [menuPosition, setMenuPosition] = useState(null);
+    const wrapperRef = useRef(null);
+    const inputRef = useRef(null);
+    const menuRef = useRef(null);
+    const listRef = useRef(null);
 
     const selectedAccount = useMemo(() => (
         accounts.find(account => account.name === value || account.code === value)
@@ -43,93 +73,262 @@ const AccountLedgerSearchSelect = ({ accounts = [], value, onChange, disabled })
 
     const filteredAccounts = useMemo(() => {
         const text = query.trim().toLowerCase();
-        if (!text) return accounts.slice(0, 60);
-        return accounts
-            .filter(account => `${account.code || ''} ${account.name || ''}`.toLowerCase().includes(text))
-            .slice(0, 60);
+        if (!text) return accounts.slice(0, MAX_ACCOUNT_RESULTS);
+        const matches = accounts.filter(account =>
+            `${account.code || ''} ${account.name || ''} ${account.subGroup || ''}`.toLowerCase().includes(text));
+        // Code-prefix matches first so typing "12" jumps straight to the 12xx range.
+        const codePrefix = (account) => ((account.code || '').toLowerCase().startsWith(text) ? 0 : 1);
+        return [...matches].sort((a, b) => codePrefix(a) - codePrefix(b)).slice(0, MAX_ACCOUNT_RESULTS);
     }, [accounts, query]);
+
+    // Grouped for display; each item keeps its flat index for keyboard navigation.
+    const groupedAccounts = useMemo(() => {
+        const groups = new Map();
+        filteredAccounts.forEach((account, flatIndex) => {
+            const label = getAccountGroupLabel(account);
+            if (!groups.has(label)) groups.set(label, []);
+            groups.get(label).push({ account, flatIndex });
+        });
+        const rank = (label) => {
+            const index = ACCOUNT_GROUP_ORDER.indexOf(label);
+            return index === -1 ? 99 : index;
+        };
+        return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b));
+    }, [filteredAccounts]);
+
+    // Navigation order must match the visual (grouped) order.
+    const navigationOrder = useMemo(() => (
+        groupedAccounts.flatMap(([, items]) => items.map(item => item.flatIndex))
+    ), [groupedAccounts]);
+
+    const updateMenuPosition = () => {
+        const rect = wrapperRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const width = Math.min(Math.max(rect.width, 440), window.innerWidth - 24);
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const openUp = spaceBelow < 300 && rect.top > spaceBelow;
+        setMenuPosition({
+            left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+            width,
+            top: openUp ? undefined : rect.bottom + 4,
+            bottom: openUp ? window.innerHeight - rect.top + 4 : undefined,
+            maxHeight: Math.min(380, (openUp ? rect.top : spaceBelow) - 16),
+        });
+    };
+
+    useLayoutEffect(() => {
+        if (!isOpen) return undefined;
+        updateMenuPosition();
+        window.addEventListener('resize', updateMenuPosition);
+        window.addEventListener('scroll', updateMenuPosition, true);
+        return () => {
+            window.removeEventListener('resize', updateMenuPosition);
+            window.removeEventListener('scroll', updateMenuPosition, true);
+        };
+    }, [isOpen]);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
-            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-                setIsOpen(false);
-                setQuery('');
-            }
+            if (wrapperRef.current?.contains(event.target) || menuRef.current?.contains(event.target)) return;
+            setIsOpen(false);
+            setQuery('');
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    const selectAccount = (account) => {
-        onChange(account.name);
+    // When the search text changes, highlight the first row as it appears on screen.
+    useEffect(() => {
+        if (query) setActiveIndex(navigationOrder[0] ?? 0);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [query]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        listRef.current?.querySelector(`[data-index="${activeIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+    }, [activeIndex, isOpen]);
+
+    const openMenu = () => {
+        if (disabled) return;
+        setIsOpen(true);
         setQuery('');
-        setIsOpen(false);
+        const selectedIndex = selectedAccount ? accounts.indexOf(selectedAccount) : -1;
+        setActiveIndex(selectedIndex >= 0 && selectedIndex < MAX_ACCOUNT_RESULTS ? selectedIndex : 0);
     };
 
-    const displayValue = isOpen
-        ? query
-        : (selectedAccount ? formatAccountLedgerLabel(selectedAccount) : value || '');
+    const closeMenu = () => {
+        setIsOpen(false);
+        setQuery('');
+    };
+
+    const selectAccount = (account) => {
+        onChange(account.name);
+        closeMenu();
+    };
+
+    const moveActive = (step) => {
+        if (navigationOrder.length === 0) return;
+        const position = navigationOrder.indexOf(activeIndex);
+        const next = Math.min(Math.max((position === -1 ? 0 : position) + step, 0), navigationOrder.length - 1);
+        setActiveIndex(navigationOrder[next]);
+    };
+
+    const handleKeyDown = (event) => {
+        if (!isOpen) {
+            if (event.key === 'ArrowDown' || event.key === 'Enter') {
+                event.preventDefault();
+                openMenu();
+                setTimeout(() => inputRef.current?.focus(), 0);
+            }
+            return;
+        }
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            moveActive(1);
+        } else if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            moveActive(-1);
+        } else if (event.key === 'Enter') {
+            event.preventDefault();
+            if (filteredAccounts[activeIndex]) selectAccount(filteredAccounts[activeIndex]);
+        } else if (event.key === 'Tab') {
+            if (query && filteredAccounts[activeIndex]) selectAccount(filteredAccounts[activeIndex]);
+            else closeMenu();
+        } else if (event.key === 'Escape') {
+            closeMenu();
+        }
+    };
+
+    const menu = isOpen && !disabled && menuPosition && createPortal(
+        <div
+            ref={menuRef}
+            style={{
+                position: 'fixed',
+                left: menuPosition.left,
+                width: menuPosition.width,
+                top: menuPosition.top,
+                bottom: menuPosition.bottom,
+            }}
+            className="z-[1000] flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl ring-1 ring-black/5"
+        >
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-[10px] font-medium text-slate-400">
+                <span>
+                    {filteredAccounts.length} ledger{filteredAccounts.length === 1 ? '' : 's'}
+                    {query ? ` matching "${query}"` : ''}
+                </span>
+                <span className="hidden sm:inline">↑↓ navigate · Enter select · Esc close</span>
+            </div>
+            <div
+                ref={listRef}
+                className="overflow-y-auto overscroll-contain pb-1"
+                style={{ maxHeight: Math.max(menuPosition.maxHeight - (onCreateNew ? 72 : 30), 140) }}
+            >
+                {filteredAccounts.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-xs text-slate-400">
+                        No account ledgers match "{query}"
+                    </div>
+                ) : groupedAccounts.map(([groupLabel, items]) => (
+                    <div key={groupLabel}>
+                        <div className="sticky top-0 z-10 border-b border-slate-50 bg-white px-3 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            {groupLabel}
+                        </div>
+                        {items.map(({ account, flatIndex }) => {
+                            const isActive = flatIndex === activeIndex;
+                            const isSelected = selectedAccount === account;
+                            const balance = parseFloat(account.balanceAmount);
+                            return (
+                                <button
+                                    type="button"
+                                    key={account.id || account.code || account.name}
+                                    data-index={flatIndex}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onMouseEnter={() => setActiveIndex(flatIndex)}
+                                    onClick={() => selectAccount(account)}
+                                    className={`flex w-full items-center gap-3 px-3 py-2 text-left text-xs ${isActive ? 'bg-[#FFF8E7]' : ''}`}
+                                >
+                                    <span className={`w-12 shrink-0 rounded px-1.5 py-0.5 text-center font-mono text-[10px] font-bold ${isActive || isSelected ? 'bg-[#F5C742] text-slate-900' : 'bg-slate-100 text-slate-500'}`}>
+                                        <HighlightMatch text={account.code || '-'} query={query} />
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block font-medium leading-snug text-slate-800">
+                                            <HighlightMatch text={account.name || ''} query={query} />
+                                        </span>
+                                        {account.subGroup && (
+                                            <span className="block truncate text-[10px] text-slate-400">{account.subGroup}</span>
+                                        )}
+                                    </span>
+                                    {Number.isFinite(balance) && balance !== 0 && (
+                                        <span className="shrink-0 text-right text-[10px] tabular-nums text-slate-400">
+                                            {balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {account.balanceType || ''}
+                                        </span>
+                                    )}
+                                    {isSelected && <Check size={14} className="shrink-0 text-emerald-600" />}
+                                </button>
+                            );
+                        })}
+                    </div>
+                ))}
+            </div>
+            {onCreateNew && (
+                <button
+                    type="button"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => { closeMenu(); onCreateNew(); }}
+                    className="flex items-center gap-2 border-t border-slate-100 px-3 py-2.5 text-left text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                >
+                    <PlusCircle size={14} /> Create new account ledger
+                </button>
+            )}
+        </div>,
+        document.body
+    );
+
+    const fieldBorder = hasError
+        ? 'border-red-300 focus:border-red-400 focus:ring-red-100'
+        : 'border-slate-200 focus:border-yellow-400 focus:ring-yellow-100';
 
     return (
-        <div ref={dropdownRef} className="relative min-w-0 flex-1">
-            <input
-                type="text"
-                value={displayValue}
-                onFocus={() => {
-                    if (!disabled) {
-                        setIsOpen(true);
-                        setQuery('');
-                    }
-                }}
-                onChange={(event) => {
-                    setQuery(event.target.value);
-                    setIsOpen(true);
-                }}
-                onKeyDown={(event) => {
-                    if (event.key === 'Enter' && filteredAccounts[0]) {
-                        event.preventDefault();
-                        selectAccount(filteredAccounts[0]);
-                    }
-                    if (event.key === 'Escape') {
-                        setIsOpen(false);
-                        setQuery('');
-                    }
-                }}
-                disabled={disabled}
-                placeholder="Search code or name"
-                className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-yellow-400 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
-            />
-
-            {isOpen && !disabled && (
-                <div className="absolute left-0 right-0 z-[80] mt-1 max-h-56 overflow-y-auto rounded-md border border-slate-200 bg-white shadow-lg">
-                    {filteredAccounts.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-slate-400">No account ledgers found</div>
-                    ) : filteredAccounts.map((account) => (
-                        <button
-                            type="button"
-                            key={account.id || account.code || account.name}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => selectAccount(account)}
-                            className={`flex w-full items-start gap-2 px-3 py-2 text-left text-xs hover:bg-yellow-50 ${account.name === value ? 'bg-yellow-50 text-slate-900' : 'text-slate-600'}`}
-                        >
-                            <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-500">
-                                {account.code || '-'}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate font-medium">{account.name}</span>
-                        </button>
-                    ))}
+        <div ref={wrapperRef} className="relative min-w-0 flex-1">
+            {!isOpen && selectedAccount ? (
+                <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => { openMenu(); setTimeout(() => inputRef.current?.focus(), 0); }}
+                    onKeyDown={handleKeyDown}
+                    title={formatAccountLedgerLabel(selectedAccount)}
+                    className="flex h-9 w-full items-center gap-2 rounded-md border border-slate-200 bg-white px-2 text-left text-xs hover:border-slate-300 focus:border-yellow-400 focus:outline-none focus:ring-2 focus:ring-yellow-100 disabled:cursor-default disabled:bg-slate-50"
+                >
+                    <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-600">
+                        {selectedAccount.code || '-'}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-slate-800">{selectedAccount.name}</span>
+                    {!disabled && <ChevronDown size={14} className="shrink-0 text-slate-400" />}
+                </button>
+            ) : (
+                <div className="relative">
+                    <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={isOpen ? query : (value || '')}
+                        onFocus={() => { if (!isOpen) openMenu(); }}
+                        onChange={(event) => {
+                            setQuery(event.target.value);
+                            setIsOpen(true);
+                        }}
+                        onKeyDown={handleKeyDown}
+                        disabled={disabled}
+                        placeholder={selectedAccount ? formatAccountLedgerLabel(selectedAccount) : 'Search code or name…'}
+                        className={`h-9 w-full rounded-md border bg-white pl-8 pr-7 text-xs placeholder:text-slate-400 focus:outline-none focus:ring-2 disabled:bg-slate-50 disabled:text-slate-400 ${fieldBorder}`}
+                    />
+                    <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                 </div>
             )}
+            {menu}
         </div>
     );
 };
 
-
-// An untouched row (no account, no amounts) is ignored rather than rejected.
-const isBlankJournalLine = (line = {}) =>
-    !String(line.accountCode || line.account || '').trim()
-    && !(parseFloat(line.debit) || 0)
-    && !(parseFloat(line.credit) || 0);
 
 const JournalVoucher = () => {
     // Username of the currently authenticated user — used to stamp
@@ -307,6 +506,8 @@ const JournalVoucher = () => {
             .sort((left, right) => (left.code || '').localeCompare(right.code || ''))
     ), [fullAccounts]);
 
+    const isLinesEditable = ['Draft', 'Rejected'].includes(formData.status) || formData.id == null;
+
     const findSelectableAccount = (value) => (
         fullAccounts.find(account => account.name === value || account.code === value)
     );
@@ -449,8 +650,18 @@ const JournalVoucher = () => {
     }, [journalVouchers]);
 
     // --- HANDLERS ---
+    // New lines are pre-filled with whatever amount is still needed to balance the entry.
     const handleAddLine = () => {
-        setJournalLines([...journalLines, { account: '', accountCode: '', description: '', debit: 0, credit: 0, costCenter: '' }]);
+        const remaining = Math.round(Math.abs(lineTotals.difference) * 100) / 100;
+        const needsCredit = lineTotals.difference > 0;
+        setJournalLines([...journalLines, {
+            account: '',
+            accountCode: '',
+            description: '',
+            debit: remaining >= 0.01 && !needsCredit ? remaining : 0,
+            credit: remaining >= 0.01 && needsCredit ? remaining : 0,
+            costCenter: ''
+        }]);
     };
 
     const handleRemoveLine = (index) => {
@@ -462,6 +673,10 @@ const JournalVoucher = () => {
     const handleLineChange = (index, field, value) => {
         const newLines = [...journalLines];
         newLines[index][field] = value;
+
+        // A journal line is either a debit or a credit, never both.
+        if (field === 'debit' && (parseFloat(value) || 0) !== 0) newLines[index].credit = 0;
+        if (field === 'credit' && (parseFloat(value) || 0) !== 0) newLines[index].debit = 0;
 
         if (field === 'account') {
             const selectedAccount = findSelectableAccount(value);
@@ -480,8 +695,9 @@ const JournalVoucher = () => {
                     newLines[index].costCenter = '';
                 }
 
-                // Auto-set Debit/Credit based on Balance
-                if (selectedAccount.balanceAmount) {
+                // Auto-set Debit/Credit based on Balance, unless the line already has an amount
+                const lineHasAmount = (parseFloat(newLines[index].debit) || 0) !== 0 || (parseFloat(newLines[index].credit) || 0) !== 0;
+                if (selectedAccount.balanceAmount && !lineHasAmount) {
                     const balance = parseFloat(selectedAccount.balanceAmount);
                     if (selectedAccount.balanceType === 'Dr') {
                         newLines[index].debit = balance;
@@ -1244,109 +1460,176 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
                             </div>
 
                             {/* LINES SECTION */}
-                            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6 min-h-[300px]">
-                                <div className="flex justify-between items-center mb-4 pb-2 border-b border-slate-100">
-                                    <h3 className="text-sm font-bold text-slate-700">Journal Lines</h3>
-                                    {(['Draft', 'Rejected'].includes(formData.status) || formData.id == null) && (
-                                        <button onClick={handleAddLine} className="px-3 py-1.5 border border-emerald-500 text-emerald-600 rounded text-xs font-bold hover:bg-emerald-50 flex items-center gap-1">
+                            <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
+                                <div className="flex justify-between items-center mb-4">
+                                    <div>
+                                        <h3 className="text-sm font-bold text-slate-700">Journal Lines</h3>
+                                        <p className="text-[11px] text-slate-400">
+                                            {journalLines.length} line{journalLines.length === 1 ? '' : 's'} · each line is either a debit or a credit
+                                        </p>
+                                    </div>
+                                    {isLinesEditable && (
+                                        <button onClick={handleAddLine} className="px-3 py-1.5 border border-emerald-500 text-emerald-600 rounded-md text-xs font-bold hover:bg-emerald-50 flex items-center gap-1">
                                             <Plus size={14} /> Add Line
                                         </button>
                                     )}
                                 </div>
 
                                 {journalLines.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center py-10 text-slate-400">
-                                        <FileSpreadsheet size={48} className="mb-4 text-slate-200" />
+                                    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 py-10 text-slate-400">
+                                        <FileSpreadsheet size={40} className="mb-3 text-slate-200" />
                                         <p className="text-sm">No journal lines added yet</p>
-                                        <p className="text-xs">Click "Add Line" to start</p>
+                                        {isLinesEditable && (
+                                            <button onClick={handleAddLine} className="mt-3 flex items-center gap-1 text-xs font-bold text-emerald-600 hover:underline">
+                                                <Plus size={14} /> Add the first line
+                                            </button>
+                                        )}
                                     </div>
                                 ) : (
-                                    <div className="space-y-3">
-                                        {/* HEADER ROW */}
-                                        <div className="grid grid-cols-12 gap-3 mb-2 px-2 text-[10px] uppercase font-bold text-slate-400">
-                                            <div className="col-span-3">Account Ledger</div>
-                                            <div className="col-span-3">Description</div>
-                                            <div className="col-span-2 text-right">Debit (<CurrencySymbol />)</div>
-                                            <div className="col-span-2 text-right">Credit (<CurrencySymbol />)</div>
-                                            <div className="col-span-2">Cost Centre</div>
-                                        </div>
+                                    <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                        <table className="w-full min-w-[820px] table-fixed text-xs">
+                                            <colgroup>
+                                                <col className="w-10" />
+                                                <col className="w-[30%]" />
+                                                <col />
+                                                <col className="w-[13%]" />
+                                                <col className="w-[13%]" />
+                                                <col className="w-[15%]" />
+                                                <col className="w-10" />
+                                            </colgroup>
+                                            <thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                                                <tr className="border-b border-slate-200">
+                                                    <th className="px-2 py-2.5 text-center">#</th>
+                                                    <th className="px-2 py-2.5 text-left">Account Ledger</th>
+                                                    <th className="px-2 py-2.5 text-left">Description</th>
+                                                    <th className="px-2 py-2.5 text-right">Debit (<CurrencySymbol />)</th>
+                                                    <th className="px-2 py-2.5 text-right">Credit (<CurrencySymbol />)</th>
+                                                    <th className="px-2 py-2.5 text-left">Cost Centre</th>
+                                                    <th />
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {journalLines.map((line, idx) => {
+                                                    const selectedAccount = findSelectableAccount(line.account);
+                                                    const isCostCenterApplicable = selectedAccount && selectedAccount.costCenterCode && selectedAccount.costCenterCode !== '-';
+                                                    const hasDebit = (parseFloat(line.debit) || 0) !== 0;
+                                                    const hasCredit = (parseFloat(line.credit) || 0) !== 0;
+                                                    const amountInput = 'h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-right text-xs tabular-nums placeholder:text-slate-300 focus:border-yellow-400 focus:outline-none focus:ring-2 focus:ring-yellow-100 disabled:bg-slate-50 disabled:text-slate-500 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
 
-                                        {journalLines.map((line, idx) => {
-                                            const selectedAccount = findSelectableAccount(line.account);
-                                            const isCostCenterApplicable = selectedAccount && selectedAccount.costCenterCode && selectedAccount.costCenterCode !== '-';
-
-                                            return (
-                                                <div key={idx} className="grid grid-cols-12 gap-3 items-start group">
-                                                    <div className="col-span-3 flex items-center gap-1">
-                                                        <AccountLedgerSearchSelect
-                                                            accounts={selectableAccounts}
-                                                            value={line.account}
-                                                            onChange={(accountName) => handleLineChange(idx, 'account', accountName)}
-                                                            disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
-                                                        />
-                                                        {(['Draft', 'Rejected'].includes(formData.status) || formData.id == null) && (
+                                                    return (
+                                                        <tr key={idx} className="group align-middle hover:bg-slate-50/60">
+                                                            <td className="px-2 py-2 text-center text-[11px] font-semibold text-slate-400">{idx + 1}</td>
+                                                            <td className="px-2 py-2">
+                                                                <AccountLedgerSearchSelect
+                                                                    accounts={selectableAccounts}
+                                                                    value={line.account}
+                                                                    onChange={(accountName) => handleLineChange(idx, 'account', accountName)}
+                                                                    onCreateNew={isLinesEditable ? () => openAccountCreate(idx) : undefined}
+                                                                    disabled={!isLinesEditable}
+                                                                />
+                                                            </td>
+                                                            <td className="px-2 py-2">
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Line description (optional)"
+                                                                    disabled={!isLinesEditable}
+                                                                    className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-xs placeholder:text-slate-300 focus:border-yellow-400 focus:outline-none focus:ring-2 focus:ring-yellow-100 disabled:bg-slate-50 disabled:text-slate-500"
+                                                                    value={line.description}
+                                                                    onChange={(e) => handleLineChange(idx, 'description', e.target.value)}
+                                                                />
+                                                            </td>
+                                                            <td className="px-2 py-2">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    step="0.01"
+                                                                    placeholder="0.00"
+                                                                    disabled={!isLinesEditable}
+                                                                    className={`${amountInput} ${hasDebit ? 'font-semibold text-slate-900' : ''}`}
+                                                                    value={line.debit === 0 ? '' : line.debit}
+                                                                    onChange={(e) => handleLineChange(idx, 'debit', e.target.value)}
+                                                                    onFocus={(e) => e.target.select()}
+                                                                    onWheel={(e) => e.currentTarget.blur()}
+                                                                />
+                                                            </td>
+                                                            <td className="px-2 py-2">
+                                                                <input
+                                                                    type="number"
+                                                                    min="0"
+                                                                    step="0.01"
+                                                                    placeholder="0.00"
+                                                                    disabled={!isLinesEditable}
+                                                                    className={`${amountInput} ${hasCredit ? 'font-semibold text-slate-900' : ''}`}
+                                                                    value={line.credit === 0 ? '' : line.credit}
+                                                                    onChange={(e) => handleLineChange(idx, 'credit', e.target.value)}
+                                                                    onFocus={(e) => e.target.select()}
+                                                                    onWheel={(e) => e.currentTarget.blur()}
+                                                                />
+                                                            </td>
+                                                            <td className="px-2 py-2">
+                                                                <select
+                                                                    className="h-9 w-full rounded-md border border-slate-200 bg-white px-2 text-xs focus:border-yellow-400 focus:outline-none focus:ring-2 focus:ring-yellow-100 disabled:bg-slate-50 disabled:text-slate-400"
+                                                                    value={line.costCenter}
+                                                                    onChange={(e) => handleLineChange(idx, 'costCenter', e.target.value)}
+                                                                    disabled={!isLinesEditable || !isCostCenterApplicable}
+                                                                    title={!isCostCenterApplicable ? 'This ledger does not use cost centres' : undefined}
+                                                                >
+                                                                    <option value="" disabled>{isCostCenterApplicable ? 'Select CC' : 'N/A'}</option>
+                                                                    {costCenters.map((cc, i) => <option key={i} value={cc}>{cc}</option>)}
+                                                                </select>
+                                                            </td>
+                                                            <td className="px-1 py-2 text-center">
+                                                                {isLinesEditable && (
+                                                                    <button
+                                                                        type="button"
+                                                                        title="Remove line"
+                                                                        onClick={() => handleRemoveLine(idx)}
+                                                                        className="rounded-md p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-500 group-hover:text-slate-400"
+                                                                    >
+                                                                        <Trash size={14} />
+                                                                    </button>
+                                                                )}
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                            <tfoot className="border-t border-slate-200 bg-slate-50/70 text-xs">
+                                                {isLinesEditable && (
+                                                    <tr>
+                                                        <td colSpan={7} className="p-0">
                                                             <button
                                                                 type="button"
-                                                                title="Create account ledger"
-                                                                onClick={() => openAccountCreate(idx)}
-                                                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-slate-200 bg-white text-slate-500 hover:border-yellow-400 hover:text-slate-900"
+                                                                onClick={handleAddLine}
+                                                                className="flex w-full items-center gap-2 border-b border-slate-200 bg-white px-4 py-2.5 text-left text-xs font-semibold text-emerald-600 hover:bg-emerald-50"
                                                             >
-                                                                <PlusCircle size={14} />
+                                                                <Plus size={14} /> Add line
+                                                                {Math.abs(lineTotals.difference) >= 0.01 && (
+                                                                    <span className="font-normal text-slate-400">
+                                                                        · pre-filled with {Math.abs(lineTotals.difference).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {lineTotals.difference > 0 ? 'credit' : 'debit'} to balance
+                                                                    </span>
+                                                                )}
                                                             </button>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                <tr className="font-bold text-slate-700">
+                                                    <td />
+                                                    <td className="px-2 py-2.5" colSpan={2}>
+                                                        {Math.abs(lineTotals.difference) < 0.01 ? (
+                                                            <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 size={14} /> Balanced</span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1 text-red-600">
+                                                                <AlertCircle size={14} /> Out of balance by <CurrencyAmount value={Math.abs(lineTotals.difference)} />
+                                                            </span>
                                                         )}
-                                                    </div>
-                                                    <div className="col-span-3">
-                                                        <input
-                                                            type="text"
-                                                            placeholder="Description"
-                                                            disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
-                                                            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-yellow-400 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
-                                                            value={line.description}
-                                                            onChange={(e) => handleLineChange(idx, 'description', e.target.value)}
-                                                        />
-                                                    </div>
-                                                    <div className="col-span-2">
-                                                        <input
-                                                            type="number"
-                                                            disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
-                                                            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-yellow-400 focus:outline-none text-right disabled:bg-slate-50 disabled:text-slate-400"
-                                                            value={line.debit}
-                                                            onChange={(e) => handleLineChange(idx, 'debit', e.target.value)}
-                                                            onFocus={(e) => e.target.select()}
-                                                        />
-                                                    </div>
-                                                    <div className="col-span-2">
-                                                        <input
-                                                            type="number"
-                                                            disabled={!['Draft', 'Rejected'].includes(formData.status) && formData.id != null}
-                                                            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-yellow-400 focus:outline-none text-right disabled:bg-slate-50 disabled:text-slate-400"
-                                                            value={line.credit}
-                                                            onChange={(e) => handleLineChange(idx, 'credit', e.target.value)}
-                                                            onFocus={(e) => e.target.select()}
-                                                        />
-                                                    </div>
-                                                    <div className="col-span-2 relative flex items-center gap-1">
-                                                        <select
-                                                            className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded focus:border-yellow-400 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
-                                                            value={line.costCenter}
-                                                            onChange={(e) => handleLineChange(idx, 'costCenter', e.target.value)}
-                                                            disabled={(!['Draft', 'Rejected'].includes(formData.status) && formData.id != null) || !isCostCenterApplicable}
-                                                        >
-                                                            <option value="" disabled>Select CC</option>
-                                                            {costCenters.map((cc, i) => <option key={i} value={cc}>{cc}</option>)}
-                                                        </select>
-                                                        {(['Draft', 'Rejected'].includes(formData.status) || formData.id == null) && (
-                                                            <button
-                                                                onClick={() => handleRemoveLine(idx)}
-                                                                className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                            >
-                                                                <Trash size={14} />
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
+                                                    </td>
+                                                    <td className="px-4 py-2.5 text-right"><CurrencyAmount value={lineTotals.totalDebit} /></td>
+                                                    <td className="px-4 py-2.5 text-right"><CurrencyAmount value={lineTotals.totalCredit} /></td>
+                                                    <td colSpan={2} />
+                                                </tr>
+                                            </tfoot>
+                                        </table>
                                     </div>
                                 )}
                             </div>
@@ -1387,7 +1670,7 @@ body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: 
 
                             {(['Draft', 'Rejected'].includes(formData.status) || formData.id == null) && (
                                 <>
-                                    {Object.keys(formErrors).length > 0 && (
+                                    {Object.values(formErrors).some(Boolean) && (
                                         <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2">
                                             <p className="text-[11px] font-bold text-red-700 mb-1">Cannot save this journal yet:</p>
                                             <ul className="list-disc list-inside space-y-0.5">
