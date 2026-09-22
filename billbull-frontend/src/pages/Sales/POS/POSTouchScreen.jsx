@@ -6,6 +6,34 @@ import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
+import SalespersonSelect from './features/sales/SalespersonSelect';
+
+/**
+ * The Salesperson row that sits directly under the Customer bar in every POS sale layout.
+ *
+ * Deliberately a strip beside the customer rather than an entry in the right-side action grid:
+ * that grid is a command surface (each button opens a dialog or fires an action), while the
+ * salesperson is a per-sale attribute like the customer.
+ */
+const SalespersonBar = ({ options, value, onChange, loading, error }) => (
+  <div className="px-3 py-2 shrink-0 border-b border-gray-200 bg-white">
+    <div className="flex items-center gap-2">
+      <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">
+        Salesperson
+      </span>
+      <div className="flex-1 min-w-0">
+        <SalespersonSelect
+          compact
+          options={options || []}
+          value={value}
+          onChange={onChange}
+          loading={!!loading}
+          error={error || ''}
+        />
+      </div>
+    </div>
+  </div>
+);
 
 const POSTouchScreen = React.memo((props) => {
   const {
@@ -35,6 +63,11 @@ const POSTouchScreen = React.memo((props) => {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
+    // salesperson — a sale-level attribute rendered beside the customer, NOT an action button.
+    // Distinct from the cashier: the logged-in operator may ring up a sale that belongs to
+    // someone else. Owned by POS/features/sales/useSalesperson.js.
+    salespersonOptions, salespersonLoading, salespersonError,
+    salespersonEmployeeId, setSalespersonEmployeeId,
     // product entry — POSSales.jsx owns the Product Entry Mode decision and the
     // Item Entry dialog; this template only reports which product was picked.
     handleProductSelection,
@@ -326,6 +359,15 @@ const POSTouchScreen = React.memo((props) => {
                 </div>
               )}
             </div>
+
+            {/* Salesperson — sale-level attribute, directly under the customer */}
+            <SalespersonBar
+              options={salespersonOptions}
+              value={salespersonEmployeeId}
+              onChange={setSalespersonEmployeeId}
+              loading={salespersonLoading}
+              error={salespersonError}
+            />
 
             {/* Cart table header + rows — horizontal scroll is the safety net on narrow
                 widths so the 12-col grid degrades to scrollable instead of clipping. */}
@@ -972,6 +1014,15 @@ const POSTouchScreen = React.memo((props) => {
                 </div>
               )}
             </div>
+
+            {/* Salesperson — sale-level attribute, directly under the customer */}
+            <SalespersonBar
+              options={salespersonOptions}
+              value={salespersonEmployeeId}
+              onChange={setSalespersonEmployeeId}
+              loading={salespersonLoading}
+              error={salespersonError}
+            />
 
             {/* Cart column header */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white shrink-0">
