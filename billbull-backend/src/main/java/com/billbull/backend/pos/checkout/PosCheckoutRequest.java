@@ -34,6 +34,11 @@ public class PosCheckoutRequest {
     private String driverName;
     private Long deliveryPersonEmployeeId;
     private String deliveryPersonEmployeeCode;
+    /** Salesperson the sale is attributed to — NOT the cashier, who stays the authenticated
+     *  session owner. Resolved server-side against the employee record; a client-supplied name is
+     *  never trusted as identity. Null/absent = Unassigned. */
+    private Long salespersonEmployeeId;
+    private String salespersonEmployeeCode;
     private String deliveryDate;
     private String deliveryTimeSlot;
     private String deliveryNotes;
@@ -170,6 +175,10 @@ public class PosCheckoutRequest {
     public void setDeliveryPersonEmployeeId(Long deliveryPersonEmployeeId) { this.deliveryPersonEmployeeId = deliveryPersonEmployeeId; }
     public String getDeliveryPersonEmployeeCode() { return deliveryPersonEmployeeCode; }
     public void setDeliveryPersonEmployeeCode(String deliveryPersonEmployeeCode) { this.deliveryPersonEmployeeCode = deliveryPersonEmployeeCode; }
+    public Long getSalespersonEmployeeId() { return salespersonEmployeeId; }
+    public void setSalespersonEmployeeId(Long salespersonEmployeeId) { this.salespersonEmployeeId = salespersonEmployeeId; }
+    public String getSalespersonEmployeeCode() { return salespersonEmployeeCode; }
+    public void setSalespersonEmployeeCode(String salespersonEmployeeCode) { this.salespersonEmployeeCode = salespersonEmployeeCode; }
     public String getDeliveryDate() { return deliveryDate; }
     public void setDeliveryDate(String deliveryDate) { this.deliveryDate = deliveryDate; }
     public String getDeliveryTimeSlot() { return deliveryTimeSlot; }

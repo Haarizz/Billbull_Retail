@@ -94,4 +94,77 @@ class EmployeeControllerTest {
 
         verifyNoInteractions(employeeService);
     }
+
+    // ── /salespersons (POS salesperson picker feed) ─────────────────────────
+
+    private static Employee salesperson(long id, String code, String first, String last, String status) {
+        Employee e = new Employee();
+        e.setId(id);
+        e.setEmployeeCode(code);
+        e.setFirstName(first);
+        e.setLastName(last);
+        e.setPhone("050-1234567");
+        e.setEmail(code.toLowerCase() + "@example.test");
+        e.setStatus(status);
+        return e;
+    }
+
+    @Test
+    void salespersonsExposesOnlyIdCodeAndNameNoPersonalData() {
+        org.mockito.Mockito.when(employeeService.getActiveSalespersons())
+                .thenReturn(List.of(salesperson(7L, "EMP-007", "Manager", "One", "Active")));
+
+        java.util.Map<String, Object> body = employeeController.getSalespersons(null);
+
+        @SuppressWarnings("unchecked")
+        List<java.util.Map<String, Object>> options = (List<java.util.Map<String, Object>>) body.get("options");
+        org.junit.jupiter.api.Assertions.assertEquals(1, options.size());
+        // Exactly these three keys: this feed is readable by every authenticated user.
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Set.of("id", "employeeCode", "name"), options.get(0).keySet());
+        org.junit.jupiter.api.Assertions.assertEquals("Manager One", options.get(0).get("name"));
+        org.junit.jupiter.api.Assertions.assertFalse(options.get(0).containsKey("phone"));
+        org.junit.jupiter.api.Assertions.assertFalse(options.get(0).containsKey("email"));
+    }
+
+    @Test
+    void salespersonsDefaultsToTheCallersActiveLinkedEmployee() {
+        Employee linked = salesperson(7L, "EMP-007", "Manager", "One", "Active");
+        org.mockito.Mockito.when(employeeService.getActiveSalespersons()).thenReturn(List.of(linked));
+        org.mockito.Mockito.when(userRepository.findLinkedEmployeeIdByUsername("cashier1"))
+                .thenReturn(java.util.Optional.of(7L));
+
+        java.util.Map<String, Object> body = employeeController.getSalespersons(
+                new UsernamePasswordAuthenticationToken("cashier1", null, List.of()));
+
+        org.junit.jupiter.api.Assertions.assertEquals(7L, body.get("defaultEmployeeId"));
+    }
+
+    @Test
+    void salespersonsHasNoDefaultWhenTheCallerHasNoLinkedEmployee() {
+        org.mockito.Mockito.when(employeeService.getActiveSalespersons())
+                .thenReturn(List.of(salesperson(7L, "EMP-007", "Manager", "One", "Active")));
+        org.mockito.Mockito.when(userRepository.findLinkedEmployeeIdByUsername("backoffice"))
+                .thenReturn(java.util.Optional.empty());
+
+        java.util.Map<String, Object> body = employeeController.getSalespersons(
+                new UsernamePasswordAuthenticationToken("backoffice", null, List.of()));
+
+        org.junit.jupiter.api.Assertions.assertNull(body.get("defaultEmployeeId"));
+        org.mockito.Mockito.verify(userRepository, org.mockito.Mockito.never()).findByUsername(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void salespersonsHasNoDefaultWhenTheLinkedEmployeeIsInactive() {
+        // Linked to employee 9, who is Inactive and therefore not in the Active roster.
+        org.mockito.Mockito.when(employeeService.getActiveSalespersons())
+                .thenReturn(List.of(salesperson(7L, "EMP-007", "Manager", "One", "Active")));
+        org.mockito.Mockito.when(userRepository.findLinkedEmployeeIdByUsername("cashier2"))
+                .thenReturn(java.util.Optional.of(9L));
+
+        java.util.Map<String, Object> body = employeeController.getSalespersons(
+                new UsernamePasswordAuthenticationToken("cashier2", null, List.of()));
+
+        org.junit.jupiter.api.Assertions.assertNull(body.get("defaultEmployeeId"));
+    }
 }

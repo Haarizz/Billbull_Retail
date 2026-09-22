@@ -159,6 +159,11 @@ class SalesInvoiceTotalsTest {
     // Build a SalesInvoiceService whose collaborators are all mocks. The
     // constructor is large; finalizeInvoiceTotals depends on none of them.
     // ------------------------------------------------------------------
+    /** Shared with {@link SalesInvoiceSalespersonAttributionTest}'s totals regression guard. */
+    static SalesInvoiceService newServiceWithMockedDepsForReuse() {
+        return newServiceWithMockedDeps();
+    }
+
     private static SalesInvoiceService newServiceWithMockedDeps() {
         return new SalesInvoiceService(
                 mock(SalesInvoiceRepository.class),

@@ -1,12 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Search,
-  Filter,
-  Download,
   Upload,
-  Settings,
   Plus,
-  MoreHorizontal,
   ChevronDown,
   Users,
   User,
@@ -15,8 +11,6 @@ import {
   Target,
   Store,
   Warehouse,
-  Smartphone,
-  Monitor,
   BarChart3,
   Clock,
   ShieldCheck,
@@ -44,8 +38,13 @@ import {
   LayoutList,
   LayoutGrid,
   Star,
-  Building2
+  Building2,
+  MoreVertical,
+  Info,
+  Mail,
+  Phone
 } from 'lucide-react';
+import CurrencyAmount from '../../../components/CurrencyAmount';
 
 // Import the API helpers
 import { employeesApi } from '../../../api/employeesApi';
@@ -54,6 +53,10 @@ import { usersApi } from '../../../api/usersApi';
 import { hasRole } from '../../../api/auth';
 import { usePermissions } from '../../../context/PermissionContext';
 import { useBranch } from '../../../context/BranchContext';
+import PerformanceTargets from './PerformanceTargets';
+import SetTargetsModal from './SetTargetsModal';
+import useEmployeePerformance, { monthKey, monthLabel } from './useEmployeePerformance';
+
 import { getImageUrl } from '../../../utils/urlUtils';
 import { formatDisplayDate as formatDateForDisplay } from '../../../utils/dateUtils';
 import TableSkeleton from '../../../components/common/TableSkeleton';
@@ -2268,36 +2271,30 @@ const StatCard = ({
   icon: Icon,
   color
 }) => (
-  <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm flex flex-col justify-between h-24 group hover:shadow-md transition-shadow">
-
-    {/* Header */}
-    <div className="flex justify-between items-start mb-2">
-      <div className="text-sm text-slate-500 font-medium">
-        {label}
-      </div>
-      <div className={`p-1.5 rounded-full ${color}`}>
-        <Icon className="h-4 w-4" />
-      </div>
+  <div className="bg-white px-3.5 py-2.5 rounded-lg border border-slate-200 shadow-sm flex items-center gap-3 min-w-0">
+    <div className={`p-2 rounded-full shrink-0 ${color}`}>
+      <Icon className="h-4 w-4" />
     </div>
-
-    {/* Value */}
-    <div className="flex items-end justify-between">
-      <div className="text-2xl font-bold text-slate-900">
-        {value}
+    <div className="min-w-0">
+      <div className="text-xs text-slate-500 font-medium leading-4 truncate">{label}</div>
+      <div className="flex items-baseline gap-1.5 min-w-0">
+        <div className="text-xl font-bold text-slate-900 leading-7 whitespace-nowrap">{value}</div>
+        {subValue && (
+          <div
+            title={typeof subValue === 'string' ? subValue : undefined}
+            className={`text-[11px] font-medium truncate ${trend === 'up'
+                ? 'text-emerald-600'
+                : trend === 'down'
+                  ? 'text-red-600'
+                  : trend === 'warning'
+                    ? 'text-amber-600'
+                    : 'text-slate-400'
+              }`}
+          >
+            {subValue}
+          </div>
+        )}
       </div>
-
-      {subValue && (
-        <div
-          className={`text-xs font-medium ${trend === 'up'
-              ? 'text-emerald-600'
-              : trend === 'down'
-                ? 'text-red-600'
-                : 'text-slate-500'
-            }`}
-        >
-          {subValue}
-        </div>
-      )}
     </div>
   </div>
 );
@@ -2306,7 +2303,7 @@ const StatCard = ({
 // 3. ACTION MODAL COMPONENT (New)
 // ==========================================
 
-const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) => {
+const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit, onSetTarget, onManageAccess }) => {
   const { canEdit } = usePermissions();
   if (!employee) return null;
 
@@ -2356,11 +2353,20 @@ const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) =>
             )}
 
             <button
-              onClick={() => alert(`Set Target for ${employee.name}`)}
+              onClick={() => { onSetTarget?.(employee.id); onClose(); }}
               className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-colors"
             >
               <Target size={14} className="text-slate-400" /> Set Target
             </button>
+
+            {hasRole('ADMIN') && onManageAccess && (
+              <button
+                onClick={() => { onManageAccess(employee); onClose(); }}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-colors"
+              >
+                <Lock size={14} className="text-slate-400" /> Manage System Access
+              </button>
+            )}
 
             <div className="h-px bg-slate-100 my-1"></div>
 
@@ -2391,6 +2397,243 @@ const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit }) =>
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+// ==========================================
+// 3b. SHARED ROW PRIMITIVES + DETAILS DRAWER
+// ==========================================
+
+const STATUS_BADGE = {
+  Active: 'bg-green-100 text-green-700 border-green-200',
+  Pending: 'bg-amber-100 text-amber-700 border-amber-200',
+};
+
+const StatusBadge = ({ status }) => (
+  <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium border whitespace-nowrap ${STATUS_BADGE[status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+    {status || EMPTY_DATA_LABEL}
+  </span>
+);
+
+const EmployeeAvatar = ({ employee, size = 'w-9 h-9', onClick }) => (
+  <button
+    type="button"
+    className={`${size} shrink-0 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden ${employee.color} ${employee.avatar ? 'cursor-pointer ring-2 ring-transparent hover:ring-offset-1 hover:ring-slate-300' : 'cursor-default'}`}
+    onClick={(e) => {
+      e.stopPropagation();
+      if (employee.avatar) onClick?.(employee.avatar);
+    }}
+  >
+    {employee.avatar ? <img src={employee.avatar} alt="Avatar" className="w-full h-full object-cover" /> : employee.initials}
+  </button>
+);
+
+// /api/employees/active returns Active and Inactive records, so these are the only statuses the list holds.
+const STATUS_FILTER_OPTIONS = ['All Statuses', 'Active', 'Inactive'];
+
+// `no-scrollbar` is referenced across the app but never defined, so horizontal strips here
+// hide their scrollbar with arbitrary utilities instead (Firefox + WebKit/Blink).
+const HIDE_SCROLLBAR = '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden';
+
+/** Native <select> under a styled label — the same pattern the page's filters already used. */
+const FilterSelect = ({ label, value, options, onChange }) => (
+  <div className="relative flex-1 sm:flex-none min-w-[8rem]">
+    <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors cursor-pointer">
+      <span className="truncate max-w-[10rem]">{value}</span>
+      <ChevronDown size={14} className="shrink-0 text-slate-400" />
+    </div>
+    <select
+      aria-label={label}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+    >
+      {options.map((option) => (
+        <option key={option} value={option}>{option}</option>
+      ))}
+    </select>
+  </div>
+);
+
+const achievementText = (value) => (value == null ? EMPTY_DATA_LABEL : `${Number(value).toFixed(0)}%`);
+
+const DetailRow = ({ label, children }) => (
+  <div className="flex items-start justify-between gap-4 py-2 border-b border-slate-100 last:border-b-0">
+    <dt className="text-xs text-slate-500 shrink-0">{label}</dt>
+    <dd className="text-xs font-medium text-slate-800 text-right min-w-0 break-words">{children || EMPTY_DATA_LABEL}</dd>
+  </div>
+);
+
+/**
+ * Read-only summary of one employee. The list row only carries the handful of fields the
+ * table needs, so the full record is fetched through the same GET /api/employees/{id} the
+ * Edit flow already uses. Performance figures are the server-computed row passed in — the
+ * drawer never derives a business number.
+ */
+const EmployeeDetailsDrawer = ({
+  employee,
+  performanceRow,
+  performancePeriodLabel,
+  performanceNotice,
+  onClose,
+  onEdit,
+  onSetTarget,
+  onManageAccess,
+  onViewPhoto,
+}) => {
+  const { canEdit } = usePermissions();
+  // The parent keys this drawer by employee id, so state starts fresh for every employee.
+  const [detailsState, setDetailsState] = useState({ data: null, loading: Boolean(employee), error: '' });
+  const { data: details, loading: detailsLoading, error: detailsError } = detailsState;
+
+  useEffect(() => {
+    if (!employee) return undefined;
+    let cancelled = false;
+    employeesApi.getEmployeeById(employee.id)
+      .then((data) => { if (!cancelled) setDetailsState({ data, loading: false, error: '' }); })
+      .catch(() => {
+        if (!cancelled) setDetailsState({ data: null, loading: false, error: 'Could not load full employee details.' });
+      });
+    return () => { cancelled = true; };
+  }, [employee]);
+
+  useEffect(() => {
+    if (!employee) return undefined;
+    const onKeyDown = (event) => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [employee, onClose]);
+
+  if (!employee) return null;
+
+  const branchLabel = employee.branch || 'Unassigned';
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/40 animate-in fade-in duration-200" onClick={onClose}>
+      <aside
+        role="dialog"
+        aria-label={`${employee.name} details`}
+        className="h-full w-full sm:max-w-md bg-white shadow-xl flex flex-col animate-in slide-in-from-right duration-200"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Profile header */}
+        <div className="px-5 py-4 border-b border-slate-200 flex items-start gap-3">
+          <EmployeeAvatar employee={employee} size="w-12 h-12" onClick={onViewPhoto} />
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-semibold text-slate-800 truncate">{employee.name}</h2>
+            <div className="text-xs text-slate-400 font-mono">{employee.code}</div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-600 font-medium">{employee.role}</span>
+              <StatusBadge status={employee.status} />
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100" aria-label="Close">
+            <XIcon size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {/* Employment */}
+          <section>
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Employment</h3>
+            <dl>
+              <DetailRow label="Branch">{branchLabel}</DetailRow>
+              <DetailRow label="Department">{employee.dept}</DetailRow>
+              {detailsLoading && (
+                <div className="py-3 text-xs text-slate-400 flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" /> Loading details…
+                </div>
+              )}
+              {details && (
+                <>
+                  <DetailRow label="Employment Type">{details.employmentType}</DetailRow>
+                  <DetailRow label="Join Date">{details.joinDate ? formatDisplayDate(details.joinDate) : null}</DetailRow>
+                  <DetailRow label="Confirmation Date">{details.confirmationDate ? formatDisplayDate(details.confirmationDate) : null}</DetailRow>
+                  <DetailRow label="Reporting Manager">{details.reportingManager}</DetailRow>
+                  <DetailRow label="Work Location">{details.workLocation}</DetailRow>
+                  <DetailRow label="Shift">{[details.shiftType, details.workDays].filter(Boolean).join(' · ')}</DetailRow>
+                </>
+              )}
+            </dl>
+            {detailsError && (
+              <p className="mt-2 text-xs text-rose-600">{detailsError}</p>
+            )}
+          </section>
+
+          {/* Contact */}
+          <section>
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Contact</h3>
+            <dl>
+              <DetailRow label={<span className="inline-flex items-center gap-1.5"><Mail size={12} /> Email</span>}>{employee.rawEmail}</DetailRow>
+              <DetailRow label={<span className="inline-flex items-center gap-1.5"><Phone size={12} /> Phone</span>}>{employee.rawPhone}</DetailRow>
+            </dl>
+          </section>
+
+          {/* Performance */}
+          <section>
+            <div className="flex items-baseline justify-between mb-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Performance</h3>
+              <span className="text-[11px] text-slate-400">{performancePeriodLabel}</span>
+            </div>
+            {performanceRow ? (
+              <div className="grid grid-cols-3 gap-2">
+                <div className="rounded-md border border-slate-200 px-3 py-2">
+                  <div className="text-[10px] uppercase text-slate-400 font-semibold">Sales</div>
+                  <div className="text-sm font-bold text-slate-800"><CurrencyAmount value={performanceRow.sales} decimals={0} /></div>
+                  <div className="text-[10px] text-slate-400">{performanceRow.bills} bill(s)</div>
+                </div>
+                <div className="rounded-md border border-slate-200 px-3 py-2">
+                  <div className="text-[10px] uppercase text-slate-400 font-semibold">Target</div>
+                  <div className="text-sm font-bold text-slate-800">
+                    {performanceRow.targetAmount != null ? <CurrencyAmount value={performanceRow.targetAmount} decimals={0} /> : EMPTY_DATA_LABEL}
+                  </div>
+                  {performanceRow.targetStatus && <div className="text-[10px] text-slate-400 truncate">{performanceRow.targetStatus}</div>}
+                </div>
+                <div className="rounded-md border border-slate-200 px-3 py-2">
+                  <div className="text-[10px] uppercase text-slate-400 font-semibold">Achievement</div>
+                  <div className="text-sm font-bold text-slate-800">{achievementText(performanceRow.achievementPercent)}</div>
+                  <div className="text-[10px] text-slate-400 truncate">
+                    Comm. <CurrencyAmount value={performanceRow.commission} decimals={0} />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">
+                {performanceNotice || 'No performance record for this period.'}
+              </p>
+            )}
+          </section>
+        </div>
+
+        {/* Actions */}
+        <div className="px-5 py-3 border-t border-slate-200 flex flex-wrap gap-2 justify-end bg-slate-50">
+          {hasRole('ADMIN') && (
+            <button
+              onClick={() => onManageAccess(employee)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <Lock size={14} /> Access
+            </button>
+          )}
+          {canEdit('hr') && (
+            <button
+              onClick={() => onSetTarget(employee.id)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-600 hover:bg-slate-50"
+            >
+              <Target size={14} /> Set Target
+            </button>
+          )}
+          {canEdit('hr') && (
+            <button
+              onClick={() => onEdit(employee)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-[#F5C742] rounded-md text-xs font-semibold text-slate-900 hover:bg-yellow-400 shadow-sm"
+            >
+              <Edit size={14} /> Edit Employee
+            </button>
+          )}
+        </div>
+      </aside>
     </div>
   );
 };
@@ -2986,9 +3229,28 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
 // ==========================================
 
 const Employees = () => {
-  const { canCreate, canEdit, canApprove, canExport } = usePermissions();
+  const { canCreate, canEdit, canApprove } = usePermissions();
+  const { branches: allBranches } = useBranch();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [activeCategory, setActiveCategory] = useState("All Employees");
+  // Functional area of the page ('employees' | 'approvals' | 'performance') is kept separate
+  // from the employee-group filter so workflow views never read as department categories.
+  const [activeView, setActiveView] = useState('employees');
+  const [activeGroup, setActiveGroup] = useState("All Employees");
+
+  // ── Performance & Targets ────────────────────────────────────────────────
+  // All figures come from the server (see useEmployeePerformance / PerformanceTargets);
+  // nothing below derives sales, achievement or commission on the client.
+  const [performanceMonth, setPerformanceMonth] = useState(() => monthKey());
+  const [performanceBranchId, setPerformanceBranchId] = useState(null);
+  const [showSetTargets, setShowSetTargets] = useState(false);
+  const [setTargetsFocusEmployeeId, setSetTargetsFocusEmployeeId] = useState(null);
+  const { performance, performanceLoading, performanceError, reloadPerformance } =
+    useEmployeePerformance({ month: performanceMonth, branchId: performanceBranchId });
+
+  const openSetTargets = (employeeId = null) => {
+    setSetTargetsFocusEmployeeId(employeeId);
+    setShowSetTargets(true);
+  };
 
   // --- REAL STATES ---
   const [employeeData, setEmployeeData] = useState([]);
@@ -3006,10 +3268,14 @@ const Employees = () => {
   // Access Panel State (ADMIN only)
   const [accessPanelEmployee, setAccessPanelEmployee] = useState(null);
 
+  // Details drawer (row click)
+  const [detailsEmployee, setDetailsEmployee] = useState(null);
+
   // --- FILTER & SORT STATE ---
   const [searchTerm, setSearchTerm] = useState("");
   const [filterRole, setFilterRole] = useState("All Roles");
   const [filterBranch, setFilterBranch] = useState("All Branches");
+  const [filterStatus, setFilterStatus] = useState("All Statuses");
   const [isLoading, setIsLoading] = useState(false);
 
   // --- 1. Fetch Data on Mount ---
@@ -3056,7 +3322,7 @@ const Employees = () => {
         // CREATE LOGIC
         await employeesApi.createEmployee(backendPayload, avatarFile);
         toast.success("Employee creation initiated. Approval workflow started.");
-        setActiveCategory("Access & Permissions"); // Auto-switch to view request
+        setActiveView('approvals'); // Auto-switch to view request
       }
 
         // Refresh UI
@@ -3155,6 +3421,7 @@ const Employees = () => {
     try {
       const fullEmployee = await employeesApi.getEmployeeById(employee.id);
       setEmployeeToEdit(fullEmployee); // backend object ✅
+      setDetailsEmployee(null);
       setIsAddModalOpen(true);
     } catch (e) {
       alert("Failed to load employee details");
@@ -3219,14 +3486,15 @@ const Employees = () => {
     )
   ), [employeeData]);
 
+  const isApprovalsView = activeView === 'approvals';
+
   const filteredEmployees = useMemo(() => {
     // Determine source data
-    let data = activeCategory === "Access & Permissions" ? pendingRequests : employeeData;
+    let data = isApprovalsView ? pendingRequests : employeeData;
 
-    // 1. Category Filter (If not "Access" or "All")
-    if (activeCategory !== "All Employees" && activeCategory !== "Access & Permissions") {
-      // Special logic for Dept filtering
-      data = data.filter(e => e.dept === activeCategory);
+    // 1. Employee group (department) filter — employee list only
+    if (!isApprovalsView && activeGroup !== "All Employees") {
+      data = data.filter(e => e.dept === activeGroup);
     }
 
     // 2. Search Filter (Search by Name, Code, or Role)
@@ -3249,41 +3517,68 @@ const Employees = () => {
       data = data.filter(e => e.branch === filterBranch);
     }
 
+    // 5. Status Filter — employee list only (every approval request is Pending)
+    if (!isApprovalsView && filterStatus !== "All Statuses") {
+      data = data.filter(e => e.status === filterStatus);
+    }
+
     return data;
-  }, [employeeData, pendingRequests, activeCategory, searchTerm, filterRole, filterBranch]);
+  }, [employeeData, pendingRequests, isApprovalsView, activeGroup, searchTerm, filterRole, filterBranch, filterStatus]);
 
   // Client-side pagination for both the employees and access-requests tabs.
   const LIST_PAGE_SIZE = 30;
   const [listPage, setListPage] = useState(0);
-  useEffect(() => { setListPage(0); }, [activeCategory, searchTerm, filterRole, filterBranch]);
+  useEffect(() => { setListPage(0); }, [activeView, activeGroup, searchTerm, filterRole, filterBranch, filterStatus]);
   const pagedEmployees = useMemo(
     () => filteredEmployees.slice(listPage * LIST_PAGE_SIZE, (listPage + 1) * LIST_PAGE_SIZE),
     [filteredEmployees, listPage]
   );
 
 
-  // --- 5. Dynamic Stats & Categories ---
-  const categories = [
-    { name: "All Employees", count: employeeData.length, icon: Users },
-    { name: "Store Team", count: employeeData.filter(e => e.dept === 'Store Team').length, icon: Store },
-    { name: "Warehouse Team", count: employeeData.filter(e => e.dept === 'Warehouse Team').length, icon: Warehouse },
-    { name: "Management", count: employeeData.filter(e => e.dept === 'Management').length, icon: Smartphone },
-    { name: "Back Office", count: employeeData.filter(e => e.dept === 'Back Office').length, icon: Monitor },
-    { name: "Performance & Targets", count: null, icon: BarChart3 },
-    { name: "Attendance & Shifts", count: null, icon: Clock },
-    { name: "Access & Permissions", count: pendingRequests.length > 0 ? pendingRequests.length : null, icon: ShieldCheck },
+  // --- 5. Dynamic Stats & Groups ---
+  // Employee groups are department filters only. Workflow areas (approvals, performance) are
+  // separate views selected from the tab strip, never mixed into this list.
+  const employeeGroups = [
+    { name: "All Employees", count: employeeData.length },
+    { name: "Store Team", count: employeeData.filter(e => e.dept === 'Store Team').length },
+    { name: "Warehouse Team", count: employeeData.filter(e => e.dept === 'Warehouse Team').length },
+    { name: "Management", count: employeeData.filter(e => e.dept === 'Management').length },
+    { name: "Back Office", count: employeeData.filter(e => e.dept === 'Back Office').length },
   ];
 
   const totalEmployees = employeeData.length;
   const activeEmployees = employeeData.filter((employee) => employee.status === "Active").length;
   const inactiveEmployees = employeeData.filter((employee) => employee.status === "Inactive").length;
   const pendingApprovalCount = pendingRequests.length;
+  const activePercent = totalEmployees > 0 ? Math.round((activeEmployees / totalEmployees) * 100) : null;
+
+  // The performance month is selectable (Performance & Targets view), so only call it MTD when
+  // it really is the current month.
+  const isCurrentPerformanceMonth = performanceMonth === monthKey();
+  const performancePeriodLabel = isCurrentPerformanceMonth ? 'MTD' : monthLabel(performanceMonth);
+
+  // Server-computed per-employee rows, keyed for the employee table and drawer. Nothing is
+  // derived here — the table only looks up the row the server already sent.
+  const performanceByEmployeeId = useMemo(() => {
+    const map = new Map();
+    (performance?.rows || []).forEach((row) => map.set(row.employeeId, row));
+    return map;
+  }, [performance]);
+
+  // One page-level explanation instead of repeating "not connected" on every row.
+  const performanceNotice = performanceLoading
+    ? null
+    : performanceError
+      ? `${performanceError} Sales and target columns show “${EMPTY_DATA_LABEL}”.`
+      : !performance
+        ? `Sales data is unavailable. Sales and target columns show “${EMPTY_DATA_LABEL}”.`
+        : null;
 
   const statsData = [
     {
       label: "Total Employees",
       value: totalEmployees.toString(),
-      subValue: pendingApprovalCount > 0 ? `${pendingApprovalCount} pending approvals` : 'No pending approvals',
+      subValue: pendingApprovalCount > 0 ? `${pendingApprovalCount} pending approval${pendingApprovalCount === 1 ? '' : 's'}` : `${totalEmployees} on roster`,
       trend: pendingApprovalCount > 0 ? 'warning' : 'neutral',
       icon: Users,
       color: STAT_COLORS.primary
@@ -3291,28 +3586,45 @@ const Employees = () => {
     {
       label: "Active Employees",
       value: activeEmployees.toString(),
-      subValue: inactiveEmployees > 0 ? `${inactiveEmployees} inactive` : 'All active',
+      subValue: activePercent == null
+        ? null
+        : `${activePercent}% active${inactiveEmployees > 0 ? ` · ${inactiveEmployees} inactive` : ''}`,
       trend: 'neutral',
       icon: Activity,
       color: STAT_COLORS.success
     },
     {
-      label: "Sales MTD",
-      value: EMPTY_DATA_LABEL,
-      subValue: "Sales data not connected",
+      // Server-computed SUM(invoiceTotal) of invoices WITH a salesperson, for the SELECTED month.
+      // Invoices with no salesperson (back-office and historical ones included) are not in this figure.
+      label: "Attributed Sales",
+      value: performance ? <CurrencyAmount value={performance.totalSales} decimals={0} /> : EMPTY_DATA_LABEL,
+      subValue: performance
+        ? `${performancePeriodLabel} · ${performance.totalBills} bill(s)`
+        : (performanceLoading ? 'Loading…' : 'Unavailable'),
       trend: 'neutral',
       icon: DollarSign,
       color: STAT_COLORS.purple
     },
     {
-      label: "Avg Achievement",
-      value: EMPTY_DATA_LABEL,
-      subValue: "Target data not connected",
+      // SUM(sales) / SUM(target) from the server — deliberately not the mean of the
+      // per-employee percentages, and suppressed entirely under a single-branch filter
+      // because a branch's sales are not comparable to a global target.
+      label: "Overall Achievement",
+      value: performance?.overallAchievementPercent != null
+        ? `${Number(performance.overallAchievementPercent).toFixed(0)}%`
+        : EMPTY_DATA_LABEL,
+      subValue: performance
+        ? (performance.branchFiltered
+            ? 'Not shown for a single branch'
+            : <>Target: <CurrencyAmount value={performance.totalTarget} decimals={0} /></>)
+        : (performanceLoading ? 'Loading…' : 'No targets set'),
       trend: 'neutral',
       icon: Target,
       color: STAT_COLORS.warning
     },
   ];
+
+  const detailsPerformanceRow = detailsEmployee ? performanceByEmployeeId.get(detailsEmployee.id) : null;
 
   const renderStageBadge = (stage) => {
     const stageLabel = stage || EMPTY_DATA_LABEL;
@@ -3354,6 +3666,35 @@ const Employees = () => {
         onDeactivate={handleDeactivateEmployee}
         onActivate={handleActivateEmployee}
         onEdit={handleEditProfile}
+        onSetTarget={openSetTargets}
+        onManageAccess={setAccessPanelEmployee}
+      />
+
+      {/* EMPLOYEE DETAILS DRAWER (row click) */}
+      <EmployeeDetailsDrawer
+        key={detailsEmployee?.id ?? 'none'}
+        employee={detailsEmployee}
+        performanceRow={detailsPerformanceRow}
+        performancePeriodLabel={performancePeriodLabel}
+        performanceNotice={performanceNotice}
+        onClose={() => setDetailsEmployee(null)}
+        onEdit={handleEditProfile}
+        onSetTarget={(id) => { setDetailsEmployee(null); openSetTargets(id); }}
+        onManageAccess={(emp) => { setDetailsEmployee(null); setAccessPanelEmployee(emp); }}
+        onViewPhoto={setViewingPhoto}
+      />
+
+      {/* Set Targets grid — the employee roster comes from the same server payload the
+          Performance & Targets view renders, so the two can never disagree. */}
+      <SetTargetsModal
+        open={showSetTargets}
+        onClose={() => { setShowSetTargets(false); setSetTargetsFocusEmployeeId(null); }}
+        month={performanceMonth}
+        onMonthChange={setPerformanceMonth}
+        rows={performance?.rows || []}
+        loading={performanceLoading}
+        focusEmployeeId={setTargetsFocusEmployeeId}
+        onSaved={reloadPerformance}
       />
 
       {/* IMAGE VIEWER MODAL OVERLAY */}
@@ -3399,67 +3740,45 @@ const Employees = () => {
       )}
 
       {/* MAIN CONTENT */}
-      <main className="flex-1 flex flex-col w-full">
-        <div className="p-4 md:p-6 space-y-6">
+      <main className="flex-1 flex flex-col w-full min-w-0">
+        <div className="p-4 md:p-6 space-y-4">
 
           {/* Header */}
-          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-            <div>
-              <div className="text-xs text-slate-500 mb-1">HR & Workforce &rarr; Employees & Roles</div>
-              <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Users className="text-[#F5C742]" size={28} /> Employees & Roles</h1>
-              <p className="text-sm text-slate-500">Central workforce control for retail operations, POS access, performance, and compliance</p>
+          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3">
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                <Users className="text-[#F5C742]" size={22} /> Employees & Roles
+              </h1>
+              <p className="text-sm text-slate-500">Manage employees, roles, branch access and workforce information</p>
             </div>
 
             <div className="flex flex-wrap gap-2 w-full lg:w-auto">
-              {/* ── VERTICAL: canCreate('hr') for Import ── */}
-              {canCreate('hr') && (
-                <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
-                  <Upload size={16} /> Import
-                </button>
-              )}
-              {/* ── VERTICAL: canExport('hr') ── */}
-              {canExport('hr') && (
-                <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
-                  <Download size={16} /> Export
-                </button>
-              )}
+              {/* Import / Export are intentionally not rendered until they have real handlers. */}
               {/* ── VERTICAL: canEdit('hr') for Set Targets ── */}
               {canEdit('hr') && (
-                <button className="flex-1 lg:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
+                <button
+                  onClick={() => openSetTargets(null)}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
                   <Target size={16} /> Set Targets
                 </button>
               )}
-              <button className="p-2 bg-white border border-slate-200 rounded-md text-slate-600 hover:bg-slate-50 transition-colors">
-                <Settings size={16} />
-              </button>
-
               {/* ── VERTICAL: canCreate('hr') for Add Employee ── */}
               {canCreate('hr') && (
-                <>
-                  {/* Desktop */}
-                  <button
-                    onClick={openAddModal}
-                    className="hidden sm:flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
-                  >
-                    <Plus size={16} /> Add Employee
-                  </button>
-                  {/* Mobile */}
-                  <button
-                    onClick={openAddModal}
-                    className="sm:hidden flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
-                  >
-                    <Plus size={16} />
-                  </button>
-                </>
+                <button
+                  onClick={openAddModal}
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-[#F5C742] rounded-md text-sm font-semibold text-slate-900 hover:bg-yellow-400 whitespace-nowrap shadow-sm transition-colors"
+                >
+                  <Plus size={16} /> Add Employee
+                </button>
               )}
             </div>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            {statsData.map((stat, idx) => (
+          {/* KPIs */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            {statsData.map((stat) => (
               <StatCard
-                key={idx}
+                key={stat.label}
                 label={stat.label}
                 value={stat.value}
                 subValue={stat.subValue}
@@ -3470,103 +3789,131 @@ const Employees = () => {
             ))}
           </div>
 
-          {/* Filters */}
-          <div className="flex flex-col md:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input
-                type="text"
-                placeholder="Search by name, code, or role"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 placeholder:text-slate-400"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {/* Role Filter Dropdown */}
-              <div className="relative flex-1 md:flex-none">
-                <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors cursor-pointer">
-                  {filterRole} <ChevronDown size={14} />
-                </div>
-                <select
-                  value={filterRole}
-                  onChange={(e) => setFilterRole(e.target.value)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          {/* Workspace views — functional areas, deliberately separate from the employee groups */}
+          {/* The bottom rule is an inset shadow rather than a border so the tabs need no -mb-px
+              overlap; with overflow-y hidden that overlap would otherwise be clipped, and
+              without it the 1px spill made the browser draw a vertical scrollbar. */}
+          <div className={`flex items-center gap-1 overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--color-slate-200)] ${HIDE_SCROLLBAR}`} role="tablist">
+            {[
+              { id: 'employees', label: 'Employees', count: totalEmployees, icon: Users },
+              { id: 'approvals', label: 'Pending Approvals', count: pendingApprovalCount > 0 ? pendingApprovalCount : null, icon: ShieldCheck, highlight: pendingApprovalCount > 0 },
+              { id: 'performance', label: 'Performance & Targets', count: null, icon: BarChart3 },
+            ].map((view) => {
+              const isActive = activeView === view.id;
+              return (
+                <button
+                  key={view.id}
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setActiveView(view.id)}
+                  className={`flex items-center gap-2 px-3 py-2 text-sm whitespace-nowrap border-b-2 transition-colors ${isActive
+                    ? 'border-[#F5C742] text-slate-900 font-semibold'
+                    : 'border-transparent text-slate-500 hover:text-slate-700'}`}
                 >
-                  {availableRoles.map(role => (
-                    <option key={role} value={role}>{role}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Branch Filter Dropdown */}
-              <div className="relative flex-1 md:flex-none">
-                <div className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors cursor-pointer">
-                  {filterBranch} <ChevronDown size={14} />
-                </div>
-                <select
-                  value={filterBranch}
-                  onChange={(e) => setFilterBranch(e.target.value)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                >
-                  {availableBranches.map(branch => (
-                    <option key={branch} value={branch}>{branch}</option>
-                  ))}
-                </select>
-              </div>
-
-              <button className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-600 hover:bg-slate-50 whitespace-nowrap transition-colors">
-                <Filter size={14} /> More Filters
-              </button>
-            </div>
+                  <view.icon size={15} className={isActive ? 'text-slate-700' : 'text-slate-400'} />
+                  {view.label}
+                  {view.count != null && (
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded-full ${view.highlight ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500'}`}>
+                      {view.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Content Split */}
-          <div className="flex flex-col lg:flex-row gap-6">
+          {/* Performance & Targets — its own view, not a variant of the employee table:
+              every column is a server-computed figure for a month/branch rather than a
+              property of the employee record. */}
+          {activeView === 'performance' ? (
+            <PerformanceTargets
+              month={performanceMonth}
+              onMonthChange={setPerformanceMonth}
+              branches={allBranches || []}
+              branchId={performanceBranchId}
+              onBranchChange={setPerformanceBranchId}
+              performance={performance}
+              loading={performanceLoading}
+              error={performanceError}
+              canEditTargets={canEdit('hr')}
+              onOpenSetTargets={() => openSetTargets(null)}
+            />
+          ) : (
+            <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden min-w-0">
 
-            {/* Sidebar Categories */}
-            <div className="w-full lg:w-64 flex-shrink-0">
-              <div className="flex lg:flex-col overflow-x-auto lg:overflow-visible gap-2 pb-4 lg:pb-0 no-scrollbar">
-                {categories.map((cat, idx) => (
-                  <div
-                    key={idx}
-                    onClick={() => setActiveCategory(cat.name)}
-                    className={`flex items-center justify-between px-4 py-3 rounded-lg text-sm cursor-pointer whitespace-nowrap flex-shrink-0 min-w-max transition-colors ${activeCategory === cat.name ? 'bg-[#F5C742] font-semibold text-slate-900 shadow-sm' : 'bg-white lg:bg-transparent border lg:border-transparent border-slate-200 text-slate-600 hover:bg-white'}`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <cat.icon size={16} className={activeCategory === cat.name ? "text-slate-900" : "text-slate-500"} />
-                      {cat.name}
-                    </div>
-                    {cat.count !== null && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full ml-3 ${activeCategory === cat.name ? 'bg-black/10' : 'bg-slate-200 text-slate-500'}`}>
-                        {cat.count}
-                      </span>
-                    )}
+              {/* Employee groups (department filter) */}
+              {!isApprovalsView && (
+                <div className={`px-3 pt-3 overflow-x-auto overflow-y-hidden ${HIDE_SCROLLBAR}`}>
+                  <div className="inline-flex gap-1 rounded-lg bg-slate-100 p-1">
+                    {employeeGroups.map((group) => {
+                      const isActive = activeGroup === group.name;
+                      return (
+                        <button
+                          key={group.name}
+                          onClick={() => setActiveGroup(group.name)}
+                          aria-pressed={isActive}
+                          className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors ${isActive
+                            ? 'bg-white text-slate-900 font-semibold shadow-sm'
+                            : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                          {group.name}
+                          <span className={`text-[10px] px-1.5 rounded-full ${isActive ? 'bg-[#F5C742]/30 text-slate-800' : 'bg-slate-200 text-slate-500'}`}>
+                            {group.count}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
-                ))}
+                </div>
+              )}
+
+              {/* Search & filters */}
+              <div className="p-3 flex flex-col md:flex-row gap-2">
+                <div className="relative flex-1 min-w-0">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input
+                    type="text"
+                    placeholder="Search by name, code or role..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <FilterSelect label="Filter by role" value={filterRole} options={availableRoles} onChange={setFilterRole} />
+                  <FilterSelect label="Filter by branch" value={filterBranch} options={availableBranches} onChange={setFilterBranch} />
+                  {!isApprovalsView && (
+                    <FilterSelect label="Filter by status" value={filterStatus} options={STATUS_FILTER_OPTIONS} onChange={setFilterStatus} />
+                  )}
+                </div>
               </div>
-            </div>
 
-            {/* Table Area */}
-            <div className="flex-1 bg-white border border-slate-200 rounded-lg shadow-sm overflow-hidden min-w-0">
-              <div className="overflow-x-auto">
+              {/* Single sales-data notice instead of a repeated per-row message */}
+              {!isApprovalsView && performanceNotice && (
+                <div className="mx-3 mb-3 flex items-start gap-2 px-3 py-2 rounded-md bg-[#FFF8E7] border border-[#FDE6A9] text-xs text-slate-600">
+                  <Info size={14} className="mt-0.5 shrink-0 text-[#F5C742]" />
+                  <span>{performanceNotice}</span>
+                </div>
+              )}
 
-                {activeCategory === "Access & Permissions" ? (
+              <div className="overflow-x-auto border-t border-slate-200">
+
+                {isApprovalsView ? (
                   /* ==================================== */
                   /* APPROVAL WORKFLOW TABLE VIEW         */
                   /* ==================================== */
                   <table className="bb-nowrap-table w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                       <tr>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Pending Employee</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Role / Dept</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Workflow Stage</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Submission Date</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase text-right whitespace-nowrap">Decision</th>
+                        <th className="px-4 py-3 font-semibold text-xs uppercase whitespace-nowrap">Pending Employee</th>
+                        <th className="px-4 py-3 font-semibold text-xs uppercase whitespace-nowrap">Role / Dept</th>
+                        <th className="px-4 py-3 font-semibold text-xs uppercase whitespace-nowrap">Workflow Stage</th>
+                        <th className="px-4 py-3 font-semibold text-xs uppercase whitespace-nowrap">Submission Date</th>
+                        <th className="px-4 py-3 font-semibold text-xs uppercase text-right whitespace-nowrap">Decision</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {isLoading && <TableSkeleton cols={7} rows={8} />}
+                      {isLoading && <TableSkeleton cols={5} rows={8} />}
                       {!isLoading && filteredEmployees.length === 0 ? (
                         <tr>
                           <td colSpan="5" className="px-6 py-12 text-center text-slate-400">
@@ -3579,31 +3926,26 @@ const Employees = () => {
                       ) : (
                         pagedEmployees.map((req) => (
                           <tr key={req.id} className="hover:bg-slate-50 transition-colors group">
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-4 py-3 whitespace-nowrap">
                               <div className="flex items-center gap-3">
-                                <button
-                                  className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden ${req.color} ${req.avatar ? 'cursor-pointer ring-2 ring-transparent hover:ring-offset-1 hover:ring-slate-300' : ''}`}
-                                  onClick={() => req.avatar && setViewingPhoto(req.avatar)}
-                                >
-                                  {req.avatar ? <img src={req.avatar} alt="Avatar" className="w-full h-full object-cover" /> : req.initials}
-                                </button>
+                                <EmployeeAvatar employee={req} onClick={setViewingPhoto} />
                                 <div>
                                   <div className="font-medium text-slate-800">{req.name}</div>
                                   <div className="text-xs text-slate-400 font-mono">{req.code}</div>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-4 py-3 whitespace-nowrap">
                               <div className="text-slate-800">{req.role}</div>
                               <div className="text-xs text-slate-500">{req.dept}</div>
                             </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
+                            <td className="px-4 py-3 whitespace-nowrap">
                               {renderStageBadge(req.stage)}
                             </td>
-                            <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
+                            <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
                               {req.submittedAt}
                             </td>
-                            <td className="px-6 py-4 text-right whitespace-nowrap">
+                            <td className="px-4 py-3 text-right whitespace-nowrap">
                               {/* ── VERTICAL: canApprove('hr') ── */}
                               {canApprove('hr') ? (
                                 <div className="flex items-center justify-end gap-2">
@@ -3638,122 +3980,128 @@ const Employees = () => {
                   /* ==================================== */
                   /* STANDARD EMPLOYEE TABLE VIEW         */
                   /* ==================================== */
-                  <table className="bb-nowrap-table w-full text-sm text-left">
+                  <table className="w-full text-sm text-left">
                     <thead className="bg-[#F7F7FA] text-slate-500 border-b border-slate-200">
                       <tr>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Employee</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Role / Dept</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Branch</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Sales (MTD)</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Bills</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Discount / Returns</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Target</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase whitespace-nowrap">Status</th>
-                        <th className="px-6 py-4 font-semibold text-xs uppercase text-right whitespace-nowrap">Actions</th>
+                        <th className="px-4 py-2.5 font-semibold text-xs uppercase whitespace-nowrap">Employee</th>
+                        <th className="hidden md:table-cell px-4 py-2.5 font-semibold text-xs uppercase whitespace-nowrap">Role / Department</th>
+                        <th className="hidden lg:table-cell px-4 py-2.5 font-semibold text-xs uppercase whitespace-nowrap">Branch</th>
+                        <th className="hidden md:table-cell px-4 py-2.5 font-semibold text-xs uppercase text-right whitespace-nowrap">Sales ({performancePeriodLabel})</th>
+                        <th className="hidden md:table-cell px-4 py-2.5 font-semibold text-xs uppercase whitespace-nowrap">Target / Achievement</th>
+                        <th className="px-4 py-2.5 font-semibold text-xs uppercase whitespace-nowrap">Status</th>
+                        <th className="px-4 py-2.5 font-semibold text-xs uppercase text-right whitespace-nowrap w-12"><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {isLoading && <TableSkeleton cols={9} rows={8} />}
+                      {isLoading && <TableSkeleton cols={7} rows={8} />}
                       {!isLoading && filteredEmployees.length === 0 ? (
-                        <tr><td colSpan="9" className="px-6 py-12 text-center text-slate-400">No employees found matching filters.</td></tr>
+                        <tr><td colSpan="7" className="px-6 py-12 text-center text-slate-400">No employees found matching filters.</td></tr>
                       ) : (
-                        pagedEmployees.map((emp) => (
-                          <tr key={emp.id} className="hover:bg-slate-50 transition-colors group">
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="flex items-center gap-3">
-                                <button
-                                  className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold overflow-hidden ${emp.color} ${emp.avatar ? 'cursor-pointer ring-2 ring-transparent hover:ring-offset-1 hover:ring-slate-300' : ''}`}
-                                  onClick={() => emp.avatar && setViewingPhoto(emp.avatar)}
-                                >
-                                  {emp.avatar ? <img src={emp.avatar} alt="Avatar" className="w-full h-full object-cover" /> : emp.initials}
-                                </button>
-                                <div>
-                                  <div className="font-medium text-slate-800">{emp.name}</div>
-                                  <div className="text-xs text-slate-400 font-mono">{emp.code}</div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-slate-800">{emp.role}</div>
-                              <div className="text-xs text-slate-500">{emp.dept}</div>
-                            </td>
-                            <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
-                              <div className="flex items-center gap-1 text-xs">
-                                <Store size={12} className="text-slate-400" />
-                                {emp.branch || 'Unassigned'}
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="font-medium text-slate-800">{emp.sales ?? EMPTY_DATA_LABEL}</div>
-                              <div className="text-xs text-slate-400">{emp.avg ?? 'Sales data not connected'}</div>
-                            </td>
-                            <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
-                              {emp.bills ?? EMPTY_DATA_LABEL}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="text-xs text-orange-600">{emp.disc ?? EMPTY_DATA_LABEL}</div>
-                              <div className="text-xs text-red-500">{emp.ret ?? EMPTY_DATA_LABEL}</div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              {emp.target ? (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-medium">{emp.target}%</span>
-                                  <div className="flex-1 w-16 bg-slate-100 rounded-full h-1.5">
-                                    <div className="bg-[#F5C742] h-1.5 rounded-full" style={{ width: `${emp.target}%` }}></div>
+                        pagedEmployees.map((emp) => {
+                          const perf = performanceByEmployeeId.get(emp.id);
+                          const missingPerfReason = performanceNotice
+                            ? 'Sales data unavailable'
+                            : performanceLoading
+                              ? 'Loading…'
+                              : 'No sales/target record for this employee in this period';
+                          return (
+                            <tr
+                              key={emp.id}
+                              tabIndex={0}
+                              onClick={() => setDetailsEmployee(emp)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') setDetailsEmployee(emp); }}
+                              className="hover:bg-slate-50 transition-colors cursor-pointer focus:outline-none focus-visible:bg-yellow-50"
+                            >
+                              <td className="px-4 py-2.5">
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <EmployeeAvatar employee={emp} onClick={setViewingPhoto} />
+                                  <div className="min-w-0">
+                                    <div className="font-medium text-slate-800 truncate">{emp.name}</div>
+                                    <div className="text-xs text-slate-400 font-mono">{emp.code}</div>
+                                    <div className="md:hidden text-xs text-slate-500 truncate">{emp.role}</div>
                                   </div>
-                                  <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 rounded">Pending</span>
                                 </div>
-                              ) : (
-                                <span className="text-xs text-slate-400">N/A</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`text-xs px-2 py-1 rounded-full font-medium border ${emp.status === 'Active' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
-                                {emp.status}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 text-right whitespace-nowrap relative">
-                              <div className="flex items-center justify-end gap-2">
-                                {hasRole('ADMIN') && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setAccessPanelEmployee(emp);
-                                    }}
-                                    title="Manage system access"
-                                    className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition-colors"
-                                  >
-                                    <Lock size={12} /> Access
-                                  </button>
+                              </td>
+                              <td className="hidden md:table-cell px-4 py-2.5">
+                                <div className="text-slate-800 text-xs font-medium truncate max-w-[12rem]" title={emp.role}>{emp.role}</div>
+                                <div className="text-xs text-slate-500 truncate max-w-[12rem]" title={emp.dept}>{emp.dept}</div>
+                              </td>
+                              <td className="hidden lg:table-cell px-4 py-2.5 text-slate-600">
+                                <div className="flex items-center gap-1 text-xs max-w-[14rem]" title={emp.branch || 'Unassigned'}>
+                                  <Store size={12} className="text-slate-400 shrink-0" />
+                                  <span className="truncate">{emp.branch || 'Unassigned'}</span>
+                                </div>
+                              </td>
+                              <td className="hidden md:table-cell px-4 py-2.5 text-right whitespace-nowrap">
+                                {perf ? (
+                                  <span className="font-medium text-slate-800"><CurrencyAmount value={perf.sales} decimals={0} /></span>
+                                ) : (
+                                  <span className="text-slate-400" title={missingPerfReason}>{EMPTY_DATA_LABEL}</span>
                                 )}
+                              </td>
+                              <td className="hidden md:table-cell px-4 py-2.5 whitespace-nowrap">
+                                {perf?.achievementPercent != null ? (
+                                  <div className="w-28">
+                                    <div className="flex items-baseline justify-between gap-2">
+                                      <span className="text-xs font-semibold text-slate-800">{achievementText(perf.achievementPercent)}</span>
+                                      {perf.targetAmount != null && (
+                                        <span className="text-[10px] text-slate-400 truncate">
+                                          of <CurrencyAmount value={perf.targetAmount} decimals={0} />
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="mt-1 w-full bg-slate-100 rounded-full h-1.5">
+                                      <div
+                                        className="bg-[#F5C742] h-1.5 rounded-full"
+                                        style={{ width: `${Math.min(100, Math.max(0, Number(perf.achievementPercent)))}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span
+                                    className="text-xs text-slate-400"
+                                    title={!perf
+                                      ? missingPerfReason
+                                      : performance?.branchFiltered
+                                        ? 'Achievement is not shown for a single-branch view'
+                                        : 'No target set'}
+                                  >
+                                    {perf && perf.targetAmount == null ? 'No target' : EMPTY_DATA_LABEL}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-2.5 whitespace-nowrap">
+                                <StatusBadge status={emp.status} />
+                              </td>
+                              <td className="px-4 py-2.5 text-right whitespace-nowrap">
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setSelectedEmployeeForAction(emp);
                                   }}
+                                  aria-label={`Actions for ${emp.name}`}
                                   className="text-slate-400 hover:text-slate-600 p-1 rounded hover:bg-slate-100 transition-colors"
                                 >
-                                  <MoreHorizontal size={18} />
+                                  <MoreVertical size={18} />
                                 </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
                 )}
-                <PaginationFooter
-                  page={listPage}
-                  size={LIST_PAGE_SIZE}
-                  totalElements={filteredEmployees.length}
-                  totalPages={Math.ceil(filteredEmployees.length / LIST_PAGE_SIZE)}
-                  onPageChange={setListPage}
-                />
               </div>
+              <PaginationFooter
+                page={listPage}
+                size={LIST_PAGE_SIZE}
+                totalElements={filteredEmployees.length}
+                totalPages={Math.ceil(filteredEmployees.length / LIST_PAGE_SIZE)}
+                onPageChange={setListPage}
+              />
             </div>
-
-          </div>
+          )}
 
         </div>
       </main>

@@ -10,6 +10,7 @@ import {
 import { getUserProfile, updateUserProfile, changePassword, logout } from '../api/auth';
 import { getImageUrl } from '../utils/urlUtils';
 import { formatUserDisplayName } from '../utils/displayName';
+import MyTargetsPerformance from './MyTargetsPerformance';
 import toast from 'react-hot-toast';
 
 const MyProfile = () => {
@@ -452,6 +453,10 @@ const MyProfile = () => {
                                     </button>
                                 </div>
                             </>
+                        ) : (activeTab === 'Targets' || activeTab === 'Performance') ? (
+                            /* Self-scoped by the server: the endpoint resolves the employee from
+                               the authenticated principal, and takes no employeeId. */
+                            <MyTargetsPerformance mode={activeTab} />
                         ) : (
                             <div className="flex flex-col items-center justify-center py-20 text-center">
                                 <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4">
