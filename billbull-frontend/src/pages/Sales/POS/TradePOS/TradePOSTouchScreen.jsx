@@ -3,6 +3,7 @@ import { TradeHeader } from './components/layout/TradeHeader';
 import { TradeMainCanvas } from './components/layout/TradeMainCanvas';
 import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
+import { ScanLine, CheckCircle2 } from 'lucide-react';
 
 /**
  * TradePOSTouchScreen
@@ -32,6 +33,14 @@ export const TradePOSTouchScreen = React.memo((props) => {
     setShowCashDropDialog,
     handleCheckout,
     
+    // Phase 2 salesperson verification. This template previously had NO salesperson UI at all,
+    // so a compact-template branch posted every sale as Unassigned. It is in scope for the
+    // mandatory-verification rule like every other layout; all state is owned by
+    // useSalesperson.js, exactly as in POSTouchScreen.
+    salespersonRequired = false,
+    verifiedSalesperson = null,
+    openSalespersonScanModal,
+
     // Customer Props
     customerSearchQuery,
     setCustomerSearchQuery,
@@ -145,6 +154,39 @@ export const TradePOSTouchScreen = React.memo((props) => {
             handleUnifiedEntry={handleUnifiedEntry}
           />
         </div>
+
+        {/* Salesperson verification strip. Rendered only while the feature is on, so a tenant
+            that never enables it sees this template exactly as before. Barcode scan only — there
+            is deliberately no manual employee picker here either. */}
+        {salespersonRequired && (
+          <div className="w-full max-w-[1600px] mx-auto shrink-0">
+            <button
+              type="button"
+              onClick={openSalespersonScanModal}
+              aria-label={verifiedSalesperson ? 'Change salesperson' : 'Scan salesperson barcode'}
+              className={`w-full flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5 text-left transition ${
+                verifiedSalesperson
+                  ? 'border-emerald-300 bg-emerald-50 hover:bg-emerald-100'
+                  : 'border-amber-300 bg-amber-50 hover:bg-amber-100'
+              }`}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                {verifiedSalesperson
+                  ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  : <ScanLine className="h-4 w-4 shrink-0 text-amber-600" />}
+                <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500 shrink-0">
+                  Salesperson
+                </span>
+                <span className="min-w-0 truncate text-sm font-semibold text-[#1E293B]">
+                  {verifiedSalesperson
+                    ? `${verifiedSalesperson.name || 'Verified'} · ${verifiedSalesperson.employeeCode || ''}`.trim()
+                    : 'Not verified'}
+                </span>
+              </span>
+              <span className="shrink-0 text-sm font-bold text-[#327F74]">Scan</span>
+            </button>
+          </div>
+        )}
 
         {/* Responsive 2-Column Layout, tabbed on mobile/tablet */}
         <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-4 lg:gap-6 w-full max-w-[1600px] mx-auto">

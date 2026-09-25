@@ -108,14 +108,24 @@ public class EmployeeSalesTargetService {
         return value.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 
+    /**
+     * Null in, null out — {@code null} means "commission not configured" and is preserved as such
+     * rather than coerced to zero. Coercion is what the old implementation did, and it is why the
+     * column could not distinguish a deliberate 0% commission from an unset one. Zero is still a
+     * perfectly valid configured rate; only absence is absence.
+     *
+     * @see EmployeeSalesTarget#getCommissionRate()
+     */
     private BigDecimal validateCommissionRate(BigDecimal rate) {
-        BigDecimal value = rate != null ? rate : BigDecimal.ZERO;
-        if (value.signum() < 0) {
+        if (rate == null) {
+            return null;
+        }
+        if (rate.signum() < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Commission rate cannot be negative.");
         }
-        if (value.compareTo(MAX_RATE) > 0) {
+        if (rate.compareTo(MAX_RATE) > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Commission rate cannot exceed 100.");
         }
-        return value.setScale(2, java.math.RoundingMode.HALF_UP);
+        return rate.setScale(2, java.math.RoundingMode.HALF_UP);
     }
 }

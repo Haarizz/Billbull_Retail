@@ -104,6 +104,8 @@ export default function MyTargetsPerformance({ mode = 'Targets' }) {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <Stat label="Target" value={data?.targetAmount != null
                         ? <CurrencyAmount value={data.targetAmount} /> : DASH} />
+                    {/* The CONFIGURED rate. `0.00%` is a real rate someone set; DASH means no
+                        rate has been configured at all — they are not the same thing. */}
                     <Stat label="Commission Rate" value={data?.commissionRate != null
                         ? `${Number(data.commissionRate).toFixed(2)}%` : DASH} />
                     <Stat label="Remaining Target" value={data?.remainingTarget != null
@@ -115,7 +117,18 @@ export default function MyTargetsPerformance({ mode = 'Targets' }) {
                     <Stat label="Target" value={data?.targetAmount != null
                         ? <CurrencyAmount value={data.targetAmount} /> : DASH} />
                     <Stat label="Achievement" value={achieved == null ? DASH : `${Number(achieved).toFixed(2)}%`} />
-                    <Stat label="Commission" value={<CurrencyAmount value={data?.commission ?? 0} />} />
+                    {/* Commission is EARNED ONLY once the monthly target is reached, and is then
+                        paid on the full month's sales. Until then the figure is not "0.00 so far"
+                        — nothing is owed — so it reads as a dash with the reason under it rather
+                        than as an amount that looks like it is accruing. */}
+                    <Stat
+                        label="Commission"
+                        value={data?.commissionEligible
+                            ? <CurrencyAmount value={data?.commission ?? 0} />
+                            : DASH}
+                        hint={data?.commissionStatus
+                            || (data?.commissionEligible ? 'Eligible' : 'Not Eligible')}
+                    />
                 </div>
             )}
 
@@ -140,9 +153,10 @@ export default function MyTargetsPerformance({ mode = 'Targets' }) {
     );
 }
 
-const Stat = ({ label, value }) => (
+const Stat = ({ label, value, hint }) => (
     <div className="bg-[#F7F7FA] border border-slate-200 rounded-lg p-4">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
         <p className="text-lg font-bold text-slate-900 mt-1">{value}</p>
+        {hint && <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p>}
     </div>
 );

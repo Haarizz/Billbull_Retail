@@ -44,6 +44,7 @@ class EmployeeSalesTargetControllerTest {
     @Mock private EmployeePerformanceService performanceService;
     @Mock private ModulePermissionService modulePermissionService;
     @Mock private UserRepository userRepository;
+    @Mock private TargetReadinessService readinessService;
 
     private EmployeeSalesTargetController controller;
 
@@ -52,7 +53,8 @@ class EmployeeSalesTargetControllerTest {
     @BeforeEach
     void setUp() {
         controller = new EmployeeSalesTargetController(
-                targetService, performanceService, modulePermissionService, userRepository);
+                targetService, performanceService, readinessService,
+                modulePermissionService, userRepository);
     }
 
     private static Authentication auth(String username) {

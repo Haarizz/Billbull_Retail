@@ -44,9 +44,24 @@ public class EmployeeSalesTarget extends BaseEntity {
     @Column(name = "target_amount", precision = 15, scale = 2, nullable = false)
     private BigDecimal targetAmount = BigDecimal.ZERO;
 
-    /** Commission as a PERCENTAGE rate (10.00 = 10%), not a fraction and not money. */
-    @Column(name = "commission_rate", precision = 5, scale = 2, nullable = false)
-    private BigDecimal commissionRate = BigDecimal.ZERO;
+    /**
+     * Commission as a PERCENTAGE rate (10.00 = 10%), not a fraction and not money.
+     *
+     * <p>NULLABLE, and deliberately so: {@code null} means "commission has not been configured",
+     * which is a different fact from {@code 0.00}, meaning "configured, and the rate is zero". The
+     * Phase 2 target-readiness rule has to tell those apart — a deliberate 0% commission is a
+     * complete configuration and must not block sales, while an unset one must. The column was
+     * originally {@code NOT NULL DEFAULT 0}, which collapsed both into zero; V104 relaxes it.
+     *
+     * <p>Existing zero rows are left as explicit zeros by that migration. They were written by a
+     * UI that always sent a number, so they are configured-zero, not placeholders — rewriting them
+     * to NULL would invent a blocking condition out of nothing.
+     *
+     * <p>Every arithmetic consumer already null-guards ({@code EmployeePerformanceService.nz}), so
+     * the commission formula is unchanged: a null rate still yields a zero commission amount.
+     */
+    @Column(name = "commission_rate", precision = 5, scale = 2)
+    private BigDecimal commissionRate;
 
     @Column(name = "status", length = 20)
     private String status;

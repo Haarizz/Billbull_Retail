@@ -403,6 +403,10 @@ export const TaxInvoiceReceiptBody = ({ data = SAMPLE_DATA, paperSize = "80mm" }
       {meta.branch && <KV en="Branch" ar="الفرع" value={meta.branch} />}
       {meta.terminalId && <KV en="Terminal ID" ar="رقم الجهاز" value={meta.terminalId} />}
       {meta.cashierName && <KV en="Cashier" ar="الكاشير" value={meta.cashierName} />}
+      {/* Salesperson directly below Cashier — independent identities, both printed. */}
+      {meta.salespersonName && (
+        <KV en="Salesperson" ar="مندوب المبيعات" value={meta.salespersonName} />
+      )}
       {meta.shiftNo && <KV en="Shift No" ar="رقم الوردية" value={meta.shiftNo} />}
       {meta.saleType && <KV en="Sale Type" ar="نوع البيع" value={meta.saleType} />}
 

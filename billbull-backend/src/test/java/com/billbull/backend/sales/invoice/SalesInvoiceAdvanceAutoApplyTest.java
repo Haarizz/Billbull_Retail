@@ -170,6 +170,7 @@ class SalesInvoiceAdvanceAutoApplyTest {
                 mock(PostingEngineService.class),
                 mock(com.billbull.backend.sales.delivery.DeliveryNoteService.class),
                 mock(com.billbull.backend.sales.settings.SalesSettingsService.class),
+                mock(com.billbull.backend.hr.employees.SalespersonService.class),
                 mock(com.billbull.backend.sales.settings.SalesDocumentNumberingService.class),
                 mock(com.billbull.backend.inventory.stockavailability.StockAvailabilityService.class),
                 mock(com.billbull.backend.financials.receiptvoucher.ReceiptVoucherService.class),

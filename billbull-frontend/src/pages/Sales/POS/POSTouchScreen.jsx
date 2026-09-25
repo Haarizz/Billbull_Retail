@@ -6,6 +6,57 @@ import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
+import { ScanLine } from 'lucide-react';
+
+/**
+ * The Salesperson row that sits directly under the Customer bar in every POS sale layout.
+ *
+ * Deliberately a strip beside the customer rather than an entry in the right-side action grid:
+ * that grid is a command surface (each button opens a dialog or fires an action), while the
+ * salesperson is a per-sale attribute like the customer.
+ *
+ * <p>Renders NOTHING when the feature is off — not a disabled control, not an empty row. A tenant
+ * that never enables it sees the pre-feature layout exactly, with the cart sitting straight under
+ * the customer bar.
+ *
+ * <p>When it IS on, the only control is [Scan]. There is deliberately no manual employee picker:
+ * a name chosen from a list is not a verification, and offering one would be a way around the
+ * barcode rule rather than a convenience.
+ */
+const SalespersonBar = ({ required = false, verified = null, onScan }) => {
+  if (!required) return null;
+  return (
+    <div className="px-3 py-2 shrink-0 border-b border-gray-200 bg-white">
+      <div className="flex items-center gap-2">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-gray-400 shrink-0">
+          Salesperson
+        </span>
+        <div className="flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={onScan}
+            aria-label={verified ? 'Change salesperson' : 'Scan salesperson barcode'}
+            className={`w-full flex items-center justify-between gap-2 rounded-lg border px-2 py-1 text-left transition ${
+              verified
+                ? 'border-emerald-300 bg-emerald-50 hover:bg-emerald-100'
+                : 'border-amber-300 bg-amber-50 hover:bg-amber-100'
+            }`}
+          >
+            <span className="min-w-0 truncate text-[11px] font-semibold text-[#1E293B]">
+              {verified
+                ? `${verified.name || 'Verified'} · ${verified.employeeCode || ''}`.trim()
+                : 'Not verified'}
+            </span>
+            <span className="flex shrink-0 items-center gap-1 text-[11px] font-bold text-[#327F74]">
+              <ScanLine className="h-3 w-3" />
+              Scan
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const POSTouchScreen = React.memo((props) => {
   const {
@@ -35,6 +86,12 @@ const POSTouchScreen = React.memo((props) => {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
+    // salesperson — a sale-level attribute rendered beside the customer, NOT an action button.
+    // Distinct from the cashier: the logged-in operator may ring up a sale that belongs to
+    // someone else. All three are owned by POS/features/sales/useSalesperson.js — this template
+    // reads them and reports intent, it holds none of this state itself, and it has no roster to
+    // pick from because a scan is the only way to name a salesperson.
+    salespersonRequired = false, verifiedSalesperson = null, openSalespersonScanModal,
     // product entry — POSSales.jsx owns the Product Entry Mode decision and the
     // Item Entry dialog; this template only reports which product was picked.
     handleProductSelection,
@@ -60,8 +117,13 @@ const POSTouchScreen = React.memo((props) => {
     posTemplate,
     // cart view
     cartViewDetailed, cartLineDetails,
-    // checkout / payment
-    setShowPaymentDialog, setTenderedAmount, setCheckoutPhase, setCheckoutKeypadMode,
+    // checkout / payment — handleCheckout is the ONLY way into settlement from this template.
+    // setShowPaymentDialog/setCheckoutPhase are deliberately NOT destructured: the
+    // salesperson-verification gate lives in handleCheckout, and these two Checkout buttons used
+    // to open the payment dialog themselves, which walked straight past it. Without the setters in
+    // scope a layout cannot reintroduce that bypass.
+    handleCheckout,
+    setTenderedAmount, setCheckoutKeypadMode,
     setCheckoutKeypadTarget, setCheckoutKeypadVisible,
     // dialogs
     setShowPOSConfig, setShowCashDropDialog, setShowLastReceiptDialog,
@@ -85,6 +147,30 @@ const POSTouchScreen = React.memo((props) => {
   } = props;
 
   const [animatingHearts, setAnimatingHearts] = useState(new Set());
+
+  /**
+   * Both Checkout buttons (Classic and Cart Focus) go through here, and through nothing else.
+   *
+   * <p>handleCheckout owns the salesperson-verification gate and opens the payment phase; this
+   * only adds the per-layout tender pre-fill. When the gate refuses it returns false and the scan
+   * modal is already up, so we return WITHOUT touching the tender or the keypad — no settlement
+   * state is primed for a sale that has not been authorised to proceed.
+   */
+  const startCheckout = useCallback(() => {
+    if (handleCheckout?.() === false) return;
+    // Pre-fill the tender to the amount actually due NOW (grand total minus any layaway deposit
+    // already collected) so the cashier isn't pushed to over-tender the full invoice.
+    const grandWithShip = currentInvoice.total + (Number(shippingCharge) || 0);
+    const balanceDue = activeLayawayId && activeLayawayDeposit > 0
+      ? Math.max(0, grandWithShip - activeLayawayDeposit)
+      : grandWithShip;
+    setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
+    setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender');
+  }, [
+    handleCheckout, currentInvoice.total, shippingCharge, activeLayawayId, activeLayawayDeposit,
+    setTenderedAmount, setCheckoutKeypadVisible, setCheckoutKeypadMode, setCheckoutKeypadTarget,
+  ]);
+
   const scannerBufferRef = useRef('');
   const scannerTimerRef = useRef(null);
   const scannerReady = Boolean(scannerConfig?.enabled) && scannerConfig?.status === 'ACTIVE' && scannerConfig?.inputMode === 'KEYBOARD_WEDGE';
@@ -135,6 +221,15 @@ const POSTouchScreen = React.memo((props) => {
     const onKeyDown = (event) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       if (posActionMode === 'qty' || posActionMode === 'discount') return;
+      // An employee barcode scanned into the salesperson modal must never reach product lookup.
+      // Focus normally keeps it out (the check below skips text inputs), but focus can be lost —
+      // a click on the dialog chrome, a re-render — and a scan landing in the cart as a phantom
+      // product is a real sale defect, not a cosmetic one. The marker attribute closes that gap
+      // regardless of where focus sits. Same suppression idea as posActionMode above.
+      if (typeof document !== 'undefined'
+          && document.querySelector('[data-pos-scan-suppress="true"]')) {
+        return;
+      }
 
       const activeTarget = event.target;
       const barcodeTarget = barcodeInputRef?.current || null;
@@ -198,6 +293,20 @@ const POSTouchScreen = React.memo((props) => {
   // Price / Remove) stay inline in each template because their behaviour depends
   // on that template's editing model (inline numpad vs middle-column keypad).
   const commonActionButtons = (iconCls = 'h-4 w-4') => [
+    // Salesperson re-verification. Present only while POS salesperson verification is ON, and it
+    // opens the SAME modal the header's Scan button does, writing to the SAME useSalesperson
+    // state — it is a second entry point, never a second source of truth.
+    ...(salespersonRequired ? [{
+      id: 'salesperson',
+      label: verifiedSalesperson
+        ? `Salesperson: ${verifiedSalesperson.name || verifiedSalesperson.employeeCode || ''}`.trim()
+        : 'Salesperson',
+      icon: <ScanLine className={iconCls} />,
+      color: verifiedSalesperson
+        ? 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700'
+        : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',
+      action: () => openSalespersonScanModal?.(),
+    }] : []),
     { id: 'quick-add-product', label: 'Quick Add Product', icon: <Plus className={iconCls} />, color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowQuickProductModal(true) },
     { id: 'layaways', label: 'Layaways', icon: <Pause className={iconCls} />, color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700', action: () => setShowLayawaysList(true) },
     { id: 'save-layaway', label: 'Save Layaway', icon: <Archive className={iconCls} />, color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700', action: () => setShowSaveLayaway(true) },
@@ -326,6 +435,13 @@ const POSTouchScreen = React.memo((props) => {
                 </div>
               )}
             </div>
+
+            {/* Salesperson — sale-level attribute, directly under the customer */}
+            <SalespersonBar
+              required={salespersonRequired}
+              verified={verifiedSalesperson}
+              onScan={openSalespersonScanModal}
+            />
 
             {/* Cart table header + rows — horizontal scroll is the safety net on narrow
                 widths so the 12-col grid degrades to scrollable instead of clipping. */}
@@ -876,16 +992,7 @@ const POSTouchScreen = React.memo((props) => {
                 </div>
               )}
               <button type="button"
-                onClick={() => {
-                  const grandWithShip = currentInvoice.total + (Number(shippingCharge) || 0);
-                  const balanceDue = activeLayawayId && activeLayawayDeposit > 0
-                    ? Math.max(0, grandWithShip - activeLayawayDeposit)
-                    : grandWithShip;
-                  setCheckoutPhase('payment');
-                  setShowPaymentDialog(true);
-                  setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
-                  setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender');
-                }}
+                onClick={startCheckout}
                 disabled={currentInvoice.items.length === 0}
                 className={`w-full min-h-[72px] bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black flex flex-col items-center justify-center py-3 transition-all ${(!activeLayawayId || activeLayawayDeposit <= 0) ? 'mt-0' : ''}`}>
                 <div className="flex items-center gap-2 text-lg">
@@ -972,6 +1079,13 @@ const POSTouchScreen = React.memo((props) => {
                 </div>
               )}
             </div>
+
+            {/* Salesperson — sale-level attribute, directly under the customer */}
+            <SalespersonBar
+              required={salespersonRequired}
+              verified={verifiedSalesperson}
+              onScan={openSalespersonScanModal}
+            />
 
             {/* Cart column header */}
             <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-white shrink-0">
@@ -1597,18 +1711,7 @@ const POSTouchScreen = React.memo((props) => {
                   <span>Deposit Applied</span><span>−{formatCurrencyStr(activeLayawayDeposit)}</span>
                 </div>
               )}
-              <button type="button" onClick={() => {
-                // Pre-fill the tender to the amount actually due NOW (grand total minus
-                // any layaway deposit already collected) so the cashier isn't pushed to
-                // over-tender the full invoice when a deposit exists.
-                const grandWithShip = currentInvoice.total + (Number(shippingCharge) || 0);
-                const balanceDue = activeLayawayId && activeLayawayDeposit > 0
-                  ? Math.max(0, grandWithShip - activeLayawayDeposit)
-                  : grandWithShip;
-                setCheckoutPhase('payment'); setShowPaymentDialog(true);
-                setTenderedAmount(balanceDue > 0 ? balanceDue.toFixed(2) : '');
-                setCheckoutKeypadVisible(false); setCheckoutKeypadMode('numeric'); setCheckoutKeypadTarget('tender');
-              }}
+              <button type="button" onClick={startCheckout}
                 disabled={currentInvoice.items.length === 0}
                 className={`w-full min-h-[72px] bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 disabled:cursor-not-allowed text-[#1E293B] font-black flex flex-col items-center justify-center py-3 transition-all ${(!activeLayawayId || activeLayawayDeposit <= 0) ? 'mt-0' : ''}`}>
                 <div className="flex items-center gap-2 text-lg">

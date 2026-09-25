@@ -76,6 +76,9 @@ class PosCheckoutBusinessDateTest {
     @Mock private PosSettingsService posSettingsService;
     @Mock private com.billbull.backend.inventory.product.ProductService productService;
     @Mock private com.billbull.backend.hr.employees.EmployeeRepository employeeRepository;
+    @Mock private com.billbull.backend.hr.targets.TargetReadinessService targetReadinessService;
+    @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    @Mock private com.billbull.backend.hr.employees.SalespersonService salespersonService;
     @Mock private com.billbull.backend.sales.payment.PaymentRepository paymentRepository;
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
@@ -105,6 +108,11 @@ class PosCheckoutBusinessDateTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
+        // Phase 2 salesperson/target settings default to OFF, which is the state in which
+        // this suite's pre-Phase-2 behaviour is defined. The enforcement paths have their
+        // own suite (PosCheckoutSalespersonEnforcementTest).
+        org.mockito.Mockito.lenient().when(salesSettingsService.getSettings())
+                .thenReturn(new com.billbull.backend.sales.settings.SalesSettings());
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(BigDecimal.ZERO);
     }

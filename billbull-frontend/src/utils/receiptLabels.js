@@ -19,6 +19,9 @@ export const RECEIPT_LABELS = {
   BRANCH:            { en: 'Branch',                 ar: 'الفرع' },
   TERMINAL:          { en: 'Terminal ID',            ar: 'رقم الجهاز' },
   CASHIER:           { en: 'Cashier',                ar: 'الكاشير' },
+  // WHO the sale belongs to, as distinct from CASHIER (who rang it up). Both appear on the
+  // receipt; they are independent identities and one never replaces the other.
+  SALESPERSON:       { en: 'Salesperson',            ar: 'مندوب المبيعات' },
   COUNTER:           { en: 'Counter',                ar: 'الكاونتر' },
   SALE_TYPE:         { en: 'Sale Type',              ar: 'نوع البيع' },
 

@@ -27,10 +27,16 @@ public class SalesSettingsController {
     /**
      * PUT /api/sales/settings
      * Saves and returns the updated Sales module settings.
+     *
+     * <p>Takes the raw body rather than a bound {@code SalesSettings} so the service can apply
+     * MERGE semantics — only the properties actually present in the JSON are written. Binding to
+     * the entity here would collapse "field absent" into "field false" before the service ever
+     * sees it, which is precisely the bug this shape exists to prevent (see
+     * {@code SalesSettingsService.saveSettings}).
      */
     @PreAuthorize("hasRole('ADMIN')")
     @PutMapping
-    public ResponseEntity<SalesSettings> saveSettings(@RequestBody SalesSettings settings) {
+    public ResponseEntity<SalesSettings> saveSettings(@RequestBody com.fasterxml.jackson.databind.JsonNode settings) {
         return ResponseEntity.ok(service.saveSettings(settings));
     }
 }

@@ -238,6 +238,10 @@ export async function buildThermalReceiptArtifacts({
       showCustomerDetails: activeShowCustomerDetails,
       showFooterText: activeShowFooterText,
       cashierName: cashierNameOverride || cashierDisplayName,
+      // Salesperson — WHO the sale belongs to, printed directly under Cashier. Read from the
+      // invoice itself rather than from live POS state, which is what makes it correct on a
+      // REPRINT: a reprint rebuilds from the stored invoice long after the till moved on.
+      salespersonName: full.salespersonName || '',
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
       // Template 2 (bilingual canvas) reads these extras; Template 1's ESC/POS
@@ -326,6 +330,10 @@ export async function buildThermalReceiptArtifacts({
       footer: activeFooter,
       showTrn: activeShowTrn,
       cashierName: cashierNameOverride || cashierDisplayName,
+      // Salesperson — WHO the sale belongs to, printed directly under Cashier. Read from the
+      // invoice itself rather than from live POS state, which is what makes it correct on a
+      // REPRINT: a reprint rebuilds from the stored invoice long after the till moved on.
+      salespersonName: full.salespersonName || '',
       terminalId: full.posTerminalId || currentTerminal?.terminalId,
       counterName: full.posCounterName || currentTerminal?.counterName,
       cashGiven,

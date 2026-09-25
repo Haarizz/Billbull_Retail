@@ -75,6 +75,25 @@ public class RolePermissionInitializer implements ApplicationRunner {
             seedIfAbsent(role, "notification", true,  true,  false, false, false);
         });
 
+        // SALESPERSON / CASHIER_SALESPERSON: shop-floor selling designations, configurable in
+        // Roles & Permissions. Modelled on DELIVERY_PERSON above — a deliberately minimal default
+        // grant, because these rows exist primarily so the designation appears in the Employees &
+        // Roles dropdown, not to hand anyone new authority. CASHIER_SALESPERSON additionally gets
+        // sales create, since that designation does ring up sales.
+        roleRepository.findByName("SALESPERSON").ifPresent(role -> {
+            seedIfAbsent(role, "sales",        true,  false, false, false, false);
+            seedIfAbsent(role, "customer",     true,  false, false, false, false);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
+        });
+
+        roleRepository.findByName("CASHIER_SALESPERSON").ifPresent(role -> {
+            seedIfAbsent(role, "sales",        true,  true,  false, false, false);
+            seedIfAbsent(role, "customer",     true,  true,  false, false, false);
+            seedIfAbsent(role, "dashboard",    true,  false, false, false, false);
+            seedIfAbsent(role, "notification", true,  true,  false, false, false);
+        });
+
         // ACCOUNTANT: full finance, read/export purchases+sales, dashboard
         roleRepository.findByName("ACCOUNTANT").ifPresent(role -> {
             seedIfAbsent(role, "finance",      true,  true,  true,  true,  true);

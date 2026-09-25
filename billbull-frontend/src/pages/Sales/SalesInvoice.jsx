@@ -45,7 +45,7 @@ import { getAllCustomers } from '../../api/customerledgerApi';
 import { getAllSalesOrders } from '../../api/salesorderApi';
 import { getAllProformas } from '../../api/proformaApi';
 import { getDeliveryNotes, getPickingNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
-import { getEmployeeNames } from '../../api/employeeApi';
+import { getEmployeeNames, getSalespersons } from '../../api/employeeApi';
 import {
     getAllSalesInvoices,
     getSalesInvoicesPage,
@@ -417,6 +417,12 @@ const SalesInvoice = () => {
     const [paymentMode, setPaymentMode] = useState('');
     const [paymentTerms, setPaymentTerms] = useState('Immediate');
     const [salesperson, setSalesperson] = useState('');
+    // Back-office salesperson attribution (Phase 2), gated by SalesSettings.
+    // salespersonRequiredAtBackOffice. When OFF, none of this renders and the legacy free-text
+    // `salesperson` behaves exactly as before.
+    const [salespersonEnabled, setSalespersonEnabled] = useState(false);
+    const [salespersonOptions, setSalespersonOptions] = useState([]);
+    const [salespersonEmployeeId, setSalespersonEmployeeId] = useState('');
     const [employeesList, setEmployeesList] = useState([]);
     const [branch, setBranch] = useState(activeBranch?.name || defaultBranch?.name || '');
     const createBlankInvoiceItem = () => ({
@@ -763,6 +769,16 @@ const SalesInvoice = () => {
                 ]);
                 setBankAccountOptions(Array.isArray(bankAccData) ? bankAccData : []);
                 setEmployeesList(Array.isArray(empData) ? empData : []);
+
+                // Only ACTIVE employees designated Salesperson / Cashier + Salesperson — the same
+                // server-filtered roster the POS uses. Deliberately not getEmployeeNames(), which
+                // returns Active AND Inactive and every designation.
+                const backOfficeOn = !!settingsData?.salespersonRequiredAtBackOffice;
+                setSalespersonEnabled(backOfficeOn);
+                if (backOfficeOn) {
+                    const roster = await getSalespersons().catch(() => null);
+                    setSalespersonOptions(Array.isArray(roster?.options) ? roster.options : []);
+                }
 
                 let validCustomers = Array.isArray(custData) ? custData : [];
                 const hasWalkin = validCustomers.some(c =>
@@ -2127,7 +2143,17 @@ const SalesInvoice = () => {
 
             paymentMode: paymentMode,
             paymentTerms: paymentTerms,
+            // LEGACY, unchanged: existing reports read this free-text field and it keeps its
+            // exact current behaviour (including the server's createdBy default when blank).
             salesperson: salesperson,
+            // Phase 2 attribution. The server re-resolves the employee from this id and writes
+            // the canonical id/code/name itself — the name above is never trusted as identity.
+            // Null when the back-office toggle is off, which is the pre-Phase-2 shape.
+            salespersonEmployeeId: salespersonEnabled && salespersonEmployeeId
+                ? Number(salespersonEmployeeId) : null,
+            salespersonEmployeeCode: salespersonEnabled && salespersonEmployeeId
+                ? (salespersonOptions.find(o => String(o.id) === String(salespersonEmployeeId))?.employeeCode || null)
+                : null,
             branch: branch,
             shippingAddress: shippingAddress,
             amountPaid: Number(amountCollected),
@@ -4008,18 +4034,47 @@ const SalesInvoice = () => {
                                     />
                                 </div>
 
+                                {/* Salesperson — present ONLY while back-office attribution is on.
+                                    With the setting off the field is absent entirely rather than
+                                    falling back to the old free-text employee picker: that picker
+                                    accepted any employee, which is exactly what the eligibility
+                                    rule exists to stop, and a tenant that has not enabled the
+                                    feature should not be collecting an attribution at all. The
+                                    legacy `salesperson` STRING is untouched on existing invoices
+                                    and still saved with whatever the invoice already carries — no
+                                    report or printed document changes. */}
+                                {salespersonEnabled && (
                                 <div className="flex flex-col gap-1 min-w-0">
                                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wide truncate">Salesperson</label>
                                     <div className="relative">
-                                        <select value={salesperson} onChange={e => setSalesperson(e.target.value)} disabled={isReadOnlyInvoice} className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500">
+                                        {/* Restricted to ACTIVE, salesperson-eligible employees and
+                                            bound by employee ID; the name is display only, and the
+                                            server re-resolves and re-validates the employee
+                                            regardless of what the client sends. */}
+                                        <select
+                                            value={salespersonEmployeeId}
+                                            onChange={e => {
+                                                const id = e.target.value;
+                                                setSalespersonEmployeeId(id);
+                                                // Keep the legacy string in step so existing
+                                                // reports and printed documents are unaffected.
+                                                const picked = salespersonOptions.find(o => String(o.id) === String(id));
+                                                setSalesperson(picked ? picked.name : '');
+                                            }}
+                                            disabled={isReadOnlyInvoice}
+                                            className="w-full text-sm p-1.5 pr-6 border border-slate-200 rounded bg-white appearance-none text-slate-700 focus:outline-none focus:border-[#F5C742] disabled:bg-slate-50 disabled:text-slate-500"
+                                        >
                                             <option value="">Select salesperson...</option>
-                                            {employeesList.map(emp => (
-                                                <option key={emp.id} value={emp.name}>{emp.name}</option>
+                                            {salespersonOptions.map(emp => (
+                                                <option key={emp.id} value={emp.id}>
+                                                    {emp.name}{emp.employeeCode ? ` · ${emp.employeeCode}` : ''}
+                                                </option>
                                             ))}
                                         </select>
                                         <ChevronDown size={14} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                                     </div>
                                 </div>
+                                )}
                             </div>
 
                             <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 flex-1">

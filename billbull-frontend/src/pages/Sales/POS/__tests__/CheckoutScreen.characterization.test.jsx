@@ -833,6 +833,12 @@ function CheckoutHarness({ base, log, initial = {} }) {
   const setCheckoutRemarks = logged('setCheckoutRemarks', rawCheckoutRemarks);
   const cancelCheckoutTenders = () => { log.push(['cancelCheckoutTenders']); base.cancelCheckoutTenders(); };
   const { handleOpenOrder } = base;
+  // Salesperson verification, as POSSales sees it. Both default to the feature being OFF, which
+  // is what keeps every existing case in this file exercising the unchanged checkout path.
+  const salespersonRequired = initial.salespersonRequired ?? false;
+  const salespersonVerified = initial.salespersonVerified ?? true;
+  const openSalespersonScanModal = () => { log.push(['openSalespersonScanModal']); };
+
   // SHARE-INITIAL-START
   const receiptShareInitialValue = useMemo(() => {
     const cust = lastPaidInvoice?.customer;
@@ -843,22 +849,43 @@ function CheckoutHarness({ base, log, initial = {} }) {
 
   // HANDLE-CHECKOUT-START
   const handleCheckout = useCallback(() => {
+    // Verification is asked for HERE, at Checkout, rather than at settlement: the cashier is told
+    // to scan a badge while the customer is still at the counter, not after the payment screen is
+    // already up. Opening the modal IS the refusal — there is no separate error to dismiss, and
+    // the Scan button never has to be found first.
+    //
+    // An already-verified sale goes straight through; the same scan is never asked for twice.
+    // useCheckout re-checks this at settlement and the server checks it again inside the
+    // transaction, so this is a convenience, not the enforcement.
+    // Returns FALSE when the gate refused, TRUE when settlement was opened. Templates that have
+    // their own per-layout follow-up (POSTouchScreen pre-fills the tender and resets the keypad)
+    // must branch on this so a refused checkout leaves no half-primed payment state behind. This
+    // is the ONE shared guard: no template re-implements the condition.
+    if (salespersonRequired && !salespersonVerified) {
+      openSalespersonScanModal();
+      return false;
+    }
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     // The Payment Manager starts with no allocations — the cashier picks a method and
     // enters an amount, so there is nothing to pre-seed here any more.
+    return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);
   // HANDLE-CHECKOUT-END
 
   const ordersListCheckout = (() => {
     // ORDERS-CHECKOUT-START
-    const handleCheckout = async () => {
+    const handleOpenOrderAndCheckout = async () => {
       await handleOpenOrder();
-      setShowPaymentDialog(true);
+      // Delegates to the SAME shared entry point as the main Checkout button rather than
+      // opening the payment dialog itself: an order picked straight into settlement is still a
+      // POS sale and still needs its salesperson scanned. The order is loaded into the cart
+      // either way, so a refusal leaves the cashier able to scan and settle from there.
+      handleCheckout();
     };
     // ORDERS-CHECKOUT-END
-    return handleCheckout;
+    return handleOpenOrderAndCheckout;
   })();
 
   // TICK-START
@@ -1575,15 +1602,17 @@ describe('16. openers', () => {
     expect(cls(root())).toBe(PAYMENT_ROOT_CLASS);
   });
 
-  it('KNOWN EDGE: the orders-list opener sets showPaymentDialog alone, so a stale "complete" phase re-shows the previous sale', async () => {
-    // Characterized, not endorsed. This opener does not reset the phase, so opening an order while
-    // the previous sale's "complete" screen is still the phase re-shows that sale instead of the
-    // payment screen. Recorded here as existing behaviour the decomposition preserved verbatim.
+  it('the orders-list opener now resets the phase too — a stale "complete" phase no longer re-shows the previous sale', async () => {
+    // Was a KNOWN EDGE: this opener set showPaymentDialog alone, so opening an order while the
+    // previous sale's "complete" screen was still the phase re-showed that sale. It now delegates
+    // to the shared handleCheckout (the salesperson-gate fix), which sets the phase first, and the
+    // edge went away with it.
     const { log, base, root } = renderHarness({ showPaymentDialog: false, checkoutPhase: 'complete' });
     await act(async () => { fireEvent.click(screen.getByTestId('orders-list-checkout')); });
     expect(base.handleOpenOrder).toHaveBeenCalledTimes(1);
-    expect(log).toEqual([['setShowPaymentDialog', true]]);
-    expect(cls(root())).toBe(COMPLETE_ROOT_CLASS);
+    expect(log).toEqual([['setCheckoutPhase', 'payment'], ['setShowPaymentDialog', true]]);
+    expect(cls(root())).toBe(PAYMENT_ROOT_CLASS);
+    expect(screen.queryByText('SI-POS-000123')).toBeNull();
   });
 
   it('the orders-list opener awaits handleOpenOrder before opening', async () => {
@@ -1753,8 +1782,9 @@ describe('18. source anchors — the copy', () => {
 
   it.each([
     ['SHARE-INITIAL', '  const receiptShareInitialValue = useMemo(() => {', '\n  }, [lastPaidInvoice, receiptShareChannel]);'],
-    ['HANDLE-CHECKOUT', '  const handleCheckout = useCallback(() => {', '\n  }, []);'],
-    ['ORDERS-CHECKOUT', '        const handleCheckout = async () => {', '\n        };'],
+    ['HANDLE-CHECKOUT', '  const handleCheckout = useCallback(() => {',
+      '\n  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);'],
+    ['ORDERS-CHECKOUT', '        const handleOpenOrderAndCheckout = async () => {', '\n        };'],
     ['TICK', '  useEffect(() => {\n    const isActive = currentSession?.status === \'OPEN\'', '\n  }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);'],
   ])('harness block %s is identical to POSSales', (marker, start, end) => {
     const copy = between(SELF, `// ${marker}-START\n`, `// ${marker}-END`);

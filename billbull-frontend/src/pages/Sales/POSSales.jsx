@@ -173,6 +173,8 @@ import { usePermissions } from '../../context/PermissionContext';
 import CustomerView from './POS/CustomerView';
 import POSConsole from './POS/POSConsole';
 import POSTouchScreen from './POS/POSTouchScreen';
+import SalespersonScanModal from './POS/features/sales/SalespersonScanModal';
+import TargetReadinessWarning from './POS/features/sales/TargetReadinessWarning';
 import { TradePOSTouchScreen } from './POS/TradePOS/TradePOSTouchScreen';
 import POSItemEntryContainer from '../../components/pos/ItemEntry/POSItemEntryContainer';
 import { getPosPrinters } from '../../api/posPrinterApi';
@@ -198,6 +200,7 @@ import ServiceRepair from './POS/features/service/ServiceRepair';
 import SerialBatch from './POS/features/products/SerialBatch';
 import { buildPosScannerStorageKey } from './POS/device/scanner/scannerStorage';
 import { useCashDrawer } from './POS/device/cashDrawer/useCashDrawer';
+import useSalesperson from './POS/features/sales/useSalesperson';
 import { usePosBehaviourSettings } from './POS/features/settings/usePosBehaviourSettings';
 import { useHeldSales } from './POS/features/heldSales/useHeldSales';
 import { useLayaway } from './POS/features/layaway/useLayaway';
@@ -1231,6 +1234,24 @@ export default function POSSales() {
   const [checkoutSettling, setCheckoutSettling] = useState(false);
   const checkoutPreviewFreezeRef = useRef('');
 
+  // Salesperson attribution for the current sale — WHO the sale belongs to, as opposed to the
+  // cashier who rang it up (that stays the session owner, untouched). All of its state lives
+  // inside the hook, so this orchestrator gains no top-level state/ref/effect declarations.
+  const {
+    salespersonPayload, resetSalesperson,
+    // Verification + readiness. Every one of these is owned by the hook; no new
+    // useState/useRef/useEffect is declared here, so the structural characterization holds.
+    salespersonRequired, verifiedSalesperson, effectiveSalesperson, salespersonVerified,
+    verifying: salespersonVerifying, verifyError: salespersonVerifyError, verifyByCode,
+    clearVerifiedSalesperson, scanModalOpen: salespersonScanModalOpen,
+    openScanModal: openSalespersonScanModal, closeScanModal: closeSalespersonScanModal,
+    targetRequired, readiness: targetReadiness, targetReady, refreshReadiness,
+    readinessBlock: targetReadinessBlock,
+    showReadinessWarning: showTargetReadinessWarning,
+    openReadinessWarning: openTargetReadinessWarning,
+    closeReadinessWarning: closeTargetReadinessWarning,
+  } = useSalesperson();
+
   const checkoutThermalHtml = useMemo(() => {
     if (checkoutSettling) return checkoutPreviewFreezeRef.current;
     if (!currentInvoice) return '';
@@ -1271,6 +1292,11 @@ export default function POSSales() {
         shippingAddress: customer?.shippingAddress || customer?.address || '',
         posTerminalId: currentTerminal?.terminalId || '',
         posCounterName: currentTerminal?.counterName || '',
+        // The salesperson the sale will be attributed to. Set on the mock invoice rather than
+        // threaded through every renderer's options bag, because all three print paths already
+        // fall back to invoice.salespersonName — which is also what makes the real print and the
+        // reprint (both built from a persisted invoice) show the same line as this preview.
+        salespersonName: effectiveSalesperson?.name || '',
         paymentMode: checkoutPaymentFields.paymentMode,
         subTotal: currentInvoice.subtotal || 0,
         taxTotal: currentInvoice.tax || 0,
@@ -1358,6 +1384,7 @@ export default function POSSales() {
           currency: activeCurrency,
           terminalId: currentTerminal?.terminalId,
           cashierName: cashierDisplayName,
+          salespersonName: effectiveSalesperson?.name || '',
           customerPhone: customer?.phone,
           branchName: currentTerminal?.branchName || currentSession?.branchName || '',
           shippingCharge: previewShipping > 0 ? previewShipping : null,
@@ -1404,7 +1431,7 @@ export default function POSSales() {
         showCustomerDetails: previewShowCustomerDetails, showLoyaltyPoints: previewShowLoyaltyPoints,
         showCreditBalance: previewShowCreditBalance, showFooterText: previewShowFooterText,
         creditPreviousBalance: checkoutPreviewCreditBalance,
-        cashierName: cashierDisplayName,
+        cashierName: cashierDisplayName, salespersonName: effectiveSalesperson?.name || '',
         terminalId: currentTerminal?.terminalId, counterName: currentTerminal?.counterName,
         currency: activeCurrency, qrPlacement: tplInvoiceQrPlacement,
         paymentBlock: previewPaymentBlock,
@@ -2688,6 +2715,10 @@ export default function POSSales() {
         shippingAddress: deliveryAddress,
         driverName: selectedDeliveryPerson?.name || null,
         deliveryPersonEmployeeCode: deliveryDriver || null,
+        // Salesperson attribution — the SECOND checkout payload builder. A delivery order is a
+        // real invoice and must carry the same attribution as a counter sale, or delivery sales
+        // would silently land in the Unassigned bucket.
+        ...salespersonPayload,
         deliveryDate,
         deliveryTimeSlot,
         deliveryNotes: [
@@ -3101,6 +3132,16 @@ export default function POSSales() {
     sessionCtx: { currentSession, currentTerminal, posSettings },
     layaway: { activeLayawayId, activeLayawayDeposit, setActiveLayawayId, setActiveLayawayDeposit },
     shipping: { shippingCharge, shippingAddress, deliveryAddress, deliveryDriver, deliveryNotes },
+    // Salesperson attribution for the counter-sale payload builder (the delivery-order builder
+    // spreads the same projection at its own call site). resetSalesperson runs after a completed
+    // sale, alongside the other per-sale resets.
+    salesperson: {
+      salespersonPayload, resetSalesperson,
+      // The checkout pre-flight reads these. They are advisory only — the server runs the same
+      // two checks inside the transaction and is what actually refuses a sale.
+      salespersonRequired, salespersonVerified, openSalespersonScanModal,
+      targetRequired, targetReady, refreshReadiness, openTargetReadinessWarning,
+    },
     printing: {
       resolveInvoiceA4TemplateFor, printThermalReceiptWithConfiguredPrinter,
       buildThermalReceiptArtifacts, openCashDrawer,
@@ -6987,11 +7028,28 @@ export default function POSSales() {
   }, [quickProductForm, loadPosProducts, handleProductSelection, showFeedback]);
 
   const handleCheckout = useCallback(() => {
+    // Verification is asked for HERE, at Checkout, rather than at settlement: the cashier is told
+    // to scan a badge while the customer is still at the counter, not after the payment screen is
+    // already up. Opening the modal IS the refusal — there is no separate error to dismiss, and
+    // the Scan button never has to be found first.
+    //
+    // An already-verified sale goes straight through; the same scan is never asked for twice.
+    // useCheckout re-checks this at settlement and the server checks it again inside the
+    // transaction, so this is a convenience, not the enforcement.
+    // Returns FALSE when the gate refused, TRUE when settlement was opened. Templates that have
+    // their own per-layout follow-up (POSTouchScreen pre-fills the tender and resets the keypad)
+    // must branch on this so a refused checkout leaves no half-primed payment state behind. This
+    // is the ONE shared guard: no template re-implements the condition.
+    if (salespersonRequired && !salespersonVerified) {
+      openSalespersonScanModal();
+      return false;
+    }
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     // The Payment Manager starts with no allocations — the cashier picks a method and
     // enters an amount, so there is nothing to pre-seed here any more.
-  }, []);
+    return true;
+  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);
 
   const touchScreenProps = {
     handleCheckout,
@@ -7010,6 +7068,11 @@ export default function POSSales() {
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
     filteredCustomerOptions, customerHistory, customerHistoryLoading, openCustomerHistoryPreview,
     posCustomersLoading, posCustomersError,
+    // Salesperson attribution. Every POS template (Classic, Cart Focus and compact TradePOS)
+    // renders the scan affordance from these three and nothing else, so no layout can quietly
+    // skip verification — and none of them can offer a manual picker, because there is no roster
+    // to pick from.
+    salespersonRequired, verifiedSalesperson, openSalespersonScanModal,
     // Product Entry Mode is decided here, once, for every template.
     handleProductSelection, handleEditItem,
     // addToInvoice/createInvoiceLine/updateInvoiceLine are deliberately NOT
@@ -7434,6 +7497,26 @@ export default function POSSales() {
         </div>
         );
       })()}
+
+      {/* Salesperson verification — ONE modal serving both the header Scan button and the
+          Actions-panel entry, rendered once at the POS root so it overlays every template
+          (Classic, Cart Focus and compact TradePOS) identically. */}
+      <SalespersonScanModal
+        open={salespersonScanModalOpen}
+        current={verifiedSalesperson}
+        onVerify={verifyByCode}
+        onClear={clearVerifiedSalesperson}
+        onClose={closeSalespersonScanModal}
+        verifying={salespersonVerifying}
+        error={salespersonVerifyError}
+      />
+
+      {/* Target readiness. Advisory here; the server refuses the checkout independently. */}
+      <TargetReadinessWarning
+        open={showTargetReadinessWarning}
+        readiness={targetReadinessBlock || targetReadiness}
+        onClose={closeTargetReadinessWarning}
+      />
 
       {/* Render current view */}
       {currentView === 'dashboard' && renderDashboard()}
@@ -9327,9 +9410,13 @@ export default function POSSales() {
           setOrdersListSelected(null);
           setOrdersListSelectedDetail(null);
         };
-        const handleCheckout = async () => {
+        const handleOpenOrderAndCheckout = async () => {
           await handleOpenOrder();
-          setShowPaymentDialog(true);
+          // Delegates to the SAME shared entry point as the main Checkout button rather than
+          // opening the payment dialog itself: an order picked straight into settlement is still a
+          // POS sale and still needs its salesperson scanned. The order is loaded into the cart
+          // either way, so a refusal leaves the cashier able to scan and settle from there.
+          handleCheckout();
         };
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -9499,7 +9586,7 @@ export default function POSSales() {
                         </button>
                         <button
                           type="button"
-                          onClick={handleCheckout}
+                          onClick={handleOpenOrderAndCheckout}
                           className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-amber-400 hover:bg-amber-500 rounded-lg transition-colors"
                         >
                           <CheckCircle className="h-3.5 w-3.5" />Checkout

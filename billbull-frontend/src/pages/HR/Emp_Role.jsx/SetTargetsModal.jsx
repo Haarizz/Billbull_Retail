@@ -13,6 +13,24 @@ import { monthLabel, recentMonths } from './useEmployeePerformance';
  */
 const MAX_RATE = 100;
 
+/**
+ * What the grid will SAVE for this row, spelled out.
+ *
+ * A blank commission field means NULL ("not configured"), and an explicit 0 means a real 0%
+ * commission. Those are two different saves with two different consequences — NULL blocks POS
+ * sales when SetTargets is on, 0 does not — and they look almost identical in an input box, so
+ * the status column says which one the admin is about to write.
+ */
+const draftStatus = (d) => {
+    const blank = (v) => v === '' || v == null;
+    const missingTarget = blank(d.targetAmount) || Number(d.targetAmount) <= 0;
+    const missingCommission = blank(d.commissionRate);
+    if (missingTarget && missingCommission) return 'Missing Target & Commission';
+    if (missingTarget) return 'Missing Target';
+    if (missingCommission) return 'Missing Commission';
+    return 'Ready';
+};
+
 const validateRow = (row) => {
     const amount = row.targetAmount === '' || row.targetAmount == null ? 0 : Number(row.targetAmount);
     const rate = row.commissionRate === '' || row.commissionRate == null ? 0 : Number(row.commissionRate);
@@ -98,7 +116,15 @@ export default function SetTargetsModal({
                 employeeId: r.employeeId,
                 targetMonth: month,
                 targetAmount: Number(draft[r.employeeId].targetAmount || 0),
-                commissionRate: Number(draft[r.employeeId].commissionRate || 0),
+                // A BLANK commission field is sent as null, not 0. Since Phase 2 the backend keeps
+                // that null and reads it as "commission not configured", which is what blocks POS
+                // sales when Set Targets enforcement is on. Coercing blank to 0 here would silently
+                // mark every employee as configured at 0% and defeat the whole check. A typed 0 is
+                // still an explicit, complete 0% configuration.
+                commissionRate: (draft[r.employeeId].commissionRate === ''
+                    || draft[r.employeeId].commissionRate == null)
+                    ? null
+                    : Number(draft[r.employeeId].commissionRate),
             }));
 
         if (payload.length === 0) {
@@ -180,6 +206,7 @@ export default function SetTargetsModal({
                                     <th className="px-4 py-3 text-left font-semibold text-xs uppercase">Role</th>
                                     <th className="px-4 py-3 text-right font-semibold text-xs uppercase">Target (AED)</th>
                                     <th className="px-4 py-3 text-right font-semibold text-xs uppercase">Commission %</th>
+                                    <th className="px-4 py-3 text-left font-semibold text-xs uppercase">Status</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -211,8 +238,21 @@ export default function SetTargetsModal({
                                                     onChange={(e) => update(r.employeeId, 'commissionRate', e.target.value)}
                                                     aria-label={`Commission rate for ${r.employeeName}`}
                                                     className="w-24 text-right border border-slate-200 rounded px-2 py-1 text-sm"
-                                                    placeholder="0.00"
+                                                    placeholder="Blank = not set"
                                                 />
+                                            </td>
+                                            <td className="px-4 py-2.5">
+                                                {(() => {
+                                                    const status = draftStatus(d);
+                                                    return (
+                                                        <span className={`text-[11px] px-2 py-0.5 rounded-full ${
+                                                            status === 'Ready'
+                                                                ? 'bg-green-100 text-green-700'
+                                                                : 'bg-rose-100 text-rose-700'}`}>
+                                                            {status}
+                                                        </span>
+                                                    );
+                                                })()}
                                             </td>
                                         </tr>
                                     );

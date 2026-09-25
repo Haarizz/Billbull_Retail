@@ -63,6 +63,12 @@ export function useCheckout({
   sessionCtx,     // { currentSession, currentTerminal, posSettings }
   layaway,        // { activeLayawayId, activeLayawayDeposit, setActiveLayawayId, setActiveLayawayDeposit }
   shipping,       // { shippingCharge, shippingAddress, deliveryAddress, deliveryDriver, deliveryNotes }
+  salesperson,    // { salespersonPayload, resetSalesperson } - attribution of the sale to an
+                  //   employee, which is NOT the cashier: the cashier stays the session owner.
+                  //   Optional, so a caller that does not supply it settles as Unassigned.
+                  //   Phase 2 adds the advisory gate inputs: salespersonRequired,
+                  //   salespersonVerified, openSalespersonScanModal, targetRequired, targetReady,
+                  //   refreshReadiness, openTargetReadinessWarning.
   printing,       // { resolveInvoiceA4TemplateFor, printThermalReceiptWithConfiguredPrinter,
                   //   buildThermalReceiptArtifacts, openCashDrawer }
   a4Template,     // the tpl*/outlet values the A4 print branch reads, plus company
@@ -137,6 +143,25 @@ export function useCheckout({
       });
       setCheckoutError(`Payment does not reconcile and was not taken. ${detail}`);
       return;
+    }
+    // Phase 2 pre-flight. ADVISORY: the server runs both of these again inside the checkout
+    // transaction and is what actually refuses the sale. This exists so the cashier is told to
+    // scan a badge before the payment screen commits, instead of after — and it sits with the
+    // other cheap guards, above setCheckoutLoading, so a refusal touches no state at all.
+    if (salesperson?.salespersonRequired && !salesperson?.salespersonVerified) {
+      setCheckoutError('Scan an employee barcode to attribute this sale before settling.');
+      salesperson?.openSalespersonScanModal?.();
+      return;
+    }
+    if (salesperson?.targetRequired && salesperson?.targetReady === false) {
+      // Re-read before refusing: an admin may have completed the configuration since this POS
+      // loaded, and blocking on a stale advisory answer would be wrong.
+      const fresh = await salesperson?.refreshReadiness?.();
+      if (fresh && fresh.ready === false) {
+        salesperson?.openTargetReadinessWarning?.(fresh);
+        setCheckoutError('Salesperson target configuration is incomplete. The sale was not taken.');
+        return;
+      }
     }
     setCheckoutLoading(true);
     setCheckoutError(null);
@@ -216,6 +241,11 @@ export function useCheckout({
         taxInclusive: !!posSettings?.taxInclusive,
         driverName: (deliveryDriver && deliveryDriver !== 'Unassigned') ? deliveryDriver : null,
         deliveryNotes: deliveryNotes || null,
+        // Salesperson attribution. Both fields are always present (null when Unassigned) so the
+        // backend never has to distinguish "not sent" from "explicitly cleared". The employee is
+        // re-resolved server-side from this id/code — nothing here is trusted as identity.
+        salespersonEmployeeId: salesperson?.salespersonPayload?.salespersonEmployeeId ?? null,
+        salespersonEmployeeCode: salesperson?.salespersonPayload?.salespersonEmployeeCode ?? null,
         items,
         supervisorOverridePin: overrideCreds?.pin || undefined,
         supervisorOverrideEmail: overrideCreds?.email || undefined,
@@ -291,6 +321,11 @@ export function useCheckout({
       setCheckoutRemarks('');
       // Drop the allocations so the next sale starts from an empty payment panel.
       checkoutPayment.clearLines();
+      // Next sale starts from the session default salesperson (or Unassigned) rather than
+      // inheriting whoever the previous sale was attributed to. Deliberately placed after the
+      // block above rather than inside it: CheckoutPaymentRegions.characterization pins that
+      // reset sequence as contiguous source text.
+      salesperson?.resetSalesperson?.();
       if (layawayIdSnapshot) { setActiveLayawayId(null); setActiveLayawayDeposit(0); }
       // Transition the checkout overlay to the "complete" screen in-place.
       // Deferred to a separate React commit (queueMicrotask) so the state
@@ -403,7 +438,19 @@ export function useCheckout({
       // cashier lacks the pos_price_override permission — route into the same supervisor-
       // approval dialog used at cart-add time instead of a dead-end error, so the checkout can
       // be retried with a verified PIN/password attached (see processPayment's overrideCreds).
-      if (isClosureWorkflowError(err)) {
+      // Target-readiness refusal. The server answers 409 with the SAME readiness DTO the advisory
+      // endpoint returns, so the warning dialog renders the authoritative list of unconfigured
+      // employees rather than a flattened sentence. Checked before the generic branches because
+      // its body is structured, not a message.
+      const readinessRefusal = err?.response?.status === 409
+        && err?.response?.data
+        && typeof err.response.data === 'object'
+        && err.response.data.ready === false
+        && Array.isArray(err.response.data.missing);
+      if (readinessRefusal) {
+        salesperson?.openTargetReadinessWarning?.(err.response.data);
+        setCheckoutError('Salesperson target configuration is incomplete. The sale was not taken.');
+      } else if (isClosureWorkflowError(err)) {
         // The session entered its close workflow (its X-Report was generated, possibly on
         // another tab/terminal) while this sale was being rung up. There is no supervisor
         // override for this — unlike BUSINESS_DAY_CLOSED below — because no credential can

@@ -107,11 +107,14 @@ public class SalesInvoiceService {
      */
     private final com.billbull.backend.pos.admin.OverlayResolutionService overlayResolutionService;
     private final jakarta.persistence.EntityManager entityManager;
+    /** THE salesperson resolver, shared with POS checkout — see resolveBackOfficeSalesperson. */
+    private final com.billbull.backend.hr.employees.SalespersonService salespersonService;
 
     public SalesInvoiceService(SalesInvoiceRepository invoiceRepo,
             PostingEngineService postingEngineService,
             DeliveryNoteService deliveryNoteService,
             SalesSettingsService settingsService,
+            com.billbull.backend.hr.employees.SalespersonService salespersonService,
             SalesDocumentNumberingService numberingService,
             StockAvailabilityService stockAvailabilityService,
             ReceiptVoucherService receiptVoucherService,
@@ -146,6 +149,7 @@ public class SalesInvoiceService {
         this.postingEngineService = postingEngineService;
         this.deliveryNoteService = deliveryNoteService;
         this.settingsService = settingsService;
+        this.salespersonService = salespersonService;
         this.numberingService = numberingService;
         this.stockAvailabilityService = stockAvailabilityService;
         this.receiptVoucherService = receiptVoucherService;
@@ -506,6 +510,17 @@ public class SalesInvoiceService {
             }
         }
 
+        // Back-office salesperson attribution. The client names a candidate by id (or code); the
+        // identity actually written is re-read from the employee row by the SAME resolver the POS
+        // checkout uses, so a back-office caller cannot attribute a sale to an inactive or
+        // ineligible employee through a laxer door. A null id means "not attributed", which is the
+        // pre-Phase-2 shape and stays legal — back-office attribution is opt-in per tenant.
+        //
+        // Deliberately BEFORE preserveFinalizedSalespersonAttribution: on a finalized invoice that
+        // guard then restores the persisted values over whatever was just resolved, keeping
+        // commission history immutable exactly as it is today.
+        resolveBackOfficeSalesperson(invoice);
+
         preserveFinalizedSalespersonAttribution(invoice, existing);
 
         SalesInvoice saved = invoiceRepo.save(invoice);
@@ -837,6 +852,30 @@ public class SalesInvoiceService {
         invoice.setTaxTotal(taxTotal);
         invoice.setInvoiceTotal(total);
         invoice.setBalance(total.subtract(paid));
+    }
+
+    /**
+     * Re-resolves {@code salespersonEmployeeId}/{@code Code} into the canonical id/code/name.
+     *
+     * <p>Shares {@code SalespersonService} with POS checkout, so "Active AND (Salesperson or
+     * Cashier + Salesperson)" is defined once. An invalid id raises the same 400 the POS returns.
+     *
+     * <p>The legacy {@link SalesInvoice#getSalesperson()} String is deliberately untouched — it is
+     * a separate, free-text concept that existing reports depend on.
+     */
+    private void resolveBackOfficeSalesperson(SalesInvoice invoice) {
+        if (invoice == null) return;
+        Long id = invoice.getSalespersonEmployeeId();
+        String code = invoice.getSalespersonEmployeeCode();
+        if (id == null && (code == null || code.isBlank())) {
+            return;
+        }
+        var employee = salespersonService.resolveEligible(id, code);
+        if (employee == null) return;
+        invoice.setSalespersonEmployeeId(employee.getId());
+        invoice.setSalespersonEmployeeCode(employee.getEmployeeCode());
+        invoice.setSalespersonName(
+                com.billbull.backend.hr.employees.SalespersonService.fullName(employee));
     }
 
     /**

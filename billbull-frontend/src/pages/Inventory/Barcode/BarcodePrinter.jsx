@@ -23,8 +23,7 @@ import {
     UAE_DIRHAM_SYMBOL_IMAGE
 } from "../../../utils/countryCurrencyOptions";
 import { buildZplBatch } from "../../../utils/zebraZpl";
-import { getPosPrinters, printPosPrinterEscPos } from "../../../api/posPrinterApi";
-import { resolvePrinterForContext, printEscPosThroughAgent } from "../../../utils/localPrintAgent";
+import { resolveLabelPrinter, sendZplToLabelPrinter, LabelPrinterError } from "../../../utils/labelPrinterTransport";
 
 const TEMPLATES = [
     {
@@ -440,7 +439,7 @@ const BarcodePrinter = () => {
     const location = useLocation();
     const navigate = useNavigate();
     const { company } = useCompany();
-    const { activeBranchId, isAllBranches, activeBranch } = useBranch();
+    const { activeBranchId, activeBranch } = useBranch();
     const currencyCode = company?.currency || 'AED';
     const currencyLabel = resolveCurrencyDisplayCode(company || {});
     const [products, setProducts] = useState([]);
@@ -1117,56 +1116,16 @@ const BarcodePrinter = () => {
         const t = templates.find(temp => temp.id === selectedTemplate) || editingTemplate;
         if (!t || cart.length === 0) return;
 
-        // Label printers are owned by the BRANCH, not by a POS terminal — Barcode
-        // Print & Design is an Inventory screen and must never require the operator
-        // to have registered this PC as a till. The branch comes from BranchContext;
-        // the company profile carries no branchId at all, and reading it from there
-        // is what made this screen fetch an empty printer list in every tenant.
+        // Printer resolution and the branch-safety rule live in labelPrinterTransport, shared
+        // with HR's employee ID barcodes. "All Branches" never guesses a printer.
         const branchId = (activeBranchId != null && activeBranchId !== 'ALL') ? Number(activeBranchId) : null;
-        if (isAllBranches || branchId == null) {
-            // Never guess. Picking "the first branch" would spool labels to hardware
-            // in another building with no error and no way to tell it happened.
-            alert('Select a branch before printing barcode labels.');
-            return;
-        }
-
-        let printers = [];
-        let printerLoadError = null;
-        try {
-            printers = await getPosPrinters({ branchId, deviceType: 'LABEL_PRINTER' });
-        } catch (e) {
-            console.error("Failed to load printers", e);
-            // Held rather than thrown so a lookup failure isn't reported as
-            // "no printer configured" — those need different fixes.
-            printerLoadError = e;
-        }
-
-        // terminalId is deliberately omitted: "give me the branch-scoped label
-        // printer, and do not narrow this Inventory operation to a POS terminal."
-        const resolvedPrinter = resolvePrinterForContext(printers, {
-            deviceType: 'LABEL_PRINTER',
-            branchId,
-        });
-
         const branchLabel = activeBranch?.name || 'this branch';
-        if (!resolvedPrinter && printerLoadError) {
-            alert(`Could not load the printer configuration for ${branchLabel}.\n\n${printerLoadError.message || printerLoadError}`);
-            return;
-        }
-        if (!resolvedPrinter) {
-            alert(`No barcode printer is configured for ${branchLabel}.\n\n`
-                + 'Add one under POS → Devices → Add Device → Label Printer, '
-                + 'leave "assign to this terminal" unchecked, and set it as the default.');
-            return;
-        }
-        if (resolvedPrinter.connectionType === 'NETWORK_IP') {
-            if (!resolvedPrinter.id || !resolvedPrinter.ipAddress || !resolvedPrinter.portNumber) {
-                alert(`The label printer configured for ${branchLabel} is missing an IP address or port.`);
-                return;
-            }
-        } else if (!resolvedPrinter.systemPrinterName) {
-            alert(`The label printer configured for ${branchLabel} has no system printer name.`);
-            return;
+        let resolvedPrinter;
+        try {
+            resolvedPrinter = await resolveLabelPrinter({ branchId, branchLabel });
+        } catch (err) {
+            if (err instanceof LabelPrinterError) { alert(err.message); return; }
+            throw err;
         }
 
         const companyName = company?.companyName || '';
@@ -1232,30 +1191,15 @@ const BarcodePrinter = () => {
 
         try {
             const zpl = buildZplBatch(labels);
-            const base64Zpl = btoa(unescape(encodeURIComponent(zpl)));
-            // Same transport fork the receipt path uses (see
-            // sendEscPosReceiptToConfiguredPrinter): Network/IP printers are relayed
-            // through the backend's raw socket, so they print from any device with no
-            // agent installed. USB/Bluetooth/Windows-queue printers can only be reached
-            // by the machine they're physically attached to, so those go through the
-            // local agent. Both carry the ZPL bytes untouched to the RAW spooler.
-            if (resolvedPrinter.connectionType === 'NETWORK_IP') {
-                await printPosPrinterEscPos(resolvedPrinter.id, base64Zpl);
-                console.info('Relayed ZPL through backend to network printer:', `${resolvedPrinter.ipAddress}:${resolvedPrinter.portNumber}`);
-            } else {
-                await printEscPosThroughAgent({
-                    printerName: resolvedPrinter.systemPrinterName,
-                    dataBase64: base64Zpl,
-                    connectionType: resolvedPrinter.connectionType,
-                    ipAddress: resolvedPrinter.ipAddress,
-                    portNumber: resolvedPrinter.portNumber,
-                    title: 'BillBull Barcode Labels',
-                });
-                console.info('Sent ZPL to BillBull Print Agent for printer:', resolvedPrinter.systemPrinterName);
-            }
+            const sent = await sendZplToLabelPrinter(resolvedPrinter, zpl, {
+                title: 'BillBull Barcode Labels',
+            });
+            console.info(`Sent ZPL via ${sent.transport} to`, sent.target);
         } catch (err) {
             console.error(err);
-            alert(`Could not send to Zebra.\n\n${err.message}`);
+            alert(`Could not send to Zebra.
+
+${err.message}`);
         }
     };
 
