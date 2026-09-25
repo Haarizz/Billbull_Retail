@@ -1,0 +1,42 @@
+# Known baseline failures for the POSSales.jsx extraction series.
+# Captured 2026-09-11 before and after the RangeExclusionConfirmDialog extraction (identical both times).
+# Totals at capture: 1,555 tests / 1,520 pass / 35 fail (32 useCheckout + 3 useDelivery).
+# Format: <file relative to src/> > <vitest fullName>, sorted. Compare with:
+#   npx vitest run --reporter=json --outputFile=report.json
+# and diff the failed assertionResults' fullName values against the lines below.
+
+pages/Sales/__tests__/useCheckout.characterization.test.js > background finalisation timing CHARACTERIZED TIMING: processPayment resolves BEFORE printing completes
+pages/Sales/__tests__/useCheckout.characterization.test.js > background finalisation timing a layaway-convert failure is swallowed with a warning
+pages/Sales/__tests__/useCheckout.characterization.test.js > background finalisation timing a print failure does not fail the sale — it warns and alerts
+pages/Sales/__tests__/useCheckout.characterization.test.js > background finalisation timing clears checkoutFinalizing only after the background work ends
+pages/Sales/__tests__/useCheckout.characterization.test.js > failure routing always releases checkoutLoading, on every failure path
+pages/Sales/__tests__/useCheckout.characterization.test.js > failure routing distinguishes a network failure and says the sale was NOT recorded
+pages/Sales/__tests__/useCheckout.characterization.test.js > failure routing keeps the payment allocations on every failure so the cashier can retry
+pages/Sales/__tests__/useCheckout.characterization.test.js > failure routing routes a 403 price-override refusal into the supervisor dialog
+pages/Sales/__tests__/useCheckout.characterization.test.js > failure routing routes a 423 BUSINESS_DAY_CLOSED into the same dialog when authorisation is available
+pages/Sales/__tests__/useCheckout.characterization.test.js > failure routing routes a closure-workflow error to the closure block
+pages/Sales/__tests__/useCheckout.characterization.test.js > failure routing shows a plain error for any other failure
+pages/Sales/__tests__/useCheckout.characterization.test.js > guards — nothing is posted and no state is touched CHARACTERIZED ORDER: compatibility is checked before lines, and lines before reconcile
+pages/Sales/__tests__/useCheckout.characterization.test.js > guards — nothing is posted and no state is touched falls back to a generic compatibility message
+pages/Sales/__tests__/useCheckout.characterization.test.js > guards — nothing is posted and no state is touched refuses a payment block that does not reconcile, naming the failed identity
+pages/Sales/__tests__/useCheckout.characterization.test.js > guards — nothing is posted and no state is touched refuses an empty cart silently
+pages/Sales/__tests__/useCheckout.characterization.test.js > guards — nothing is posted and no state is touched refuses when the server compatibility probe says it cannot settle
+pages/Sales/__tests__/useCheckout.characterization.test.js > guards — nothing is posted and no state is touched refuses with no payment lines
+pages/Sales/__tests__/useCheckout.characterization.test.js > initial state starts idle, on the payment phase, with no error
+pages/Sales/__tests__/useCheckout.characterization.test.js > payload hand-off posts through the existing projections — items plus the scalar fields
+pages/Sales/__tests__/useCheckout.characterization.test.js > post-success side-effect sequence commits the success snapshot and the finalising flag
+pages/Sales/__tests__/useCheckout.characterization.test.js > post-success side-effect sequence freezes the A4 preview before the cart is cleared
+pages/Sales/__tests__/useCheckout.characterization.test.js > post-success side-effect sequence records the exact current order
+pages/Sales/__tests__/useCheckout.characterization.test.js > post-success side-effect sequence resets the layaway tagging only when a conversion was active
+pages/Sales/__tests__/useCheckout.characterization.test.js > printing branch selection does not open the cash drawer when no cash changed hands
+pages/Sales/__tests__/useCheckout.characterization.test.js > printing branch selection opens the drawer for change only when change is due
+pages/Sales/__tests__/useCheckout.characterization.test.js > printing branch selection takes the A4 path for A4 paper, and never builds thermal artifacts
+pages/Sales/__tests__/useCheckout.characterization.test.js > printing branch selection takes the thermal path for non-A4 paper
+pages/Sales/__tests__/useCheckout.characterization.test.js > supervisor override credentials forwards the override credentials onto the checkout payload
+pages/Sales/__tests__/useCheckout.characterization.test.js > supervisor override credentials omits them entirely on a normal settle
+pages/Sales/__tests__/useCheckout.characterization.test.js > the payment-confirmed boundary leaves the cart untouched when the post itself fails
+pages/Sales/__tests__/useCheckout.characterization.test.js > the payment-confirmed boundary performs NO cart or UI mutation before posCheckout resolves
+pages/Sales/__tests__/useCheckout.characterization.test.js > the payment-confirmed boundary reads the credit balance BEFORE posting, never after
+pages/Sales/__tests__/useDelivery.characterization.test.js > initial state starts with an empty roster, list and validation state
+pages/Sales/__tests__/useDelivery.characterization.test.js > settle modal open does nothing when the modal closes
+pages/Sales/__tests__/useDelivery.characterization.test.js > settle modal open resets the filters, selection and payment lines, then loads
