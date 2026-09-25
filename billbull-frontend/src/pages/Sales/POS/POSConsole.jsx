@@ -2554,9 +2554,9 @@ const POSConsole = React.memo((props) => {
           {consoleTab === 'terminals' && (() => {
             const maxSlots = posSettings?.maxTerminalsPerBranch ?? 5;
 
-            const activeCount = terminalList.filter(t => t.status === 'ACTIVE').length;
+            const activeCount = terminalList.filter(t => ['ACTIVE', 'IDLE', 'NEW', 'PENDING_REGISTRATION'].includes(t.status)).length;
             const blockedCount = terminalList.filter(t => t.status === 'BLOCKED').length;
-            const inactiveCount = terminalList.filter(t => t.status === 'INACTIVE').length;
+            const inactiveCount = terminalList.filter(t => ['INACTIVE', 'MAINTENANCE'].includes(t.status)).length;
             const offlineCount = terminalList.filter(t => t.status === 'OFFLINE').length;
             const staleCount = terminalList.filter(t => t.status === 'STALE').length;
             const archivedCount = terminalList.filter(t => t.status === 'ARCHIVED').length;
@@ -2625,7 +2625,10 @@ const POSConsole = React.memo((props) => {
             };
 
             const statusConfig = {
+              NEW:      { label: 'New',      dot: 'bg-blue-500',  badge: 'bg-blue-50 text-blue-700',   icon: <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> },
+              PENDING_REGISTRATION: { label: 'Pending', dot: 'bg-blue-400', badge: 'bg-blue-50 text-blue-600', icon: <span className="w-1.5 h-1.5 rounded-full bg-blue-400" /> },
               ACTIVE:   { label: 'Active',   dot: 'bg-green-500', badge: 'bg-green-50 text-green-700',  icon: <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> },
+              IDLE:     { label: 'Idle',     dot: 'bg-green-400', badge: 'bg-green-50 text-green-600',  icon: <span className="w-1.5 h-1.5 rounded-full bg-green-400" /> },
               INACTIVE: { label: 'Inactive', dot: 'bg-amber-400', badge: 'bg-amber-50 text-amber-700',  icon: <span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> },
               OFFLINE:  { label: 'Offline',  dot: 'bg-gray-400',  badge: 'bg-gray-100 text-gray-600',    icon: <span className="w-1.5 h-1.5 rounded-full bg-gray-400" /> },
               BLOCKED:  { label: 'Blocked',  dot: 'bg-red-500',   badge: 'bg-red-50 text-red-600',      icon: <span className="w-1.5 h-1.5 rounded-full bg-red-500" /> },
