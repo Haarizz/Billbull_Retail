@@ -293,6 +293,22 @@ public interface StockMovementRepository
                         """)
         List<Object[]> findStockByWarehouseAndBins(@Param("warehouseId") Long warehouseId);
 
+        // ✅ Optimized variant: restricts the warehouse/bin aggregation to a specific set of products.
+        // Used by BinStockService.getStockByBin() to avoid scanning the entire warehouse — only the
+        // products that actually exist in the requested bin are included. Same projection as
+        // findStockByWarehouseAndBins: [productId, binId, SUM(quantity)].
+        @Query("""
+                            SELECT sm.productId, sm.binId, COALESCE(SUM(sm.quantity), 0)
+                            FROM StockMovement sm
+                            WHERE sm.warehouseId = :warehouseId
+                              AND sm.productId IN :productIds
+                            GROUP BY sm.productId, sm.binId
+                            HAVING SUM(sm.quantity) > 0
+                        """)
+        List<Object[]> findStockByWarehouseAndBinsForProducts(
+                        @Param("warehouseId") Long warehouseId,
+                        @Param("productIds") List<Long> productIds);
+
         @Query("""
                             SELECT sm.productId,
                                    sm.binId,

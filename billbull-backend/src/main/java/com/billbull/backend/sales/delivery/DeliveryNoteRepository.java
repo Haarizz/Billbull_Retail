@@ -81,6 +81,40 @@ public interface DeliveryNoteRepository extends JpaRepository<DeliveryNote, Long
       @Param("productId") Long productId,
       @Param("binId") Long binId);
 
+  // Bulk form of sumUnassignedReservedQtyInDispatchedNotes: clause-for-clause identical, with the
+  // single-product restriction generalized to a list and the result grouped by product id.
+  // Products with no matching DN items are simply absent (callers default them to zero).
+  @Query("""
+          SELECT i.product.id, COALESCE(SUM(i.currentQty * COALESCE(pp.conversion, 1)), 0)
+          FROM DeliveryNote dn JOIN dn.items i
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = i.product.id AND LOWER(pp.unit.name) = LOWER(i.unit) AND pp.isActive = true
+          WHERE i.product.id IN :productIds
+            AND dn.warehouse.id = :warehouseId
+            AND i.binId IS NULL
+            AND dn.status IN ('DRAFT', 'DISPATCHED')
+          GROUP BY i.product.id
+      """)
+  List<Object[]> sumUnassignedReservedQtyInDispatchedNotesForProducts(
+      @Param("productIds") List<Long> productIds,
+      @Param("warehouseId") Long warehouseId);
+
+  // Bulk form of sumReservedQtyInDispatchedNotesByBin: clause-for-clause identical, with the
+  // single-product restriction generalized to a list and the result grouped by product id.
+  @Query("""
+          SELECT i.product.id, COALESCE(SUM(i.currentQty * COALESCE(pp.conversion, 1)), 0)
+          FROM DeliveryNote dn JOIN dn.items i
+          LEFT JOIN com.billbull.backend.inventory.product.ProductPacking pp
+              ON pp.product.id = i.product.id AND LOWER(pp.unit.name) = LOWER(i.unit) AND pp.isActive = true
+          WHERE i.product.id IN :productIds
+            AND i.binId = :binId
+            AND dn.status IN ('DRAFT', 'DISPATCHED')
+          GROUP BY i.product.id
+      """)
+  List<Object[]> sumReservedQtyInDispatchedNotesByBinForProducts(
+      @Param("productIds") List<Long> productIds,
+      @Param("binId") Long binId);
+
   @Query("""
           SELECT i.product.id, COALESCE(SUM(i.currentQty * COALESCE(pp.conversion, 1)), 0)
           FROM DeliveryNote dn JOIN dn.items i
