@@ -14,7 +14,9 @@ import {
     Settings,
     Tag,
     Zap,
-    DollarSign
+    DollarSign,
+    UserCheck,
+    Target
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
@@ -178,6 +180,13 @@ const zeroPricePolicies = [
 ];
 
 const sectionMeta = {
+    salesperson: {
+        title: 'SalesPerson & SetTargets',
+        subtitle: 'Salesperson attribution and monthly targets',
+        description: 'Control whether POS and back-office sales must name an eligible salesperson, and whether monthly targets must be configured before selling.',
+        icon: UserCheck,
+        tint: 'bg-emerald-100 text-emerald-700'
+    },
     stockCheck: {
         title: 'Stock Check',
         subtitle: 'Control stock validation before posting',
@@ -367,6 +376,11 @@ const SalesSettings = () => {
     const [roundingMode, setRoundingMode] = useState('NEAREST');
     const [roundingPrecision, setRoundingPrecision] = useState(1);
     const [zeroPricePolicy, setZeroPricePolicy] = useState('BLOCK');
+    // SalesPerson & SetTargets. Three independent switches; all default OFF so an existing tenant
+    // behaves exactly as before until an admin turns one on.
+    const [salespersonRequiredAtPos, setSalespersonRequiredAtPos] = useState(false);
+    const [salespersonRequiredAtBackOffice, setSalespersonRequiredAtBackOffice] = useState(false);
+    const [monthlyTargetRequired, setMonthlyTargetRequired] = useState(false);
     const [documentNumbering, setDocumentNumbering] = useState(DEFAULT_DOCUMENT_NUMBERING.map((setting) => ({
         ...setting,
         preview: buildPreview(setting)
@@ -383,6 +397,9 @@ const SalesSettings = () => {
                 setRoundingMode(data.roundingMode ?? 'NEAREST');
                 setRoundingPrecision(Number(data.roundingPrecision) > 0 ? Number(data.roundingPrecision) : 1);
                 setZeroPricePolicy(data.zeroPricePolicy ?? 'BLOCK');
+                setSalespersonRequiredAtPos(data.salespersonRequiredAtPos ?? false);
+                setSalespersonRequiredAtBackOffice(data.salespersonRequiredAtBackOffice ?? false);
+                setMonthlyTargetRequired(data.monthlyTargetRequired ?? false);
                 setDocumentNumbering(normalizeDocumentNumbering(data.documentNumbering));
             } catch (err) {
                 console.error('Failed to load sales settings', err);
@@ -405,6 +422,9 @@ const SalesSettings = () => {
                 roundingMode,
                 roundingPrecision,
                 zeroPricePolicy,
+                salespersonRequiredAtPos,
+                salespersonRequiredAtBackOffice,
+                monthlyTargetRequired,
                 documentNumbering
             });
             toast.success('Configure & customize saved successfully');
@@ -445,6 +465,13 @@ const SalesSettings = () => {
         ? 'No rounding'
         : `${roundingModes.find((mode) => mode.value === roundingMode)?.label || 'Nearest'} · step ${Number(roundingPrecision).toFixed(2)}`;
     const zeroPriceSummary = zeroPricePolicies.find((p) => p.value === zeroPricePolicy)?.label || 'Allow';
+    const salespersonSummary = (() => {
+        const on = [];
+        if (salespersonRequiredAtPos) on.push('POS');
+        if (salespersonRequiredAtBackOffice) on.push('Back Office');
+        if (monthlyTargetRequired) on.push('Targets required');
+        return on.length ? on.join(' · ') : 'Disabled';
+    })();
 
     const stockCheckModal = showStockCheckModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-sm">
@@ -546,6 +573,7 @@ const SalesSettings = () => {
 
                 <main className="space-y-6 p-7">
                     <section className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                        <HubCard meta={sectionMeta.salesperson} value={salespersonSummary} onClick={() => setActiveScreen('salesperson')} />
                         <HubCard meta={sectionMeta.stockCheck} value={stockCheckSummary} onClick={() => setShowStockCheckModal(true)} />
                         <HubCard meta={sectionMeta.creditLimit} value={creditSummary} onClick={() => setActiveScreen('creditLimit')} />
                         <HubCard meta={sectionMeta.executionMode} value={modeSummary} onClick={() => setActiveScreen('executionMode')} />
@@ -557,6 +585,75 @@ const SalesSettings = () => {
                 </main>
                 {stockCheckModal}
             </div>
+        );
+    }
+
+    if (activeScreen === 'salesperson') {
+        return (
+            <>
+                <SectionShell meta={sectionMeta.salesperson} onBack={() => setActiveScreen('hub')} onSave={persistSettings} isSaving={isSaving}>
+                    <div className="space-y-6">
+                        <div>
+                            <div className="mb-3 flex items-center gap-2">
+                                <UserCheck className="h-4 w-4 text-emerald-600" />
+                                <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">SalesPerson</h3>
+                            </div>
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-bold text-slate-900">POS</p>
+                                        <p className="mt-1 text-sm text-slate-600">
+                                            Require employee salesperson verification before POS checkout. Every sale must scan an
+                                            eligible employee barcode — including when the cashier is themselves a salesperson.
+                                        </p>
+                                    </div>
+                                    <Toggle checked={salespersonRequiredAtPos} onChange={setSalespersonRequiredAtPos} />
+                                </div>
+
+                                <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-bold text-slate-900">Back Office</p>
+                                        <p className="mt-1 text-sm text-slate-600">
+                                            Enable salesperson selection on Sales Invoices. Only active employees with the
+                                            Salesperson or Cashier + Salesperson designation can be chosen.
+                                        </p>
+                                    </div>
+                                    <Toggle checked={salespersonRequiredAtBackOffice} onChange={setSalespersonRequiredAtBackOffice} />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div className="mb-3 flex items-center gap-2">
+                                <Target className="h-4 w-4 text-amber-600" />
+                                <h3 className="text-sm font-bold uppercase tracking-wide text-slate-500">Set Targets</h3>
+                            </div>
+                            <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                                <div className="min-w-0">
+                                    <p className="text-sm font-bold text-slate-900">Required for this month</p>
+                                    <p className="mt-1 text-sm text-slate-600">
+                                        Prevent POS sales until all active sales employees have a monthly target and commission
+                                        configuration. A commission of 0% counts as configured.
+                                    </p>
+                                </div>
+                                <Toggle checked={monthlyTargetRequired} onChange={setMonthlyTargetRequired} />
+                            </div>
+                        </div>
+
+                        {monthlyTargetRequired && (
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-900">
+                                <p className="font-semibold">This is a tenant-wide rule.</p>
+                                <p className="mt-1">
+                                    If any one active Salesperson or Cashier + Salesperson is missing this month&apos;s target or
+                                    commission, POS sales are blocked at every branch — not just for that employee. Back-office
+                                    invoices are not affected.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </SectionShell>
+                {stockCheckModal}
+            </>
         );
     }
 

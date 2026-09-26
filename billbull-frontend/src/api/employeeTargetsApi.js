@@ -44,3 +44,21 @@ export const getMyPerformance = async ({ month } = {}) => {
     const res = await api.get("/api/hr/targets/me", { params });
     return res.status === 204 ? null : (res.data ?? null);
 };
+
+/**
+ * Whether this month's salesperson target configuration allows POS selling.
+ *
+ * ADVISORY ONLY — this drives the early warning in the POS. The authoritative check runs inside
+ * the checkout transaction server-side, so a stale or failed read here can never let a sale
+ * through that the server would refuse.
+ *
+ * Returns `{ required, ready, month, missing: [{ employeeId, employeeCode, employeeName, role,
+ * missingTarget, missingCommission }] }`. Authenticated access — POS cashiers hold no HR
+ * permissions, which is why the response carries no personal data.
+ */
+export const getTargetReadiness = async ({ month } = {}) => {
+    const params = {};
+    if (month) params.month = month;
+    const res = await api.get("/api/hr/targets/readiness", { params });
+    return res.data;
+};

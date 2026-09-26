@@ -57,17 +57,51 @@ public class EmployeePerformanceService {
     }
 
     /**
-     * {@code monthlySales × rate / 100}, rounded ONCE at the end.
+     * Commission is EARNED ONLY ONCE THE MONTHLY TARGET IS REACHED, and is then calculated on the
+     * FULL monthly eligible sales — not on the excess above the target, and not on the target
+     * amount:
      *
-     * <p>Computed from the monthly aggregate, not per invoice and then summed — the two differ by
-     * rounding and the monthly figure is the one the target is measured against.
+     * <pre>
+     *   monthlySales &lt; target   →  0.00          (Not Eligible)
+     *   monthlySales &gt;= target  →  monthlySales × rate / 100
+     * </pre>
+     *
+     * <p>So a 25,000 target at 10% pays nothing on 20,000 of sales, 2,500 on exactly 25,000 and
+     * 3,000 on 30,000 — never 500 (the excess) and never 2,500 (the target) on 30,000.
+     *
+     * <p>A missing or zero target means the threshold can never be crossed, so NO commission is
+     * payable however high the sales or the rate. That is deliberate and is what makes "SetTargets
+     * off + a commission rate on file" pay nothing: the rate alone does not earn anything.
+     *
+     * <p>A configured rate of exactly 0.00 is a complete configuration that happens to pay 0.00 —
+     * it is eligible, not unconfigured. Only {@code null} means "no rate configured".
+     *
+     * <p>Computed from the monthly aggregate and rounded ONCE at the end, not per invoice and then
+     * summed — the two differ by rounding and the monthly figure is the one the target is measured
+     * against.
      */
-    public static BigDecimal commission(BigDecimal monthlySales, BigDecimal rate) {
-        if (rate == null || rate.signum() <= 0) {
+    public static BigDecimal commission(BigDecimal monthlySales, BigDecimal rate, BigDecimal target) {
+        if (!commissionEligible(monthlySales, target) || rate == null || rate.signum() <= 0) {
             return BigDecimal.ZERO.setScale(2);
         }
         return nz(monthlySales).multiply(rate)
                 .divide(HUNDRED, 2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Has the employee earned commission this month? Requires a usable target AND sales that have
+     * reached it. Independent of the rate: a 0% rate is eligible and simply pays 0.00, which is
+     * why this is reported separately from the amount — "0.00 because 0%" and "0.00 because the
+     * target was missed" are different answers and the UI must not show them the same way.
+     */
+    public static boolean commissionEligible(BigDecimal monthlySales, BigDecimal target) {
+        if (target == null || target.signum() <= 0) return false;
+        return nz(monthlySales).compareTo(target) >= 0;
+    }
+
+    /** Presentation-only label paired with {@link #commissionEligible}. */
+    public static String commissionStatus(BigDecimal monthlySales, BigDecimal target) {
+        return commissionEligible(monthlySales, target) ? "Eligible" : "Not Eligible";
     }
 
     /** Presentation-only status. Deliberately derived, never persisted. */
@@ -157,7 +191,10 @@ public class EmployeePerformanceService {
 
             EmployeeSalesTarget target = targetsByEmployee.get(employeeId);
             BigDecimal targetAmount = target != null ? money(target.getTargetAmount()) : null;
-            BigDecimal rate = target != null ? nz(target.getCommissionRate()) : BigDecimal.ZERO;
+            // The CONFIGURED rate, which may legitimately be null ("not configured") and must stay
+            // null on the way out so the Set Targets grid re-opens blank instead of pre-filling a
+            // phantom 0% that a re-save would then persist as a real configuration.
+            BigDecimal rate = target != null ? target.getCommissionRate() : null;
             BigDecimal sales = salesByEmployee.getOrDefault(employeeId, BigDecimal.ZERO.setScale(2));
             long bills = billsByEmployee.getOrDefault(employeeId, 0L);
 
@@ -172,14 +209,19 @@ public class EmployeePerformanceService {
             row.setBranchName(employee.getBranch());
             row.setEmployeeStatus(employee.getStatus());
             row.setTargetAmount(targetAmount);
-            row.setCommissionRate(rate.setScale(2, RoundingMode.HALF_UP));
+            row.setCommissionRate(rate != null ? rate.setScale(2, RoundingMode.HALF_UP) : null);
             row.setSales(sales);
             row.setBills(bills);
             // Suppressed under a branch filter: a single branch's sales against a global target is
             // not a meaningful percentage, and showing one anyway is the kind of number people act
             // on without reading the filter.
             row.setAchievementPercent(branchFiltered ? null : achievementPercent(sales, targetAmount));
-            row.setCommission(commission(sales, rate));
+            // Commission is now a TARGET COMPARISON, so it is suppressed under a branch filter
+            // for exactly the reason achievement is: one branch's sales measured against a global
+            // target would report a genuinely eligible employee as "Not Eligible".
+            row.setCommission(branchFiltered ? null : commission(sales, rate, targetAmount));
+            row.setCommissionEligible(!branchFiltered && commissionEligible(sales, targetAmount));
+            row.setCommissionStatus(branchFiltered ? null : commissionStatus(sales, targetAmount));
             row.setRemainingTarget(targetAmount != null
                     ? targetAmount.subtract(sales).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP)
                     : null);
@@ -188,7 +230,7 @@ public class EmployeePerformanceService {
 
             if (targetAmount != null) totalTarget = totalTarget.add(targetAmount);
             totalSales = totalSales.add(sales);
-            totalCommission = totalCommission.add(row.getCommission());
+            if (row.getCommission() != null) totalCommission = totalCommission.add(row.getCommission());
             totalBills += bills;
         }
 
@@ -211,7 +253,8 @@ public class EmployeePerformanceService {
         // SUM(sales) / SUM(target) — NOT the mean of the per-row percentages.
         response.setOverallAchievementPercent(
                 branchFiltered ? null : achievementPercent(totalSales, money(totalTarget)));
-        response.setTotalCommission(money(totalCommission));
+        // Null, not zero, under a branch filter — the per-row figures it would sum are suppressed.
+        response.setTotalCommission(branchFiltered ? null : money(totalCommission));
         response.setUnassignedSales(unassignedSales);
         response.setUnassignedBills(unassignedBills);
         return response;
@@ -252,7 +295,7 @@ public class EmployeePerformanceService {
         EmployeeSalesTarget target = targetRepository
                 .findByEmployeeIdAndTargetMonth(employee.getId(), from).orElse(null);
         BigDecimal targetAmount = target != null ? money(target.getTargetAmount()) : null;
-        BigDecimal rate = target != null ? nz(target.getCommissionRate()) : BigDecimal.ZERO;
+        BigDecimal rate = target != null ? target.getCommissionRate() : null;
 
         EmployeePerformanceRow row = new EmployeePerformanceRow();
         row.setEmployeeId(employee.getId());
@@ -263,11 +306,13 @@ public class EmployeePerformanceService {
         row.setBranchName(employee.getBranch());
         row.setEmployeeStatus(employee.getStatus());
         row.setTargetAmount(targetAmount);
-        row.setCommissionRate(rate.setScale(2, RoundingMode.HALF_UP));
+        row.setCommissionRate(rate != null ? rate.setScale(2, RoundingMode.HALF_UP) : null);
         row.setSales(sales);
         row.setBills(bills);
         row.setAchievementPercent(achievementPercent(sales, targetAmount));
-        row.setCommission(commission(sales, rate));
+        row.setCommission(commission(sales, rate, targetAmount));
+        row.setCommissionEligible(commissionEligible(sales, targetAmount));
+        row.setCommissionStatus(commissionStatus(sales, targetAmount));
         row.setRemainingTarget(targetAmount != null
                 ? targetAmount.subtract(sales).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP)
                 : null);

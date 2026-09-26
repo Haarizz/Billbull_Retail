@@ -92,7 +92,7 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   showArabic = true,
   branchName = '', saleType = '',
   outletAddress = '', outletPhone = '',
-  cashierName = '', terminalId = '', counterName = '',
+  cashierName = '', salespersonName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
   // Customer TRN + the customer's address on file. Printed in the CUSTOMER
   // block whenever the record carries them (parity with Template 1 and with
@@ -298,6 +298,9 @@ export const renderBilingualReceiptCanvas = async (paperSize, invoice, {
   if (branchName) kv2(L.BRANCH, branchName);
   if (terminalId) kv2(L.TERMINAL, terminalId);
   if (cashierName) kv2(L.CASHIER, cashierName);
+  // Salesperson directly under Cashier — see escPosReceipt for the reprint fallback rationale.
+  const salespersonLine = salespersonName || invoice.salespersonName || '';
+  if (salespersonLine) kv2(L.SALESPERSON, salespersonLine);
   if (counterName) kv2(L.COUNTER, counterName);
   if (saleType) kv2(L.SALE_TYPE, saleType);
 

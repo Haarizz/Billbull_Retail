@@ -3,6 +3,8 @@ package com.billbull.backend.hr.targets;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -83,37 +85,108 @@ class EmployeePerformanceServiceTest {
         assertNull(EmployeePerformanceService.achievementPercent(new BigDecimal("50000"), new BigDecimal("-1")));
     }
 
+    // ── Commission is earned ONLY after the monthly target is reached ───────────────────────
+
     @Test
-    void commissionIsTheWorkedExample() {
-        // Gross 10,000 - discount 1,000 + VAT 450 = invoiceTotal 9,450; 10% => 945.00
-        assertEquals(new BigDecimal("945.00"),
-                EmployeePerformanceService.commission(new BigDecimal("9450.00"), new BigDecimal("10")));
+    void commissionIsTheWorkedExampleOnceTheTargetIsReached() {
+        // Gross 10,000 - discount 1,000 + VAT 450 = invoiceTotal 9,450; 10% => 945.00.
+        // The target is reached, so the rate applies to the full monthly sales.
+        assertEquals(new BigDecimal("945.00"), EmployeePerformanceService.commission(
+                new BigDecimal("9450.00"), new BigDecimal("10"), new BigDecimal("5000.00")));
+    }
+
+    @Test
+    void noCommissionUntilTheTargetIsReached() {
+        // The PM's worked example: target 25,000 at 10%.
+        BigDecimal target = new BigDecimal("25000.00");
+        BigDecimal rate = new BigDecimal("10");
+
+        // 20,000 = 80% achieved. Nothing is earned — not 2,000, not a pro-rata share.
+        assertEquals(new BigDecimal("0.00"),
+                EmployeePerformanceService.commission(new BigDecimal("20000.00"), rate, target));
+        assertFalse(EmployeePerformanceService.commissionEligible(new BigDecimal("20000.00"), target));
+        assertEquals("Not Eligible",
+                EmployeePerformanceService.commissionStatus(new BigDecimal("20000.00"), target));
+    }
+
+    @Test
+    void commissionIsEarnedAtExactlyTheTarget() {
+        // The boundary is inclusive: reaching the target earns, missing it by a fils does not.
+        BigDecimal target = new BigDecimal("25000.00");
+        BigDecimal rate = new BigDecimal("10");
+        assertEquals(new BigDecimal("2500.00"),
+                EmployeePerformanceService.commission(new BigDecimal("25000.00"), rate, target));
+        assertTrue(EmployeePerformanceService.commissionEligible(new BigDecimal("25000.00"), target));
+        assertEquals(new BigDecimal("0.00"),
+                EmployeePerformanceService.commission(new BigDecimal("24999.99"), rate, target));
+    }
+
+    @Test
+    void aboveTargetCommissionIsOnTheFullMonthlySalesNotTheExcessAndNotTheTarget() {
+        // 30,000 against a 25,000 target at 10% pays 3,000 — the single number this rule exists
+        // to pin down. NOT 500 (the 5,000 excess) and NOT 2,500 (the target amount).
+        BigDecimal target = new BigDecimal("25000.00");
+        BigDecimal rate = new BigDecimal("10");
+        BigDecimal earned = EmployeePerformanceService.commission(new BigDecimal("30000.00"), rate, target);
+        assertEquals(new BigDecimal("3000.00"), earned);
+        assertNotEquals(new BigDecimal("500.00"), earned);
+        assertNotEquals(new BigDecimal("2500.00"), earned);
+        assertEquals("Eligible",
+                EmployeePerformanceService.commissionStatus(new BigDecimal("30000.00"), target));
+    }
+
+    @Test
+    void aConfiguredZeroPercentRateIsEligibleAndSimplyPaysNothing() {
+        // 0% is a COMPLETE configuration, not a missing one. The employee has met their target and
+        // is eligible; the amount is 0.00 because the rate is, which the UI must not confuse with
+        // "target missed".
+        BigDecimal target = new BigDecimal("25000.00");
+        assertEquals(new BigDecimal("0.00"),
+                EmployeePerformanceService.commission(new BigDecimal("30000.00"), BigDecimal.ZERO, target));
+        assertTrue(EmployeePerformanceService.commissionEligible(new BigDecimal("30000.00"), target));
+    }
+
+    @Test
+    void withoutATargetNothingIsEverEarnedHoweverHighTheRateOrTheSales() {
+        // SetTargets off + a commission rate on file pays NOTHING: a rate alone earns nothing,
+        // because a threshold that does not exist can never be crossed.
+        assertEquals(new BigDecimal("0.00"),
+                EmployeePerformanceService.commission(new BigDecimal("500000.00"), new BigDecimal("10"), null));
+        assertEquals(new BigDecimal("0.00"),
+                EmployeePerformanceService.commission(new BigDecimal("500000.00"), new BigDecimal("10"), BigDecimal.ZERO));
+        assertFalse(EmployeePerformanceService.commissionEligible(new BigDecimal("500000.00"), null));
+        assertEquals("Not Eligible",
+                EmployeePerformanceService.commissionStatus(new BigDecimal("500000.00"), null));
     }
 
     @Test
     void commissionRoundsHalfUpToTwoDecimals() {
         // 333.33 x 7.5% = 24.99975 -> 25.00
-        assertEquals(new BigDecimal("25.00"),
-                EmployeePerformanceService.commission(new BigDecimal("333.33"), new BigDecimal("7.5")));
-        // 1.00 x 0.125% = 0.00125 -> 0.00
-        assertEquals(new BigDecimal("0.00"),
-                EmployeePerformanceService.commission(new BigDecimal("1.00"), new BigDecimal("0.13")));
+        assertEquals(new BigDecimal("25.00"), EmployeePerformanceService.commission(
+                new BigDecimal("333.33"), new BigDecimal("7.5"), new BigDecimal("100.00")));
+        // 1.00 x 0.13% = 0.0013 -> 0.00
+        assertEquals(new BigDecimal("0.00"), EmployeePerformanceService.commission(
+                new BigDecimal("1.00"), new BigDecimal("0.13"), new BigDecimal("1.00")));
     }
 
     @Test
     void commissionIsZeroForNoOrZeroRate() {
+        BigDecimal target = new BigDecimal("1000.00");
         assertEquals(new BigDecimal("0.00"),
-                EmployeePerformanceService.commission(new BigDecimal("9450.00"), null));
+                EmployeePerformanceService.commission(new BigDecimal("9450.00"), null, target));
         assertEquals(new BigDecimal("0.00"),
-                EmployeePerformanceService.commission(new BigDecimal("9450.00"), BigDecimal.ZERO));
+                EmployeePerformanceService.commission(new BigDecimal("9450.00"), BigDecimal.ZERO, target));
     }
 
     @Test
     void commissionFromTheMonthlyAggregateCanDifferFromSummedPerInvoiceCommission() {
-        // Three invoices of 0.05 at 50%: per-invoice each rounds to 0.03 (sum 0.09), while the
-        // monthly aggregate 0.15 x 50% = 0.075 -> 0.08. Pinning that we use the aggregate.
-        BigDecimal monthly = EmployeePerformanceService.commission(new BigDecimal("0.15"), new BigDecimal("50"));
-        BigDecimal perInvoiceSummed = EmployeePerformanceService.commission(new BigDecimal("0.05"), new BigDecimal("50"))
+        // Three invoices of 0.05 at 50% against a 0.01 target (long since reached): per-invoice
+        // each rounds to 0.03 (sum 0.09), while the monthly aggregate 0.15 x 50% = 0.075 -> 0.08.
+        // Pinning that we use the aggregate.
+        BigDecimal target = new BigDecimal("0.01");
+        BigDecimal monthly = EmployeePerformanceService.commission(new BigDecimal("0.15"), new BigDecimal("50"), target);
+        BigDecimal perInvoiceSummed = EmployeePerformanceService
+                .commission(new BigDecimal("0.05"), new BigDecimal("50"), target)
                 .multiply(new BigDecimal("3"));
         assertEquals(new BigDecimal("0.08"), monthly);
         assertNotEquals(monthly, perInvoiceSummed);
@@ -163,18 +236,25 @@ class EmployeePerformanceServiceTest {
         assertEquals(new BigDecimal("50000.00"), one.getSales());
         assertEquals(12L, one.getBills());
         assertEquals(new BigDecimal("50.00"), one.getAchievementPercent());
-        assertEquals(new BigDecimal("5000.00"), one.getCommission());
+        // Half way to a 100,000 target: NOTHING is earned yet, even at 10% on 50,000 of sales.
+        assertEquals(new BigDecimal("0.00"), one.getCommission());
+        assertFalse(one.isCommissionEligible());
+        assertEquals("Not Eligible", one.getCommissionStatus());
         assertEquals(new BigDecimal("50000.00"), one.getRemainingTarget());
         assertEquals("On Track", one.getTargetStatus());
 
         EmployeePerformanceRow two = res.getRows().get(1);
+        // Exactly on an 80,000 target at 8% — eligible, and paid on the full 80,000.
         assertEquals(new BigDecimal("6400.00"), two.getCommission());
+        assertTrue(two.isCommissionEligible());
+        assertEquals("Eligible", two.getCommissionStatus());
         assertEquals("Target Reached", two.getTargetStatus());
         assertEquals(new BigDecimal("0.00"), two.getRemainingTarget());
 
         assertEquals(new BigDecimal("180000.00"), res.getTotalTarget());
         assertEquals(new BigDecimal("130000.00"), res.getTotalSales());
-        assertEquals(new BigDecimal("11400.00"), res.getTotalCommission());
+        // Only the employee who reached their target contributes.
+        assertEquals(new BigDecimal("6400.00"), res.getTotalCommission());
         assertEquals(32L, res.getTotalBills());
 
         // ONE aggregate query, not one per employee.
@@ -268,8 +348,13 @@ class EmployeePerformanceServiceTest {
         assertNull(row.getAchievementPercent());
         assertNull(row.getTargetStatus());
         assertNull(res.getOverallAchievementPercent());
-        // Commission still applies: it is a rate on actual sales, not a target comparison.
-        assertEquals(new BigDecimal("2000.00"), row.getCommission());
+        // Commission is now a TARGET COMPARISON too (earned only once the target is reached), so
+        // it is suppressed alongside achievement rather than computed from branch-scoped sales
+        // against a global target — that would report a genuinely eligible employee as earning 0.
+        assertNull(row.getCommission());
+        assertNull(row.getCommissionStatus());
+        assertFalse(row.isCommissionEligible());
+        assertNull(res.getTotalCommission());
     }
 
     @Test
@@ -301,9 +386,48 @@ class EmployeePerformanceServiceTest {
 
         assertEquals(new BigDecimal("9450.00"), row.getSales());
         assertEquals(2L, row.getBills());
-        assertEquals(new BigDecimal("945.00"), row.getCommission());
+        // 9.45% of a 100,000 target: the employee sees their sales and how far they have to go,
+        // but nothing is earned until the target is reached.
+        assertEquals(new BigDecimal("0.00"), row.getCommission());
+        assertFalse(row.isCommissionEligible());
+        assertEquals("Not Eligible", row.getCommissionStatus());
         assertEquals(new BigDecimal("9.45"), row.getAchievementPercent());
         assertEquals(new BigDecimal("90550.00"), row.getRemainingTarget());
+    }
+
+    @Test
+    void selfViewEarnsOnTheFullMonthOnceTheTargetIsReached() {
+        // The employee's own view follows the same rule as the admin grid: at 30,000 against a
+        // 25,000 target at 10% the commission is 3,000 — the full month, not the 5,000 excess.
+        Employee me = employee(1L, "EMP-1", "Me", "Myself", "Active");
+        when(invoiceRepository.sumSalesForSalesperson(eq(1L), eq(SEP), eq(LocalDate.of(2026, 9, 30)), isNull()))
+                .thenReturn(List.<Object[]>of(new Object[] { new BigDecimal("30000.00"), 12L }));
+        when(targetRepository.findByEmployeeIdAndTargetMonth(1L, SEP))
+                .thenReturn(Optional.of(target(1L, "25000", "10")));
+
+        EmployeePerformanceRow row = service.getForEmployee(me, SEP, null);
+
+        assertEquals(new BigDecimal("3000.00"), row.getCommission());
+        assertTrue(row.isCommissionEligible());
+        assertEquals("Eligible", row.getCommissionStatus());
+        assertEquals(new BigDecimal("120.00"), row.getAchievementPercent());
+    }
+
+    @Test
+    void selfViewWithACommissionRateButNoTargetEarnsNothing() {
+        // "SetTargets off, commission 10% on file" — the rate alone earns nothing, because the
+        // threshold it would have to cross does not exist.
+        Employee me = employee(1L, "EMP-1", "Me", "Myself", "Active");
+        when(invoiceRepository.sumSalesForSalesperson(any(), any(), any(), isNull()))
+                .thenReturn(List.<Object[]>of(new Object[] { new BigDecimal("40000.00"), 9L }));
+        when(targetRepository.findByEmployeeIdAndTargetMonth(1L, SEP))
+                .thenReturn(Optional.of(target(1L, "0", "10")));
+
+        EmployeePerformanceRow row = service.getForEmployee(me, SEP, null);
+
+        assertEquals(new BigDecimal("0.00"), row.getCommission());
+        assertFalse(row.isCommissionEligible());
+        assertEquals("Not Eligible", row.getCommissionStatus());
     }
 
     @Test
@@ -334,7 +458,8 @@ class EmployeePerformanceServiceTest {
         EmployeePerformanceRow row = service.getForEmployeeId(1L, SEP, null);
 
         assertEquals("Me Myself", row.getEmployeeName());
-        assertEquals(new BigDecimal("945.00"), row.getCommission());
+        assertEquals(new BigDecimal("0.00"), row.getCommission());
+        assertEquals("Not Eligible", row.getCommissionStatus());
     }
 
     @Test

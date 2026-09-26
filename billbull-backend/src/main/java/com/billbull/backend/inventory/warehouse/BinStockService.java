@@ -47,6 +47,20 @@ public class BinStockService {
         return value != null ? value.intValue() : 0;
     }
 
+    /** Collapses (productId, amount) aggregate rows from a bulk reservation query into a map. */
+    private Map<Long, BigDecimal> toProductAmountMap(List<Object[]> rows) {
+        Map<Long, BigDecimal> amounts = new HashMap<>();
+        for (Object[] row : rows) {
+            if (row[0] == null) {
+                continue;
+            }
+            Long productId = ((Number) row[0]).longValue();
+            BigDecimal amount = row[1] != null ? new BigDecimal(row[1].toString()) : BigDecimal.ZERO;
+            amounts.merge(productId, amount, BigDecimal::add);
+        }
+        return amounts;
+    }
+
     private int allocateReservedToSelectedBin(Long selectedBinId, List<Object[]> warehouseBinRows, int totalReserved) {
         if (selectedBinId == null || warehouseBinRows == null || warehouseBinRows.isEmpty() || totalReserved <= 0) {
             return 0;
@@ -145,26 +159,50 @@ public class BinStockService {
                 batchMasterRepository.findReservedBatchNumbersByBin(binId));
 
         Map<Long, List<Object[]>> warehouseBinRowsByProduct = stockMovementRepository
-                .findStockByWarehouseAndBins(warehouseId)
+                .findStockByWarehouseAndBinsForProducts(warehouseId, productIds)
                 .stream()
                 .collect(Collectors.groupingBy(row -> (Long) row[0]));
 
+        // Reservation lookups are bulk-fetched once for every non-batch product in this bin, instead
+        // of four queries per product inside the loop below (the 4N term behind the /stock-by-bin
+        // 504s on bins holding ~1.4k distinct products). Batch products are excluded here exactly as
+        // the per-product loop excluded them, so a batch-only bin still issues no reservation query.
+        // Product ids with no loaded Product row stay in the DN lists: the old code also ran both DN
+        // queries for them (only the SO lookup short-circuited to 0 on a missing product).
+        List<Long> nonBatchProductIds = productIds.stream()
+                .filter(productId -> {
+                    Product product = productDetails.get(productId);
+                    return product == null || !product.isBatch();
+                })
+                .toList();
+        List<Product> nonBatchProducts = nonBatchProductIds.stream()
+                .map(productDetails::get)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+
+        Map<Long, Map<Long, Integer>> soReservedByProductAndWarehouse = nonBatchProducts.isEmpty()
+                ? Map.of()
+                : warehouseStockService.getSalesOrderReservationAllocations(nonBatchProducts);
+        Map<Long, BigDecimal> unassignedDnReservedByProduct = nonBatchProductIds.isEmpty()
+                ? Map.of()
+                : toProductAmountMap(deliveryNoteRepo
+                        .sumUnassignedReservedQtyInDispatchedNotesForProducts(nonBatchProductIds, warehouseId));
+        Map<Long, BigDecimal> binDnReservedByProduct = nonBatchProductIds.isEmpty()
+                ? Map.of()
+                : toProductAmountMap(deliveryNoteRepo
+                        .sumReservedQtyInDispatchedNotesByBinForProducts(nonBatchProductIds, binId));
+
         Map<Long, Integer> remainingReservedByProduct = new HashMap<>();
-        for (Long productId : productIds) {
-            Product product = productDetails.get(productId);
-            if (product != null && product.isBatch()) {
-                // Batch products: per-unit reserved count is derived from the
-                // reservedBatchNumbers set below; no heuristic total needed here.
-                continue;
-            }
+        for (Long productId : nonBatchProductIds) {
             List<Object[]> warehouseBinRows = warehouseBinRowsByProduct.getOrDefault(productId, List.of());
-            int warehouseSoReserved = warehouseStockService.getSalesOrderReservedForWarehouse(warehouseId, productId);
+            int warehouseSoReserved = soReservedByProductAndWarehouse
+                    .getOrDefault(productId, Map.of())
+                    .getOrDefault(warehouseId, 0);
             int allocatedSoReserved = allocateReservedToSelectedBin(binId, warehouseBinRows, warehouseSoReserved);
-            int warehouseUnassignedDnReserved = safeInt(
-                    deliveryNoteRepo.sumUnassignedReservedQtyInDispatchedNotes(productId, warehouseId));
+            int warehouseUnassignedDnReserved = safeInt(unassignedDnReservedByProduct.get(productId));
             int allocatedUnassignedDnReserved = allocateReservedToSelectedBin(
                     binId, warehouseBinRows, warehouseUnassignedDnReserved);
-            int binDnReserved = safeInt(deliveryNoteRepo.sumReservedQtyInDispatchedNotesByBin(productId, binId));
+            int binDnReserved = safeInt(binDnReservedByProduct.get(productId));
             remainingReservedByProduct.put(productId,
                     allocatedSoReserved + allocatedUnassignedDnReserved + binDnReserved);
         }

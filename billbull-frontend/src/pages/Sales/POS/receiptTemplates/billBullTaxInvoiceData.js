@@ -87,6 +87,8 @@ export function mapToTemplate2Data(outlet = {}, txn = {}, toggles = {}) {
       branch: txn.branch || outlet.name || "",
       terminalId: txn.terminalId || "",
       cashierName: txn.cashierName || "",
+      // Distinct from cashierName: WHO the sale belongs to vs. who rang it up.
+      salespersonName: txn.salespersonName || "",
       shiftNo: txn.shiftNo || "",
       saleType: txn.saleType || "",
     },
@@ -296,6 +298,9 @@ export function mapInvoiceToTxn(invoice = {}, opts = {}) {
     branch: opts.branchName || invoice.branchName || "",
     terminalId: opts.terminalId || "",
     cashierName: opts.cashierName || "",
+    // Falls back to the invoice's persisted name so reprints — which rebuild from the stored
+    // invoice rather than live POS state — still carry the salesperson.
+    salespersonName: opts.salespersonName || invoice.salespersonName || "",
     saleType: invoice.salesType || invoice.saleType || opts.saleType || "",
     customer: isWalkIn
       ? null

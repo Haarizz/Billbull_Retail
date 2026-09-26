@@ -80,7 +80,17 @@ public class WarehouseStockService {
         return warehouseOnHandMap;
     }
 
-    private Map<Long, Map<Long, Integer>> getSalesOrderReservationAllocations(List<Product> products) {
+    /**
+     * Sales-order + proforma reservation totals, keyed productId -> warehouseId -> qty.
+     *
+     * <p>Public so callers that iterate many products (e.g. {@code BinStockService.getStockByBin})
+     * can resolve every product in two queries instead of two queries per product. Semantics are
+     * identical to the single-product {@link #getSalesOrderReservedForWarehouse(Long, Long)} path:
+     * batch products are excluded here, the same product-code filtering and warehouse grouping
+     * apply, and the underlying repository queries already GROUP BY product, so a bulk call
+     * produces per-product values indistinguishable from N single-product calls.
+     */
+    public Map<Long, Map<Long, Integer>> getSalesOrderReservationAllocations(List<Product> products) {
         Map<Long, Map<Long, Integer>> allocations = new HashMap<>();
         if (products == null || products.isEmpty()) {
             return allocations;

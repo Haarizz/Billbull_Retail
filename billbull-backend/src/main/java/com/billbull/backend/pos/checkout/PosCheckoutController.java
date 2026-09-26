@@ -80,6 +80,11 @@ public class PosCheckoutController {
     private final PosSettingsService posSettingsService;
     private final ProductService productService;
     private final EmployeeRepository employeeRepository;
+    /** THE salesperson resolver. Eligibility is never decided here — see SalespersonService. */
+    private final com.billbull.backend.hr.employees.SalespersonService salespersonService;
+    /** THE target-readiness rule, shared with GET /api/hr/targets/readiness. */
+    private final com.billbull.backend.hr.targets.TargetReadinessService targetReadinessService;
+    private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
     private final PaymentRepository paymentRepository;
     /** Rebuilds an invoice's tender breakdown from its recorded payments, for receipt reprints. */
     private final com.billbull.backend.sales.payment.InvoicePaymentSummaryService paymentSummaryService;
@@ -104,6 +109,9 @@ public class PosCheckoutController {
                                   PosSettingsService posSettingsService,
                                   ProductService productService,
                                   EmployeeRepository employeeRepository,
+                                  com.billbull.backend.hr.employees.SalespersonService salespersonService,
+                                  com.billbull.backend.hr.targets.TargetReadinessService targetReadinessService,
+                                  com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
                                   PaymentRepository paymentRepository,
                                   com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService,
                                   com.billbull.backend.pos.businessdate.BusinessDayCheckoutGate businessDayCheckoutGate,
@@ -136,6 +144,9 @@ public class PosCheckoutController {
         this.posSettingsService = posSettingsService;
         this.productService = productService;
         this.employeeRepository = employeeRepository;
+        this.salespersonService = salespersonService;
+        this.targetReadinessService = targetReadinessService;
+        this.salesSettingsService = salesSettingsService;
         this.paymentRepository = paymentRepository;
         this.terminalActivityService = terminalActivityService;
         this.branchTaxResolutionService = branchTaxResolutionService;
@@ -240,6 +251,20 @@ public class PosCheckoutController {
         // fails fast, before any invoice row is created — a malformed payment must never leave
         // a stranded DRAFT invoice behind.
         allocationResolver.validateStructure(request);
+
+        // Salesperson + target-readiness gate. Placed HERE, in the same "validate before we touch
+        // anything" band as the allocation check and strictly before buildInvoice/save, so a
+        // refusal leaves behind no invoice, no payment, no stock movement, no GL posting and no
+        // session counter. Anywhere after invoiceService.save() would need a compensating
+        // deleteQuietly() to unwind, which is a weaker guarantee than never having written.
+        try {
+            assertSalespersonAndTargetReadiness(request);
+        } catch (com.billbull.backend.hr.targets.TargetReadinessBlockedException ex) {
+            // Structured, not a message string: the cashier has to be told WHICH employees are
+            // unconfigured or the refusal is unactionable. Mirrors how the Business Day gate above
+            // surfaces its own typed payload rather than flattening it into text.
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ex.getReadiness());
+        }
 
         SalesInvoice invoice = buildInvoice(request);
 
@@ -965,32 +990,62 @@ public class PosCheckoutController {
      * chosen employee to the caller and no salesperson-assignment permission. Traceability of who
      * made the attribution comes from the invoice's created_by_user_id and POS session owner.
      */
+    /**
+     * The salesperson named by the client, re-read from the employee row and validated.
+     *
+     * <p>Delegates entirely to {@code SalespersonService} — existence, Active status and the
+     * two-designation eligibility rule all live there, shared with the barcode lookup and the
+     * back-office invoice path, so a client cannot find a laxer door into the same attribution.
+     *
+     * <p>Returns null when the client named nobody. Whether that is ACCEPTABLE is decided by
+     * {@link #assertSalespersonAndTargetReadiness}, which knows the tenant's setting; this method
+     * only resolves.
+     */
     private Employee resolveSalesperson(PosCheckoutRequest req) {
-        boolean hasId = req.getSalespersonEmployeeId() != null;
-        boolean hasCode = req.getSalespersonEmployeeCode() != null
-                && !req.getSalespersonEmployeeCode().isBlank();
-        if (!hasId && !hasCode) {
-            return null;
+        return salespersonService.resolveEligible(
+                req.getSalespersonEmployeeId(), req.getSalespersonEmployeeCode());
+    }
+
+    /**
+     * The two Phase 2 pre-conditions on a POS sale. Both are server-authoritative; the POS UI
+     * gates are a courtesy and are not trusted.
+     *
+     * <p>CHECK A — {@code salespersonRequiredAtPos}: the sale must name a salesperson, and that
+     * employee must be Active and hold one of the two eligible designations. There is NO
+     * role-based bypass: a logged-in Cashier + Salesperson must still send a verified employee,
+     * even their own. The server cannot tell a scanned badge from a typed one, which is precisely
+     * why it validates the employee rather than the act of scanning.
+     *
+     * <p>CHECK B — {@code monthlyTargetRequired}: GLOBAL readiness. Every active eligible employee
+     * must have this month's target and commission configured. Deliberately NOT narrowed to the
+     * salesperson on this sale: one unconfigured colleague blocks every till, which is the stated
+     * rule. Re-evaluated per checkout with no caching, so completing a target unblocks selling
+     * immediately and an employee going inactive stops counting immediately.
+     *
+     * <p>The two settings are independent — either may be on without the other.
+     */
+    private void assertSalespersonAndTargetReadiness(PosCheckoutRequest req) {
+        var settings = salesSettingsService.getSettings();
+
+        if (settings.isSalespersonRequiredAtPos()) {
+            Employee salesperson = resolveSalesperson(req);
+            if (salesperson == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "This sale must be attributed to a salesperson. "
+                                + "Scan an employee barcode to continue.");
+            }
         }
 
-        Employee employee = null;
-        if (hasId) {
-            employee = employeeRepository.findById(req.getSalespersonEmployeeId()).orElse(null);
+        if (settings.isMonthlyTargetRequired()) {
+            // The business date, not the calendar date — a sale rung at 01:00 on an overnight
+            // Business Day belongs to the previous trading date, and it must be measured against
+            // that month's targets, exactly as its invoice is dated into it.
+            java.time.LocalDate businessDate = posBusinessDate(req.getSessionId());
+            var readiness = targetReadinessService.evaluate(businessDate);
+            if (!readiness.isReady()) {
+                throw new com.billbull.backend.hr.targets.TargetReadinessBlockedException(readiness);
+            }
         }
-        if (employee == null && hasCode) {
-            employee = employeeRepository
-                    .findByEmployeeCodeIgnoreCase(req.getSalespersonEmployeeCode().trim())
-                    .orElse(null);
-        }
-        if (employee == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Selected salesperson could not be found.");
-        }
-        if (!isActiveEmployee(employee)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Selected salesperson must be an active employee.");
-        }
-        return employee;
     }
 
     private boolean isActiveEmployee(Employee employee) {

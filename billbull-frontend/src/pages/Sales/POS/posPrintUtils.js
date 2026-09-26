@@ -282,7 +282,7 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   // Flat (untaxed) shipping charge shown as its own line before TOTAL. invoice.invoiceTotal
   // is expected to already include it.
   shippingCharge = null,
-  cashierName = '', terminalId = '', counterName = '',
+  cashierName = '', salespersonName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
   // Customer TRN + the customer's address on file. Neither is persisted on the
   // invoice, so both are passed from the resolved customer record (falling back
@@ -321,6 +321,10 @@ export const buildThermalReceiptHtml = (paperSize, invoice, {
   const customerName = invoice.customerName || 'Walk-in Customer';
   // Cashier = logged-in user (§2A); falls back to audit createdBy. NOT the counter name.
   const cashier = cashierName || invoice.createdBy || '';
+  // Salesperson — WHO the sale belongs to, as distinct from the cashier who rang it up.
+  // Falls back to the invoice's own persisted salespersonName so a REPRINT shows it too:
+  // reprints rebuild from the stored invoice, not from live POS state.
+  const salesperson = salespersonName || invoice.salespersonName || '';
   const terminal = terminalId || invoice.posTerminalId || '';
   const counter = counterName || invoice.posCounterName || '';
   const D = `<div class="d"></div>`;
@@ -365,6 +369,9 @@ body{width:${pw};margin:0 auto;font-family:'Roboto Mono','Courier New',monospace
   html += `<div class="row"><span class="lbl">Invoice No:</span><span class="num">${esc(invoice.invoiceNumber || '')}</span></div>`;
   html += `<div class="row"><span class="lbl">Date:</span><span class="num">${esc(invDate)}${invTime ? '  ' + esc(invTime) : ''}</span></div>`;
   if (cashier) html += `<div class="row"><span class="lbl">Cashier:</span><span class="val">${esc(cashier)}</span></div>`;
+  // Immediately below Cashier, always — the two are independent identities and the pairing is
+  // what makes "who served me" answerable from the paper.
+  if (salesperson) html += `<div class="row"><span class="lbl">Salesperson:</span><span class="val">${esc(salesperson)}</span></div>`;
   if (terminal) html += `<div class="row"><span class="lbl">Terminal ID:</span><span class="num">${esc(terminal)}</span></div>`;
   if (counter) html += `<div class="row"><span class="lbl">Counter:</span><span class="num">${esc(counter)}</span></div>`;
   // Sale Type (ported from Template 2) — retail / delivery / etc. when present.
@@ -725,6 +732,7 @@ export const buildThermalReceiptText = (paperSize, invoice, {
   showTrn = true,
   documentTitle = null,
   cashierName = '',
+  salespersonName = '',
   terminalId = '',
   counterName = '',
   cashGiven = null,
@@ -778,6 +786,8 @@ export const buildThermalReceiptText = (paperSize, invoice, {
     }
   }
   if (cashierName) lines.push(buildFixedWidthLine('Cashier', cashierName, width));
+  const salespersonLine = salespersonName || invoice.salespersonName || '';
+  if (salespersonLine) lines.push(buildFixedWidthLine('Salesperson', salespersonLine, width));
   if (terminalId) lines.push(buildFixedWidthLine('Terminal', terminalId, width));
   if (counterName) lines.push(buildFixedWidthLine('Counter', counterName, width));
   lines.push(hr);
@@ -1673,7 +1683,10 @@ export const buildPosPrintData = (full, footerNote = '', customersList = [], tit
       notes: footerNote,
       paymentMode: full.paymentMode || '',
       location: full.branchName || '',
-      salesPerson: full.posCounterName || '',
+      // Was `full.posCounterName` — a counter is a till, not a person, so the A4 template's
+      // Salesperson field has been showing the wrong thing. salespersonName is the persisted,
+      // server-resolved employee name and is the authoritative value for this field.
+      salesPerson: full.salespersonName || '',
     },
   };
 };

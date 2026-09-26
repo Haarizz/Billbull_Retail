@@ -61,6 +61,11 @@ class PosCheckoutControllerSalespersonTest {
     @Mock private RolePermissionService permissionService;
     @Mock private PosSettingsService posSettingsService;
     @Mock private EmployeeRepository employeeRepository;
+    @Mock private com.billbull.backend.hr.targets.TargetReadinessService targetReadinessService;
+    @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
+    /** Real, not mocked: the eligibility rule IS what these tests exercise. */
+    @org.mockito.Spy private com.billbull.backend.hr.employees.SalespersonService salespersonService =
+            new com.billbull.backend.hr.employees.SalespersonService(null);
     @Mock private com.billbull.backend.pos.terminal.PosTerminalActivityService terminalActivityService;
     @Mock private com.billbull.backend.common.tax.BranchTaxResolutionService branchTaxResolutionService;
     @Mock private com.billbull.backend.pos.businessdate.BusinessDayCheckoutGate businessDayCheckoutGate;
@@ -81,6 +86,15 @@ class PosCheckoutControllerSalespersonTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
+        // SalespersonService resolves through the EmployeeRepository these tests already stub, so
+        // it is constructed against the same mock rather than being stubbed itself — the tests
+        // then exercise the real eligibility rule, not a restatement of it.
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                salespersonService, "employeeRepository", employeeRepository);
+        // Phase 2 settings default to OFF, which is what keeps the Phase 1 behaviour these tests
+        // pin (optional attribution) intact. The ON cases live in their own suite.
+        lenient().when(salesSettingsService.getSettings())
+                .thenReturn(new com.billbull.backend.sales.settings.SalesSettings());
         lenient().when(branchTaxResolutionService.resolveSalesTaxRateForProduct(any(), any()))
                 .thenReturn(BigDecimal.ZERO);
         org.springframework.test.util.ReflectionTestUtils.setField(controller, "deliverySettlementService",
@@ -107,13 +121,28 @@ class PosCheckoutControllerSalespersonTest {
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
+    /**
+     * DELIBERATELY CHANGED in Phase 2: the fixture now carries an eligible designation.
+     *
+     * <p>Phase 1 accepted ANY active employee as a salesperson, so these fixtures needed no role.
+     * Phase 2 narrows eligibility to Salesperson / Cashier + Salesperson, so a role-less employee
+     * is now correctly rejected — the assertions below are about what happens to an employee who
+     * IS eligible, and they would otherwise be testing the rejection path by accident.
+     * Role-based rejection has its own suite: PosCheckoutSalespersonEnforcementTest.
+     */
     private static Employee employee(long id, String code, String first, String last, String status) {
+        return employee(id, code, first, last, status, "Salesperson");
+    }
+
+    private static Employee employee(long id, String code, String first, String last,
+                                     String status, String role) {
         Employee e = new Employee();
         e.setId(id);
         e.setEmployeeCode(code);
         e.setFirstName(first);
         e.setLastName(last);
         e.setStatus(status);
+        e.setRole(role);
         return e;
     }
 

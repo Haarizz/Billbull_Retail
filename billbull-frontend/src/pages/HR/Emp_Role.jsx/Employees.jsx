@@ -40,11 +40,14 @@ import {
   Star,
   Building2,
   MoreVertical,
+  ScanBarcode as BarcodeIcon,
   Info,
   Mail,
   Phone
 } from 'lucide-react';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import EmployeeBarcodeCard from './EmployeeBarcodeCard';
+import { isSalespersonRole } from '../../../utils/salespersonRoles';
 
 // Import the API helpers
 import { employeesApi } from '../../../api/employeesApi';
@@ -494,9 +497,24 @@ const AddEmployeeModal = ({
   const [formError, setFormError] = useState('');
 
   // --- Designation Roles (for Role/Designation dropdown) ---
-  const FALLBACK_ROLES = ['ADMIN', 'SALES', 'INVENTORY_MANAGER', 'ACCOUNTANT', 'CASHIER', 'DELIVERY_PERSON'];
-  const employeeRoleOptionValue = (roleName = '') => roleName === 'DELIVERY_PERSON' ? 'Delivery Person' : roleName;
-  const employeeRoleOptionLabel = (roleName = '') => roleName === 'DELIVERY_PERSON' ? 'Delivery Person' : roleName;
+  // GET /api/roles is ADMIN-only, so a non-admin HR user never receives the live role list and
+  // falls back to this one. The two salesperson designations are therefore listed here as well as
+  // seeded in RBACInitializer — omitting them would make the new roles invisible to exactly the
+  // users who maintain employee records.
+  const FALLBACK_ROLES = [
+    'ADMIN', 'SALES', 'INVENTORY_MANAGER', 'ACCOUNTANT', 'CASHIER',
+    'DELIVERY_PERSON', 'SALESPERSON', 'CASHIER_SALESPERSON',
+  ];
+  // Raw RBAC role name -> the human-readable designation stored in employees.role. Kept in step
+  // with the backend's hr.employees.SalespersonEligibility, which accepts BOTH the designation
+  // and the raw key so an employee saved by an older client still resolves.
+  const EMPLOYEE_ROLE_LABELS = {
+    DELIVERY_PERSON: 'Delivery Person',
+    SALESPERSON: 'Salesperson',
+    CASHIER_SALESPERSON: 'Cashier + Salesperson',
+  };
+  const employeeRoleOptionValue = (roleName = '') => EMPLOYEE_ROLE_LABELS[roleName] || roleName;
+  const employeeRoleOptionLabel = (roleName = '') => EMPLOYEE_ROLE_LABELS[roleName] || roleName;
   const [designationRoles, setDesignationRoles] = useState([]);
   const [designationRolesLoading, setDesignationRolesLoading] = useState(false);
 
@@ -2303,7 +2321,7 @@ const StatCard = ({
 // 3. ACTION MODAL COMPONENT (New)
 // ==========================================
 
-const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit, onSetTarget, onManageAccess }) => {
+const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit, onSetTarget, onManageAccess, onPrintBarcode }) => {
   const { canEdit } = usePermissions();
   if (!employee) return null;
 
@@ -2358,6 +2376,20 @@ const ActionModal = ({ employee, onClose, onDeactivate, onActivate, onEdit, onSe
             >
               <Target size={14} className="text-slate-400" /> Set Target
             </button>
+
+            {/* Employee ID barcode. Read-only — it prints what is already on the employee record,
+                so it needs no edit permission, only the hr.employee view this screen already gates.
+                Offered ONLY for the two salesperson-eligible designations: the barcode exists so a
+                sale can be attributed at the till, and a badge for a storekeeper would be scanned
+                once, rejected by the server, and leave the cashier wondering which one to use. */}
+            {isSalespersonRole(employee.rawRole || employee.role) && (
+              <button
+                onClick={() => { onPrintBarcode?.(employee); onClose(); }}
+                className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 rounded flex items-center gap-2 transition-colors"
+              >
+                <BarcodeIcon size={14} className="text-slate-400" /> Print Employee Barcode
+              </button>
+            )}
 
             {hasRole('ADMIN') && onManageAccess && (
               <button
@@ -2941,7 +2973,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                 <div className="py-6 text-center text-sm text-slate-400">Loading roles…</div>
               ) : rolesLayout === 'vertical' ? (
                 /* ── Vertical list ── */
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
                   {allRoles.map(role => {
                     const checked = selectedIds.has(role.id);
                     const isPrimary = primaryRoleId === role.id;
@@ -2977,7 +3009,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
                 </div>
               ) : (
                 /* ── Horizontal grid (2 columns) ── */
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
                   {allRoles.map(role => {
                     const checked = selectedIds.has(role.id);
                     const isPrimary = primaryRoleId === role.id;
@@ -3261,6 +3293,7 @@ const Employees = () => {
 
   // Action Modal State
   const [selectedEmployeeForAction, setSelectedEmployeeForAction] = useState(null);
+  const [barcodeEmployee, setBarcodeEmployee] = useState(null);
 
   // Edit State
   const [employeeToEdit, setEmployeeToEdit] = useState(null);
@@ -3438,6 +3471,10 @@ const Employees = () => {
     id: emp.id,
     name: `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Unnamed Employee',
     code: emp.employeeCode || EMPTY_DATA_LABEL,
+    // Raw, un-placeholdered copies. `code`/`role` above are display values that fall back to
+    // '--', which must never be encoded into a barcode or printed on an ID card.
+    employeeCode: emp.employeeCode || '',
+    rawRole: emp.role || '',
     role: emp.role || EMPTY_DATA_LABEL,
     dept: emp.department || EMPTY_DATA_LABEL,
     branch: emp.branch || '',
@@ -3668,6 +3705,18 @@ const Employees = () => {
         onEdit={handleEditProfile}
         onSetTarget={openSetTargets}
         onManageAccess={setAccessPanelEmployee}
+        onPrintBarcode={(emp) => setBarcodeEmployee({
+          name: emp.name,
+          employeeCode: emp.employeeCode || '',
+          role: emp.rawRole || '',
+        })}
+      />
+
+      {/* EMPLOYEE ID CARD (barcode preview + print) */}
+      <EmployeeBarcodeCard
+        open={!!barcodeEmployee}
+        employee={barcodeEmployee}
+        onClose={() => setBarcodeEmployee(null)}
       />
 
       {/* EMPLOYEE DETAILS DRAWER (row click) */}

@@ -1,132 +1,128 @@
-import { act, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
 
-vi.mock('../../../../api/employeeApi', () => ({ getSalespersons: vi.fn() }));
+/**
+ * useSalesperson's ON/OFF contract.
+ *
+ * `SalesPerson → POS` is a single switch with two whole behaviours behind it, and this file pins
+ * both ends. OFF must be INDISTINGUISHABLE from the POS before the feature existed — that is a
+ * stronger claim than "the UI is hidden", and it is the one tenants who never enable the feature
+ * depend on. ON must refuse to attribute anything that was not scanned.
+ *
+ * Sibling file: useSalespersonVerification.test.js covers the scan/replace/readiness paths.
+ */
 
-import { getSalespersons } from '../../../../api/employeeApi';
+const lookupSalespersonByCode = vi.fn();
+const getSalesSettings = vi.fn();
+const getTargetReadiness = vi.fn();
+
+vi.mock('../../../../api/employeeApi', () => ({
+  lookupSalespersonByCode: (...a) => lookupSalespersonByCode(...a),
+}));
+vi.mock('../../../../api/salesSettingsApi', () => ({
+  getSalesSettings: (...a) => getSalesSettings(...a),
+}));
+vi.mock('../../../../api/employeeTargetsApi', () => ({
+  getTargetReadiness: (...a) => getTargetReadiness(...a),
+}));
+
 import useSalesperson from '../features/sales/useSalesperson';
 
-const OPTIONS = [
-  { id: 1, employeeCode: 'EMP-001', name: 'Cashier One' },
-  { id: 2, employeeCode: 'EMP-002', name: 'Manager One' },
-];
+const VERIFIED = {
+  id: 7, employeeCode: 'EMP9664', name: 'Manager One',
+  role: 'Salesperson', status: 'Active', targetAmount: '25000.00', commissionRate: '10.00',
+};
 
-describe('useSalesperson', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
-  afterEach(() => { vi.restoreAllMocks(); });
+const settings = (over = {}) => ({
+  salespersonRequiredAtPos: false,
+  salespersonRequiredAtBackOffice: false,
+  monthlyTargetRequired: false,
+  ...over,
+});
 
-  it('preselects the caller\'s own linked employee when the backend supplies one', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: 2 });
+const mount = async (required = false) => {
+  const view = renderHook(() => useSalesperson());
+  await waitFor(() => expect(view.result.current.salespersonRequired).toBe(required));
+  return view;
+};
 
-    const { result } = renderHook(() => useSalesperson());
+describe('useSalesperson — the POS salesperson switch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getSalesSettings.mockResolvedValue(settings());
+    getTargetReadiness.mockResolvedValue({ required: false, ready: true, missing: [] });
+    lookupSalespersonByCode.mockResolvedValue(VERIFIED);
+  });
 
-    await waitFor(() => expect(result.current.salespersonEmployeeId).toBe(2));
-    expect(result.current.selectedSalesperson.name).toBe('Manager One');
-    expect(result.current.salespersonPayload).toEqual({
-      salespersonEmployeeId: 2,
-      salespersonEmployeeCode: 'EMP-002',
+  // ── OFF ────────────────────────────────────────────────────────────────
+
+  it('exposes no attribution and no way to make one while the feature is off', async () => {
+    const view = await mount(false);
+
+    expect(view.result.current.salespersonPayload).toEqual({
+      salespersonEmployeeId: null, salespersonEmployeeCode: null,
+    });
+    expect(view.result.current.effectiveSalesperson).toBeNull();
+    // Nothing to satisfy: the sale is "verified" in the sense that it is free to proceed.
+    expect(view.result.current.salespersonVerified).toBe(true);
+  });
+
+  it('never offers a roster to pick from, in either mode', async () => {
+    // The manual picker is gone, so there is no employee-list endpoint to call. If this ever
+    // fails, a dropdown has crept back in — which is a bypass, not a convenience.
+    const off = await mount(false);
+    expect(off.result.current.salespersonOptions).toBeUndefined();
+    expect(off.result.current.setSalespersonEmployeeId).toBeUndefined();
+
+    getSalesSettings.mockResolvedValue(settings({ salespersonRequiredAtPos: true }));
+    const on = await mount(true);
+    expect(on.result.current.salespersonOptions).toBeUndefined();
+    expect(on.result.current.setSalespersonEmployeeId).toBeUndefined();
+  });
+
+  it('does not fetch target readiness while target enforcement is off', async () => {
+    await mount(false);
+    await waitFor(() => expect(getSalesSettings).toHaveBeenCalled());
+    // A tenant that never turns this on pays nothing for it — not even one request.
+    expect(getTargetReadiness).not.toHaveBeenCalled();
+  });
+
+  // ── ON ─────────────────────────────────────────────────────────────────
+
+  it('requires a scan before it will attribute a sale', async () => {
+    getSalesSettings.mockResolvedValue(settings({ salespersonRequiredAtPos: true }));
+    const view = await mount(true);
+
+    expect(view.result.current.salespersonVerified).toBe(false);
+    expect(view.result.current.salespersonPayload.salespersonEmployeeId).toBeNull();
+
+    await act(async () => { await view.result.current.verifyByCode('EMP9664'); });
+
+    expect(view.result.current.salespersonVerified).toBe(true);
+    expect(view.result.current.salespersonPayload).toEqual({
+      salespersonEmployeeId: 7, salespersonEmployeeCode: 'EMP9664',
     });
   });
 
-  it('starts Unassigned when the user has no linked employee — it never guesses', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: null });
+  it('starts every sale unverified — a verification is per-sale, never inherited', async () => {
+    getSalesSettings.mockResolvedValue(settings({ salespersonRequiredAtPos: true }));
+    const view = await mount(true);
+    await act(async () => { await view.result.current.verifyByCode('EMP9664'); });
 
-    const { result } = renderHook(() => useSalesperson());
+    act(() => view.result.current.resetSalesperson());
 
-    await waitFor(() => expect(result.current.salespersonLoading).toBe(false));
-    expect(result.current.salespersonEmployeeId).toBeNull();
-    expect(result.current.salespersonPayload).toEqual({
-      salespersonEmployeeId: null,
-      salespersonEmployeeCode: null,
-    });
+    // The next customer may be served by someone else, and there is no default to fall back to:
+    // the next sale has to be scanned.
+    expect(view.result.current.verifiedSalesperson).toBeNull();
+    expect(view.result.current.salespersonVerified).toBe(false);
+    expect(view.result.current.salespersonPayload.salespersonEmployeeId).toBeNull();
   });
 
-  it('ignores a default that is not in the roster', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: 999 });
-
-    const { result } = renderHook(() => useSalesperson());
-
-    await waitFor(() => expect(result.current.salespersonLoading).toBe(false));
-    expect(result.current.salespersonEmployeeId).toBeNull();
-  });
-
-  it('lets the cashier change the salesperson away from the default', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: 1 });
-
-    const { result } = renderHook(() => useSalesperson());
-    await waitFor(() => expect(result.current.salespersonEmployeeId).toBe(1));
-
-    act(() => { result.current.setSalespersonEmployeeId(2); });
-
-    // Cashier 1 logged in, sale attributed to Manager One.
-    expect(result.current.salespersonPayload.salespersonEmployeeId).toBe(2);
-    expect(result.current.salespersonPayload.salespersonEmployeeCode).toBe('EMP-002');
-  });
-
-  it('lets the cashier clear the attribution back to Unassigned', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: 1 });
-
-    const { result } = renderHook(() => useSalesperson());
-    await waitFor(() => expect(result.current.salespersonEmployeeId).toBe(1));
-
-    act(() => { result.current.setSalespersonEmployeeId(null); });
-
-    expect(result.current.salespersonPayload.salespersonEmployeeId).toBeNull();
-  });
-
-  it('returns to the session default after a completed sale', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: 1 });
-
-    const { result } = renderHook(() => useSalesperson());
-    await waitFor(() => expect(result.current.salespersonEmployeeId).toBe(1));
-
-    act(() => { result.current.setSalespersonEmployeeId(2); });
-    act(() => { result.current.resetSalesperson(); });
-
-    expect(result.current.salespersonEmployeeId).toBe(1);
-  });
-
-  it('resets to Unassigned after a sale when there is no default', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: null });
-
-    const { result } = renderHook(() => useSalesperson());
-    await waitFor(() => expect(result.current.salespersonLoading).toBe(false));
-
-    act(() => { result.current.setSalespersonEmployeeId(2); });
-    act(() => { result.current.resetSalesperson(); });
-
-    expect(result.current.salespersonEmployeeId).toBeNull();
-  });
-
-  it('degrades to Unassigned without throwing when the roster cannot be loaded', async () => {
-    // Attribution is optional — a failed lookup must never block selling.
-    getSalespersons.mockRejectedValue(new Error('network'));
-
-    const { result } = renderHook(() => useSalesperson());
-
-    await waitFor(() => expect(result.current.salespersonLoading).toBe(false));
-    expect(result.current.salespersonOptions).toEqual([]);
-    expect(result.current.salespersonError).toBe('Could not load salespersons');
-    expect(result.current.salespersonPayload.salespersonEmployeeId).toBeNull();
-  });
-
-  it('tolerates a malformed response shape', async () => {
-    getSalespersons.mockResolvedValue({});
-
-    const { result } = renderHook(() => useSalesperson());
-
-    await waitFor(() => expect(result.current.salespersonLoading).toBe(false));
-    expect(result.current.salespersonOptions).toEqual([]);
-    expect(result.current.salespersonEmployeeId).toBeNull();
-  });
-
-  it('loads the roster exactly once per POS mount', async () => {
-    getSalespersons.mockResolvedValue({ options: OPTIONS, defaultEmployeeId: 1 });
-
-    const { result, rerender } = renderHook(() => useSalesperson());
-    await waitFor(() => expect(result.current.salespersonEmployeeId).toBe(1));
-    rerender();
-
-    expect(getSalespersons).toHaveBeenCalledTimes(1);
+  it('falls back to the off behaviour when the settings read fails', async () => {
+    // Failing closed would strand every till on a transient blip; the server enforces the rule
+    // independently, so failing open here cannot actually let an unattributed sale through.
+    getSalesSettings.mockRejectedValue(new Error('offline'));
+    const view = await mount(false);
+    expect(view.result.current.targetRequired).toBe(false);
   });
 });

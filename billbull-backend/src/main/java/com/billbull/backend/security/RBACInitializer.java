@@ -45,6 +45,14 @@ public class RBACInitializer {
             createRoleIfNotExists(roleRepository, "ACCOUNTANT");
             createRoleIfNotExists(roleRepository, "HR");
             createRoleIfNotExists(roleRepository, "DELIVERY_PERSON");
+            // The two salesperson-eligible employee designations. Seeded here — rather than as a
+            // constant list somewhere else — because the Employees & Roles form's Role/Designation
+            // dropdown is fed from this table (GET /api/roles), exactly as DELIVERY_PERSON already
+            // is. The human-readable labels ("Salesperson", "Cashier + Salesperson") are mapped
+            // client-side in Employees.jsx; eligibility itself is decided by
+            // hr.employees.SalespersonEligibility, never by User.roles.
+            createRoleIfNotExists(roleRepository, "SALESPERSON");
+            createRoleIfNotExists(roleRepository, "CASHIER_SALESPERSON");
 
             // 2. Default branch — must exist before the admin is assigned to it
             Branch defaultBranch = ensureDefaultBranch(branchRepository);

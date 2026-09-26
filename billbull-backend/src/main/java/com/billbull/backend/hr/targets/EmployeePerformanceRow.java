@@ -20,6 +20,14 @@ public class EmployeePerformanceRow {
     /** Null when there is no usable target (zero/absent) — the UI renders "—" rather than 0 or ∞. */
     private BigDecimal achievementPercent;
     private BigDecimal commission;
+    /**
+     * Has the target been reached? Commission is earned only after it is, so a 0.00 commission
+     * means two very different things depending on this flag ("0% rate, target met" vs "target
+     * missed") and the UI must be able to tell them apart.
+     */
+    private boolean commissionEligible;
+    /** "Eligible" / "Not Eligible" — the label paired with {@link #commissionEligible}. */
+    private String commissionStatus;
     private BigDecimal remainingTarget;
     private String targetStatus;
 
@@ -49,6 +57,10 @@ public class EmployeePerformanceRow {
     public void setAchievementPercent(BigDecimal achievementPercent) { this.achievementPercent = achievementPercent; }
     public BigDecimal getCommission() { return commission; }
     public void setCommission(BigDecimal commission) { this.commission = commission; }
+    public boolean isCommissionEligible() { return commissionEligible; }
+    public void setCommissionEligible(boolean commissionEligible) { this.commissionEligible = commissionEligible; }
+    public String getCommissionStatus() { return commissionStatus; }
+    public void setCommissionStatus(String commissionStatus) { this.commissionStatus = commissionStatus; }
     public BigDecimal getRemainingTarget() { return remainingTarget; }
     public void setRemainingTarget(BigDecimal remainingTarget) { this.remainingTarget = remainingTarget; }
     public String getTargetStatus() { return targetStatus; }

@@ -1,6 +1,7 @@
 package com.billbull.backend.hr.targets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -156,14 +157,41 @@ class EmployeeSalesTargetServiceTest {
                 service.upsert(5L, SEP, BigDecimal.ZERO, new BigDecimal("100")).getCommissionRate());
     }
 
+    /**
+     * DELIBERATELY CHANGED in Phase 2. A null target amount is still coerced to zero — zero is a
+     * meaningful target ("none set") and the column stays NOT NULL. A null commission rate is NOT:
+     * since commission_rate became nullable (V104), null is the only way to express "commission not
+     * configured", which is what target-readiness blocks on. Coercing it to zero here would mark
+     * every employee configured-at-0% and make the readiness check unable to fail.
+     */
     @Test
-    void treatsNullAmountsAsZeroRatherThanFailing() {
+    void coercesANullTargetAmountToZeroButPreservesANullCommissionRate() {
         when(targetRepository.findByEmployeeIdAndTargetMonth(5L, SEP)).thenReturn(Optional.empty());
 
         EmployeeSalesTarget saved = service.upsert(5L, SEP, null, null);
 
         assertEquals(new BigDecimal("0.00"), saved.getTargetAmount());
+        assertNull(saved.getCommissionRate(),
+                "null commission must survive as 'not configured', not become 0%");
+    }
+
+    @Test
+    void anExplicitZeroCommissionIsStoredAsAConfiguredZero() {
+        when(targetRepository.findByEmployeeIdAndTargetMonth(5L, SEP)).thenReturn(Optional.empty());
+
+        EmployeeSalesTarget saved = service.upsert(5L, SEP, new BigDecimal("100000"), BigDecimal.ZERO);
+
         assertEquals(new BigDecimal("0.00"), saved.getCommissionRate());
+    }
+
+    @Test
+    void clearingACommissionOnAnExistingRowMakesItUnconfiguredAgain() {
+        when(targetRepository.findByEmployeeIdAndTargetMonth(5L, SEP))
+                .thenReturn(Optional.of(existing(5L, SEP, "100000", "10")));
+
+        EmployeeSalesTarget saved = service.upsert(5L, SEP, new BigDecimal("100000"), null);
+
+        assertNull(saved.getCommissionRate());
     }
 
     @Test

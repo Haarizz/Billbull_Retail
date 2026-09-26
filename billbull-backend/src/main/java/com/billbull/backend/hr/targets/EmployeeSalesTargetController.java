@@ -34,17 +34,40 @@ public class EmployeeSalesTargetController {
 
     private final EmployeeSalesTargetService targetService;
     private final EmployeePerformanceService performanceService;
+    private final TargetReadinessService readinessService;
     private final ModulePermissionService modulePermissionService;
     private final UserRepository userRepository;
 
     public EmployeeSalesTargetController(EmployeeSalesTargetService targetService,
                                          EmployeePerformanceService performanceService,
+                                         TargetReadinessService readinessService,
                                          ModulePermissionService modulePermissionService,
                                          UserRepository userRepository) {
         this.targetService = targetService;
         this.performanceService = performanceService;
+        this.readinessService = readinessService;
         this.modulePermissionService = modulePermissionService;
         this.userRepository = userRepository;
+    }
+
+    /**
+     * Whether this month's salesperson target configuration allows POS selling.
+     *
+     * <p>Deliberately NOT behind {@code canView("hr.employee")}, unlike the rest of this
+     * controller's reads: the people who most need this answer are POS cashiers, who hold no HR
+     * permissions. Authenticated access is safe here because {@link TargetReadinessResponse}
+     * projects to employee id/code/name/role and the two missing-flags, and nothing else — the same
+     * reasoning that already lets every authenticated user read
+     * {@code GET /api/employees/salespersons}.
+     *
+     * <p>Advisory only. The authoritative evaluation happens inside the checkout transaction, in
+     * {@code PosCheckoutController}, against this same service.
+     */
+    @GetMapping("/readiness")
+    public TargetReadinessResponse getReadiness(
+            @RequestParam(name = "month", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate month) {
+        return readinessService.evaluate(month);
     }
 
     /**

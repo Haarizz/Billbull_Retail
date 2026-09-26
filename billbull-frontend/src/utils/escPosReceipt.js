@@ -759,7 +759,7 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
   qrPlacement = 'before',
   showCustomerDetails = true,
   showFooterText = true,
-  cashierName = '', terminalId = '', counterName = '',
+  cashierName = '', salespersonName = '', terminalId = '', counterName = '',
   customerPhone = null, customerEmail = null,
   // Customer TRN + address on file — printed in the CUSTOMER block when the
   // customer record carries them (parity with buildThermalReceiptHtml).
@@ -853,6 +853,10 @@ export const buildEscPosReceipt = async (paperSize, invoice, {
     w.gline(gutter, buildFixedWidthLine('Date:', new Date(invoice.invoiceDate).toLocaleDateString('en-GB'), width));
   }
   if (cashierName) w.gline(gutter, buildFixedWidthLine('Cashier:', cashierName, width));
+  // Salesperson directly under Cashier. Falls back to the invoice's persisted name so a reprint,
+  // which rebuilds from the stored invoice rather than live POS state, carries it too.
+  const salespersonLine = salespersonName || invoice.salespersonName || '';
+  if (salespersonLine) w.gline(gutter, buildFixedWidthLine('Salesperson:', salespersonLine, width));
   if (terminalId) w.gline(gutter, buildFixedWidthLine('Terminal ID:', terminalId, width));
   if (counterName) w.gline(gutter, buildFixedWidthLine('Counter:', counterName, width));
   emitDivider(w, gutter, hr);

@@ -1,11 +1,41 @@
-import React from 'react';
-import { Loader2, Info } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Loader2, Info, AlertTriangle, X } from 'lucide-react';
 import CurrencyAmount from '../../../components/CurrencyAmount';
+import { getTargetReadiness } from '../../../api/employeeTargetsApi';
+import { isSalespersonRole } from '../../../utils/salespersonRoles';
 import { monthLabel, recentMonths } from './useEmployeePerformance';
 
 const DASH = '—';
 
 const pct = (value) => (value == null ? DASH : `${Number(value).toFixed(2)}%`);
+
+/**
+ * Is this row's month configured? Mirrors the server's `TargetReadinessService`:
+ *
+ *   target      — configured when it is present AND greater than zero
+ *   commission  — configured when it is NOT NULL. **0% is a complete configuration**, and the
+ *                 most common way to get this wrong is to test `rate > 0`, which would show a
+ *                 deliberate 0% as "Missing Commission" and send an admin hunting for a problem
+ *                 that does not exist.
+ *
+ * Non-eligible designations are not evaluated at all: the rule only applies to ACTIVE
+ * Salesperson / Cashier + Salesperson employees, and marking a storekeeper "Missing Target" would
+ * be noise hiding the rows that actually block the tills.
+ */
+const configStatus = (row) => {
+    if (!isSalespersonRole(row.role)) return null;
+    if (String(row.employeeStatus ?? '').trim().toLowerCase() !== 'active') return null;
+    const missingTarget = row.targetAmount == null || Number(row.targetAmount) <= 0;
+    const missingCommission = row.commissionRate == null;
+    if (missingTarget && missingCommission) return 'Missing Target & Commission';
+    if (missingTarget) return 'Missing Target';
+    if (missingCommission) return 'Missing Commission';
+    return 'Ready';
+};
+
+const configChip = (status) => (status === 'Ready'
+    ? 'bg-green-100 text-green-700'
+    : 'bg-rose-100 text-rose-700');
 
 const statusChip = (status) => {
     const map = {
@@ -38,6 +68,29 @@ export default function PerformanceTargets({
 }) {
     const rows = performance?.rows || [];
     const branchFiltered = !!performance?.branchFiltered;
+
+    // Readiness is READ here, never re-derived: the banner must agree with the refusal the POS
+    // issues, and two implementations of "is this month configured?" would eventually disagree.
+    const [readiness, setReadiness] = useState(null);
+    const [showMissing, setShowMissing] = useState(false);
+
+    // Re-read whenever the month changes or targets are saved (the same reload refetches
+    // `performance`), so completing the last missing employee clears the banner in place.
+    // `cancelled` guards the late response from a month the user has already moved away from.
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const result = await getTargetReadiness({ month });
+                if (!cancelled) setReadiness(result);
+            } catch (_) {
+                // Advisory: a failed read hides the banner, it never invents one. The checkout
+                // gate still refuses the sale, so nothing is let through by this being quiet.
+                if (!cancelled) setReadiness(null);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [month, performance]);
 
     return (
         <div className="space-y-4">
@@ -80,6 +133,36 @@ export default function PerformanceTargets({
                     </button>
                 )}
             </div>
+
+            {/* Target readiness — the SAME evaluation the POS checkout gate runs, so an admin
+                finds out here rather than from a cashier whose sale has just been refused. A
+                persistent banner and not an auto-opening modal: this screen is opened many times a
+                day, and a dialog on every visit trains people to dismiss it unread. */}
+            {readiness?.required && readiness?.ready === false && (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 rounded-lg bg-rose-50 border border-rose-200">
+                    <AlertTriangle size={18} className="shrink-0 text-rose-600" />
+                    <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-rose-800">Salesperson Setup Incomplete</p>
+                        <p className="text-xs text-rose-700 mt-0.5">
+                            {readiness.missing.length} active Salesperson / Cashier + Salesperson
+                            {readiness.missing.length === 1 ? ' employee is' : ' employees are'} missing
+                            this month&apos;s target or commission configuration.{' '}
+                            <strong>POS sales are currently blocked.</strong>
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setShowMissing(true)}
+                        className="shrink-0 px-3 py-2 text-xs font-semibold rounded-md bg-rose-600 text-white hover:bg-rose-700"
+                    >
+                        Review Missing Employees
+                    </button>
+                </div>
+            )}
+
+            {showMissing && readiness?.missing?.length > 0 && (
+                <MissingConfigDialog missing={readiness.missing} onClose={() => setShowMissing(false)} />
+            )}
 
             {/*
               A branch filter narrows SALES but not the TARGET — targets are global per employee,
@@ -159,16 +242,17 @@ export default function PerformanceTargets({
                                 <th className="px-4 py-4 font-semibold text-xs uppercase text-right">Achievement</th>
                                 <th className="px-4 py-4 font-semibold text-xs uppercase text-right">Commission</th>
                                 <th className="px-4 py-4 font-semibold text-xs uppercase">Status</th>
+                                <th className="px-4 py-4 font-semibold text-xs uppercase">Configuration</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {loading && (
-                                <tr><td colSpan="9" className="px-6 py-12 text-center text-slate-400">
+                                <tr><td colSpan="10" className="px-6 py-12 text-center text-slate-400">
                                     <span className="inline-flex items-center gap-2"><Loader2 size={16} className="animate-spin" /> Loading performance…</span>
                                 </td></tr>
                             )}
                             {!loading && rows.length === 0 && (
-                                <tr><td colSpan="9" className="px-6 py-12 text-center text-slate-400">
+                                <tr><td colSpan="10" className="px-6 py-12 text-center text-slate-400">
                                     No employee performance for {monthLabel(month)}.
                                 </td></tr>
                             )}
@@ -207,13 +291,41 @@ export default function PerformanceTargets({
                                             </div>
                                         )}
                                     </td>
-                                    <td className="px-4 py-3 text-right"><CurrencyAmount value={row.commission} /></td>
+                                    <td className="px-4 py-3 text-right">
+                                        {row.commission == null ? (
+                                            <span className="text-slate-400">{DASH}</span>
+                                        ) : (
+                                            <div className="inline-flex flex-col items-end">
+                                                <CurrencyAmount value={row.commission} />
+                                                {/* Commission is earned only once the target is
+                                                    reached, so a 0.00 needs its reason attached:
+                                                    "0% rate, target met" and "target missed" are
+                                                    different answers that must not look alike. */}
+                                                {row.commissionStatus && (
+                                                    <span className={`text-[10px] ${row.commissionEligible ? 'text-green-600' : 'text-slate-400'}`}>
+                                                        {row.commissionStatus}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </td>
                                     <td className="px-4 py-3">
                                         {row.targetStatus ? (
                                             <span className={`text-[11px] px-2 py-0.5 rounded-full ${statusChip(row.targetStatus)}`}>
                                                 {row.targetStatus}
                                             </span>
                                         ) : <span className="text-slate-400 text-xs">{DASH}</span>}
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        {(() => {
+                                            const status = configStatus(row);
+                                            if (!status) return <span className="text-slate-400 text-xs">{DASH}</span>;
+                                            return (
+                                                <span className={`text-[11px] px-2 py-0.5 rounded-full ${configChip(status)}`}>
+                                                    {status}
+                                                </span>
+                                            );
+                                        })()}
                                     </td>
                                 </tr>
                             ))}
@@ -224,6 +336,56 @@ export default function PerformanceTargets({
         </div>
     );
 }
+
+/**
+ * The rows blocking the tills, named. Deliberately the server's `missing` list rather than a
+ * filter over the grid: the grid can be branch-filtered or narrowed, and a banner that says "3
+ * employees" must show those three whatever the screen is currently displaying.
+ */
+const MissingConfigDialog = ({ missing, onClose }) => (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+        <div className="w-full max-w-lg rounded-lg bg-white shadow-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-4 py-3">
+                <h3 className="text-sm font-semibold text-slate-700">Missing Configuration</h3>
+                <button onClick={onClose} aria-label="Close missing configuration" className="text-slate-400 hover:text-slate-600">
+                    <X size={16} />
+                </button>
+            </div>
+            <div className="max-h-80 overflow-y-auto">
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-[#F7F7FA] text-slate-500 sticky top-0">
+                        <tr>
+                            <th className="px-4 py-2.5 font-semibold text-xs uppercase">Employee</th>
+                            <th className="px-4 py-2.5 font-semibold text-xs uppercase">Target</th>
+                            <th className="px-4 py-2.5 font-semibold text-xs uppercase">Commission</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {missing.map(m => (
+                            <tr key={m.employeeId}>
+                                <td className="px-4 py-2.5">
+                                    <div className="font-medium text-slate-800">{m.employeeName}</div>
+                                    <div className="text-[11px] text-slate-400">{m.employeeCode} · {m.role}</div>
+                                </td>
+                                <td className={`px-4 py-2.5 text-xs ${m.missingTarget ? 'text-rose-600 font-semibold' : 'text-slate-500'}`}>
+                                    {m.missingTarget ? 'Missing' : 'Set'}
+                                </td>
+                                <td className={`px-4 py-2.5 text-xs ${m.missingCommission ? 'text-rose-600 font-semibold' : 'text-slate-500'}`}>
+                                    {m.missingCommission ? 'Missing' : 'Set'}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+            <div className="flex justify-end border-t border-slate-100 bg-slate-50 px-4 py-3">
+                <button onClick={onClose} className="px-3 py-2 text-xs font-medium rounded text-slate-600 hover:bg-slate-200">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+);
 
 const SummaryCard = ({ label, value, hint }) => (
     <div className="bg-white border border-slate-200 rounded-lg p-4">

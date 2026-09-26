@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('../../../api/employeeTargetsApi', () => ({ saveEmployeeTargetsBulk: vi.fn() }));
 vi.mock('react-hot-toast', () => ({
@@ -54,6 +54,32 @@ describe('SetTargetsModal', () => {
       { employeeId: 1, targetMonth: '2026-09-01', targetAmount: 100000, commissionRate: 10 },
       { employeeId: 2, targetMonth: '2026-09-01', targetAmount: 80000, commissionRate: 8 },
     ]);
+  });
+
+  // Phase 2: commission_rate is nullable, and null means "not configured" — the condition that
+  // blocks POS sales when Set Targets enforcement is on. A blank field must therefore travel as
+  // null; coercing it to 0 here would mark everyone configured-at-0% and make readiness unfailable.
+  it('sends a blank commission as null, not as zero', async () => {
+    renderModal();
+    fireEvent.change(targetInput('Cashier Two'), { target: { value: '80000' } });
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(saveEmployeeTargetsBulk).toHaveBeenCalled());
+    const rowTwo = saveEmployeeTargetsBulk.mock.calls[0][0]
+      .find((r) => r.employeeId === 2);
+    expect(rowTwo.commissionRate).toBeNull();
+  });
+
+  it('sends a typed zero commission as an explicit configured 0%', async () => {
+    renderModal();
+    fireEvent.change(targetInput('Cashier Two'), { target: { value: '80000' } });
+    fireEvent.change(rateInput('Cashier Two'), { target: { value: '0' } });
+    fireEvent.click(saveButton());
+
+    await waitFor(() => expect(saveEmployeeTargetsBulk).toHaveBeenCalled());
+    const rowTwo = saveEmployeeTargetsBulk.mock.calls[0][0]
+      .find((r) => r.employeeId === 2);
+    expect(rowTwo.commissionRate).toBe(0);
   });
 
   it('leaves an untouched employee without a target rather than writing a zero', async () => {
@@ -140,5 +166,40 @@ describe('SetTargetsModal', () => {
   it('shows a loading state while the roster is being fetched', () => {
     renderModal({ loading: true, rows: [] });
     expect(screen.getByText(/Loading employees/)).toBeInTheDocument();
+  });
+
+  /**
+   * The Status column exists because a blank commission box and a box containing 0 look almost
+   * identical, and they are two different saves: blank writes NULL ("not configured", which
+   * blocks POS sales when SetTargets is on) and 0 writes a real 0% commission (which does not).
+   * The column names which one is about to be written, live, before Save is pressed.
+   */
+  describe('the configuration status column', () => {
+    const rowOf = (name) => screen.getByText(name).closest('tr');
+
+    it('reads a filled row as Ready', () => {
+      renderModal();
+      expect(within(rowOf('Cashier One')).getByText('Ready')).toBeInTheDocument();
+    });
+
+    it('reads an empty row as missing both', () => {
+      renderModal();
+      expect(within(rowOf('Cashier Two')).getByText('Missing Target & Commission')).toBeInTheDocument();
+    });
+
+    it('turns Ready as soon as a deliberate 0% is typed — 0 is configured, blank is not', () => {
+      renderModal();
+      fireEvent.change(targetInput('Cashier Two'), { target: { value: '25000' } });
+      expect(within(rowOf('Cashier Two')).getByText('Missing Commission')).toBeInTheDocument();
+
+      fireEvent.change(rateInput('Cashier Two'), { target: { value: '0' } });
+      expect(within(rowOf('Cashier Two')).getByText('Ready')).toBeInTheDocument();
+    });
+
+    it('falls back to missing when a rate is cleared again', () => {
+      renderModal();
+      fireEvent.change(rateInput('Cashier One'), { target: { value: '' } });
+      expect(within(rowOf('Cashier One')).getByText('Missing Commission')).toBeInTheDocument();
+    });
   });
 });

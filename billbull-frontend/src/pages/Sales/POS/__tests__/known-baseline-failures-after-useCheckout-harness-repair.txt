@@ -1,0 +1,14 @@
+# Known baseline failures for the POSSales.jsx extraction series — SUPERSEDES known-baseline-failures.txt.
+# Captured 2026-09-14 after repairing the useCheckout characterization test harness (test-only change).
+# Transition: 3,094 tests / 3,059 pass / 35 fail (32 useCheckout + 3 useDelivery)
+#          -> 3,094 tests / 3,091 pass /  3 fail (3 useDelivery)
+# The 32 useCheckout failures were a stale harness: makeArgs did not supply the hook's
+# `previewFreeze` group, and two tests read checkoutSettling/checkoutPreviewFreezeRef from the
+# hook's return value after that state had deliberately moved to the caller (POSSales).
+# Format: <file relative to src/> > <vitest fullName>, sorted. Compare with:
+#   npx vitest run --reporter=json --outputFile=report.json
+# and diff the failed assertionResults' fullName values against the lines below.
+
+pages/Sales/__tests__/useDelivery.characterization.test.js > initial state starts with an empty roster, list and validation state
+pages/Sales/__tests__/useDelivery.characterization.test.js > settle modal open does nothing when the modal closes
+pages/Sales/__tests__/useDelivery.characterization.test.js > settle modal open resets the filters, selection and payment lines, then loads

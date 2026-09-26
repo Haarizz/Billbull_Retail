@@ -35,6 +35,9 @@ class EmployeeControllerTest {
     @Mock
     private ModulePermissionService modulePermissionService;
 
+    @Mock private SalespersonService salespersonService;
+    @Mock private com.billbull.backend.hr.targets.EmployeeSalesTargetService targetService;
+
     private EmployeeController employeeController;
     private ObjectMapper objectMapper;
 
@@ -47,7 +50,9 @@ class EmployeeControllerTest {
                 objectMapper,
                 auditLogService,
                 userRepository,
-                modulePermissionService);
+                modulePermissionService,
+                salespersonService,
+                targetService);
     }
 
     @Test
@@ -106,11 +111,15 @@ class EmployeeControllerTest {
         e.setPhone("050-1234567");
         e.setEmail(code.toLowerCase() + "@example.test");
         e.setStatus(status);
+        e.setRole("Salesperson");
         return e;
     }
 
+    // DELIBERATELY WIDENED in Phase 2: `role` joins the projection so the POS can show the
+    // verified employee's designation without a second call. It is a business designation, not
+    // personal data. The exclusions below — phone, email — are the part that must not move.
     @Test
-    void salespersonsExposesOnlyIdCodeAndNameNoPersonalData() {
+    void salespersonsExposesOnlyIdCodeNameAndRoleNoPersonalData() {
         org.mockito.Mockito.when(employeeService.getActiveSalespersons())
                 .thenReturn(List.of(salesperson(7L, "EMP-007", "Manager", "One", "Active")));
 
@@ -121,7 +130,7 @@ class EmployeeControllerTest {
         org.junit.jupiter.api.Assertions.assertEquals(1, options.size());
         // Exactly these three keys: this feed is readable by every authenticated user.
         org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Set.of("id", "employeeCode", "name"), options.get(0).keySet());
+                java.util.Set.of("id", "employeeCode", "name", "role"), options.get(0).keySet());
         org.junit.jupiter.api.Assertions.assertEquals("Manager One", options.get(0).get("name"));
         org.junit.jupiter.api.Assertions.assertFalse(options.get(0).containsKey("phone"));
         org.junit.jupiter.api.Assertions.assertFalse(options.get(0).containsKey("email"));

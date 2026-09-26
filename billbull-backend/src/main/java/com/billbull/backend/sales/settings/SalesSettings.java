@@ -74,6 +74,42 @@ public class SalesSettings {
     @Column(nullable = false, length = 10, columnDefinition = "varchar(10) default 'BLOCK'")
     private ZeroPricePolicy zeroPricePolicy = ZeroPricePolicy.BLOCK;
 
+    /**
+     * Require employee salesperson verification (barcode scan) before a POS checkout may settle.
+     *
+     * <p>OFF (the default, and what every existing tenant gets) leaves the POS flow exactly as it
+     * was. ON makes verification mandatory for EVERY POS sale regardless of the logged-in
+     * operator's own designation — a Cashier + Salesperson does not bypass it. Enforced
+     * authoritatively in {@code PosCheckoutController} before the invoice is persisted; the POS UI
+     * gate is a courtesy.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean salespersonRequiredAtPos = false;
+
+    /**
+     * Enable the eligible-salesperson selector on back-office Sales Invoices.
+     *
+     * <p>Independent of {@link #salespersonRequiredAtPos}. Back office selects manually (no
+     * barcode) and is NOT subject to {@link #monthlyTargetRequired} — see
+     * {@code TargetReadinessService}'s class comment for that scope decision.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean salespersonRequiredAtBackOffice = false;
+
+    /**
+     * Block POS sales until EVERY active salesperson-eligible employee has a current-month target
+     * and an explicitly configured commission rate.
+     *
+     * <p>A GLOBAL, tenant-level readiness condition — not a check against the salesperson selected
+     * for the sale in hand. One misconfigured eligible employee blocks every POS sale, at every
+     * branch, because the target model is global per employee per month.
+     *
+     * <p>Deliberately independent of {@link #salespersonRequiredAtPos}: either may be on without
+     * the other.
+     */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean monthlyTargetRequired = false;
+
     @Transient
     private List<SalesDocumentNumberSetting> documentNumbering = new ArrayList<>();
 
@@ -143,6 +179,30 @@ public class SalesSettings {
 
     public void setZeroPricePolicy(ZeroPricePolicy zeroPricePolicy) {
         this.zeroPricePolicy = zeroPricePolicy;
+    }
+
+    public boolean isSalespersonRequiredAtPos() {
+        return salespersonRequiredAtPos;
+    }
+
+    public void setSalespersonRequiredAtPos(boolean salespersonRequiredAtPos) {
+        this.salespersonRequiredAtPos = salespersonRequiredAtPos;
+    }
+
+    public boolean isSalespersonRequiredAtBackOffice() {
+        return salespersonRequiredAtBackOffice;
+    }
+
+    public void setSalespersonRequiredAtBackOffice(boolean salespersonRequiredAtBackOffice) {
+        this.salespersonRequiredAtBackOffice = salespersonRequiredAtBackOffice;
+    }
+
+    public boolean isMonthlyTargetRequired() {
+        return monthlyTargetRequired;
+    }
+
+    public void setMonthlyTargetRequired(boolean monthlyTargetRequired) {
+        this.monthlyTargetRequired = monthlyTargetRequired;
     }
 
     public List<SalesDocumentNumberSetting> getDocumentNumbering() {

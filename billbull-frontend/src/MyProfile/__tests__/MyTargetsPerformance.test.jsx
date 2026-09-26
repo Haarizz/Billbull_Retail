@@ -19,7 +19,10 @@ const MINE = {
   sales: '9450.00',
   bills: 2,
   achievementPercent: '9.45',
-  commission: '945.00',
+  // 9,450 against a 100,000 target: the target has NOT been reached, so nothing is earned yet.
+  commission: '0.00',
+  commissionEligible: false,
+  commissionStatus: 'Not Eligible',
   remainingTarget: '90550.00',
   targetStatus: 'Below Target',
 };
@@ -46,9 +49,28 @@ describe('MyTargetsPerformance', () => {
 
     await waitFor(() => expect(screen.getByText('My Performance')).toBeInTheDocument());
     expect(screen.getByText('9450.00')).toBeInTheDocument();
-    expect(screen.getByText('945.00')).toBeInTheDocument();
     expect(screen.getByText('9.45%')).toBeInTheDocument();
     expect(screen.getByText(/Based on 2 invoice\(s\)/)).toBeInTheDocument();
+    // Below target: the commission reads as "nothing owed", not as an amount accruing towards
+    // payout. Showing 945.00 here would promise money the employee has not earned.
+    expect(screen.getByText('Not Eligible')).toBeInTheDocument();
+  });
+
+  it('shows the earned commission once the target has been reached', async () => {
+    // The worked example: 30,000 of sales against a 25,000 target at 10% pays 3,000 — the full
+    // month, not the 5,000 excess.
+    getMyPerformance.mockResolvedValue({
+      ...MINE,
+      targetAmount: '25000.00', sales: '30000.00', achievementPercent: '120.00',
+      commission: '3000.00', commissionEligible: true, commissionStatus: 'Eligible',
+      remainingTarget: '0.00', targetStatus: 'Target Reached',
+    });
+
+    render(<MyTargetsPerformance mode="Performance" />);
+
+    await waitFor(() => expect(screen.getByText('My Performance')).toBeInTheDocument());
+    expect(screen.getByText('3000.00')).toBeInTheDocument();
+    expect(screen.getByText('Eligible')).toBeInTheDocument();
   });
 
   it('never sends an employee id — the server resolves identity from the session', async () => {

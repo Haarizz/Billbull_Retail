@@ -26,3 +26,23 @@ export const getSalespersons = async () => {
     const res = await api.get("/api/employees/salespersons");
     return res.data;
 };
+
+/**
+ * Resolve a scanned employee barcode to an eligible salesperson.
+ *
+ * The barcode value IS the employee code — there is no second employee identifier. The SERVER
+ * decides eligibility (exists / Active / Salesperson or Cashier + Salesperson) and answers 400
+ * with a specific reason otherwise, so nothing here may be treated as verification on its own.
+ *
+ * Returns `{ id, employeeCode, name, role, status, targetMonth, targetAmount, commissionRate }`.
+ * `commissionRate: null` means "not configured" — it is NOT the same as 0%.
+ */
+export const lookupSalespersonByCode = async (employeeCode, { month } = {}) => {
+    const params = {};
+    if (month) params.month = month;
+    const res = await api.get(
+        `/api/employees/salespersons/by-code/${encodeURIComponent(String(employeeCode).trim())}`,
+        { params },
+    );
+    return res.data;
+};
