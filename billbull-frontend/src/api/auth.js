@@ -35,8 +35,15 @@ export const hasRole = (role) => {
 };
 
 // 🔐 Auth check
+// Presence alone is not authentication: an expired token sits in sessionStorage forever, so
+// PrivateRoute kept rendering the POS while every request came back rejected. Decoding `exp`
+// here sends a stale session to /login instead of leaving the cashier on a screen whose
+// buttons all fail. A malformed token decodes to null and is treated as logged-out.
 export const isAuthenticated = () => {
-  return !!sessionStorage.getItem("token");
+  const decoded = getDecodedToken();
+  if (!decoded) return false;
+  if (typeof decoded.exp !== "number") return true; // no expiry claim — let the server decide
+  return decoded.exp * 1000 > Date.now();
 };
 
 // 🔓 Logout

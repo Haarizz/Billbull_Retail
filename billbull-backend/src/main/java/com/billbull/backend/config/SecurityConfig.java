@@ -1,6 +1,8 @@
 package com.billbull.backend.config;
 
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchyImpl;
@@ -43,6 +45,14 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**", "/api/client-logs/**", "/uploads/**", "/tools/**").permitAll()
                         .anyRequest().authenticated())
+                // Without an explicit entry point Spring falls back to Http403ForbiddenEntryPoint,
+                // so a missing/expired JWT came back as 403 — indistinguishable from a real
+                // permission denial. The POS front end then showed "You do not have permission to
+                // perform this action" and kept the cashier on a dead session instead of taking the
+                // 401 path that clears the token and returns to /login. Authenticated-but-denied
+                // requests still get 403 from the default AccessDeniedHandler.
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
                 // Rate limiter runs AFTER JwtFilter so the authenticated principal is available for

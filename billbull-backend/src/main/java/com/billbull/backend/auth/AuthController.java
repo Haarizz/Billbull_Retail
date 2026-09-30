@@ -126,6 +126,14 @@ public class AuthController {
     @Transactional(readOnly = true)
     @GetMapping("/profile")
     public UserProfileDto getProfile(org.springframework.security.core.Authentication authentication) {
+        // /api/auth/** is permitAll, so this is reachable with no (or an expired) token, and Spring
+        // hands us a null Authentication for an anonymous principal. Left unguarded that was a 500
+        // NullPointerException on every stale-session profile fetch; 401 is the honest answer and
+        // lets the client take its session-expired path.
+        if (authentication == null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNAUTHORIZED, "Not authenticated");
+        }
         String username = authentication.getName();
         User user = userRepository.findByUsernameAndIsActiveTrue(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
