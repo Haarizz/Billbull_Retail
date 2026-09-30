@@ -16,19 +16,36 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
+
 @Service
 public class CustomerImportService {
 
     private final CustomerRepository repository;
+    private final BranchRepository branchRepo;
 
-    public CustomerImportService(CustomerRepository repository) {
+    public CustomerImportService(CustomerRepository repository, BranchRepository branchRepo) {
         this.repository = repository;
+        this.branchRepo = branchRepo;
     }
 
     public String importCustomers(MultipartFile file) {
+        return importCustomers(file, null);
+    }
+
+    /**
+     * @param branchId branch the imported customers belong to; null keeps them unattributed
+     *                 (branch_id NULL), which the scoping predicate in
+     *                 {@code CustomerRepository.searchCustomers} treats as visible to EVERY
+     *                 branch — so a tenant that needs branch-level segregation must pass one.
+     */
+    public String importCustomers(MultipartFile file, Long branchId) {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Import file is empty");
         }
+
+        Branch targetBranch = branchId == null ? null : branchRepo.findById(branchId).orElse(null);
 
         int createdCount = 0;
         int updatedCount = 0;
@@ -118,6 +135,9 @@ public class CustomerImportService {
                             Optional<Customer> existing = repository.findByCode(code.trim());
                             boolean isUpdate = existing.isPresent();
                             Customer customer = existing.orElseGet(Customer::new);
+                            if (!isUpdate) {
+                                assignBranch(customer, targetBranch);
+                            }
 
                             customer.setCode(limit(code.trim(), 255));
                             customer.setName(limit(name.trim(), 255));
@@ -155,6 +175,9 @@ public class CustomerImportService {
                             Optional<Customer> existing = repository.findByCode(code);
                             boolean isUpdate = existing.isPresent();
                             Customer customer = existing.orElseGet(Customer::new);
+                            if (!isUpdate) {
+                                assignBranch(customer, targetBranch);
+                            }
 
                             customer.setCode(code);
                             customer.setName(limit(name.trim(), 255));
@@ -185,6 +208,9 @@ public class CustomerImportService {
                             Optional<Customer> existing = repository.findByCode(code.trim());
                             boolean isUpdate = existing.isPresent();
                             Customer customer = existing.orElseGet(Customer::new);
+                            if (!isUpdate) {
+                                assignBranch(customer, targetBranch);
+                            }
 
                             String address = cell(row, 4);
                             String city = cell(row, 5);
@@ -375,5 +401,30 @@ public class CustomerImportService {
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    /**
+     * Mirrors {@code CustomerService}'s branch mapping: {@code branchEntity} is the owning FK the
+     * scoping predicate reads, and the allocation row is what the Customer form's branch list
+     * shows, so an imported customer needs both.
+     *
+     * Note this is distinct from {@code customer.setBranch(String)} elsewhere in this importer —
+     * that writes the legacy free-text label sourced from the sheet's Location column (see
+     * Customer.branch), which no query filters on.
+     */
+    private void assignBranch(Customer customer, Branch targetBranch) {
+        if (targetBranch == null) {
+            return;
+        }
+        customer.setBranchEntity(targetBranch);
+        boolean alreadyAllocated = customer.getBranchAllocations().stream()
+                .anyMatch(a -> a.getBranch() != null && targetBranch.getId().equals(a.getBranch().getId()));
+        if (!alreadyAllocated) {
+            CustomerBranchAllocation alloc = new CustomerBranchAllocation();
+            alloc.setCustomer(customer);
+            alloc.setBranch(targetBranch);
+            alloc.setDefault(true);
+            customer.getBranchAllocations().add(alloc);
+        }
     }
 }

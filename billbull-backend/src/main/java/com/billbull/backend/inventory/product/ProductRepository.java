@@ -9,6 +9,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
 public interface ProductRepository extends JpaRepository<Product, Long> {
+        boolean existsByCode(String code);
+
         boolean existsByCodeAndIsActiveTrue(String code);
 
         boolean existsByCodeAndStatusNot(String code, ProductStatus status);
@@ -18,6 +20,13 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         boolean existsBySkuAndIdNotAndIsActiveTrue(String sku, Long id);
 
         Optional<Product> findByCode(String code);
+
+        // Branch-Level Inventory Phase 6A: a code may exist once globally AND once per branch,
+        // so findByCode(String) can legitimately match more than one row. Importing into a branch
+        // resolves the owning tier explicitly instead of risking a NonUniqueResultException.
+        List<Product> findByCodeAndBranch_Id(String code, Long branchId);
+
+        List<Product> findByCodeAndBranchIsNull(String code);
 
         Optional<Product> findByIdAndIsActiveTrue(Long id);
 
@@ -57,7 +66,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
          * Paginated list for the product list view. JOIN FETCH avoids lazy-load N+1 for
          * brand and department.
          */
-        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department WHERE p.isActive = true ORDER BY p.name ASC")
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department WHERE p.isActive = true")
         Page<Product> findAllActiveForList(Pageable pageable);
 
         /** Paginated search — filters on name, code, SKU, brand name, or any of the product's barcodes. */
@@ -68,7 +77,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))" +
-                        ") ORDER BY p.name ASC")
+                        ")")
         Page<Product> findAllActiveBySearch(@org.springframework.data.repository.query.Param("search") String search,
                         Pageable pageable);
 
@@ -105,7 +114,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         @Query("SELECT DISTINCT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
                         "WHERE p.isActive = true AND p.id IN (" +
                         "  SELECT sm.productId FROM StockMovement sm WHERE sm.warehouseId = :warehouseId" +
-                        ") ORDER BY p.name ASC")
+                        ")")
         Page<Product> findAllActiveForListByWarehouse(
                         @org.springframework.data.repository.query.Param("warehouseId") Long warehouseId,
                         Pageable pageable);
@@ -123,7 +132,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))" +
-                        ") ORDER BY p.name ASC")
+                        ")")
         Page<Product> findAllActiveBySearchAndWarehouse(
                         @org.springframework.data.repository.query.Param("search") String search,
                         @org.springframework.data.repository.query.Param("warehouseId") Long warehouseId,
@@ -143,8 +152,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  OR EXISTS (SELECT 1 FROM BatchMaster bm WHERE bm.productId = p.id AND LOWER(bm.batchNumber) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
                         "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
-                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) " +
-                        "ORDER BY p.name ASC")
+                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) ")
         Page<Product> findAllActiveFiltered(
                         @org.springframework.data.repository.query.Param("search") String search,
                         @org.springframework.data.repository.query.Param("departmentId") Long departmentId,
@@ -269,8 +277,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
 
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
-                        "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) " +
-                        "ORDER BY p.name ASC")
+                        "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) ")
         Page<Product> findAllActiveForListInBranchScope(
                         @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds,
                         Pageable pageable);
@@ -282,7 +289,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  LOWER(p.sku)  LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  LOWER(p.brand.name) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                         "  EXISTS (SELECT 1 FROM ProductBarcode pb WHERE pb.product = p AND LOWER(pb.barcode) LIKE LOWER(CONCAT('%', :search, '%')))" +
-                        ") ORDER BY p.name ASC")
+                        ")")
         Page<Product> findAllActiveBySearchInBranchScope(
                         @org.springframework.data.repository.query.Param("search") String search,
                         @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds,
@@ -298,8 +305,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         "  OR EXISTS (SELECT 1 FROM BatchMaster bm WHERE bm.productId = p.id AND LOWER(bm.batchNumber) LIKE LOWER(CONCAT('%', :search, '%')))) " +
                         "AND (:departmentId IS NULL OR p.department.id = :departmentId) " +
                         "AND (:brandId IS NULL OR p.brand.id = :brandId) " +
-                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) " +
-                        "ORDER BY p.name ASC")
+                        "AND (:availableInPos IS NULL OR p.availableInPos = :availableInPos) ")
         Page<Product> findAllActiveFilteredInBranchScope(
                         @org.springframework.data.repository.query.Param("search") String search,
                         @org.springframework.data.repository.query.Param("departmentId") Long departmentId,

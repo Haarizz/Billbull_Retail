@@ -28,10 +28,13 @@ class CustomerImportServiceTest {
     @Mock
     private CustomerRepository repository;
 
+    @Mock
+    private com.billbull.backend.settings.branch.BranchRepository branchRepo;
+
     @Test
     void importsAcFormatPhoneOnlyAndNameOnlyRows() throws Exception {
         when(repository.findByCode(anyString())).thenReturn(Optional.empty());
-        CustomerImportService service = new CustomerImportService(repository);
+        CustomerImportService service = new CustomerImportService(repository, branchRepo);
 
         MockMultipartFile file = new MockMultipartFile(
                 "file",
