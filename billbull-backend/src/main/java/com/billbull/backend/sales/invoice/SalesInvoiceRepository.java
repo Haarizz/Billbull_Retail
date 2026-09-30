@@ -642,7 +642,8 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
          * can never exceed it. The amount sums the invoices' own {@code balance}; it is never
          * derived from {@code invoiceTotal}.
          *
-         * <p>Reads through {@code idx_sales_invoice_customer_due} (customer_code, due_date).
+         * <p>Reads through {@code idx_sales_invoice_customer_due} (customer_code, delivery_date
+         * — the column {@code dueDate} is mapped to).
          */
         @Query("SELECT new com.billbull.backend.sales.invoice.CustomerOverdueSummary("
                + "COUNT(s), COALESCE(SUM(s.balance), 0)) FROM SalesInvoice s "
