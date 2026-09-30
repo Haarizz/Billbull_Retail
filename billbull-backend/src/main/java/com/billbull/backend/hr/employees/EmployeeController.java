@@ -203,6 +203,28 @@ public class EmployeeController {
         return service.getActiveEmployees();
     }
 
+    /**
+     * Typeahead search backing the global search modal.
+     *
+     * <p>Gated on {@code hr.employee} — deliberately not modelled on
+     * {@code /names}, which is authenticated-only and therefore unsuitable as the
+     * basis of a global search that surfaces employee records. Returns
+     * {@link EmployeeSearchResponse}, which carries no payroll, attendance,
+     * leave, document or contact data. {@code size} is clamped server-side.
+     */
+    @GetMapping("/search")
+    @PreAuthorize("isAuthenticated()")
+    public List<EmployeeSearchResponse> search(
+            @RequestParam(defaultValue = "") String q,
+            @RequestParam(defaultValue = "5") int size,
+            @RequestParam(defaultValue = "false") boolean preview) {
+        modulePermissionService.requireCanView("hr.employee");
+        // `preview` backs the global search modal's empty-query suggestions and applies
+        // only when there is no term; a blank q without it still returns nothing.
+        if (preview && (q == null || q.isBlank())) return service.preview(size);
+        return service.search(q, size);
+    }
+
     @GetMapping("/pending")
     public List<Employee> pendingEmployees() {
         modulePermissionService.requireCanView("hr.employee");

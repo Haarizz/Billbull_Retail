@@ -14,6 +14,35 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, String
 
     List<LedgerEntry> findByAccountCodeOrderByTransactionDateAsc(String accountCode);
 
+    /**
+     * Newest-first page of one account's entries, backing
+     * {@code GET /api/ledger/accounts/{code}/transactions}.
+     *
+     * <p>Deliberately separate from {@link #findAllByOrderByTransactionDateDesc()}, which the
+     * GL transactions screen uses and which loads the whole ledger. The {@code Pageable} caps
+     * the row count in SQL, and the (account_code, transaction_date) index the entity already
+     * declares (idx_ledger_acct_date, also in V3__missing_indexes.sql) serves both the filter
+     * and the sort.
+     *
+     * <p>{@code id} is the tie-breaker so entries sharing a date come back in a stable order —
+     * without it the page contents are non-deterministic for same-day postings.
+     *
+     * <p>Branch-scoped, for the same reason {@code getTransactionHistory} is: a voucher line is
+     * branch-attributed transactional data, so a user who cannot reach a branch must not read
+     * its postings here either. Entries with no branch stay visible, as everywhere else.
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT le FROM LedgerEntry le
+            WHERE le.accountCode = :accountCode
+              AND (:allBranches = true OR le.branch IS NULL OR le.branch.id IN :branchIds)
+            ORDER BY le.transactionDate DESC, le.id DESC
+            """)
+    List<LedgerEntry> findRecentByAccountCodeScoped(
+            @org.springframework.data.repository.query.Param("accountCode") String accountCode,
+            @org.springframework.data.repository.query.Param("allBranches") boolean allBranches,
+            @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds,
+            org.springframework.data.domain.Pageable pageable);
+
     List<LedgerEntry> findByTransactionDateBetweenOrderByTransactionDateAsc(java.time.LocalDate start,
             java.time.LocalDate end);
 

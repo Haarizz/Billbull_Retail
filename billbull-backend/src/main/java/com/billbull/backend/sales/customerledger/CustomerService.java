@@ -57,6 +57,9 @@ public class CustomerService {
     @Autowired
     private EffectiveCorrectionViewService effectiveCorrectionViewService;
 
+    @Autowired
+    private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+
     // =========================
     // GET ALL CUSTOMERS
     // QA-028: force-initialise savedAddresses while the JPA session is open.
@@ -129,10 +132,35 @@ public class CustomerService {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Global-search customer typeahead, branch-scoped in the database.
+     *
+     * <p>A user who cannot reach every branch sees only customers attached to a branch
+     * they can reach, plus customers with no branch attribution. Users who can reach every
+     * branch keep seeing every customer; the Branch Selector does not narrow search (see
+     * {@code BranchAccessService.currentSearchScope()}). The filtering happens in the
+     * query, not in the caller — the frontend never sees an out-of-scope row.
+     */
     @Transactional(readOnly = true)
     public List<Customer> search(String q) {
         if (q == null || q.isBlank()) return List.of();
-        List<Customer> list = repository.searchAllFields(q);
+        com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
+                branchAccessService.currentSearchScope();
+        List<Customer> list = repository.searchAllFields(q, scope.allBranches(), scope.branchIds());
+        list.forEach(c -> c.getSavedAddresses().size());
+        return list;
+    }
+
+    /**
+     * The first few customers, for the global search modal's empty-query preview.
+     * Branch-scoped exactly as {@link #search} is, and bounded in the database.
+     */
+    @Transactional(readOnly = true)
+    public List<Customer> preview(int size) {
+        com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
+                branchAccessService.currentSearchScope();
+        List<Customer> list = repository.previewCustomers(scope.allBranches(), scope.branchIds(),
+                com.billbull.backend.util.SearchLimit.page(size));
         list.forEach(c -> c.getSavedAddresses().size());
         return list;
     }
@@ -184,6 +212,90 @@ public class CustomerService {
             dto.setBranch(customer.getBranchEntity().getName());
         }
         return dto;
+    }
+
+    // =========================
+    // CUSTOMER SUMMARY (global search details panel)
+    // =========================
+
+    /**
+     * Financial snapshot of one customer, using the same arithmetic as
+     * {@link #getAllCustomers(String)} but resolved for a single row.
+     *
+     * <p>The formula is deliberately identical — opening balance from
+     * {@code Customer.balance}, outstanding as invoice outstanding + opening
+     * outstanding, total sales as opening balance + lifetime invoiced — so the details
+     * panel and the customer list can never disagree about the same customer. What
+     * differs is only the query shape: three single-customer sums instead of three
+     * GROUP BY aggregates over every customer in the table.
+     *
+     * <p>Total Paid is returned as {@code totalSales - outstanding} — lifetime settled,
+     * consistent with the two figures it is derived from by construction. It is deliberately
+     * not a receipt-voucher sum, which would miss any sale settled at the till without one.
+     *
+     * <p>Overdue (count and amount) is returned from one grouped query over this customer's
+     * invoices: {@code dueDate < today} and {@code balance > 0}, within the same status
+     * window as Outstanding, so it can never exceed it. It deliberately does not use the
+     * existing global {@code countOverdueInvoices}, which has no customer predicate and ages
+     * from {@code invoiceDate}.
+     *
+     * <p>No Due Amount and no generic Last Transaction are returned — see
+     * {@code docs/global-search-details-decisions.md}.
+     */
+    @Transactional(readOnly = true)
+    public CustomerSummaryResponse getCustomerSummary(Long id) {
+        Customer customer = repository.findById(id).orElse(null);
+        if (customer == null) return null;
+
+        String code = customer.getCode();
+        BigDecimal openingBalance = customer.getBalance() != null ? customer.getBalance() : BigDecimal.ZERO;
+
+        BigDecimal invoiced = BigDecimal.ZERO;
+        BigDecimal invOutstanding = BigDecimal.ZERO;
+        BigDecimal opnOutstanding = BigDecimal.ZERO;
+        com.billbull.backend.sales.invoice.CustomerOverdueSummary overdue =
+                com.billbull.backend.sales.invoice.CustomerOverdueSummary.EMPTY;
+        // A customer with no code cannot be joined to invoices or opening invoices at
+        // all — those are keyed by code. Identity still renders; the figures stay at the
+        // opening balance rather than being guessed.
+        if (code != null && !code.isBlank()) {
+            invoiced = nullToZero(salesInvoiceRepo.sumInvoiceTotalForCustomerCode(code));
+            invOutstanding = nullToZero(salesInvoiceRepo.sumOutstandingBalanceForCustomerCode(code));
+            opnOutstanding = nullToZero(openingInvoiceRepository.sumOutstandingForCustomer(code));
+            // One grouped query for count + amount, so the two can never be read at
+            // different instants. "Today" is resolved once, here, rather than inside the
+            // query, so the boundary is explicit and testable.
+            com.billbull.backend.sales.invoice.CustomerOverdueSummary fetched =
+                    salesInvoiceRepo.overdueSummaryForCustomerCode(code, java.time.LocalDate.now());
+            if (fetched != null) overdue = fetched;
+        }
+
+        BigDecimal outstanding = invOutstanding.add(opnOutstanding);
+        BigDecimal totalSales = openingBalance.add(invoiced);
+
+        CustomerSummaryResponse dto = new CustomerSummaryResponse();
+        dto.setId(customer.getId());
+        dto.setCustomerCode(code);
+        dto.setCustomerName(customer.getName());
+        dto.setStatus(customer.getStatus());
+        dto.setCurrency(customer.getCurrency());
+        dto.setBranch(customer.getBranchEntity() != null
+                ? customer.getBranchEntity().getName()
+                : customer.getBranch());
+        dto.setOpeningBalance(openingBalance);
+        dto.setOutstanding(outstanding);
+        dto.setTotalSales(totalSales);
+        // Lifetime settled, derived from the two figures directly above rather than from
+        // receipt vouchers: a receipt-voucher sum would miss any sale settled at the till
+        // without one, and could contradict the outstanding shown beside it. This cannot.
+        dto.setTotalPaid(totalSales.subtract(outstanding));
+        dto.setOverdueInvoiceCount(overdue.getInvoiceCount());
+        dto.setOverdueAmount(overdue.getAmount());
+        return dto;
+    }
+
+    private static BigDecimal nullToZero(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 
     // =========================

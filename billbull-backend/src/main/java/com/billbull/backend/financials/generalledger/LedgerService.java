@@ -44,6 +44,8 @@ public class LedgerService {
     @Autowired
     private LedgerEntryRepository entryRepo;
     @Autowired
+    private GlAccountBalanceRepository glAccountBalanceRepo;
+    @Autowired
     private BranchAccessService branchAccessService;
     @Autowired
     private BranchRepository branchRepository;
@@ -145,6 +147,26 @@ public class LedgerService {
         return accountRepo.findAll();
     }
 
+    /**
+     * Server-side account typeahead for the global search modal. A blank query
+     * returns nothing rather than the whole chart of accounts.
+     *
+     * <p>Not branch-scoped, per the note above: the COA is a company-wide master.
+     */
+    public List<com.billbull.backend.financials.chartofaccounts.AccountSearchResponse> searchAccounts(
+            String q, int size) {
+        if (q == null || q.isBlank()) return List.of();
+        return accountRepo.searchAccounts(q.trim(), com.billbull.backend.util.SearchLimit.page(size));
+    }
+
+    /**
+     * The first few accounts, for the global search modal's empty-query preview.
+     * Bounded in the database; ordering matches the search.
+     */
+    public List<com.billbull.backend.financials.chartofaccounts.AccountSearchResponse> previewAccounts(int size) {
+        return accountRepo.previewAccounts(com.billbull.backend.util.SearchLimit.page(size));
+    }
+
     public List<Account> getBankAccounts() {
         return getBankAccounts(false);
     }
@@ -189,6 +211,126 @@ public class LedgerService {
     /** Single account by code, or null when no such code exists. */
     public Account getAccountByCode(String code) {
         return code == null ? null : accountRepo.findByCode(code.trim());
+    }
+
+    // ==================== ACCOUNT DETAIL SUMMARY (global search details panel) ====================
+
+    /**
+     * Balance summary for one account code, assembled from the pre-aggregated
+     * {@link GlAccountBalance} rows rather than by summing ledger entries.
+     *
+     * <p>Branch-scoped through {@link BranchAccessService#currentSearchScope()} — the same
+     * resolver the sibling {@link #getAccountTransactions(String, int)} read uses, so both
+     * halves of the details panel describe one dataset. A caller who cannot reach a branch
+     * never receives its debit, credit or closing figure; ADMIN / SUPER_ADMIN (the
+     * {@code isAllBranches} JWT claim) keep the company-wide view unchanged. The predicate
+     * is pushed into SQL by {@code GlAccountBalanceRepository.findByAccountCodeScoped}.
+     *
+     * <p>The account totals are the sum of the balance rows <em>that are returned</em>, never an
+     * independently queried company-wide figure, so the response is internally consistent with
+     * the per-branch breakdown it carries: a branch-scoped total describes exactly the branch
+     * rows beside it. Balance rows whose {@code branchId} is null (the posting engine's
+     * rolling-window rows) stay in scope for restricted and unrestricted callers alike — as
+     * everywhere else in {@code BranchAccessService} — and are reported as an unattributed
+     * branch; dropping them would leave the branch rows failing to add up to the total.
+     *
+     * <p>Several rows can share a branch (one per fiscal period), so they are folded together
+     * by branch id; {@code fiscalPeriodId} is not part of this panel's contract.
+     *
+     * @return the summary, or null when no such account code exists.
+     */
+    @Transactional(readOnly = true)
+    public LedgerAccountSummaryResponse getAccountSummary(String code) {
+        if (code == null || code.isBlank()) return null;
+        String accountCode = code.trim();
+
+        Account account = accountRepo.findByCode(accountCode);
+        if (account == null) return null;
+
+        LedgerAccountSummaryResponse response = new LedgerAccountSummaryResponse();
+        response.setAccountCode(account.getCode());
+        response.setAccountName(account.getName());
+        response.setAccountType(account.getAccountType());
+        response.setAccountGroup(account.getAccountGroup());
+        response.setStatus(account.getStatus());
+
+        BranchAccessService.ListScope scope = branchAccessService.currentSearchScope();
+        List<GlAccountBalance> balances = glAccountBalanceRepo.findByAccountCodeScoped(
+                accountCode, scope.allBranches(), scope.branchIds());
+
+        BigDecimal debitTotal = BigDecimal.ZERO;
+        BigDecimal creditTotal = BigDecimal.ZERO;
+        BigDecimal closing = BigDecimal.ZERO;
+
+        // LinkedHashMap keeps a stable order; the null key is the unattributed bucket.
+        Map<Long, BigDecimal[]> byBranch = new LinkedHashMap<>();
+        for (GlAccountBalance balance : balances) {
+            BigDecimal debit = nullToZero(balance.getDebitTotal());
+            BigDecimal credit = nullToZero(balance.getCreditTotal());
+            BigDecimal net = nullToZero(balance.getClosingBalance());
+
+            debitTotal = debitTotal.add(debit);
+            creditTotal = creditTotal.add(credit);
+            closing = closing.add(net);
+
+            BigDecimal[] bucket = byBranch.computeIfAbsent(balance.getBranchId(),
+                    k -> new BigDecimal[] { BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO });
+            bucket[0] = bucket[0].add(debit);
+            bucket[1] = bucket[1].add(credit);
+            bucket[2] = bucket[2].add(net);
+        }
+
+        response.setDebitTotal(debitTotal);
+        response.setCreditTotal(creditTotal);
+        response.setClosingBalance(closing);
+
+        // One findAllById for every named branch rather than a lookup per row.
+        Set<Long> branchIds = byBranch.keySet().stream()
+                .filter(java.util.Objects::nonNull)
+                .collect(java.util.stream.Collectors.toSet());
+        Map<Long, String> branchNames = new LinkedHashMap<>();
+        if (!branchIds.isEmpty()) {
+            branchRepository.findAllById(branchIds)
+                    .forEach(branch -> branchNames.put(branch.getId(), branch.getName()));
+        }
+
+        List<LedgerAccountSummaryResponse.BranchBalance> branchBalances = new ArrayList<>();
+        byBranch.forEach((branchId, bucket) -> branchBalances.add(
+                new LedgerAccountSummaryResponse.BranchBalance(
+                        branchId,
+                        branchId == null
+                                ? UNATTRIBUTED_BRANCH_LABEL
+                                : branchNames.getOrDefault(branchId, "Branch " + branchId),
+                        bucket[0], bucket[1], bucket[2])));
+        response.setBranchBalances(branchBalances);
+
+        return response;
+    }
+
+    /**
+     * The most recent ledger entries for one account code, newest first.
+     *
+     * <p>Bounded in SQL through {@link com.billbull.backend.util.SearchLimit} — the same row-cap
+     * contract the typeahead endpoints use — so the details panel can never pull the whole
+     * ledger the way {@code GET /api/ledger/transactions} does.
+     */
+    @Transactional(readOnly = true)
+    public List<LedgerAccountTransactionResponse> getAccountTransactions(String code, int size) {
+        if (code == null || code.isBlank()) return List.of();
+        BranchAccessService.ListScope scope = branchAccessService.currentSearchScope();
+        return entryRepo
+                .findRecentByAccountCodeScoped(code.trim(), scope.allBranches(), scope.branchIds(),
+                        com.billbull.backend.util.SearchLimit.page(size))
+                .stream()
+                .map(LedgerAccountTransactionResponse::from)
+                .toList();
+    }
+
+    /** Label for balance rows the posting engine left without a branch. */
+    static final String UNATTRIBUTED_BRANCH_LABEL = "Unattributed";
+
+    private static BigDecimal nullToZero(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 
     public Account saveAccount(Account account) {

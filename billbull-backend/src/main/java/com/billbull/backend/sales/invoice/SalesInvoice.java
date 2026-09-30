@@ -19,6 +19,9 @@ import java.util.List;
     @Index(name = "idx_sales_invoice_customer",      columnList = "customer_code"),
     @Index(name = "idx_sales_invoice_status",        columnList = "status"),
     @Index(name = "idx_sales_invoice_customer_due",  columnList = "customer_code, delivery_date"),
+    // Despite the name above, that index covers delivery_date. This one is the overdue
+    // read's index (SalesInvoiceRepository.overdueSummaryForCustomerCode). See V107.
+    @Index(name = "idx_sales_invoice_customer_duedate", columnList = "customer_code, due_date"),
     @Index(name = "idx_sales_invoice_number",        columnList = "invoice_number")
 })
 @JsonIgnoreProperties({ "hibernateLazyInitializer", "handler" })

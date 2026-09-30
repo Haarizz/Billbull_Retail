@@ -19,6 +19,12 @@ public interface EmployeeService {
 
     List<Employee> getPendingEmployees();
 
+    /** Typeahead search for the global search modal — a lightweight projection, not full records. */
+    List<EmployeeSearchResponse> search(String q, int size);
+
+    /** Empty-query preview for the global search modal — the first {@code size} rows. */
+    List<EmployeeSearchResponse> preview(int size);
+
     // ===== CREATE / UPDATE =====
     Employee createEmployee(EmployeeUpsertRequest request, MultipartFile avatar);
 

@@ -24,18 +24,21 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final AdminSafeguardService adminSafeguardService;
     private final UserService userService;
     private final BranchRepository branchRepository;
+    private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
     public EmployeeServiceImpl(
             EmployeeRepository repository,
             UserRepository userRepository,
             AdminSafeguardService adminSafeguardService,
             UserService userService,
-            BranchRepository branchRepository) {
+            BranchRepository branchRepository,
+            com.billbull.backend.settings.branch.BranchAccessService branchAccessService) {
         this.repository = repository;
         this.userRepository = userRepository;
         this.adminSafeguardService = adminSafeguardService;
         this.userService = userService;
         this.branchRepository = branchRepository;
+        this.branchAccessService = branchAccessService;
     }
 
     @Override
@@ -68,6 +71,37 @@ public class EmployeeServiceImpl implements EmployeeService {
     @Override
     public List<Employee> getPendingEmployees() {
         return repository.findByStatus("Pending");
+    }
+
+    /**
+     * Server-side employee typeahead. A blank query returns nothing rather than
+     * the whole directory — same guard as the customer and vendor searches.
+     *
+     * <p>Branch-scoped in the database. A user who cannot reach every branch sees only
+     * employees of a branch they can reach, plus employees with no branch record. Users
+     * who can reach every branch keep seeing the whole directory, with the branch on each
+     * row; the Branch Selector does not narrow search (see
+     * {@code BranchAccessService.currentSearchScope()}).
+     */
+    @Override
+    public List<EmployeeSearchResponse> search(String q, int size) {
+        if (q == null || q.isBlank()) return List.of();
+        com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
+                branchAccessService.currentSearchScope();
+        return repository.searchEmployees(q.trim(), scope.allBranches(), scope.branchIds(),
+                com.billbull.backend.util.SearchLimit.page(size));
+    }
+
+    /**
+     * The first few employees, for the global search modal's empty-query preview.
+     * Branch-scoped exactly as {@link #search} is, and bounded in the database.
+     */
+    @Override
+    public List<EmployeeSearchResponse> preview(int size) {
+        com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
+                branchAccessService.currentSearchScope();
+        return repository.previewEmployees(scope.allBranches(), scope.branchIds(),
+                com.billbull.backend.util.SearchLimit.page(size));
     }
 
     /**

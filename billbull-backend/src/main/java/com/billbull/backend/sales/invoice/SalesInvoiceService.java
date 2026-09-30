@@ -60,6 +60,7 @@ import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import com.billbull.backend.util.DocumentOrderingUtil;
+import com.billbull.backend.util.SearchLimit;
 import com.billbull.backend.pos.dayclose.PosDayCloseRepository;
 
 @Service
@@ -1126,6 +1127,31 @@ public class SalesInvoiceService {
         stats.put("thisMonthInvoiceCount", monthInvoiceCount);
         stats.put("outstandingBalance", outstanding);
         return stats;
+    }
+
+    // RECENT INVOICES FOR ONE CUSTOMER
+    // ----------------------------
+
+    /**
+     * The newest invoices raised on one customer, for the global search details panel.
+     *
+     * <p>Keeps the DRAFT/CANCELLED exclusions and the newest-first ordering of
+     * {@code findRecentByCustomerCode} — the query the POS History tab runs — but adds the
+     * branch predicate every list read of this entity already applies
+     * ({@code filterBranchScoped}). Global search is reachable from any branch, so without
+     * it this section would be the one place a branch-restricted caller reads another
+     * branch's invoices. {@code size} is clamped by {@link SearchLimit}, so this can never
+     * become {@link #getAll()} for a busy customer.
+     */
+    @Transactional(readOnly = true)
+    public List<CustomerRecentInvoiceResponse> getRecentInvoicesForCustomer(String customerCode, int size) {
+        if (customerCode == null || customerCode.isBlank()) return List.of();
+        BranchAccessService.ListScope scope = branchAccessService.currentSearchScope();
+        return invoiceRepo.findRecentByCustomerCodeScoped(customerCode.trim(),
+                        scope.allBranches(), scope.branchIds(), SearchLimit.page(size))
+                .stream()
+                .map(CustomerRecentInvoiceResponse::from)
+                .collect(java.util.stream.Collectors.toList());
     }
 
     // GET ALL

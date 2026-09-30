@@ -161,4 +161,65 @@ class ProductServiceBranchScopeTest {
 
         assertThat(service().resolveActiveByCodeOrSku("P1")).isEmpty();
     }
+
+    // ───────────────── empty-query preview ─────────────────
+
+    /**
+     * The global search modal's empty-query suggestion list. It is the one place a
+     * product read happens with nothing to match on, so what matters is that it stays
+     * capped in the database and keeps the same branch scope as every other catalog read.
+     */
+    @Test
+    void previewIsBoundedAndUsesTheUnscopedListWhenNoScopeIsActive() {
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.empty());
+        when(productRepo.findAllActiveForList(any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> pageable =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+
+        service().previewProducts(2);
+
+        verify(productRepo).findAllActiveForList(pageable.capture());
+        assertThat(pageable.getValue().getPageSize()).isEqualTo(2);
+        assertThat(pageable.getValue().getPageNumber()).isZero();
+        verify(productRepo, never()).findAllActiveForListInBranchScope(any(), any());
+    }
+
+    @Test
+    void previewUsesTheBranchScopedListWhenAScopeIsActive() {
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.of(scopeOf(3L)));
+        when(productRepo.findAllActiveForListInBranchScope(any(), any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        service().previewProducts(2);
+
+        verify(productRepo).findAllActiveForListInBranchScope(org.mockito.ArgumentMatchers.eq(Set.of(3L)),
+                any(org.springframework.data.domain.Pageable.class));
+        verify(productRepo, never()).findAllActiveForList(any());
+    }
+
+    @Test
+    void previewSizeIsCappedServerSide() {
+        when(branchScopeResolver.activeListScope()).thenReturn(Optional.empty());
+        when(productRepo.findAllActiveForList(any(org.springframework.data.domain.Pageable.class)))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> pageable =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+
+        service().previewProducts(10_000);
+
+        verify(productRepo).findAllActiveForList(pageable.capture());
+        assertThat(pageable.getValue().getPageSize())
+                .isEqualTo(com.billbull.backend.util.SearchLimit.MAX_SIZE);
+    }
+
+    @Test
+    void searchWithABlankTermStillReadsNothingAtAll() {
+        // The preview is opt-in. Without it an empty term must not become a table read.
+        assertThat(service().searchProducts("")).isEmpty();
+
+        verify(productRepo, never()).findAllActiveForList(any());
+        verify(productRepo, never()).findAllActiveBySearch(any(), any());
+    }
+
 }

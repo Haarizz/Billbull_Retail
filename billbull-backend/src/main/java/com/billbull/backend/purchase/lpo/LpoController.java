@@ -61,6 +61,21 @@ public class LpoController {
         return ResponseEntity.ok(service.listPage(status, search, dateFrom, dateTo, vendor, page, size));
     }
 
+    /**
+     * The newest LPOs for one vendor, backing the global search details panel.
+     *
+     * <p>Guarded by {@code purchases.lpo} rather than {@code purchases.vendor}: seeing a
+     * vendor record does not imply seeing its purchase orders, and the panel renders this
+     * section's denial independently of the rest.
+     */
+    @GetMapping("/recent")
+    public java.util.List<VendorRecentLpoResponse> recentForVendor(
+            @RequestParam Long vendorId,
+            @RequestParam(defaultValue = "5") int size) {
+        modulePermissionService.requireCanView(MODULE);
+        return service.getRecentForVendor(vendorId, size);
+    }
+
     @GetMapping("/counts")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Long>> counts() {

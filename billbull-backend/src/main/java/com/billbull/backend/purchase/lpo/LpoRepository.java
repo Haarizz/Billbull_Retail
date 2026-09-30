@@ -27,6 +27,29 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
     boolean existsByVendorCode(String vendorCode);
 
     /**
+     * The most recent LPOs raised on one vendor, newest first, backing the global search
+     * details panel.
+     *
+     * <p>Filtered and ordered in SQL and bounded by the caller's {@link Pageable} — the
+     * paged list query above searches by vendor name/code as free text, which is not the
+     * same thing as "this vendor's LPOs", and nothing here loads the full list to filter
+     * it in memory. Ties on {@code lpoDate} are broken by id so the order is stable.
+     *
+     * <p>Branch-scoped on the same contract as {@link #searchPage}: an LPO is a
+     * branch-attributed document, so a caller who cannot reach a branch must not read its
+     * purchase orders through the details panel either. {@code allBranches = true} applies
+     * no predicate; otherwise rows must be in {@code branchIds} or carry no branch
+     * (legacy rows stay visible, as elsewhere).
+     */
+    @Query("SELECT l FROM Lpo l WHERE l.vendorId = :vendorId "
+            + "AND (:allBranches = true OR l.branchId IS NULL OR l.branchId IN :branchIds) "
+            + "ORDER BY l.lpoDate DESC, l.id DESC")
+    List<Lpo> findRecentByVendorId(@Param("vendorId") Long vendorId,
+            @Param("allBranches") boolean allBranches,
+            @Param("branchIds") java.util.Collection<Long> branchIds,
+            Pageable pageable);
+
+    /**
      * Branch-scoped, filtered, sorted page of LPOs — all pushed into SQL so only
      * one page of rows is materialised. See {@code BranchAccessService.ListScope}
      * for the {@code allBranches}/{@code branchIds} contract. {@code search} must

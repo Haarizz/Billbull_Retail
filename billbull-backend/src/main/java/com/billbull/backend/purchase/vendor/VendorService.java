@@ -22,6 +22,7 @@ public class VendorService {
     private final com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invRepo;
     private final com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo;
     private final BranchRepository branchRepo;
+    private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
     @PersistenceContext
     private EntityManager em;
@@ -30,12 +31,14 @@ public class VendorService {
             com.billbull.backend.purchase.lpo.LpoRepository lpoRepo,
             com.billbull.backend.purchase.invoice.PurchaseInvoiceRepository invRepo,
             com.billbull.backend.purchase.payment.PaymentVoucherRepository payRepo,
-            BranchRepository branchRepo) {
+            BranchRepository branchRepo,
+            com.billbull.backend.settings.branch.BranchAccessService branchAccessService) {
         this.repo = repo;
         this.lpoRepo = lpoRepo;
         this.invRepo = invRepo;
         this.payRepo = payRepo;
         this.branchRepo = branchRepo;
+        this.branchAccessService = branchAccessService;
     }
 
     // -------------------------
@@ -59,6 +62,40 @@ public class VendorService {
         map(req, v);
         mapBranchAllocations(req, v);
         return repo.save(v);
+    }
+
+    // -------------------------
+    // SEARCH (typeahead / global search)
+    // -------------------------
+
+    /**
+     * Server-side vendor typeahead. Blank queries return nothing rather than the
+     * whole table — same guard as {@code CustomerService.search}.
+     *
+     * <p>Branch-scoped in the database, not in the caller. A user who cannot reach
+     * every branch sees only vendors attached to a branch they can reach, plus vendors
+     * with no branch attribution at all. Users who can reach every branch keep seeing
+     * every vendor, with the branch on each row — the Branch Selector does not narrow
+     * search (see {@code BranchAccessService.currentSearchScope()}).
+     */
+    @Transactional(readOnly = true)
+    public List<VendorSearchResponse> search(String q, int size) {
+        if (q == null || q.isBlank()) return List.of();
+        com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
+                branchAccessService.currentSearchScope();
+        return repo.searchVendors(q.trim(), scope.allBranches(), scope.branchIds(),
+                com.billbull.backend.util.SearchLimit.page(size));
+    }
+
+    /**
+     * The first few vendors, for the global search modal's empty-query preview.
+     * Branch-scoped exactly as {@link #search} is, and bounded in the database.
+     */
+    public List<VendorSearchResponse> preview(int size) {
+        com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
+                branchAccessService.currentSearchScope();
+        return repo.previewVendors(scope.allBranches(), scope.branchIds(),
+                com.billbull.backend.util.SearchLimit.page(size));
     }
 
     // -------------------------
@@ -165,6 +202,85 @@ public class VendorService {
                     .collect(Collectors.toList());
         }
         return result;
+    }
+
+    // -------------------------
+    // SUMMARY (global search details panel)
+    // -------------------------
+
+    /**
+     * Payables snapshot for one vendor, using the same accounting as {@link #list(String)}
+     * but resolved for a single row — none of the grouped all-vendor queries are touched.
+     *
+     * <p><b>Name-keying.</b> The vendor record is id-based, but this module's accounting is
+     * keyed by {@code vendorName}: purchase invoices and payment vouchers store the name,
+     * not a vendor id. So the id is resolved to the authoritative {@link Vendor} first and
+     * that record's <em>current</em> name drives the accounting queries. Two consequences
+     * are worth naming rather than hiding:
+     *
+     * <ul>
+     *   <li>A vendor renamed after its invoices were raised will under-report here,
+     *       exactly as it already does on the vendor list — this method reproduces the
+     *       existing behaviour rather than diverging from it.
+     *   <li>Two vendors sharing a name share these figures, for the same reason.
+     * </ul>
+     *
+     * Migrating the accounting to {@code vendorId} would fix both, and is deliberately out
+     * of scope here: it changes every existing vendor balance, not just this panel.
+     */
+    @Transactional(readOnly = true)
+    public VendorSummaryResponse getSummary(Long id) {
+        Vendor v = repo.findById(id).orElse(null);
+        if (v == null) return null;
+
+        String vendorName = v.getName();
+        BigDecimal openingBal = v.getOpeningBalance() != null ? v.getOpeningBalance() : BigDecimal.ZERO;
+
+        BigDecimal onAccountPaid = BigDecimal.ZERO;
+        BigDecimal invGross = BigDecimal.ZERO;
+        BigDecimal invPaid = BigDecimal.ZERO;
+        BigDecimal totalPaid = BigDecimal.ZERO;
+        long overdueCount = 0L;
+        // Every accounting query below is name-keyed; a nameless vendor can be shown but
+        // cannot be joined to any of them.
+        if (vendorName != null && !vendorName.isBlank()) {
+            onAccountPaid = nullToZero(payRepo.sumOnAccountPaidByVendorName(vendorName));
+            invGross = nullToZero(invRepo.sumOutstandingForVendorName(vendorName));
+            invPaid = nullToZero(payRepo.sumInvoiceLinkedPaymentsByVendorName(vendorName));
+            totalPaid = nullToZero(payRepo.sumPaymentsByVendorName(vendorName));
+            // "Today" is resolved here rather than in the query so the boundary is
+            // explicit and testable, matching the customer side.
+            overdueCount = invRepo.countOverdueForVendorName(vendorName, java.time.LocalDate.now());
+        }
+
+        BigDecimal openingOutstanding = openingBal.subtract(onAccountPaid).max(BigDecimal.ZERO);
+        BigDecimal invOutstanding = invGross.subtract(invPaid).max(BigDecimal.ZERO);
+
+        VendorSummaryResponse r = new VendorSummaryResponse();
+        r.setId(v.getId());
+        r.setVendorCode(v.getCode());
+        r.setVendorName(vendorName);
+        r.setStatus(v.getStatus());
+        r.setCurrency(v.getCurrency());
+        r.setOpeningBalance(v.getOpeningBalance());
+        r.setOpeningBalanceOutstanding(openingOutstanding);
+        r.setPayableBalance(invOutstanding.add(openingOutstanding));
+        r.setTotalPaid(totalPaid);
+        r.setOverdueInvoiceCount(overdueCount);
+
+        // Same default-branch resolution as the list: the allocation flagged default,
+        // falling back to the legacy single-branch FK.
+        v.getBranchAllocations().size();
+        r.setBranch(v.getBranchAllocations().stream()
+                .filter(VendorBranchAllocation::isDefault)
+                .findFirst()
+                .map(alloc -> alloc.getBranch().getName())
+                .orElse(v.getBranch() != null ? v.getBranch().getName() : null));
+        return r;
+    }
+
+    private static BigDecimal nullToZero(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 
     /** Collapse grouped {@code [vendorName, sum]} rows into a name→amount map. */

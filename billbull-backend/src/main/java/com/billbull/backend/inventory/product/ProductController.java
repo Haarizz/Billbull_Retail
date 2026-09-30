@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
+
+import com.billbull.backend.security.BranchContextHolder;
 import com.billbull.backend.security.ModulePermissionService;
 
 import com.billbull.backend.security.AuditLogService;
@@ -65,10 +67,11 @@ public class ProductController {
     // -------------------------------------------------
     @PostMapping(value = "/import/excel", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<String> importFromExcel(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<String> importFromExcel(@RequestParam("file") MultipartFile file,
+            @RequestParam(value = "branchId", required = false) Long branchId) {
         modulePermissionService.requireCanCreate("inventory.product");
         try {
-            String result = importService.importProducts(file);
+            String result = importService.importProducts(file, resolveImportBranchId(branchId));
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Import Failed: " + e.getMessage());
@@ -78,9 +81,32 @@ public class ProductController {
     @PostMapping(value = "/import/excel/start", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ProductImportService.ImportJobStatus> startImportFromExcel(
-            @RequestParam("file") MultipartFile file) {
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "branchId", required = false) Long branchId) {
         modulePermissionService.requireCanCreate("inventory.product");
-        return ResponseEntity.ok(importService.startImport(file));
+        return ResponseEntity.ok(importService.startImport(file, resolveImportBranchId(branchId)));
+    }
+
+    /**
+     * Imported items are assigned to the branch the user is currently scoped to, so a
+     * branch-restricted user can only ever load stock into their own branch. An explicit
+     * {@code branchId} form field wins (admins importing on behalf of a branch), but only
+     * after {@code JwtFilter} has validated it against the caller's allowed branches.
+     * Null means the caller is on "All Branches" and the items stay company-wide.
+     *
+     * Resolved here, on the request thread: the import job runs on a background executor
+     * where the BranchContextHolder ThreadLocal is no longer populated.
+     */
+    private Long resolveImportBranchId(Long requestedBranchId) {
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        if (requestedBranchId != null) {
+            if (ctx == null || ctx.isAllBranches() || ctx.allowedBranchIds().contains(requestedBranchId)) {
+                return requestedBranchId;
+            }
+            throw new org.springframework.security.access.AccessDeniedException(
+                    "Not allowed to import products into branch " + requestedBranchId);
+        }
+        return ctx == null ? null : ctx.activeBranchId();
     }
 
     @GetMapping("/import/excel/progress/{jobId}")
@@ -148,9 +174,10 @@ public class ProductController {
             @RequestParam(required = false) Long warehouseId,
             @RequestParam(required = false) Long departmentId,
             @RequestParam(required = false) Long brandId,
-            @RequestParam(required = false) Boolean availableInPos) {
+            @RequestParam(required = false) Boolean availableInPos,
+            @RequestParam(required = false) String sort) {
         modulePermissionService.requireCanView("inventory.product");
-        return ResponseEntity.ok(service.getList(page, size, search, warehouseId, departmentId, brandId, availableInPos));
+        return ResponseEntity.ok(service.getList(page, size, search, warehouseId, departmentId, brandId, availableInPos, sort));
     }
 
     // -------------------------------------------------
@@ -168,7 +195,20 @@ public class ProductController {
     // -------------------------------------------------
     @GetMapping("/search")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<ProductAggregateResponse>> searchExact(@RequestParam(defaultValue = "") String q) {
+    public ResponseEntity<List<ProductAggregateResponse>> searchExact(
+            @RequestParam(defaultValue = "") String q,
+            @RequestParam(defaultValue = "false") boolean preview,
+            @RequestParam(defaultValue = "2") int size) {
+        // Returns the full aggregate (cost/pricing included), so it needs the same
+        // module gate as /list — authentication alone let any role enumerate the
+        // catalogue. Inherits from the "inventory" parent like every other check.
+        modulePermissionService.requireCanView("inventory.product");
+        // `preview` is the global search modal's empty-query suggestion list. It only
+        // applies when there is no term: a blank q without it still returns nothing, so
+        // q="" can never come to mean "the whole catalogue".
+        if (preview && (q == null || q.isBlank())) {
+            return ResponseEntity.ok(service.previewProducts(size));
+        }
         return ResponseEntity.ok(service.searchProducts(q));
     }
 
