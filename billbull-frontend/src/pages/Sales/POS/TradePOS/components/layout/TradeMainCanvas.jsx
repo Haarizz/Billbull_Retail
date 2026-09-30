@@ -11,6 +11,8 @@ export const TradeMainCanvas = React.memo(({
   posProductsLoading,
   onProductSelected,
   formatCurrency,
+  activeProductIndex = -1,
+  setActiveProductIndex,
 
   // Customer Props
   customerSearchQuery,
@@ -226,6 +228,9 @@ export const TradeMainCanvas = React.memo(({
         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
           Quick Pick &mdash; Frequent Items
         </span>
+        <span className="hidden lg:inline text-[10px] font-semibold text-slate-400">
+          &uarr;&darr; to browse &middot; Enter to add
+        </span>
       </div>
 
       {/* 4. Product List (Quick Picks) */}
@@ -235,6 +240,8 @@ export const TradeMainCanvas = React.memo(({
           loading={posProductsLoading}
           onProductSelected={onProductSelected}
           formatCurrency={formatCurrency}
+          activeIndex={activeProductIndex}
+          onActiveIndexChange={setActiveProductIndex}
         />
       </div>
     </div>

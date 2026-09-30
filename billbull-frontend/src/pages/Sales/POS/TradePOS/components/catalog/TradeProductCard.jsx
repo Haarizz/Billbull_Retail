@@ -1,23 +1,41 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { Package, Star } from 'lucide-react';
 
 export const TradeProductCard = React.memo(({
   product,
+  index,
+  isActive = false,
+  onActivate,
   onProductSelected,
   formatCurrency
 }) => {
+  const rowRef = useRef(null);
+
+  // Keep the keyboard-highlighted row visible inside the scrolling Quick Pick list.
+  useEffect(() => {
+    if (isActive) rowRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [isActive]);
+
   const handleClick = useCallback(() => {
     if (onProductSelected && product) {
+      onActivate?.(index);
       onProductSelected(product);
     }
-  }, [onProductSelected, product]);
+  }, [onProductSelected, onActivate, product, index]);
 
   if (!product) return null;
 
   return (
-    <div 
+    <div
+      ref={rowRef}
+      role="option"
+      aria-selected={isActive}
       onClick={handleClick}
-      className="flex items-center justify-between p-3 bg-white rounded-xl hover:bg-gray-50 hover:shadow-sm border border-transparent hover:border-gray-200 cursor-pointer transition-all group"
+      className={`flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all group border ${
+        isActive
+          ? 'bg-amber-50 border-amber-400 shadow-sm ring-1 ring-amber-300'
+          : 'bg-white border-transparent hover:bg-gray-50 hover:shadow-sm hover:border-gray-200'
+      }`}
     >
       <div className="flex items-center gap-4">
         {/* Icon / Image */}

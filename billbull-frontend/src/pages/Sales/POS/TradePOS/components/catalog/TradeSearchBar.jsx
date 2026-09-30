@@ -6,6 +6,9 @@ export const TradeSearchBar = React.memo(({
   setSearchQuery,
   handleUnifiedEntry,
   barcodeInputRef,
+  onMoveHighlight,
+  onSelectHighlighted,
+  onResetHighlight,
   placeholder = "Scan barcode or type item code / name..."
 }) => {
   const [localQuery, setLocalQuery] = useState(searchQuery || '');
@@ -21,6 +24,8 @@ export const TradeSearchBar = React.memo(({
   const handleChange = useCallback((e) => {
     const value = e.target.value;
     setLocalQuery(value);
+    // Typing (or a scanner burst) invalidates any stale highlight before Enter arrives.
+    onResetHighlight?.();
 
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
@@ -29,16 +34,27 @@ export const TradeSearchBar = React.memo(({
     typingTimeoutRef.current = setTimeout(() => {
       setSearchQuery(value);
     }, 150);
-  }, [setSearchQuery]);
+  }, [setSearchQuery, onResetHighlight]);
 
   const handleKeyDown = useCallback((e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!onMoveHighlight) return;
+      e.preventDefault();
+      onMoveHighlight(e.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (e.key === 'Escape') {
+      onResetHighlight?.();
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (onSelectHighlighted?.()) return;
       setSearchQuery(localQuery);
       handleUnifiedEntry(localQuery, { fromGrid: true });
     }
-  }, [localQuery, setSearchQuery, handleUnifiedEntry]);
+  }, [localQuery, setSearchQuery, handleUnifiedEntry, onMoveHighlight, onSelectHighlighted, onResetHighlight]);
 
   const handleClear = useCallback(() => {
     setLocalQuery('');
