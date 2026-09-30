@@ -56,6 +56,53 @@ public class GeneralLedgerController {
     }
 
     /**
+     * Typeahead search over the chart of accounts, backing the global search modal.
+     * Matches account code and name; {@code size} is clamped server-side.
+     */
+    @GetMapping("/accounts/search")
+    @PreAuthorize("isAuthenticated()")
+    public List<com.billbull.backend.financials.chartofaccounts.AccountSearchResponse> searchAccounts(
+            @RequestParam(defaultValue = "") String q,
+            @RequestParam(defaultValue = "5") int size,
+            @RequestParam(defaultValue = "false") boolean preview) {
+        modulePermissionService.requireCanView("finance.ledger");
+        // `preview` backs the global search modal's empty-query suggestions and applies
+        // only when there is no term; a blank q without it still returns nothing.
+        if (preview && (q == null || q.isBlank())) return ledgerService.previewAccounts(size);
+        return ledgerService.searchAccounts(q, size);
+    }
+
+    /**
+     * Balance summary for one account, backing the global search details panel.
+     *
+     * <p>Reads the pre-aggregated GL balance rows — one query, no ledger scan. Every figure
+     * is authoritative server-side; the panel renders them as given.
+     */
+    @GetMapping("/accounts/{code}/summary")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<LedgerAccountSummaryResponse> getAccountSummary(@PathVariable String code) {
+        modulePermissionService.requireCanView("finance.ledger");
+        LedgerAccountSummaryResponse summary = ledgerService.getAccountSummary(code);
+        return summary == null ? ResponseEntity.notFound().build() : ResponseEntity.ok(summary);
+    }
+
+    /**
+     * The most recent ledger entries for one account, newest first.
+     *
+     * <p>{@code size} is clamped server-side by {@link com.billbull.backend.util.SearchLimit},
+     * so this can never become the whole-ledger load that {@code GET /api/ledger/transactions}
+     * performs.
+     */
+    @GetMapping("/accounts/{code}/transactions")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<LedgerAccountTransactionResponse>> getAccountTransactions(
+            @PathVariable String code,
+            @RequestParam(defaultValue = "5") int size) {
+        modulePermissionService.requireCanView("finance.ledger");
+        return ResponseEntity.ok(ledgerService.getAccountTransactions(code, size));
+    }
+
+    /**
      * Cash-and-bank settlement accounts. {@code excludeCash=true} drops Cash in Hand /
      * Petty Cash for callers that need a genuine bank account (e.g. the POS
      * Online / Bank Transfer receiving account).

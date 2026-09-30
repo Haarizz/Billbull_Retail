@@ -39,6 +39,8 @@ class EmployeeServiceImplTest {
 
     @Mock
     private com.billbull.backend.settings.branch.BranchRepository branchRepository;
+    @Mock
+    private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
     private EmployeeServiceImpl employeeService;
 
@@ -49,7 +51,8 @@ class EmployeeServiceImplTest {
                 userRepository,
                 adminSafeguardService,
                 userService,
-                branchRepository);
+                branchRepository,
+                branchAccessService);
     }
 
     @Test

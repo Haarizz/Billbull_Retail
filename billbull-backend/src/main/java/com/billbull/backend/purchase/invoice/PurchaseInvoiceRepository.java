@@ -75,6 +75,47 @@ public interface PurchaseInvoiceRepository
                "GROUP BY i.vendorName")
         java.util.List<Object[]> sumOutstandingByVendorName();
 
+        /**
+         * Single-vendor variant of {@link #sumOutstandingByVendorName()}.
+         *
+         * <p>Same predicate, no GROUP BY. Note the name is the existing one: this is the
+         * GROSS grandTotal of POSTED, not-fully-paid invoices — invoice-linked payments are
+         * netted off by the caller, exactly as {@code VendorService.list()} does.
+         */
+        @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i " +
+               "WHERE i.status = com.billbull.backend.purchase.invoice.InvoiceStatus.POSTED " +
+               "AND i.paymentStatus <> com.billbull.backend.purchase.invoice.PaymentStatus.PAID " +
+               "AND i.vendorName = :vendorName")
+        java.math.BigDecimal sumOutstandingForVendorName(@org.springframework.data.repository.query.Param("vendorName") String vendorName);
+
+        /**
+         * How many of one vendor's invoices are past due. A count only — never an amount.
+         *
+         * <p>{@code PurchaseInvoice} stores no per-invoice balance, so there is no honest
+         * overdue *amount* to report: {@code grandTotal} is the gross, and the payments that
+         * would reduce it are tracked at vendor level, not against the invoice. Subtracting
+         * one from the other would attribute unrelated payments to these specific invoices.
+         * So the amount stays absent and only the count is exposed.
+         *
+         * <p>The count itself needs no balance. Whether an invoice is settled is a fact the
+         * invoice already carries in its own {@code paymentStatus}, and this query reuses the
+         * exact predicate {@link #sumOutstandingForVendorName} already relies on
+         * ({@code status = POSTED AND paymentStatus <> PAID}), narrowed to invoices whose
+         * {@code dueDate} has passed. Strictly before today, so an invoice due today is not
+         * overdue; invoices with no due date cannot be aged and are excluded.
+         *
+         * <p>Reads through the existing {@code idx_purchase_invoice_vendor_due}
+         * (vendor_name, due_date).
+         */
+        @org.springframework.data.jpa.repository.Query("SELECT COUNT(i) FROM PurchaseInvoice i " +
+               "WHERE i.status = com.billbull.backend.purchase.invoice.InvoiceStatus.POSTED " +
+               "AND i.paymentStatus <> com.billbull.backend.purchase.invoice.PaymentStatus.PAID " +
+               "AND i.vendorName = :vendorName " +
+               "AND i.dueDate IS NOT NULL " +
+               "AND i.dueDate < :today")
+        long countOverdueForVendorName(@org.springframework.data.repository.query.Param("vendorName") String vendorName,
+                        @org.springframework.data.repository.query.Param("today") java.time.LocalDate today);
+
         @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(s.invoiceDate, s.invoiceNumber, 'INVOICE', CAST(0 AS big_decimal), s.grandTotal, CAST(s.status AS string)) FROM PurchaseInvoice s WHERE s.vendorName = :vendorName AND s.invoiceDate BETWEEN :startDate AND :endDate AND s.status <> 'CANCELLED'")
         List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,
                         java.time.LocalDate startDate, java.time.LocalDate endDate);

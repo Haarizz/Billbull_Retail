@@ -7,7 +7,9 @@ export const TradeProductGrid = React.memo(({
   products = [],
   loading = false,
   onProductSelected,
-  formatCurrency
+  formatCurrency,
+  activeIndex = -1,
+  onActiveIndexChange
 }) => {
   if (loading) {
     return (
@@ -30,11 +32,14 @@ export const TradeProductGrid = React.memo(({
   }
 
   return (
-    <div className="flex flex-col gap-2 pb-20 lg:pb-4">
-      {products.map(product => (
+    <div role="listbox" aria-label="Quick pick products" className="flex flex-col gap-2 pb-20 lg:pb-4">
+      {products.map((product, index) => (
         <TradeProductCard
           key={product.id}
           product={product}
+          index={index}
+          isActive={index === activeIndex}
+          onActivate={onActiveIndexChange}
           onProductSelected={onProductSelected}
           formatCurrency={formatCurrency}
         />

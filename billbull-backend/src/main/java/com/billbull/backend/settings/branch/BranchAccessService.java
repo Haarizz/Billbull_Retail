@@ -320,6 +320,43 @@ public class BranchAccessService {
         return scoped(ids);
     }
 
+    /**
+     * Branch scope for global search, which is narrower than {@link #currentListScope()}
+     * in one specific way: it ignores the Branch Selector.
+     *
+     * <p>A list page is a view of one branch's work, so narrowing the selector narrows the
+     * page — for admins too. Global search is not that. It is how someone finds a record
+     * they know exists, and silently hiding a vendor because the selector happens to sit on
+     * another branch makes the box look broken. So a user who can reach every branch keeps
+     * reaching every branch here regardless of the selector, and the result carries its
+     * branch so the destination is predictable before the click.
+     *
+     * <p>Who is restricted is decided by the JWT's {@code isAllBranches} claim, which
+     * {@code JwtUtil} sets for ADMIN and SUPER_ADMIN only. Every other role — BRANCH_ADMIN
+     * included — is confined to its primary plus additional branches. That is the existing
+     * restriction mechanism; nothing here tests for a role name.
+     *
+     * <p>{@code allBranches == true} means apply no branch predicate. Otherwise a row is in
+     * scope when its branch is in {@code branchIds} or it has no branch at all — legacy
+     * unattributed records stay visible, as everywhere else in this class.
+     */
+    public ListScope currentSearchScope() {
+        BranchContextHolder.BranchContext ctx = BranchContextHolder.get();
+        if (ctx == null) {
+            Long current = getCurrentUserBranchId();
+            return scoped(current != null ? java.util.Set.of(current) : java.util.Set.of());
+        }
+        if (ctx.isAllBranches()) {
+            return new ListScope(true, java.util.Set.of(-1L));
+        }
+        java.util.Set<Long> ids = new java.util.HashSet<>(ctx.allowedBranchIds());
+        Long current = getCurrentUserBranchId();
+        if (current != null) {
+            ids.add(current);
+        }
+        return scoped(ids);
+    }
+
     private ListScope scoped(java.util.Set<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return new ListScope(false, java.util.Set.of(-1L));

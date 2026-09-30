@@ -52,4 +52,67 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
     default List<Employee> findActiveSalespersons() {
         return findActiveByRoleKeys(SalespersonEligibility.roleKeys());
     }
+
+    /**
+     * Typeahead search for the global search modal.
+     *
+     * <p>Matches identification fields only — employee code, name (including the
+     * "first last" form so a full name typed in one go still hits), designation
+     * and department. Phone, email and document numbers are deliberately NOT
+     * searchable: this endpoint must not double as a probe for an employee's
+     * private contact details.
+     *
+     * <p>Returns {@link EmployeeSearchResponse} rather than entities, so a
+     * keystroke never hydrates an Employee with its salary and document columns,
+     * and the row cap is applied by the database via {@code Pageable}.
+     *
+     * <p>Branch-scoped server-side, unlike {@code getAll()} / {@code getActiveEmployees()}.
+     * {@code allBranches = true} applies no branch predicate; otherwise an employee is in
+     * scope when {@code branchEntity} is in {@code branchIds} or absent (legacy rows with
+     * only the free-text {@code branch} label stay visible rather than disappearing from
+     * search). The scope comes from {@code BranchAccessService.currentSearchScope()};
+     * this query never tests a role name.
+     *
+     * <p>Note the parentheses around the match clause: without them the branch predicate
+     * would bind to the last OR term only and scope nothing.
+     */
+    @Query("""
+            select new com.billbull.backend.hr.employees.EmployeeSearchResponse(
+                e.id, e.employeeCode, e.firstName, e.middleName, e.lastName,
+                e.role, e.department, e.branch, e.status)
+            from Employee e
+            where (lower(e.employeeCode) like lower(concat('%', :q, '%'))
+               or lower(e.firstName) like lower(concat('%', :q, '%'))
+               or lower(e.middleName) like lower(concat('%', :q, '%'))
+               or lower(e.lastName) like lower(concat('%', :q, '%'))
+               or lower(concat(e.firstName, ' ', e.lastName)) like lower(concat('%', :q, '%'))
+               or lower(e.role) like lower(concat('%', :q, '%'))
+               or lower(e.department) like lower(concat('%', :q, '%')))
+              and (:allBranches = true or e.branchEntity is null or e.branchEntity.id in :branchIds)
+            order by e.firstName asc, e.lastName asc, e.employeeCode asc
+            """)
+    List<EmployeeSearchResponse> searchEmployees(@Param("q") String q,
+            @Param("allBranches") boolean allBranches,
+            @Param("branchIds") java.util.Collection<Long> branchIds,
+            org.springframework.data.domain.Pageable pageable);
+
+    /**
+     * The first few employees, for the global search modal's empty-query preview.
+     *
+     * <p>Same projection — identity only, no payroll, attendance or leave — same branch
+     * predicate and same ordering as {@link #searchEmployees}, with the match clause
+     * dropped rather than matched against an empty string. The row cap is applied by the
+     * database via {@code Pageable}.
+     */
+    @Query("""
+            select new com.billbull.backend.hr.employees.EmployeeSearchResponse(
+                e.id, e.employeeCode, e.firstName, e.middleName, e.lastName,
+                e.role, e.department, e.branch, e.status)
+            from Employee e
+            where (:allBranches = true or e.branchEntity is null or e.branchEntity.id in :branchIds)
+            order by e.firstName asc, e.lastName asc, e.employeeCode asc
+            """)
+    List<EmployeeSearchResponse> previewEmployees(@Param("allBranches") boolean allBranches,
+            @Param("branchIds") java.util.Collection<Long> branchIds,
+            org.springframework.data.domain.Pageable pageable);
 }

@@ -529,6 +529,30 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         List<SalesInvoice> findRecentByCustomerCode(@Param("customerCode") String customerCode,
                                                     Pageable pageable);
 
+        /**
+         * Branch-scoped variant of {@link #findRecentByCustomerCode}, for the global search
+         * details panel.
+         *
+         * <p>Separate from that query rather than a change to it: the POS History tab runs
+         * inside one till's branch already, and global search is reachable from anywhere. A
+         * sales invoice is branch-attributed and every list read of it goes through
+         * {@code filterBranchScoped}, so a caller who cannot reach a branch must not read its
+         * invoices here. Same status exclusions (DRAFT, CANCELLED) and same newest-first
+         * ordering, so the two cannot disagree about which invoices exist.
+         *
+         * <p>{@code allBranches = true} applies no predicate; otherwise rows must be in
+         * {@code branchIds} or carry no branch, matching {@code ListScope} everywhere else.
+         */
+        @Query("SELECT s FROM SalesInvoice s WHERE s.customerCode = :customerCode " +
+               "AND s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.DRAFT, " +
+               "com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED) " +
+               "AND (:allBranches = true OR s.branchId IS NULL OR s.branchId IN :branchIds) " +
+               "ORDER BY s.id DESC")
+        List<SalesInvoice> findRecentByCustomerCodeScoped(@Param("customerCode") String customerCode,
+                        @Param("allBranches") boolean allBranches,
+                        @Param("branchIds") java.util.Collection<Long> branchIds,
+                        Pageable pageable);
+
         // POS session queries
         List<SalesInvoice> findByPosSessionId(Long posSessionId);
 
@@ -576,6 +600,61 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                "AND s.customerCode IS NOT NULL " +
                "GROUP BY s.customerCode")
         List<Object[]> sumOutstandingBalanceByCustomerCode();
+
+        /**
+         * Single-customer variant of {@link #sumInvoiceTotalByCustomerCode()}.
+         *
+         * <p>Same predicate, no GROUP BY: the details panel resolves one customer, so it
+         * must not pay for an aggregate over every customer in the table.
+         */
+        @Query("SELECT COALESCE(SUM(s.invoiceTotal), 0) FROM SalesInvoice s " +
+               "WHERE s.status <> com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED " +
+               "AND s.customerCode = :customerCode")
+        java.math.BigDecimal sumInvoiceTotalForCustomerCode(@Param("customerCode") String customerCode);
+
+        /**
+         * Single-customer variant of {@link #sumOutstandingBalanceByCustomerCode()}.
+         *
+         * <p>Same predicate and same per-invoice {@code balance} field, so a customer's
+         * outstanding here is identical to the figure the customer list shows.
+         */
+        @Query("SELECT COALESCE(SUM(s.balance), 0) FROM SalesInvoice s " +
+               "WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, " +
+               "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID) " +
+               "AND s.customerCode = :customerCode")
+        java.math.BigDecimal sumOutstandingBalanceForCustomerCode(@Param("customerCode") String customerCode);
+
+        /**
+         * What one customer owes past its due date: invoice count and amount, in one pass.
+         *
+         * <p>Deliberately NOT {@link #countOverdueInvoices(java.time.LocalDate)}. That query
+         * is global (no customer predicate) and ages invoices from {@code invoiceDate}
+         * against a caller-supplied cutoff, which is a different definition of "overdue"
+         * and would give the details panel a figure the customer page never shows.
+         *
+         * <p>Here an invoice is overdue when its own {@code dueDate} — the date the agreed
+         * payment terms produced — is strictly before today AND it still carries a positive
+         * persisted {@code balance}. Strictly before, so an invoice due today is not yet
+         * overdue. Invoices with no {@code dueDate} cannot be aged and are excluded.
+         *
+         * <p>The status window is the same one {@link #sumOutstandingBalanceForCustomerCode}
+         * uses, so the overdue amount is always a subset of that customer's outstanding and
+         * can never exceed it. The amount sums the invoices' own {@code balance}; it is never
+         * derived from {@code invoiceTotal}.
+         *
+         * <p>Reads through {@code idx_sales_invoice_customer_due} (customer_code, delivery_date
+         * — the column {@code dueDate} is mapped to).
+         */
+        @Query("SELECT new com.billbull.backend.sales.invoice.CustomerOverdueSummary("
+               + "COUNT(s), COALESCE(SUM(s.balance), 0)) FROM SalesInvoice s "
+               + "WHERE s.status NOT IN (com.billbull.backend.sales.invoice.SalesInvoiceStatus.CANCELLED, "
+               + "com.billbull.backend.sales.invoice.SalesInvoiceStatus.PAID) "
+               + "AND s.customerCode = :customerCode "
+               + "AND s.balance > 0 "
+               + "AND s.dueDate IS NOT NULL "
+               + "AND s.dueDate < :today")
+        CustomerOverdueSummary overdueSummaryForCustomerCode(@Param("customerCode") String customerCode,
+                        @Param("today") java.time.LocalDate today);
 
         /**
          * POS batch check: find invoices that contain a given item code (used to

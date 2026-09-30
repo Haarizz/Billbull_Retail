@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { X, Lock } from 'lucide-react';
 import EntryForm from './EntryForm';
 import StockCard from './StockCard';
@@ -37,11 +37,21 @@ const POSItemEntryModal = ({
     selectedPriceRef,
     onSelectPrice
 }) => {
+    const priceInputRef = useRef(null);
+
     if (!product) return null;
+
+    // Radix focuses the first tabbable element (the close X) by default; start on Price instead.
+    const handleOpenAutoFocus = (e) => {
+        if (mode === 'view' || !priceInputRef.current) return;
+        e.preventDefault();
+        priceInputRef.current.focus();
+        priceInputRef.current.select();
+    };
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="w-[95vw] sm:max-w-[900px] p-0 overflow-y-auto md:overflow-hidden flex flex-col md:flex-row max-h-[90vh] bg-white border-0 sm:rounded-2xl shadow-2xl [&>button]:hidden">
+            <DialogContent className="w-[95vw] sm:max-w-[900px] p-0 overflow-y-auto md:overflow-hidden flex flex-col md:flex-row max-h-[90vh] bg-white border-0 sm:rounded-2xl shadow-2xl [&>button]:hidden" onOpenAutoFocus={handleOpenAutoFocus}>
 
                 {/* Left Column: Form & Product Header */}
                 <div className="flex-1 flex flex-col bg-white border-r border-gray-100 md:min-h-0 md:overflow-hidden">
@@ -49,6 +59,9 @@ const POSItemEntryModal = ({
                     {/* Brand Amber Header */}
                     <div className="bg-primary text-white px-4 sm:px-6 py-4 sm:py-5 relative sm:rounded-tl-2xl shrink-0">
                         <button
+                            type="button"
+                            tabIndex={-1}
+                            aria-label="Close"
                             onClick={onClose}
                             className="absolute top-4 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white/90 hover:text-white transition-colors"
                         >
@@ -88,6 +101,7 @@ const POSItemEntryModal = ({
                             mode={mode}
                             uom={product.uom || 'BAG'}
                             lockQuantity={lockQuantity}
+                            priceInputRef={priceInputRef}
                         />
                     </div>
                 </div>

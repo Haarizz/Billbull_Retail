@@ -41,6 +41,8 @@ import com.billbull.backend.inventory.department.Department;
 import com.billbull.backend.inventory.department.DepartmentRepository;
 import com.billbull.backend.inventory.units.Unit;
 import com.billbull.backend.inventory.units.UnitRepository;
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
 
 @Service
 public class ProductImportService {
@@ -48,6 +50,9 @@ public class ProductImportService {
     public static class ImportJobStatus {
         public String jobId;
         public String fileName;
+        /** Branch the imported items are assigned to; null = company-wide ("All Branches"). */
+        public Long branchId;
+        public String branchName;
         public volatile String status = "QUEUED";
         public volatile int totalRows = 0;
         public volatile int processedRows = 0;
@@ -104,6 +109,7 @@ public class ProductImportService {
     private final BrandRepository brandRepo;
     private final DepartmentRepository departmentRepo;
     private final UnitRepository unitRepo;
+    private final BranchRepository branchRepo;
     private final ProductPackingRepository packingRepo;
     private final ProductBarcodeRepository barcodeRepo;
     private final ProductMediaRepository mediaRepo;
@@ -116,11 +122,12 @@ public class ProductImportService {
             DepartmentRepository departmentRepo,
             UnitRepository unitRepo, ProductPackingRepository packingRepo, ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository mediaRepo, ProductPriceChangeRepository priceChangeRepo,
-            ProductImageStorageService imageStorageService) {
+            ProductImageStorageService imageStorageService, BranchRepository branchRepo) {
         this.productRepo = productRepo;
         this.brandRepo = brandRepo;
         this.departmentRepo = departmentRepo;
         this.unitRepo = unitRepo;
+        this.branchRepo = branchRepo;
         this.packingRepo = packingRepo;
         this.barcodeRepo = barcodeRepo;
         this.mediaRepo = mediaRepo;
@@ -142,8 +149,18 @@ public class ProductImportService {
         }
     }
 
-    @CacheEvict(value = "productList", allEntries = true)
     public ImportJobStatus startImport(MultipartFile file) {
+        return startImport(file, null);
+    }
+
+    /**
+     * @param branchId branch the imported items belong to; null imports them company-wide
+     *                 ("All Branches"), preserving the historical behaviour. Resolved on the
+     *                 request thread because the import itself runs on {@link #importExecutor},
+     *                 where the per-request BranchContextHolder ThreadLocal is not visible.
+     */
+    @CacheEvict(value = "productList", allEntries = true)
+    public ImportJobStatus startImport(MultipartFile file, Long branchId) {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Import file is empty");
         }
@@ -151,6 +168,9 @@ public class ProductImportService {
         ImportJobStatus job = new ImportJobStatus();
         job.jobId = UUID.randomUUID().toString();
         job.fileName = file.getOriginalFilename();
+        Branch targetBranch = resolveBranch(branchId);
+        job.branchId = targetBranch != null ? targetBranch.getId() : null;
+        job.branchName = targetBranch != null ? targetBranch.getName() : "All Branches";
         importJobs.put(job.jobId, job);
 
         try {
@@ -178,7 +198,7 @@ public class ProductImportService {
         job.status = "RUNNING";
         job.startedAt = System.currentTimeMillis();
         try (InputStream inputStream = Files.newInputStream(importFile)) {
-            job.message = importProducts(inputStream, job);
+            job.message = importProducts(inputStream, job, job.branchId);
             job.status = "SUCCESS";
         } catch (Exception e) {
             job.errorCount++;
@@ -197,18 +217,24 @@ public class ProductImportService {
 
     @CacheEvict(value = "productList", allEntries = true)
     public String importProducts(MultipartFile file) {
+        return importProducts(file, null);
+    }
+
+    @CacheEvict(value = "productList", allEntries = true)
+    public String importProducts(MultipartFile file, Long branchId) {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Import file is empty");
         }
         try {
-            return importProducts(file.getInputStream(), null);
+            return importProducts(file.getInputStream(), null, branchId);
         } catch (IOException e) {
             throw new RuntimeException("Failed to parse Excel file", e);
         }
     }
 
-    private String importProducts(InputStream inputStream, ImportJobStatus job) {
+    private String importProducts(InputStream inputStream, ImportJobStatus job, Long branchId) {
         ImportCounters counters = new ImportCounters();
+        Branch targetBranch = resolveBranch(branchId);
         Set<String> seenBarcodes = new HashSet<>();
         Unit fallbackUnit = getOrCreateUnit("PCS", null);
         Set<String> exactRowSignatures = new HashSet<>();
@@ -464,7 +490,7 @@ public class ProductImportService {
                         Product product = null;
                         boolean isUpdate = false;
 
-                        Optional<Product> existingByBarcode = findProductByBarcode(barcodeValue);
+                        Optional<Product> existingByBarcode = findProductByBarcode(barcodeValue, targetBranch);
                         if (existingByBarcode.isPresent()
                                 && productMatchesRow(existingByBarcode.get(), finalName, barcodeValue, productCost,
                                         landingCost, priceInclTax, netLandedCost, markup, gp, wholesalePrice,
@@ -475,7 +501,7 @@ public class ProductImportService {
                             continue;
                         }
 
-                        Optional<Product> existingByCode = productRepo.findByCode(baseCode);
+                        Optional<Product> existingByCode = findProductByCode(baseCode, targetBranch);
                         if (!repeatedCodeInCurrentFile && existingByCode.isPresent()) {
                             product = existingByCode.get();
                             isUpdate = true;
@@ -491,10 +517,14 @@ public class ProductImportService {
                             }
                             product = new Product();
                             product.setCode(generateUniqueProductCode(baseCode, reservedCodes));
+                            product.setBranch(targetBranch);
                             counters.duplicateCreatedCount++;
                         } else {
                             product = existingByCode.orElseGet(Product::new);
                             product.setCode(baseCode);
+                            if (product.getId() == null) {
+                                product.setBranch(targetBranch);
+                            }
                         }
 
                         reservedCodes.add(product.getCode());
@@ -849,11 +879,48 @@ public class ProductImportService {
         return trimmed.length() > 20 || trimmed.matches(".*\\s+.*");
     }
 
-    private Optional<Product> findProductByBarcode(String barcodeValue) {
+    /**
+     * Resolves the branch an import writes into. A null/unknown id means the historical
+     * company-wide import (products stay {@code branch = null}, shown as "Global").
+     */
+    private Branch resolveBranch(Long branchId) {
+        return branchId == null ? null : branchRepo.findById(branchId).orElse(null);
+    }
+
+    /**
+     * Branch-scoped code lookup. Phase 6A lets a code live once globally and once per branch,
+     * so a branch import must only ever match (and update) a row already owned by that branch —
+     * otherwise it would silently re-home the company-wide product of the same code.
+     */
+    private Optional<Product> findProductByCode(String code, Branch targetBranch) {
+        if (isBlank(code)) {
+            return Optional.empty();
+        }
+        List<Product> matches = targetBranch == null
+                ? productRepo.findByCodeAndBranchIsNull(code)
+                : productRepo.findByCodeAndBranch_Id(code, targetBranch.getId());
+        return matches.isEmpty() ? Optional.empty() : Optional.of(matches.get(0));
+    }
+
+    /**
+     * A barcode match only counts when the hit sits in the tier being imported into; the same
+     * barcode may legitimately exist on another branch's copy of the item.
+     */
+    private Optional<Product> findProductByBarcode(String barcodeValue, Branch targetBranch) {
         if (isBlank(barcodeValue)) {
             return Optional.empty();
         }
-        return barcodeRepo.findFirstByBarcode(barcodeValue.trim()).map(ProductBarcode::getProduct);
+        return barcodeRepo.findFirstByBarcode(barcodeValue.trim())
+                .map(ProductBarcode::getProduct)
+                .filter(p -> sameBranch(p, targetBranch));
+    }
+
+    private boolean sameBranch(Product product, Branch targetBranch) {
+        Long productBranchId = (product == null || product.getBranch() == null)
+                ? null
+                : product.getBranch().getId();
+        Long targetBranchId = targetBranch == null ? null : targetBranch.getId();
+        return java.util.Objects.equals(productBranchId, targetBranchId);
     }
 
     private boolean productMatchesRow(Product product, String name, String barcodeValue, BigDecimal cost,
@@ -1042,7 +1109,7 @@ public class ProductImportService {
         do {
             String suffix = "-" + seq++;
             candidate = limit(base, Math.max(1, 50 - suffix.length())) + suffix;
-        } while (reservedCodes.contains(candidate) || productRepo.findByCode(candidate).isPresent());
+        } while (reservedCodes.contains(candidate) || productRepo.existsByCode(candidate));
         return candidate;
     }
 

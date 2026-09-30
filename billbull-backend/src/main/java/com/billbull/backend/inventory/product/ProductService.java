@@ -1066,6 +1066,28 @@ public class ProductService {
                 .orElse(new ArrayList<>());
     }
 
+    /**
+     * The first few catalogue rows, for the global search modal's empty-query preview.
+     *
+     * <p>Not a search: there is no term to match, so this is the same branch-scoped,
+     * name-ordered list the product page opens on, cut to {@code size}. Blank {@code q}
+     * on {@code /search} still returns nothing — a caller has to ask for the preview
+     * explicitly, so no existing caller's empty query turns into a table read.
+     *
+     * <p>{@code size} is clamped by {@link com.billbull.backend.util.SearchLimit}, so the
+     * query is bounded in the database whatever the client asks for.
+     */
+    @Transactional(readOnly = true)
+    public List<ProductAggregateResponse> previewProducts(int size) {
+        org.springframework.data.domain.Pageable limit = org.springframework.data.domain.PageRequest.of(
+                0, com.billbull.backend.util.SearchLimit.clamp(size), listSort("name"));
+        java.util.Collection<Long> scope = catalogScope();
+        org.springframework.data.domain.Page<Product> page = scope != null
+                ? productRepo.findAllActiveForListInBranchScope(scope, limit)
+                : productRepo.findAllActiveForList(limit);
+        return page.getContent().stream().map(this::buildResponse).collect(Collectors.toList());
+    }
+
     @Transactional(readOnly = true)
     public List<ProductAggregateResponse> searchProducts(String search) {
         String trimmedSearch = (search != null) ? search.trim() : "";
@@ -1073,7 +1095,7 @@ public class ProductService {
             return new ArrayList<>();
         }
         
-        org.springframework.data.domain.Pageable limit = org.springframework.data.domain.PageRequest.of(0, 20);
+        org.springframework.data.domain.Pageable limit = org.springframework.data.domain.PageRequest.of(0, 20, listSort("name"));
         // Phase 6: branch-scoped catalog search (own branch + global) when scoping is active.
         java.util.Collection<Long> scope = catalogScope();
         org.springframework.data.domain.Page<Product> productPage = scope != null
@@ -1102,7 +1124,36 @@ public class ProductService {
     }
 
     public java.util.Map<String, Object> getList(int page, int size, String search, Long warehouseId, Long departmentId, Long brandId, Boolean availableInPos) {
-        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size);
+        return getList(page, size, search, warehouseId, departmentId, brandId, availableInPos, null);
+    }
+
+    /**
+     * Sort keys accepted by the list endpoint. The list is paginated server-side, so
+     * ordering has to happen in the query — sorting only the current page would show
+     * the "latest" items of that page rather than of the catalog.
+     */
+    private static org.springframework.data.domain.Sort listSort(String sort) {
+        String key = (sort != null) ? sort.trim().toLowerCase() : "";
+        switch (key) {
+            case "latest":
+                // id as the tiebreak: createdAt is only second-resolution for rows
+                // imported in bulk, which would otherwise order arbitrarily.
+                return org.springframework.data.domain.Sort.by(
+                        org.springframework.data.domain.Sort.Order.desc("createdAt"),
+                        org.springframework.data.domain.Sort.Order.desc("id"));
+            case "code":
+                return org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Order.asc("code"));
+            // "brand" is deliberately absent: the list queries JOIN FETCH p.brand, and a
+            // Sort on brand.name makes Hibernate add a second, unfetched join. The
+            // frontend keeps sorting the page by brand itself, as it always has.
+            case "name":
+            default:
+                return org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Order.asc("name"));
+        }
+    }
+
+    public java.util.Map<String, Object> getList(int page, int size, String search, Long warehouseId, Long departmentId, Long brandId, Boolean availableInPos, String sort) {
+        org.springframework.data.domain.Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size, listSort(sort));
 
         String trimmedSearch = (search != null) ? search.trim() : "";
         boolean hasDeptOrBrand = (departmentId != null || brandId != null || availableInPos != null);

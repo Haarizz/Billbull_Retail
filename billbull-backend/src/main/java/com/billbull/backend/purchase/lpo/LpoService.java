@@ -119,6 +119,31 @@ public class LpoService {
         this.vendorValidationService = vendorValidationService;
     }
 
+    /**
+     * The newest LPOs raised on one vendor, for the global search details panel.
+     *
+     * <p>Filtering and ordering happen in SQL and the row count is clamped by
+     * {@link com.billbull.backend.util.SearchLimit} — the paged list query nearby matches
+     * vendor as free text among other filters, which is a different question, and nothing
+     * here materialises the full LPO list to filter it in memory.
+     *
+     * <p>Branch-scoped in the query. An LPO is a branch-attributed document and the paged
+     * list read applies the same predicate, so this panel section must not be the one place
+     * a branch-restricted caller reads another branch's purchase orders.
+     */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public java.util.List<VendorRecentLpoResponse> getRecentForVendor(Long vendorId, int size) {
+        if (vendorId == null) return java.util.List.of();
+        com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
+                branchAccessService.currentSearchScope();
+        return repository
+                .findRecentByVendorId(vendorId, scope.allBranches(), scope.branchIds(),
+                        com.billbull.backend.util.SearchLimit.page(size))
+                .stream()
+                .map(VendorRecentLpoResponse::from)
+                .collect(java.util.stream.Collectors.toList());
+    }
+
     /* ================= CREATE ================= */
 
     /* ================= CREATE ================= */

@@ -5,11 +5,21 @@ import * as ScrollAreaPrimitive from "@radix-ui/react-scroll-area";
 
 import { cn } from "./utils";
 
+/**
+ * Radix renders the viewport's content in an inner `display: table` div so a horizontally
+ * scrolling area can size itself to its content. In a fixed-width column that is the
+ * wrong behaviour: the table grows past the column, `truncate` on its children never
+ * bites, and the content spills over whatever sits beside it. `fitWidth` pins that inner
+ * div back to a plain block, for the vertical-only areas — which is most of them.
+ */
+const FIT_WIDTH_VIEWPORT = "[&>div]:!block [&>div]:!min-w-0 [&>div]:w-full";
+
 function ScrollArea({
   className,
   children,
+  fitWidth = false,
   ...props
-}: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
+}: React.ComponentProps<typeof ScrollAreaPrimitive.Root> & { fitWidth?: boolean }) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
@@ -18,7 +28,10 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
+        className={cn(
+          "focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1",
+          fitWidth && FIT_WIDTH_VIEWPORT
+        )}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

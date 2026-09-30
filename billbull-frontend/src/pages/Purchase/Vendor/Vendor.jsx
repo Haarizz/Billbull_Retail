@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Users, Upload, Download, Plus, Search, ChevronDown,
   Filter, Star, Clock, Eye, SquarePen, Trash2,
@@ -1975,11 +1976,36 @@ const CreditorsSummaryView = ({ vendors = [] }) => {
 
 // --- MAIN WRAPPER ---
 const Vendor = () => {
+  const location = useLocation();
   const [view, setView] = useState("list");
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedVendor, setSelectedVendor] = useState(null);
   const { activeBranch } = useBranch();
+
+  // ── Global search arrival ──────────────────────────────────────────────────
+  // navigateToEntity("vendor-detail") hands the vendor over as router state.
+  //
+  // This page has no read-only vendor view: the only per-vendor UI is
+  // CreateVendorWizard, the create/edit mutation form. Dropping a user who picked a
+  // search result into an edit form would be a mutation surface they never asked for,
+  // so the contract stops at selection — the list filters down to that vendor and
+  // highlights its row. The read-only vendor detail itself belongs to the global
+  // search panel (Phase 2B-2), which never needs this page to mount.
+  const [highlightVendorId, setHighlightVendorId] = useState(null);
+  const consumedVendorIdRef = useRef(null);
+  useEffect(() => {
+    const requestedId = location.state?.vendorId;
+    if (!requestedId) return;
+    if (consumedVendorIdRef.current === String(requestedId)) return;
+    if (vendors.length === 0) return; // roster still loading — retry on the next render
+
+    consumedVendorIdRef.current = String(requestedId);
+    const match = vendors.find((v) => String(v.id) === String(requestedId));
+    // A stale or cross-branch id leaves the list untouched rather than filtering it
+    // down to nothing.
+    if (match) setHighlightVendorId(String(match.id));
+  }, [location.state?.vendorId, vendors]);
 
   // Load vendors on mount and when active branch changes (BBQA52-024)
   useEffect(() => {
@@ -2051,6 +2077,7 @@ const Vendor = () => {
         <VendorListViewWithActions
           vendors={vendors}
           loading={loading} // Pass loading state
+          highlightVendorId={highlightVendorId}
           onAddNew={() => { setSelectedVendor(null); setView("create"); }}
           onEdit={handleEdit}
           onDelete={handleDelete}
@@ -2068,7 +2095,7 @@ const Vendor = () => {
 };
 
 // Sub-Component: ListView with Actions wired
-const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete, onImport }) => {
+const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelete, onImport, highlightVendorId = null }) => {
   const { company } = useCompany();
   const { activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyDisplayCode(company);
@@ -2077,6 +2104,16 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState("All Status");
   const [filterCategory, setFilterCategory] = useState("All Categories");
+
+  // A vendor arriving from global search pre-fills the search box with its code (or
+  // name) so the row is on screen without a new filtering mechanism, and without the
+  // other filters being reset behind the user's back. The box stays editable — typing
+  // over it clears the arrival like any other search.
+  useEffect(() => {
+    if (!highlightVendorId) return;
+    const match = vendors.find((v) => String(v.id) === String(highlightVendorId));
+    if (match) setSearchTerm(match.code || match.name || "");
+  }, [highlightVendorId, vendors]);
   const importFileRef = useRef(null);
   const [isImporting, setIsImporting] = useState(false);
 
@@ -2394,7 +2431,12 @@ const VendorListViewWithActions = ({ vendors, loading, onAddNew, onEdit, onDelet
                       <tr><td colSpan="10" className="p-8 text-center text-slate-500">No vendors found matching criteria.</td></tr>
                     ) : (
                       pagedVendors.map((vendor, index) => (
-                        <tr key={vendor.id} className="hover:bg-slate-50 transition-colors">
+                        <tr
+                          key={vendor.id}
+                          data-vendor-id={vendor.id}
+                          data-highlighted={String(vendor.id) === String(highlightVendorId) ? "true" : undefined}
+                          className={`transition-colors ${String(vendor.id) === String(highlightVendorId) ? "bg-[#FFF8E7]" : "hover:bg-slate-50"}`}
+                        >
                           <td className="px-4 py-4 text-center text-slate-400 font-mono font-medium">
                             {getListSerialNumber(index, {
                               page: listPage,

@@ -34,6 +34,26 @@ public class SalesInvoiceController {
         this.salespersonAttributionService = salespersonAttributionService;
     }
 
+    /**
+     * The newest invoices for one customer, backing the global search details panel.
+     *
+     * <p>A separate endpoint rather than a filter on the list read: the list returns the
+     * full entity for every invoice in scope, which is the wrong shape and the wrong size
+     * for a preview pane. {@code size} is clamped server-side.
+     *
+     * <p>Guarded by {@code sales.invoice}, not {@code sales.customer}: a user who may see
+     * a customer does not automatically get to see that customer's invoices, and the
+     * panel renders this section's denial on its own.
+     */
+    @GetMapping("/recent")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<List<CustomerRecentInvoiceResponse>> getRecentForCustomer(
+            @RequestParam String customerCode,
+            @RequestParam(defaultValue = "5") int size) {
+        modulePermissionService.requireCanView("sales.invoice");
+        return ResponseEntity.ok(service.getRecentInvoicesForCustomer(customerCode, size));
+    }
+
     // QA-040: send the invoice email using the frontend-rendered HTML body
     // (same template as Print) + CID inline images.
     @PostMapping("/{id}/send-email")

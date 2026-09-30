@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
     Search, Filter, Download, Upload, Plus, MoreHorizontal, ChevronDown, Users, Wallet, MapPin, Phone, Mail,
     FileText, CreditCard, Truck, Building, Save, X, CheckCircle2, AlertCircle, File, Edit, Trash2, Eye,
@@ -1514,6 +1515,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 const ReceiveMoneyView = () => {
     const { company } = useCompany();
     const { branches: availableBranches, activeBranch } = useBranch();
+    const { canCreate, permissionsLoaded } = usePermissions();
     const currency = company?.currency || 'AED';
     const [isLoading, setIsLoading] = useState(false);
     const [isReceiptPrinting, setIsReceiptPrinting] = useState(false);
@@ -1554,14 +1556,24 @@ const ReceiveMoneyView = () => {
         loadData();
     }, []);
 
+    // The payment number comes from a create-gated endpoint, so a view-only user who
+    // opens this tab would otherwise get a 403 and the global "no permission" toast.
+    // Waits on permissionsLoaded because canCreate is false until /api/rbac/me
+    // resolves; the number is a non-consuming preview, so re-running is harmless.
+    useEffect(() => {
+        if (!permissionsLoaded || !canCreate('sales.payment')) return;
+        if (salesSettings && !isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT')) return;
+        getNextSalesPaymentNumber().then(setNextPaymentNo).catch(() => setNextPaymentNo(''));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [permissionsLoaded, salesSettings]);
+
     const loadData = async () => {
         setIsLoading(true);
         try {
-            const [custData, invData, paymentData, nextNo, settingsData] = await Promise.all([
+            const [custData, invData, paymentData, settingsData] = await Promise.all([
                 getAllCustomers(),
                 getAllSalesInvoices(),
                 getAllSalesPayments(),
-                getNextSalesPaymentNumber().catch(() => ''),
                 getSalesSettings().catch(() => null)
             ]);
 
@@ -1569,7 +1581,7 @@ const ReceiveMoneyView = () => {
             setInvoices(invData || []);
             setPayments(paymentData || []);
             if (settingsData) setSalesSettings(settingsData);
-            setNextPaymentNo(settingsData && !isAutoNumberingEnabled(settingsData, 'SALES_PAYMENT') ? '' : nextNo);
+            if (settingsData && !isAutoNumberingEnabled(settingsData, 'SALES_PAYMENT')) setNextPaymentNo('');
         } catch (error) {
             console.error("Error loading data:", error);
         } finally {
@@ -2735,6 +2747,7 @@ const StatCard = ({ label, value, subtext, icon: Icon, bgClass, iconColor }) => 
 // ==========================================
 
 const CustomerLedger = () => {
+    const location = useLocation();
     const { company } = useCompany();
     const { activeBranch } = useBranch();
     const { canCreate, canEdit } = usePermissions();
@@ -2856,6 +2869,28 @@ const CustomerLedger = () => {
     }
 
     // ✅ Handle Close Modal
+    // ── Global search / dashboard arrival ────────────────────────────────────
+    // navigateToEntity("customer-ledger") hands the customer over as router state
+    // (see utils/entityNavigation.js). Resolve it against the roster this page has
+    // already loaded and open the page's own detail view — no second workflow, and
+    // no extra fetch beyond the one handleEditClick already performs.
+    //
+    // Consumed once: a re-render, a filter change or a browser Back must not reopen
+    // the modal, and navigating here without state leaves the page exactly as before.
+    const consumedCustomerIdRef = useRef(null);
+    useEffect(() => {
+        const requestedId = location.state?.customerId;
+        if (!requestedId) return;
+        if (consumedCustomerIdRef.current === String(requestedId)) return;
+        if (customers.length === 0) return; // roster still loading — retry on the next render
+
+        consumedCustomerIdRef.current = String(requestedId);
+        const match = customers.find((c) => String(c.id) === String(requestedId));
+        // A stale or cross-branch id simply leaves the list as it is; inventing an
+        // error state for a link the user did not type would be noise.
+        if (match) handleEditClick(match);
+    }, [location.state?.customerId, customers]);
+
     const handleCloseModal = () => {
         setIsAddModalOpen(false);
         // Small delay to prevent UI flicker when resetting form

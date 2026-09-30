@@ -15,19 +15,36 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import com.billbull.backend.settings.branch.Branch;
+import com.billbull.backend.settings.branch.BranchRepository;
+
 @Service
 public class VendorImportService {
 
     private final VendorRepository repository;
+    private final BranchRepository branchRepo;
 
-    public VendorImportService(VendorRepository repository) {
+    public VendorImportService(VendorRepository repository, BranchRepository branchRepo) {
         this.repository = repository;
+        this.branchRepo = branchRepo;
     }
 
     public String importVendors(MultipartFile file) {
+        return importVendors(file, null);
+    }
+
+    /**
+     * @param branchId branch the imported vendors belong to; null keeps them unattributed
+     *                 (branch_id NULL), which the scoping predicate in
+     *                 {@code VendorRepository.searchVendors} treats as visible to EVERY
+     *                 branch — so a tenant that needs branch-level segregation must pass one.
+     */
+    public String importVendors(MultipartFile file, Long branchId) {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("Import file is empty");
         }
+
+        Branch targetBranch = branchId == null ? null : branchRepo.findById(branchId).orElse(null);
 
         int createdCount = 0;
         int updatedCount = 0;
@@ -76,6 +93,9 @@ public class VendorImportService {
                             Optional<Vendor> existing = repository.findByCode(code);
                             boolean isUpdate = existing.isPresent();
                             Vendor vendor = existing.orElseGet(Vendor::new);
+                            if (!isUpdate) {
+                                assignBranch(vendor, targetBranch);
+                            }
 
                             String cleanPhone = cleanPhone(phone);
                             String cleanPhone2 = cleanPhone(phone2);
@@ -117,6 +137,9 @@ public class VendorImportService {
                             Optional<Vendor> existing = repository.findByCode(code.trim());
                             boolean isUpdate = existing.isPresent();
                             Vendor vendor = existing.orElseGet(Vendor::new);
+                            if (!isUpdate) {
+                                assignBranch(vendor, targetBranch);
+                            }
 
                             String groupA = cell(row, 2);
                             String groupB = cell(row, 3);
@@ -322,5 +345,27 @@ public class VendorImportService {
             return value;
         }
         return value.substring(0, maxLength);
+    }
+
+    /**
+     * Mirrors {@code VendorService.mapBranchAllocations}: the owning FK is the vendor's default
+     * branch and a matching allocation row is what the Vendor form's "Allocated Branches" reads,
+     * so an imported vendor must carry both or it looks branch-less in the edit screen.
+     * A null branch leaves the vendor unattributed, preserving the previous import behaviour.
+     */
+    private void assignBranch(Vendor vendor, Branch targetBranch) {
+        if (targetBranch == null) {
+            return;
+        }
+        vendor.setBranch(targetBranch);
+        boolean alreadyAllocated = vendor.getBranchAllocations().stream()
+                .anyMatch(a -> a.getBranch() != null && targetBranch.getId().equals(a.getBranch().getId()));
+        if (!alreadyAllocated) {
+            VendorBranchAllocation alloc = new VendorBranchAllocation();
+            alloc.setVendor(vendor);
+            alloc.setBranch(targetBranch);
+            alloc.setDefault(true);
+            vendor.getBranchAllocations().add(alloc);
+        }
     }
 }

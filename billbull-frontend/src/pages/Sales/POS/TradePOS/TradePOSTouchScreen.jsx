@@ -1,8 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { TradeHeader } from './components/layout/TradeHeader';
 import { TradeMainCanvas } from './components/layout/TradeMainCanvas';
 import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
+import QuickCustomerModal from '../features/customers/QuickCustomerModal';
+import { useStickyScanFocus } from './useStickyScanFocus';
 import { ScanLine, CheckCircle2 } from 'lucide-react';
 
 /**
@@ -16,6 +18,7 @@ export const TradePOSTouchScreen = React.memo((props) => {
   const {
     // POSSales Shared State
     currentInvoice,
+    invoiceCounter,
     selectedFocusItemId,
     setSelectedFocusItemId,
     formatCurrency,
@@ -66,11 +69,64 @@ export const TradePOSTouchScreen = React.memo((props) => {
     // Product Entry Mode controllers — owned by POSSales.jsx, which is the single
     // place that decides Direct Add vs Open Entry Dialog and renders the dialog.
     handleProductSelection,
-    handleEditItem
+    handleEditItem,
+
+    // Quick customer creation. The dialog itself used to be rendered ONLY by POSTouchScreen,
+    // so "Create New Customer" in this template opened nothing at all. Same POSSales-owned
+    // state, now rendered here too through the shared QuickCustomerModal.
+    showQuickCustomerModal,
+    setShowQuickCustomerModal,
+    quickCustomerForm,
+    setQuickCustomerForm,
+    quickCustomerDuplicateWarning,
+    quickCustomerLoading,
+    quickCustomerError,
+    handleSaveQuickCustomer,
+    showFeedback
   } = props;
 
   // Presentation state for mobile/tablet responsive behavior
   const [mobileActiveTab, setMobileActiveTab] = useState('catalog'); // 'catalog' | 'cart'
+
+  // Keyboard highlight in the Quick Pick list (-1 = nothing highlighted, so a plain Enter
+  // still goes through handleUnifiedEntry and barcode scans behave exactly as before).
+  const [activeProductIndex, setActiveProductIndex] = useState(-1);
+  const [highlightedList, setHighlightedList] = useState(filteredProducts);
+
+  // New search results → drop the highlight (render-time reset, no extra effect pass).
+  if (highlightedList !== filteredProducts) {
+    setHighlightedList(filteredProducts);
+    setActiveProductIndex(-1);
+  }
+
+  // Keep the caret in the search box: at session start, after every cart change, once a sale
+  // closes (invoiceCounter bumps) and whenever a customer is assigned — so the next scan or
+  // keystroke always lands somewhere useful without the cashier clicking first.
+  const cartLineCount = currentInvoice?.items?.length || 0;
+  useStickyScanFocus(barcodeInputRef, {
+    triggers: [invoiceCounter, cartLineCount, selectedCustomerData?.id, showQuickCustomerModal]
+  });
+
+  const moveProductHighlight = useCallback((delta) => {
+    const count = filteredProducts?.length || 0;
+    if (count === 0) return;
+    setActiveProductIndex(prev => {
+      const next = prev + delta;
+      if (next < -1) return -1;
+      if (next > count - 1) return count - 1;
+      return next;
+    });
+  }, [filteredProducts]);
+
+  const resetProductHighlight = useCallback(() => setActiveProductIndex(-1), []);
+
+  // Returns true when a highlighted product was added, so the search bar skips its default Enter.
+  const selectHighlightedProduct = useCallback(() => {
+    const product = activeProductIndex >= 0 ? filteredProducts?.[activeProductIndex] : null;
+    if (!product || !handleProductSelection) return false;
+    handleProductSelection(product);
+    return true;
+  }, [activeProductIndex, filteredProducts, handleProductSelection]);
 
   // Grouped and memoized prop objects to prevent full-tree re-renders
   const headerProps = useMemo(() => ({
@@ -91,11 +147,14 @@ export const TradePOSTouchScreen = React.memo((props) => {
     filteredProducts,
     posProductsLoading,
     onProductSelected: handleProductSelection,
-    formatCurrency
+    formatCurrency,
+    activeProductIndex,
+    setActiveProductIndex
   }), [
-    searchQuery, setSearchQuery, barcodeInputRef, handleUnifiedEntry, 
-    productCategories, selectedCategory, setSelectedCategory, 
-    filteredProducts, posProductsLoading, handleProductSelection, formatCurrency
+    searchQuery, setSearchQuery, barcodeInputRef, handleUnifiedEntry,
+    productCategories, selectedCategory, setSelectedCategory,
+    filteredProducts, posProductsLoading, handleProductSelection, formatCurrency,
+    activeProductIndex
   ]);
 
   const customerPanelProps = useMemo(() => ({
@@ -152,6 +211,9 @@ export const TradePOSTouchScreen = React.memo((props) => {
             setSearchQuery={setSearchQuery}
             barcodeInputRef={barcodeInputRef}
             handleUnifiedEntry={handleUnifiedEntry}
+            onMoveHighlight={moveProductHighlight}
+            onSelectHighlighted={selectHighlightedProduct}
+            onResetHighlight={resetProductHighlight}
           />
         </div>
 
@@ -230,6 +292,21 @@ export const TradePOSTouchScreen = React.memo((props) => {
           Invoice ({currentInvoice?.items?.filter(i => !i.isVoided)?.length || 0})
         </button>
       </nav>
+
+      {/* Quick customer creation — the counterpart of the "Create New Customer" button in
+          TradeMainCanvas's customer dropdown. */}
+      <QuickCustomerModal
+        show={showQuickCustomerModal}
+        form={quickCustomerForm}
+        setForm={setQuickCustomerForm}
+        duplicateWarning={quickCustomerDuplicateWarning}
+        loading={quickCustomerLoading}
+        error={quickCustomerError}
+        onClose={() => setShowQuickCustomerModal && setShowQuickCustomerModal(false)}
+        onSave={handleSaveQuickCustomer}
+        setSelectedCustomer={setSelectedCustomer}
+        showFeedback={showFeedback}
+      />
 
     </div>
   );

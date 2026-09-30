@@ -38,6 +38,28 @@ public interface GlAccountBalanceRepository extends JpaRepository<GlAccountBalan
 
     List<GlAccountBalance> findByAccountCode(String accountCode);
 
+    /**
+     * Balance rows for one account, narrowed to the branches the caller can reach.
+     *
+     * <p>Branch-scoped for the same reason {@code LedgerEntryRepository.findRecentByAccountCodeScoped}
+     * is: a GL balance is branch-attributed financial data, so a user who cannot reach a branch
+     * must not read its debit/credit/closing figures in the global-search details panel either.
+     * {@code allBranches = true} applies no branch predicate at all (ADMIN / SUPER_ADMIN).
+     *
+     * <p>Rows with no branch stay visible, as everywhere else in this codebase's branch scoping —
+     * they are the posting engine's rolling-window/unattributed rows, and dropping them would
+     * leave the panel's branch breakdown failing to add up to its own account total.
+     */
+    @Query("""
+        SELECT b FROM GlAccountBalance b
+         WHERE b.accountCode = :accountCode
+           AND (:allBranches = true OR b.branchId IS NULL OR b.branchId IN :branchIds)
+        """)
+    List<GlAccountBalance> findByAccountCodeScoped(
+            @Param("accountCode") String accountCode,
+            @Param("allBranches") boolean allBranches,
+            @Param("branchIds") java.util.Collection<Long> branchIds);
+
     List<GlAccountBalance> findByFiscalPeriodId(Long fiscalPeriodId);
 
     /** All balances for a branch, ordered by account code for report consumption. */

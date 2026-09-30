@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React, { useId, useRef } from 'react';
 import { Minus, Plus, PlusCircle, Check } from 'lucide-react';
 import CurrencyAmount from '../../../components/CurrencyAmount';
 
@@ -25,13 +25,55 @@ const EntryForm = ({
     onCancel,
     onConfirm,
     mode,
-    uom = 'BAG'
+    uom = 'BAG',
+    // Owned by the modal so it can focus the price field when the dialog opens.
+    priceInputRef
 }) => {
     const priceId = useId();
     const qtyId = useId();
     const discId = useId();
+    const localPriceRef = useRef(null);
+    const priceRef = priceInputRef || localPriceRef;
+    const qtyRef = useRef(null);
+    const discRef = useRef(null);
 
     const qtyDisabled = isReadOnly || lockQuantity;
+
+    const focusField = (field) => {
+        const el = { price: priceRef, quantity: qtyRef, discount: discRef }[field]?.current;
+        el?.focus();
+        el?.select();
+    };
+
+    // Keyboard flow for fast counter entry: Price -> (Tab/Enter) -> Quantity -> (Tab/Enter) -> confirm.
+    // Arrow Up/Down step between Price, Quantity and Discount instead of nudging the number value.
+    // Shift+Tab walks back. A locked quantity is skipped, so Tab on Price confirms straight away.
+    const fieldOrder = qtyDisabled ? ['price', 'discount'] : ['price', 'quantity', 'discount'];
+
+    const handleFieldKeyDown = (field) => (e) => {
+        if (isReadOnly) return;
+        const idx = fieldOrder.indexOf(field);
+
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const target = fieldOrder[idx + (e.key === 'ArrowDown' ? 1 : -1)];
+            if (target) focusField(target);
+            return;
+        }
+        if (e.key === 'Tab' && e.shiftKey) {
+            if (idx > 0) {
+                e.preventDefault();
+                focusField(fieldOrder[idx - 1]);
+            }
+            return;
+        }
+        if (e.key === 'Tab' || e.key === 'Enter') {
+            e.preventDefault();
+            // Price moves on to Quantity; Quantity and Discount commit the line.
+            if (field === 'price' && !qtyDisabled) focusField('quantity');
+            else onConfirm?.();
+        }
+    };
 
     const handleQtyChange = (delta) => {
         if (qtyDisabled) return;
@@ -51,6 +93,9 @@ const EntryForm = ({
                     <div className="relative">
                         <input
                             id={priceId}
+                            ref={priceRef}
+                            onKeyDown={handleFieldKeyDown('price')}
+                            onFocus={(e) => e.target.select()}
                             type="number"
                             min="0"
                             step="any"
@@ -91,6 +136,9 @@ const EntryForm = ({
                         </button>
                         <input
                             id={qtyId}
+                            ref={qtyRef}
+                            onKeyDown={handleFieldKeyDown('quantity')}
+                            onFocus={(e) => e.target.select()}
                             type="number"
                             min="0.001"
                             step="any"
@@ -145,6 +193,9 @@ const EntryForm = ({
                     <div className="relative">
                         <input
                             id={discId}
+                            ref={discRef}
+                            onKeyDown={handleFieldKeyDown('discount')}
+                            onFocus={(e) => e.target.select()}
                             type="number"
                             min="0"
                             step="any"

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Search,
   Upload,
@@ -3261,6 +3262,7 @@ const EmployeeAccessPanel = ({ employee, onClose }) => {
 // ==========================================
 
 const Employees = () => {
+  const location = useLocation();
   const { canCreate, canEdit, canApprove } = usePermissions();
   const { branches: allBranches } = useBranch();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -3333,6 +3335,32 @@ const Employees = () => {
       setIsLoading(false);
     }
   };
+
+  // ── Global search arrival ──────────────────────────────────────────────────
+  // navigateToEntity("employee-detail") hands the employee over as router state.
+  //
+  // The row is resolved out of employeeData — the roster this page already loads on
+  // mount from /api/employees/active — so arriving from search costs no extra request
+  // and reads nothing the list itself does not already hold. In particular it does not
+  // call GET /api/employees/{id} to build a row; the drawer makes that call itself, the
+  // same one an ordinary row click makes, and only once it is open.
+  //
+  // Consumed once: Back or a filter change must not reopen the drawer, and a page
+  // opened without state behaves exactly as before.
+  const consumedEmployeeIdRef = useRef(null);
+  useEffect(() => {
+    const requestedId = location.state?.employeeId;
+    if (!requestedId) return;
+    if (consumedEmployeeIdRef.current === String(requestedId)) return;
+    if (employeeData.length === 0) return; // roster still loading — retry on the next render
+
+    consumedEmployeeIdRef.current = String(requestedId);
+    const match = employeeData.find((e) => String(e.id) === String(requestedId));
+    // A stale id leaves the roster as it is rather than opening an empty drawer.
+    if (!match) return;
+    setActiveView('employees');
+    setDetailsEmployee(match);
+  }, [location.state?.employeeId, employeeData]);
 
   // --- 2. Workflow Logic ---
 
