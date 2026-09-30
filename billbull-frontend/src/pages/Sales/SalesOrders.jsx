@@ -189,7 +189,7 @@ const SalesOrders = () => {
   const { branches: availableBranches, activeBranch } = useBranch();
   const currencyLabel = resolveCurrencyLabel(company);
   const orderCurrency = company?.currency || currencyLabel || 'AED';
-  const { canCreate, canEdit, canApprove, canExport, canAction } = usePermissions();
+  const { canCreate, canEdit, canApprove, canExport, canAction, permissionsLoaded } = usePermissions();
   const canManualBatchSelect = canAction('batch_manual_select', 'edit');
   const [activeTab, setActiveTab] = useState('list');
 
@@ -521,6 +521,24 @@ const SalesOrders = () => {
     }
   }, [location.state, customersList]);
 
+  // Prefetch the next SO number for the create form.
+  //
+  // GET /next-number is create-gated on the backend, so a view-only user asking for
+  // it gets a 403 and the global interceptor shows "You do not have permission to
+  // perform this action." just for opening the list. Gate the call on canCreate.
+  //
+  // This waits on permissionsLoaded: granularPermissions starts empty, so canCreate
+  // returns false until /api/rbac/me resolves. Firing from the mount effect alone
+  // would leave a user who CAN create with a permanently blank number. The number is
+  // a non-consuming preview, so re-running this is harmless.
+  useEffect(() => {
+    if (!permissionsLoaded || orderId || !salesSettings) return;
+    if (!canCreate('sales.order')) return;
+    if (!isAutoNumberingEnabled(salesSettings, 'SALES_ORDER')) return;
+    getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissionsLoaded, orderId, salesSettings]);
+
   const fetchAllData = async () => {
     try {
       const [custResult, qtnResult, proformaResult, bankAccResult, settingsResult] = await Promise.allSettled([
@@ -539,9 +557,6 @@ const SalesOrders = () => {
       const loadedSettings = settingsResult.status === 'fulfilled' ? settingsResult.value : null;
       if (loadedSettings) {
         setSalesSettings(loadedSettings);
-        if (!orderId && isAutoNumberingEnabled(loadedSettings, 'SALES_ORDER')) {
-          getNextSalesOrderNumber().then(setSoNumber).catch(() => setSoNumber(''));
-        }
       }
 
       let validCustomers = Array.isArray(custData) ? custData : [];

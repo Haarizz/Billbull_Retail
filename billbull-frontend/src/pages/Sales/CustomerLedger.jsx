@@ -1515,6 +1515,7 @@ const AddCustomerModal = ({ isOpen, onClose, customerToEdit, onSaveCustomer }) =
 const ReceiveMoneyView = () => {
     const { company } = useCompany();
     const { branches: availableBranches, activeBranch } = useBranch();
+    const { canCreate, permissionsLoaded } = usePermissions();
     const currency = company?.currency || 'AED';
     const [isLoading, setIsLoading] = useState(false);
     const [isReceiptPrinting, setIsReceiptPrinting] = useState(false);
@@ -1555,14 +1556,24 @@ const ReceiveMoneyView = () => {
         loadData();
     }, []);
 
+    // The payment number comes from a create-gated endpoint, so a view-only user who
+    // opens this tab would otherwise get a 403 and the global "no permission" toast.
+    // Waits on permissionsLoaded because canCreate is false until /api/rbac/me
+    // resolves; the number is a non-consuming preview, so re-running is harmless.
+    useEffect(() => {
+        if (!permissionsLoaded || !canCreate('sales.payment')) return;
+        if (salesSettings && !isAutoNumberingEnabled(salesSettings, 'SALES_PAYMENT')) return;
+        getNextSalesPaymentNumber().then(setNextPaymentNo).catch(() => setNextPaymentNo(''));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [permissionsLoaded, salesSettings]);
+
     const loadData = async () => {
         setIsLoading(true);
         try {
-            const [custData, invData, paymentData, nextNo, settingsData] = await Promise.all([
+            const [custData, invData, paymentData, settingsData] = await Promise.all([
                 getAllCustomers(),
                 getAllSalesInvoices(),
                 getAllSalesPayments(),
-                getNextSalesPaymentNumber().catch(() => ''),
                 getSalesSettings().catch(() => null)
             ]);
 
@@ -1570,7 +1581,7 @@ const ReceiveMoneyView = () => {
             setInvoices(invData || []);
             setPayments(paymentData || []);
             if (settingsData) setSalesSettings(settingsData);
-            setNextPaymentNo(settingsData && !isAutoNumberingEnabled(settingsData, 'SALES_PAYMENT') ? '' : nextNo);
+            if (settingsData && !isAutoNumberingEnabled(settingsData, 'SALES_PAYMENT')) setNextPaymentNo('');
         } catch (error) {
             console.error("Error loading data:", error);
         } finally {
