@@ -88,7 +88,21 @@ const mapProductListItem = (d) => ({
   branchName: d.branchName ?? null,
 });
 
+const SORT_OPTIONS = ["Sort by Name", "Sort by Code", "Sort by Brand", "Sort by Latest"];
+
+// Server-side sort keys understood by /api/products/list. Ordering has to happen in the
+// query because the list is paginated — re-sorting the current page would only surface
+// the latest products of that page, not of the catalog.
+const SORT_PARAMS = {
+  "Sort by Name": "name",
+  "Sort by Code": "code",
+  "Sort by Brand": "brand",
+  "Sort by Latest": "latest"
+};
+
 const sortProducts = (items, sortBy) => [...items].sort((a, b) => {
+  // Latest is ordered by the backend (createdAt desc); keep the page order as received.
+  if (sortBy === "Sort by Latest") return 0;
   if (sortBy === "Sort by Name") return (a.name || '').localeCompare(b.name || '');
   if (sortBy === "Sort by Code") return (a.code || '').localeCompare(b.code || '');
   if (sortBy === "Sort by Brand") return (a.brandName || '').localeCompare(b.brandName || '');
@@ -2225,6 +2239,12 @@ const ImportProgressModal = ({ fileName, status, message, progress = {}, onClose
             <p className="text-xs text-slate-500 mt-0.5 truncate max-w-[320px]" title={fileName}>
               📄 {fileName}
             </p>
+            {/* Destination branch: imported items are owned by the branch active at upload time. */}
+            {progress.branchName && (
+              <p className="text-xs text-slate-500 mt-0.5 truncate max-w-[320px]">
+                🏢 Importing into: <span className="font-semibold text-slate-700">{progress.branchName}</span>
+              </p>
+            )}
           </div>
         </div>
 
@@ -2380,6 +2400,12 @@ const Products = () => {
     fetchProducts(0, debouncedSearch);
   }, [filterDepartment, filterBrand, activeBranchId]);
 
+  // Sorting is server-side (the list is paginated), so a sort change re-fetches page 0.
+  useEffect(() => {
+    setCurrentPage(0);
+    fetchProducts(0, debouncedSearch, sortBy);
+  }, [sortBy]);
+
   useEffect(() => {
     getCompanyProfile().then(res => setCompanyProfile(res.data)).catch(() => {});
   }, []);
@@ -2414,12 +2440,12 @@ const Products = () => {
       : null
   });
 
-  const fetchProducts = async (page = 0, search = debouncedSearch) => {
+  const fetchProducts = async (page = 0, search = debouncedSearch, sort = sortBy) => {
     try {
       setLoading(true);
       // BB-001: Resolve department/brand IDs for server-side filtering
       const { deptId, brnId } = getProductListFilterIds();
-      const data = await getProductsList(page, PAGE_SIZE, search, undefined, null, deptId, brnId);
+      const data = await getProductsList(page, PAGE_SIZE, search, undefined, null, deptId, brnId, null, null, SORT_PARAMS[sort]);
 
       if (!data || !Array.isArray(data.content)) {
         console.error("API did not return expected list response:", data);
@@ -2447,7 +2473,7 @@ const Products = () => {
   const loadProductsForExport = async () => {
     const { deptId, brnId } = getProductListFilterIds();
     const initialSize = Math.max(PAGE_SIZE, totalElements || PAGE_SIZE);
-    let data = await getProductsList(0, initialSize, debouncedSearch, undefined, null, deptId, brnId);
+    let data = await getProductsList(0, initialSize, debouncedSearch, undefined, null, deptId, brnId, null, null, SORT_PARAMS[sortBy]);
 
     if (!data || !Array.isArray(data.content)) {
       throw new Error("Product list export API did not return a valid response.");
@@ -2455,7 +2481,7 @@ const Products = () => {
 
     const exportTotal = data.totalElements ?? data.content.length;
     if (exportTotal > data.content.length) {
-      data = await getProductsList(0, exportTotal, debouncedSearch, undefined, null, deptId, brnId);
+      data = await getProductsList(0, exportTotal, debouncedSearch, undefined, null, deptId, brnId, null, null, SORT_PARAMS[sortBy]);
       if (!data || !Array.isArray(data.content)) {
         throw new Error("Product list export API did not return a valid full response.");
       }
@@ -2875,7 +2901,7 @@ const Products = () => {
             </div>
             <Dropdown options={uniqueDepartmentsList} selected={filterDepartment} onSelect={setFilterDepartment} />
             <Dropdown options={uniqueBrandsList} selected={filterBrand} onSelect={setFilterBrand} />
-            <Dropdown options={["Sort by Name", "Sort by Code", "Sort by Brand"]} selected={sortBy} onSelect={setSortBy} />
+            <Dropdown options={SORT_OPTIONS} selected={sortBy} onSelect={setSortBy} />
           </div>
           <div className="mt-3 flex items-center justify-between pb-4">
             <p className="text-xs text-slate-500">

@@ -4,6 +4,11 @@
 import api from "./axiosConfig";
 import { getBranches as fetchBranches } from "./branchApi";
 import { getDashboardData, clearDashboardApiCache } from "./dashboardApi";
+import {
+  globalSearch as sharedGlobalSearch,
+  clearGlobalSearchCache,
+  DASHBOARD_SEARCH_SOURCE_KEYS,
+} from "./globalSearchApi";
 
 // ==================== RE-EXPORT TYPES ====================
 
@@ -172,19 +177,6 @@ interface ServiceResponse<T> {
   status?: string;
 }
 
-// ==================== GLOBAL SEARCH CONSTANTS ====================
-
-interface SearchSource {
-  /** How many rows of this source may reach the dropdown. */
-  limit: number;
-  request: (query: string, signal?: AbortSignal) => Promise<any>;
-  map: (row: any) => GlobalSearchResult;
-}
-
-const SEARCH_RESULT_LIMIT = 12;
-const SEARCH_CACHE_TTL = 30_000;
-const SEARCH_CACHE_MAX_ENTRIES = 50;
-
 // ==================== DATE FILTER HELPERS ====================
 
 const dateFilterToTimeRange = (dateFilter: string): string => {
@@ -261,7 +253,7 @@ class BillBullDashboardService {
   invalidateCaches(): void {
     this.summaryCache.clear();
     this.inFlight.clear();
-    this.searchCache.clear();
+    clearGlobalSearchCache();
     clearDashboardApiCache();
   }
 
@@ -642,140 +634,30 @@ class BillBullDashboardService {
 
   // ==================== GLOBAL SEARCH ====================
 
-  // One entry per backend call the dropdown fans out to. Kept as data so the
-  // search can render each source the moment it lands instead of waiting on the
-  // slowest endpoint, while the array order still fixes the grouping on screen.
-  private readonly SEARCH_SOURCES: SearchSource[] = [
-    {
-      limit: 3,
-      request: (q, signal) => api.get("/api/products/search", { params: { q, size: 3 }, signal }),
-      map: (p: any) => ({
-        id: String(p.id ?? ""),
-        type: "product",
-        title: String(p.name ?? ""),
-        subtitle: `${p.sku ?? p.code ?? ""} • ${p.department?.name ?? ""}`,
-        meta: { badge: `Stock: ${p.quantity ?? 0}`, rightTag: p.sellingPrice ? `AED ${Number(p.sellingPrice).toLocaleString()}` : undefined },
-      }),
-    },
-    {
-      limit: 3,
-      request: (q, signal) => api.get("/api/sales/customer-ledger/search", { params: { q, size: 3 }, signal }),
-      map: (c: any) => ({
-        id: String(c.id ?? ""),
-        type: "customer",
-        title: String(c.name ?? c.customerName ?? ""),
-        subtitle: `${c.code ?? ""} • ${c.mobile ?? c.phone ?? c.email ?? ""}`,
-        meta: { badge: c.groupType ?? "Customer" },
-      }),
-    },
-    {
-      limit: 3,
-      request: (q, signal) => api.get("/api/sales/invoices/page", { params: { search: q, size: 3 }, signal }),
-      map: (inv: any) => ({
-        id: String(inv.id ?? ""),
-        type: "invoice",
-        title: String(inv.invoiceNumber ?? inv.id ?? ""),
-        subtitle: `${inv.customerName ?? "Walk-in"} • ${inv.invoiceDate ?? ""}`,
-        meta: { badge: inv.status ?? "Invoice", rightTag: inv.invoiceTotal ? `AED ${Number(inv.invoiceTotal).toLocaleString()}` : undefined },
-      }),
-    },
-    {
-      limit: 2,
-      request: (q, signal) => api.get("/api/lpos/page", { params: { search: q, size: 3 }, signal }),
-      map: (lpo: any) => ({
-        id: String(lpo.dbId ?? lpo.id ?? ""),
-        type: "lpo",
-        title: String(lpo.id ?? lpo.dbId ?? ""),
-        subtitle: `${lpo.vendorName ?? ""} • ${lpo.status ?? ""}`,
-        meta: { badge: "LPO", rightTag: lpo.totalValue ? `AED ${Number(lpo.totalValue).toLocaleString()}` : undefined },
-      }),
-    },
-    {
-      limit: 2,
-      request: (q, signal) => api.get("/api/grns/page", { params: { search: q, size: 3 }, signal }),
-      map: (grn: any) => ({
-        id: String(grn.id ?? ""),
-        type: "grn",
-        title: String(grn.idDisplay ?? grn.id ?? ""),
-        subtitle: `${grn.vendor ?? ""} • ${grn.date ?? ""}`,
-        meta: { badge: "GRN", rightTag: grn.value ? `AED ${Number(grn.value).toLocaleString()}` : undefined },
-      }),
-    },
-    {
-      limit: 2,
-      request: (q, signal) => api.get("/api/sales/quotations/page", { params: { search: q, size: 3 }, signal }),
-      map: (q: any) => ({
-        id: String(q.id ?? ""),
-        type: "quotation",
-        title: String(q.quotationNumber ?? q.id ?? ""),
-        subtitle: `${q.customerName ?? ""} • ${q.quotationDate ?? q.createdAt ?? ""}`,
-        meta: { badge: q.status ?? "Quote", rightTag: q.totalAmount ?? q.grandTotal ? `AED ${Number(q.totalAmount ?? q.grandTotal ?? 0).toLocaleString()}` : undefined },
-      }),
-    },
-  ];
-
-  // Typing "INV-2026-0185" issues a request per prefix; backspacing or re-typing
-  // a term then costs nothing. Only completed (non-aborted) result sets land here.
-  private searchCache: Map<string, { data: GlobalSearchResult[]; ts: number }> = new Map();
-
-  private readSearchCache(key: string): GlobalSearchResult[] | null {
-    const hit = this.searchCache.get(key);
-    if (!hit) return null;
-    if (Date.now() - hit.ts >= SEARCH_CACHE_TTL) {
-      this.searchCache.delete(key);
-      return null;
-    }
-    return hit.data;
-  }
-
-  private writeSearchCache(key: string, data: GlobalSearchResult[]): void {
-    // Plain FIFO eviction — the map keeps insertion order, so the oldest key is first.
-    if (this.searchCache.size >= SEARCH_CACHE_MAX_ENTRIES) {
-      const oldest = this.searchCache.keys().next().value;
-      if (oldest !== undefined) this.searchCache.delete(oldest);
-    }
-    this.searchCache.set(key, { data, ts: Date.now() });
-  }
-
   /**
-   * Fans out across every search source. `onPartial` fires each time a source
-   * resolves, carrying the full ordered list built so far, so the dropdown can
-   * paint early hits while the slower endpoints are still running. Pass a
-   * `signal` to drop a superseded keystroke's requests.
+   * Thin delegate to the shared global-search service. The sources, cache and
+   * fan-out live in api/globalSearchApi.js so the dashboard dropdown and the
+   * global search modal cannot drift apart.
+   *
+   * The dropdown searches the sources pinned in DASHBOARD_SEARCH_SOURCE_KEYS, in
+   * that order, with the shared 12-result cap. As of Phase 2B-3 that list is
+   * products, customers, invoices, LPOs, GRNs, quotations, vendors and ledger
+   * accounts: vendors and ledger accounts joined it once entityNavigation had a
+   * verified route contract for them. Employees are still excluded — that is a
+   * visibility decision, not a missing route.
+   *
+   * No permission predicate is passed, so every pinned source is requested and a
+   * user without purchases.vendor / finance.ledger gets a 403 per denied source.
+   * The modal filters by permission before dispatching; this surface does not.
    */
   async globalSearch(
     query: string,
     opts: { signal?: AbortSignal; onPartial?: (results: GlobalSearchResult[]) => void } = {}
   ): Promise<ServiceResponse<GlobalSearchResult[]>> {
-    const term = (query ?? "").trim();
-    if (term.length < 2) return { success: true, data: [] };
-
-    const key = term.toLowerCase();
-    const cached = this.readSearchCache(key);
-    if (cached) return { success: true, data: cached };
-
-    // One bucket per source keeps the grouped ordering stable regardless of
-    // which request happens to finish first.
-    const buckets: GlobalSearchResult[][] = this.SEARCH_SOURCES.map(() => []);
-    const collect = () => buckets.flat().slice(0, SEARCH_RESULT_LIMIT);
-
-    await Promise.all(
-      this.SEARCH_SOURCES.map(async (source, index) => {
-        try {
-          const res = await source.request(term, opts.signal);
-          const raw = Array.isArray(res?.data) ? res.data : (res?.data?.content ?? []);
-          buckets[index] = raw.slice(0, source.limit).map(source.map);
-        } catch {
-          buckets[index] = [];
-        }
-        if (!opts.signal?.aborted) opts.onPartial?.(collect());
-      })
-    );
-
-    const results = collect();
-    if (opts.signal?.aborted) return { success: true, data: results };
-    this.writeSearchCache(key, results);
-    return { success: true, data: results };
+    return sharedGlobalSearch(query, {
+      ...opts,
+      sourceKeys: DASHBOARD_SEARCH_SOURCE_KEYS,
+    }) as Promise<ServiceResponse<GlobalSearchResult[]>>;
   }
 }
 

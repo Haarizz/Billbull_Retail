@@ -91,6 +91,7 @@ import {
   type BranchSummary,
 } from "../../api/billbull-dashboard-service";
 import { useBranch } from "../../context/BranchContext";
+import { entitySectionForResult } from "../../utils/entityNavigation";
 
 // Props
 interface DashboardProps {
@@ -524,26 +525,16 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
   const handleSearchResultClick = (item: GlobalSearchResult) => {
     if (!onNavigate) return;
 
-    switch (item.type) {
-      case "product":
-        onNavigate("inventory-product-detail", { productId: item.id });
-        break;
-      case "customer":
-        onNavigate("customer-ledger", { customerId: item.id });
-        break;
-      case "invoice":
-        onNavigate("sales-invoice-detail", { invoiceId: item.id });
-        break;
-      case "lpo":
-        onNavigate("lpo-detail", { lpoId: item.id, lpoNumber: item.title });
-        break;
-      case "grn":
-        onNavigate("grn-detail", { grnId: item.id });
-        break;
-      case "quotation":
-        onNavigate("quotation-detail", { quotationId: item.id });
-        break;
-    }
+    // The result -> section/params mapping is shared with the global search
+    // modal (utils/entityNavigation.js) so both open an entity the same way.
+    //
+    // A type with no verified destination returns null here. That is the reason
+    // DASHBOARD_SEARCH_SOURCE_KEYS is pinned rather than open: a source whose rows map
+    // to nothing would render a row that swallows the click. Vendors and ledger accounts
+    // are in that list now precisely because both map to a destination below.
+    const mapped = entitySectionForResult(item);
+    if (mapped) onNavigate(mapped.section, mapped.params);
+
     setShowSearchResults(false);
     setSearchTerm("");
   };
@@ -984,7 +975,11 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
                     item.type === "invoice" && "bg-emerald-50 text-emerald-700",
                     item.type === "lpo" && "bg-purple-50 text-purple-700",
                     item.type === "grn" && "bg-orange-50 text-orange-700",
-                    item.type === "quotation" && "bg-teal-50 text-teal-700"
+                    item.type === "quotation" && "bg-teal-50 text-teal-700",
+                    // Same colours the global search modal uses for these two, so a
+                    // vendor looks like a vendor wherever it is searched from.
+                    item.type === "vendor" && "bg-indigo-50 text-indigo-700",
+                    item.type === "ledger" && "bg-violet-50 text-violet-700"
                   )}>
                     {item.type === "product" && "SKU"}
                     {item.type === "customer" && "CST"}
@@ -992,6 +987,8 @@ export function BillBullDashboard({ onNavigate }: DashboardProps = {}) {
                     {item.type === "lpo" && "LPO"}
                     {item.type === "grn" && "GRN"}
                     {item.type === "quotation" && "QTN"}
+                    {item.type === "vendor" && "VND"}
+                    {item.type === "ledger" && "LGR"}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">

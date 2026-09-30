@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import {
   BookOpen,
@@ -177,6 +178,7 @@ const SUB_GROUP_OPTIONS_MAP = {
 };
 
 const Ledger = () => {
+  const location = useLocation();
   const { branches, defaultBranchName, activeBranch, activeBranchId, isAllBranches } = useBranch();
   const { company } = useCompany();
   const currency = resolveCurrencyDisplayCode(company || {});
@@ -685,6 +687,36 @@ const Ledger = () => {
   const [openActionMenuId, setOpenActionMenuId] = useState(null);
   const [openCostCenterMenuId, setOpenCostCenterMenuId] = useState(null);
   const [selectedAccountForView, setSelectedAccountForView] = useState(null);
+
+  // ── Global search arrival ──────────────────────────────────────────────────
+  // navigateToEntity("ledger-account-detail") hands over { accountCode, tab: "chart" }.
+  // The account is resolved out of accountRows — the page's own loaded rows, already
+  // carrying the formatted balance/branch/cost-centre fields the view modal reads — so
+  // no row object is fabricated and no formatted display string travels in route state.
+  //
+  // Consumed once per arrival, and a page opened without state behaves exactly as before.
+  const consumedAccountCodeRef = useRef(null);
+  useEffect(() => {
+    const requestedCode = location.state?.accountCode;
+    if (!requestedCode) return;
+    if (consumedAccountCodeRef.current === String(requestedCode)) return;
+
+    // The tab is safe to switch before the accounts land; the row lookup is not.
+    if (location.state?.tab === 'chart') setActiveTab('chart');
+    if (accountRows.length === 0) return; // still loading — retry on the next render
+
+    consumedAccountCodeRef.current = String(requestedCode);
+    const match = accountRows.find((row) => String(row.code) === String(requestedCode));
+    if (!match) return; // stale/unknown code: leave the chart as it is
+    // Filtering by the code puts the account on screen even when it sits on a later page.
+    // The list view is the one whose search is keyed by account code (the tree view has
+    // its own, separate search), so the arrival lands there.
+    setCoaViewMode('list');
+    setSearchQuery(String(match.code));
+    setSelectedAccountForView(match);
+    setIsViewModalOpen(true);
+  }, [location.state?.accountCode, location.state?.tab, accountRows]);
+
   const [selectedCostCenterForView, setSelectedCostCenterForView] = useState(null);
 
   // --- CLICK OUTSIDE LOGIC ---

@@ -26,6 +26,7 @@ import { CompanyProvider } from "./context/CompanyContext";
 import { BranchProvider } from "./context/BranchContext";
 import ResourceGuard from "./components/auth/ResourceGuard";// import CustomerInquiries from "./pages/Customer/CustomerInquiries";
 import AedSymbolRenderer from "./components/AedSymbolRenderer";
+import GlobalSearchModal from "./components/search/GlobalSearchModal";
 import AppAlertBridge from "./components/AppAlertBridge";
 import { logClientError, logClientEvent } from "./utils/clientLogger";
 import { clientConfig } from "./config/clientConfig";
@@ -195,6 +196,9 @@ function App() {
                 <PermissionProvider>
                 <ErrorBoundary>
                 <NotificationProvider>
+                {/* Mounted once, above the page routes: Ctrl/Cmd+X opens it from
+                    anywhere, and opening/closing it never remounts the page. */}
+                <GlobalSearchModal />
                 <Sidebar>
                   <Routes>
                     {/* Default redirect */}
