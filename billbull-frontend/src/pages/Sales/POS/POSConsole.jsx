@@ -956,9 +956,19 @@ const POSConsole = React.memo((props) => {
                 <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
                   <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><ShoppingCart className="h-3.5 w-3.5 text-[#b8920e]" /></div>
                   Product Entry Mode
+                  <span className="px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[10px] font-bold uppercase tracking-wide text-[#b8920e]">
+                    Compact layout only
+                  </span>
                 </h3>
                 <p className="text-xs text-gray-400 mb-4">When a product is selected, either add it directly to the invoice or open the Product Entry dialog before adding.</p>
-                
+                {/* The Item Entry dialog belongs to the Compact (Trade POS) layout; the Classic and
+                    Cart Focus layouts have their own inline qty/price/discount controls and stay on
+                    Direct Add whatever is chosen here. Enforced once, in useProductEntry. */}
+                <p className="text-[11px] text-gray-500 mb-4 -mt-2">
+                  Applies to the <span className="font-bold text-[#1E293B]">Compact</span> screen template only.
+                  Classic and Cart Focus always use Direct Add.
+                </p>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {[
                     ['DIRECT_ADD', 'Direct Add', 'Instantly adds 1 qty to the cart. Quickest workflow.'],

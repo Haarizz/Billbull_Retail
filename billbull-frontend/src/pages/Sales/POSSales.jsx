@@ -2220,7 +2220,7 @@ export default function POSSales() {
     isItemEntryOpen, selectedProductForEntry, itemEntryAction, itemEntryContext,
     itemEntryInitialValues, closeItemEntry, handleItemEntryConfirm,
   } = useProductEntry({
-    posSettings, currentRenderCount,
+    posSettings, posTemplate, currentRenderCount, // posTemplate scopes Product Entry Mode (compact-only)
     setCurrentInvoice, currentInvoiceRef, recalculateInvoice,
     requestApproval,
     productCacheRef, setBarcodeInput, setSearchQuery, setSelectedCustomer,

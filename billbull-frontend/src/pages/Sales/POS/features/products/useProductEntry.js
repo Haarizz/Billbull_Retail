@@ -52,7 +52,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { resolvePosEntry } from '../../../../../api/posApi';
-import { ProductEntryMode } from '../../../../../components/pos/ItemEntry/constants';
+import { ProductEntryMode, templateSupportsEntryDialog } from '../../../../../components/pos/ItemEntry/constants';
 import { resolveLineTaxRate } from '../../../../../utils/vatMath';
 import { cachePosProduct, getPriceFloor, mapPosProductAggregateItem, toNumber } from '../../posUtils';
 
@@ -72,9 +72,13 @@ import { cachePosProduct, getPriceFloor, mapPosProductAggregateItem, toNumber } 
  * @param {Function} args.applyScannedVoucher    payment dependency - a scanned voucher is
  *                                               an allocation, never a cart line
  * @param {Function} args.showFeedback           POSSales' feedback toaster (stable)
+ * @param {string}   args.posTemplate            active layout id. Product Entry Mode is only
+ *                                               honoured on the template that owns the Item
+ *                                               Entry dialog - see templateSupportsEntryDialog.
  */
 export function useProductEntry({
   posSettings,
+  posTemplate,
   currentRenderCount,
   setCurrentInvoice,
   currentInvoiceRef,
@@ -100,7 +104,11 @@ export function useProductEntry({
   const posSettingsRef = useRef(null);
   const handleProductSelectionRef = useRef(null);
   const applyScannedVoucherRef = useRef(null);
+  // Same frozen-closure reason as posSettingsRef: handleProductSelection is memoized with an
+  // empty dep array, so the live template id has to reach it through a ref.
+  const posTemplateRef = useRef(null);
   posSettingsRef.current = posSettings;
+  posTemplateRef.current = posTemplate;
   applyScannedVoucherRef.current = applyScannedVoucher;
 
   const [lastScannedItem, setLastScannedItem] = useState(null);
@@ -518,13 +526,19 @@ export function useProductEntry({
    *
    * DIRECT_ADD is the default everywhere (backend, POS Settings, here); there is
    * deliberately no OPEN_ENTRY_DIALOG fallback.
+   *
+   * The setting is layout-scoped: only the compact (Trade POS) template renders and is
+   * designed around the Item Entry dialog, so every other template stays DIRECT_ADD even
+   * when the tenant has OPEN_ENTRY_DIALOG saved. The gate lives HERE, at the one decision
+   * point, rather than in each template - a layout cannot opt itself in or out.
    */
   const handleProductSelection = useCallback((product, options = {}) => {
     if (!product) return { ok: false, reason: 'No product selected' };
     const { quantity = 1, batch = null, serial = null, expiry = null } = options;
     const entryMode = posSettingsRef.current?.productEntryMode || ProductEntryMode.DIRECT_ADD;
 
-    if (entryMode !== ProductEntryMode.OPEN_ENTRY_DIALOG) {
+    if (entryMode !== ProductEntryMode.OPEN_ENTRY_DIALOG
+        || !templateSupportsEntryDialog(posTemplateRef.current)) {
       return addToInvoiceRef.current(product, quantity, batch, serial, expiry);
     }
 
