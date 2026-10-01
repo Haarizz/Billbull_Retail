@@ -28,6 +28,15 @@ public class WarehouseService {
     private final ZoneRepository zoneRepository;
     private final LocatorRepository locatorRepository;
     private final BinRepository binRepository;
+    /**
+     * Roles allowed to read/write warehouses outside their own branch. Mirrors
+     * {@code JwtUtil.ALL_BRANCH_ROLES}, the single place that decides which roles get the
+     * {@code isAllBranches} JWT claim. BRANCH_ADMIN is deliberately NOT here: it is branch-scoped
+     * like every other non-admin role (the ROLE_ADMIN > ROLE_BRANCH_ADMIN hierarchy in
+     * SecurityConfig grants endpoint access, not cross-branch data visibility).
+     */
+    private static final String[] ALL_BRANCH_ROLES = { "ADMIN", "SUPER_ADMIN" };
+
     private final BranchRepository branchRepository;
     private final BranchAccessService branchAccessService;
     // Branch-Level Inventory Phase 5: decides whether the branch-user warehouse list should also
@@ -176,7 +185,7 @@ public class WarehouseService {
     }
 
     private Branch resolveBranchForWrite(Long requestedBranchId, Branch existingBranch) {
-        if (!branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
+        if (!branchAccessService.currentUserHasRole(ALL_BRANCH_ROLES)) {
             Branch currentBranch = branchAccessService.getRequiredCurrentUserBranch();
             if (requestedBranchId != null && !Objects.equals(requestedBranchId, currentBranch.getId())) {
                 throw new ResponseStatusException(
@@ -209,7 +218,7 @@ public class WarehouseService {
     }
 
     private void assertWarehouseWritable(Warehouse warehouse) {
-        if (branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
+        if (branchAccessService.currentUserHasRole(ALL_BRANCH_ROLES)) {
             return;
         }
 
@@ -226,9 +235,12 @@ public class WarehouseService {
     }
 
     private List<Warehouse> getAccessibleWarehouses(Long requestedBranchId) {
-        // Admin authority is UNCHANGED (existing role check preserved — see Phase 5 decision):
-        // ADMIN / BRANCH_ADMIN see all warehouses (or a requested branch's) as before.
-        if (branchAccessService.currentUserHasRole("ADMIN", "BRANCH_ADMIN")) {
+        // Only the roles that carry the JWT isAllBranches claim (JwtUtil.ALL_BRANCH_ROLES —
+        // ADMIN / SUPER_ADMIN) may read across branches. BRANCH_ADMIN used to be listed here
+        // too, which made it fall into repository.findAll() and see every branch's warehouses
+        // — the opposite of what the role means, and inconsistent with the rest of the
+        // branch-scope plumbing (see BranchAccessService#currentSearchScope's javadoc).
+        if (branchAccessService.currentUserHasRole(ALL_BRANCH_ROLES)) {
             if (requestedBranchId != null) {
                 return repository.findByBranch_Id(requestedBranchId);
             }
