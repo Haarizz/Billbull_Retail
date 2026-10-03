@@ -293,11 +293,6 @@ const MobileCard = ({ qtn, onClick, renderStatusBadge, isExpanded, onToggleExpan
                     <div>
                         <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5 flex-wrap">
                             {qtn.qtnNo}
-                            {qtn.revisions && qtn.revisions.length > 0 && (
-                                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1 py-0.5 rounded">
-                                    Rev {qtn.revisions.length}
-                                </span>
-                            )}
                         </h4>
                         <span className="text-xs text-slate-500">{formatDisplayDate(qtn.date)}</span>
                     </div>
@@ -3323,11 +3318,6 @@ const Quotations = () => {
                                                         </button>
                                                     )}
                                                     {qtn.qtnNo}
-                                                    {qtn.revisions && qtn.revisions.length > 0 && (
-                                                        <span className="text-[10px] font-bold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
-                                                            Rev {qtn.revisions.length}
-                                                        </span>
-                                                    )}
                                                 </td>
                                                 <td className="px-4 py-3 text-slate-600">{formatDisplayDate(qtn.date)}</td>
                                                 <td className="px-4 py-3">
@@ -3595,7 +3585,7 @@ const Quotations = () => {
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <label className="text-xs font-semibold text-slate-500 shrink-0">Revision</label>
-                                            <input type="text" value={editingId ? `0${currentRevisions.length + 1}` : '00'} readOnly className="w-12 text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-center text-slate-700" />
+                                            <input type="text" value={String(editingId ? currentRevisions.length : 0).padStart(2, '0')} readOnly className="w-12 text-sm p-1.5 bg-slate-50 border border-slate-200 rounded text-center text-slate-700" />
                                         </div>
 
                                         <div className="flex items-center gap-2">

@@ -822,9 +822,11 @@ public class QuotationService {
         QuotationRevision revision = new QuotationRevision();
         revision.setRevisionNumber(current.getRevisions().size() + 1);
 
-        revision.setQtnNoDisplay(
-                current.getQtnNo() + " Rev " +
-                        String.format("%02d", revision.getRevisionNumber()));
+        // The snapshot keeps the number the superseded version carried; the live
+        // quotation moves on to "<base> Rev NN", so the newest version owns the
+        // revised number (print, email and downstream SO/invoice links follow it).
+        revision.setQtnNoDisplay(current.getQtnNo());
+        current.setQtnNo(revisedQtnNo(current.getQtnNo(), revision.getRevisionNumber()));
 
         revision.setRevisionDate(LocalDate.now());
         revision.setFollowUpNote(note);
@@ -839,6 +841,11 @@ public class QuotationService {
         Quotation saved = quotationRepo.save(current);
         initialize(saved);
         return saved;
+    }
+
+    static String revisedQtnNo(String qtnNo, int revisionNumber) {
+        String base = SalesDocumentNumberingService.stripRevisionSuffix(qtnNo);
+        return base + " Rev " + String.format("%02d", revisionNumber);
     }
 
     // -------------------------------------------------

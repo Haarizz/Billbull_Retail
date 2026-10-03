@@ -106,4 +106,28 @@ class SalesDocumentNumberingServiceTest {
         assertThrows(ResponseStatusException.class,
                 () -> service.resolveNumberForCreate(SalesDocumentType.SALES_INVOICE, " "));
     }
+
+    @Test
+    void revisedQuotationNumberStillReservesItsBaseSequence() {
+        SalesDocumentNumberSetting setting = SalesDocumentNumberSetting.defaultFor(SalesDocumentType.QUOTATION);
+        setting.setPrefix("QTN");
+        setting.setNextNumber(1);
+
+        String yearPrefix = "QTN-" + LocalDate.now().getYear() + "-";
+        when(settingRepository.findLockedByDocumentType(SalesDocumentType.QUOTATION))
+                .thenReturn(Optional.of(setting));
+        when(quotationRepository.findQtnNumbersByPrefix(yearPrefix))
+                .thenReturn(List.of(yearPrefix + "0016 Rev 01"));
+        when(quotationRepository.existsByQtnNo(yearPrefix + "0017")).thenReturn(false);
+
+        String number = service.resolveNumberForCreate(SalesDocumentType.QUOTATION, null);
+
+        assertEquals(yearPrefix + "0017", number);
+    }
+
+    @Test
+    void stripRevisionSuffixReturnsBaseNumber() {
+        assertEquals("QTN-2026-0016", SalesDocumentNumberingService.stripRevisionSuffix("QTN-2026-0016 Rev 01"));
+        assertEquals("QTN-2026-0016", SalesDocumentNumberingService.stripRevisionSuffix("QTN-2026-0016"));
+    }
 }
