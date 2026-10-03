@@ -5,7 +5,12 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.settings.company.CompanyProfileService;
 import com.billbull.backend.settings.email.DocumentEmailSender;
+import com.billbull.backend.settings.whatsapp.DocumentWhatsAppSender;
+import com.billbull.backend.settings.whatsapp.WhatsAppApiException;
+import com.billbull.backend.settings.whatsapp.WhatsAppDocumentType;
+import com.billbull.backend.settings.whatsapp.WhatsAppTemplateParams;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -21,17 +26,23 @@ public class SalesInvoiceController {
     private final ModulePermissionService modulePermissionService;
     private final DocumentEmailSender emailSender;
     private final SalespersonAttributionService salespersonAttributionService;
+    private final DocumentWhatsAppSender whatsAppSender;
+    private final CompanyProfileService companyProfileService;
 
     public SalesInvoiceController(SalesInvoiceService service,
                                   InvoiceCustomerContactService customerContactService,
                                   ModulePermissionService modulePermissionService,
                                   DocumentEmailSender emailSender,
-                                  SalespersonAttributionService salespersonAttributionService) {
+                                  SalespersonAttributionService salespersonAttributionService,
+                                  DocumentWhatsAppSender whatsAppSender,
+                                  CompanyProfileService companyProfileService) {
         this.service = service;
         this.customerContactService = customerContactService;
         this.modulePermissionService = modulePermissionService;
         this.emailSender = emailSender;
         this.salespersonAttributionService = salespersonAttributionService;
+        this.whatsAppSender = whatsAppSender;
+        this.companyProfileService = companyProfileService;
     }
 
     /**
@@ -83,6 +94,46 @@ public class SalesInvoiceController {
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }
+    }
+
+    /**
+     * Sends the invoice PDF as a WhatsApp document (Meta Cloud API, "sales_invoice_document"
+     * template). Body: { toPhone (optional, defaults to the invoice's customer phone), html
+     * (required: the same print HTML as Download PDF) }.
+     */
+    @PostMapping("/{id}/send-whatsapp")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> sendWhatsApp(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        modulePermissionService.requireCanView("sales.invoice");
+        try {
+            SalesInvoice invoice = customerContactService.attach(service.getById(id));
+            String toPhone = body.get("toPhone") instanceof String s && !s.isBlank() ? s : invoice.getCustomerPhone();
+            return ResponseEntity.ok(whatsAppSender.send(new DocumentWhatsAppSender.SendRequest(
+                    WhatsAppDocumentType.SALES_INVOICE,
+                    invoice.getId(),
+                    invoice.getInvoiceNumber(),
+                    invoice.getBranchId(),
+                    toPhone,
+                    (String) body.get("html"),
+                    invoice.getInvoiceNumber(),
+                    invoiceTemplateParams(invoice, companyProfileService.getProfile().getCurrency()))));
+        } catch (IllegalArgumentException | IllegalStateException | WhatsAppApiException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    /**
+     * Body variables of the "sales_invoice_document" template, in order:
+     * {{1}} customer name, {{2}} invoice no, {{3}} invoice total with currency, {{4}} due date
+     * (the invoice date when no due date is set). Changing this order requires re-approving the
+     * template in Meta; see docs/whatsapp-business-api-integration-2026-10-01.md.
+     */
+    static List<String> invoiceTemplateParams(SalesInvoice inv, String currency) {
+        return List.of(
+                WhatsAppTemplateParams.customerName(inv.getCustomerName(), inv.getCustomerCode()),
+                inv.getInvoiceNumber() == null ? "-" : inv.getInvoiceNumber(),
+                WhatsAppTemplateParams.amount(currency, inv.getInvoiceTotal()),
+                WhatsAppTemplateParams.date(inv.getDueDate() != null ? inv.getDueDate() : inv.getInvoiceDate(), "-"));
     }
 
     @GetMapping

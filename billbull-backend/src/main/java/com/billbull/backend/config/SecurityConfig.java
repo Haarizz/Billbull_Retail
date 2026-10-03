@@ -44,6 +44,9 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**", "/api/client-logs/**", "/uploads/**", "/tools/**").permitAll()
+                        // Meta's WhatsApp webhook carries no JWT; WhatsAppController authenticates it with
+                        // the verify token (GET) and the X-Hub-Signature-256 HMAC (POST).
+                        .requestMatchers("/api/whatsapp/webhook").permitAll()
                         .anyRequest().authenticated())
                 // Without an explicit entry point Spring falls back to Http403ForbiddenEntryPoint,
                 // so a missing/expired JWT came back as 403 — indistinguishable from a real

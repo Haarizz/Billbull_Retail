@@ -88,6 +88,7 @@ import DocumentNumbering from "./pages/Settings/DocumentNumbering";
 import UserRoleConfig from "./pages/Settings/UserRoleConfig";
 import BranchSetup from "./pages/Settings/BranchSetup";
 import EmailSettings from "./pages/Settings/EmailSettings";
+import WhatsAppSettings from "./pages/Settings/WhatsAppSettings";
 import BranchOutlets from "./pages/Enterprise/BranchOutlets";
 import DataManagement from "./pages/Enterprise/DataManagement";
 import PosAdministration from "./pages/Enterprise/PosAdministration";
@@ -729,6 +730,15 @@ function App() {
                       element={
                         <ResourceGuard module="userManagement.setup">
                           <EmailSettings />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/settings/whatsapp"
+                      element={
+                        <ResourceGuard module="userManagement.setup">
+                          <WhatsAppSettings />
                         </ResourceGuard>
                       }
                     />

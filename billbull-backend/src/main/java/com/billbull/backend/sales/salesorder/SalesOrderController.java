@@ -3,7 +3,12 @@ package com.billbull.backend.sales.salesorder;
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.security.ModulePermissionService;
 import com.billbull.backend.inventory.batch.BatchSelectionRequest;
+import com.billbull.backend.settings.company.CompanyProfileService;
 import com.billbull.backend.settings.email.DocumentEmailSender;
+import com.billbull.backend.settings.whatsapp.DocumentWhatsAppSender;
+import com.billbull.backend.settings.whatsapp.WhatsAppApiException;
+import com.billbull.backend.settings.whatsapp.WhatsAppDocumentType;
+import com.billbull.backend.settings.whatsapp.WhatsAppTemplateParams;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.ResponseEntity;
@@ -31,6 +36,8 @@ public class SalesOrderController {
     private final AuditLogService auditLogService;
     private final DocumentEmailSender emailSender;
     private final ModulePermissionService modulePermissionService;
+    private final DocumentWhatsAppSender whatsAppSender;
+    private final CompanyProfileService companyProfileService;
 
     /**
      * Root for sales-order attachments, always resolved to an ABSOLUTE path.
@@ -50,6 +57,8 @@ public class SalesOrderController {
             AuditLogService auditLogService,
             DocumentEmailSender emailSender,
             ModulePermissionService modulePermissionService,
+            DocumentWhatsAppSender whatsAppSender,
+            CompanyProfileService companyProfileService,
             @org.springframework.beans.factory.annotation.Value("${upload.path:uploads/}") String uploadPath) {
         this.attachmentRoot = Paths.get(uploadPath, "sales-orders").toAbsolutePath().normalize();
         this.service = service;
@@ -57,6 +66,8 @@ public class SalesOrderController {
         this.auditLogService = auditLogService;
         this.emailSender = emailSender;
         this.modulePermissionService = modulePermissionService;
+        this.whatsAppSender = whatsAppSender;
+        this.companyProfileService = companyProfileService;
     }
 
     // QA-040: send the SO email using the frontend-rendered HTML body.
@@ -83,6 +94,44 @@ public class SalesOrderController {
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }
+    }
+
+    /**
+     * Sends the sales-order PDF as a WhatsApp document (Meta Cloud API, "sales_order_document"
+     * template). Body: { toPhone (required: the SO stores no customer phone, so the frontend sends
+     * the customer master's mobile), html (required: the same print HTML as Print) }.
+     */
+    @PostMapping("/{id}/send-whatsapp")
+    public ResponseEntity<?> sendWhatsApp(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        modulePermissionService.requireCanView(MODULE);
+        try {
+            SalesOrder order = service.getById(id);
+            return ResponseEntity.ok(whatsAppSender.send(new DocumentWhatsAppSender.SendRequest(
+                    WhatsAppDocumentType.SALES_ORDER,
+                    order.getId(),
+                    order.getSoNumber(),
+                    order.getBranch() != null ? order.getBranch().getId() : null,
+                    body.get("toPhone") instanceof String s ? s : null,
+                    (String) body.get("html"),
+                    order.getSoNumber(),
+                    orderTemplateParams(order, companyProfileService.getProfile().getCurrency()))));
+        } catch (IllegalArgumentException | IllegalStateException | WhatsAppApiException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    /**
+     * Body variables of the "sales_order_document" template, in order:
+     * {{1}} customer name, {{2}} SO no, {{3}} order total with currency, {{4}} expected delivery
+     * date ("to be confirmed" when unset). Changing this order requires re-approving the template
+     * in Meta; see docs/whatsapp-business-api-integration-2026-10-01.md.
+     */
+    static List<String> orderTemplateParams(SalesOrder order, String currency) {
+        return List.of(
+                WhatsAppTemplateParams.customerName(order.getCustomerName(), order.getCustomerCode()),
+                order.getSoNumber() == null ? "-" : order.getSoNumber(),
+                WhatsAppTemplateParams.amount(currency, order.getOrderTotal()),
+                WhatsAppTemplateParams.date(order.getExpectedDeliveryDate(), "to be confirmed"));
     }
 
     @PostMapping

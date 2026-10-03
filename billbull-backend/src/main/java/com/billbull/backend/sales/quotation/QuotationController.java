@@ -22,6 +22,11 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.security.ModulePermissionService;
+import com.billbull.backend.settings.whatsapp.DocumentWhatsAppSender;
+import com.billbull.backend.settings.whatsapp.WhatsAppApiException;
+import com.billbull.backend.settings.whatsapp.WhatsAppDocumentType;
+import com.billbull.backend.settings.whatsapp.WhatsAppMessageLog;
+import com.billbull.backend.settings.whatsapp.WhatsAppTemplateParams;
 
 @RestController
 @RequestMapping("/api/sales/quotations")
@@ -34,15 +39,18 @@ public class QuotationController {
     private final AuditLogService auditLogService;
     private final ModulePermissionService permissionService;
     private final QuotationEmailService emailService;
+    private final DocumentWhatsAppSender whatsAppSender;
 
     public QuotationController(QuotationService service,
                                AuditLogService auditLogService,
                                ModulePermissionService permissionService,
-                               QuotationEmailService emailService) {
+                               QuotationEmailService emailService,
+                               DocumentWhatsAppSender whatsAppSender) {
         this.service = service;
         this.auditLogService = auditLogService;
         this.permissionService = permissionService;
         this.emailService = emailService;
+        this.whatsAppSender = whatsAppSender;
     }
 
     // ---------------- PRODUCTS ----------------
@@ -209,5 +217,47 @@ public class QuotationController {
             return ResponseEntity.internalServerError()
                     .body("Failed to send email: " + e.getMessage());
         }
+    }
+
+    // ---------------- SEND WHATSAPP ----------------
+    /**
+     * Sends the quotation PDF as a WhatsApp document via the Meta Cloud API.
+     * Body: { toPhone (optional, defaults to the quotation's customer mobile), html (required —
+     * the same print HTML the frontend sends to /api/documents/pdf, so the attachment matches
+     * Download PDF exactly) }.
+     */
+    @PostMapping("/{id}/send-whatsapp")
+    public ResponseEntity<?> sendWhatsApp(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        permissionService.requireCan(MODULE, "view");
+        try {
+            Quotation quotation = service.getQuotationById(id);
+            String toPhone = body.get("toPhone") instanceof String s && !s.isBlank() ? s : quotation.getCustomerMobile();
+            WhatsAppMessageLog sent = whatsAppSender.send(new DocumentWhatsAppSender.SendRequest(
+                    WhatsAppDocumentType.QUOTATION,
+                    quotation.getId(),
+                    quotation.getQtnNo(),
+                    quotation.getBranchId(),
+                    toPhone,
+                    (String) body.get("html"),
+                    quotation.getQtnNo(),
+                    quotationTemplateParams(quotation)));
+            return ResponseEntity.ok(sent);
+        } catch (IllegalArgumentException | IllegalStateException | WhatsAppApiException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    /**
+     * Body variables of the "quotation_document" template, in order:
+     * {{1}} customer name, {{2}} quotation no, {{3}} amount with currency, {{4}} valid-till date.
+     * Changing this order requires re-approving the template in Meta — see
+     * docs/whatsapp-business-api-integration-2026-10-01.md.
+     */
+    static List<String> quotationTemplateParams(Quotation q) {
+        return List.of(
+                WhatsAppTemplateParams.customerName(q.getCustomer(), q.getCustomerCode()),
+                q.getQtnNo() == null ? "-" : q.getQtnNo(),
+                WhatsAppTemplateParams.amount(q.getCurrency(), q.getTotalAmount()),
+                WhatsAppTemplateParams.date(q.getValidTill(), "-"));
     }
 }

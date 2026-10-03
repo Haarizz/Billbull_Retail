@@ -57,6 +57,7 @@ import {
     getItemPriceHistory,
     sendQuotationEmail
 } from '../../api/quotationApi';
+import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { getStockAvailability } from '../../api/stockAvailabilityApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
 import { compareDocumentValues } from '../../utils/documentOrdering';
@@ -457,6 +458,8 @@ const Quotations = () => {
     const [emailPreviewHtml, setEmailPreviewHtml] = useState('');
     const [activeActionMenu, setActiveActionMenu] = useState(null);
     const [actionMenuPosition, setActionMenuPosition] = useState(null);
+    // WhatsApp: PDF via the Business API when configured, else download + wa.me chat.
+    const { openWhatsApp, whatsAppElement } = useWhatsAppDocumentSend();
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
     const [focusedRowId, setFocusedRowId] = useState(null);
     const [highlightedIndex, setHighlightedIndex] = useState(0);
@@ -2464,7 +2467,7 @@ const Quotations = () => {
     };
 
     // Print HTML for a listing row using the default Quotation template — the exact
-    // document Download PDF produces.
+    // document Download PDF produces, and what WhatsApp sends as the attachment.
     // Returns null when no default template exists.
     const buildListingPdfHtml = async (qtn) => {
         const templates = await getTemplatesByCategory('Quotation');
@@ -2487,6 +2490,23 @@ const Quotations = () => {
         closeActionMenu();
         handleEditQuotation(qtn, 'view');
         setTimeout(() => handleOpenEmailModal(), 120);
+    };
+
+    const handleListingWhatsApp = (qtn, e) => {
+        e?.stopPropagation();
+        closeActionMenu();
+        const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
+        openWhatsApp({
+            documentType: 'QUOTATION',
+            documentId: qtn.id,
+            documentNo: qtn.qtnNo,
+            customerName: fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`)
+                ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer),
+            phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '',
+            amountText: `${getDisplayCurrencyProps(qtn.currency).currency || 'AED'} ${Number(qtn.total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            dateText: qtn.validTill ? formatDisplayDate(qtn.validTill) : '',
+            buildHtml: () => buildListingPdfHtml(qtn),
+        });
     };
 
 
@@ -3029,9 +3049,10 @@ const Quotations = () => {
                                         <Mail className="h-4 w-4" /> Email
                                     </button>
                                     <button onClick={() => {
-                                        const phone = (selectedCustomerData?.mobile || selectedCustomerData?.phone || inquiryCustomerSnapshot?.mobile || '').replace(/\D/g, '');
-                                        if (phone) window.open(`https://wa.me/${phone}`, '_blank');
-                                        else alert('No phone number found for this customer.');
+                                        // Sends the SAVED quotation (same PDF as the list's Download PDF).
+                                        const saved = editingId && quotationsList.find(q => q.id === editingId);
+                                        if (!saved) { alert('Please save the quotation before sending it on WhatsApp.'); return; }
+                                        handleListingWhatsApp(saved);
                                     }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                                         <MessageCircle className="h-4 w-4" /> WhatsApp
                                     </button>
@@ -3398,6 +3419,14 @@ const Quotations = () => {
                                                             className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
                                                         >
                                                             <Mail size={15} />
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => handleListingWhatsApp(qtn, e)}
+                                                            title="WhatsApp"
+                                                            aria-label="WhatsApp"
+                                                            className="p-1.5 rounded-md text-slate-500 hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                                                        >
+                                                            <MessageCircle size={15} />
                                                         </button>
                                                         <span className="mx-1 h-4 w-px bg-slate-200" aria-hidden="true" />
                                                         <button
@@ -4488,6 +4517,8 @@ const Quotations = () => {
                         </div>
                     )
                 }
+
+                {whatsAppElement}
 
                 {/* --- EMAIL MODAL --- */}
                 {isEmailModalOpen && (

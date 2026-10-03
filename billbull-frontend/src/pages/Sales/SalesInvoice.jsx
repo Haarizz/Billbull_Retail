@@ -91,6 +91,7 @@ import KpiCards from '../../components/common/KpiCards';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
@@ -364,6 +365,8 @@ const SalesInvoice = () => {
     // null | 'need-draft' | 'need-batches'
     const [batchGuideStep, setBatchGuideStep] = useState(null);
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
+    // WhatsApp: PDF via the Business API when configured, else download + wa.me chat.
+    const { openWhatsApp, whatsAppElement } = useWhatsAppDocumentSend();
 
     // --- FORM STATES ---
     const [status, setStatus] = useState('Draft');
@@ -3170,6 +3173,24 @@ const SalesInvoice = () => {
         finally { setIsPrinting(false); }
     };
 
+    // Sends the invoice PDF (same document as Download PDF) on WhatsApp. `invoice` is a list
+    // row; without one it sends the invoice open in the form (API path only once saved).
+    const handleWhatsAppClick = (invoice = null) => {
+        const isListView = invoice && invoice.invoiceNumber;
+        const source = isListView ? invoice : buildCurrentFormPrintSource();
+        const full = customersList.find(c => c.code === source.customerCode);
+        openWhatsApp({
+            documentType: 'SALES_INVOICE',
+            documentId: isListView ? invoice.id : invoiceId,
+            documentNo: source.invoiceNumber,
+            customerName: source.customerName || full?.name,
+            phone: (isListView ? invoice.customerPhone : selectedCustomer?.mobile) || full?.mobile || full?.phone || '',
+            amountText: formatCurrencyDisplay(isListView ? (invoice.invoiceTotal || 0) : netTotal, invoiceCurrency),
+            dateText: source.dueDate ? formatDisplayDate(source.dueDate) : '',
+            buildHtml: () => buildInvoiceHtml(source, { titleOverride: getInvoiceDocumentTitle(source), forPdf: false }),
+        });
+    };
+
     const handlePrintClick = async (invoice = null, chosenTemplate = null) => {
         const isListView = invoice && invoice.invoiceNumber;
         const dataToPrint = isListView ? invoice : buildCurrentFormPrintSource();
@@ -3777,6 +3798,11 @@ const SalesInvoice = () => {
                                                             className="p-1 hover:bg-sky-100 rounded text-sky-500"
                                                             title="Send Email"
                                                         ><Mail size={14} /></button>
+                                                        <button
+                                                            onClick={() => handleWhatsAppClick(inv)}
+                                                            className="p-1 hover:bg-emerald-50 rounded text-emerald-600"
+                                                            title="WhatsApp"
+                                                        ><MessageCircle size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -5127,12 +5153,7 @@ const SalesInvoice = () => {
                         if (!invoiceId) { alert('Please save the Sales Invoice before sending an email.'); return; }
                         setIsEmailModalOpen(true);
                     }}
-                    onWhatsApp={() => {
-                        const full = customersList.find(c => c.code === selectedCustomer?.code);
-                        const digits = String(full?.mobile || full?.phone || selectedCustomer?.mobile || '').replace(/[^0-9]/g, '');
-                        const msg = `Invoice ${invoiceNo} — ${formatCurrencyDisplay(netTotal, invoiceCurrency)}`;
-                        window.open(digits ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-                    }}
+                    onWhatsApp={() => handleWhatsAppClick()}
                 />
             )}
 
@@ -5157,6 +5178,8 @@ const SalesInvoice = () => {
                     onWhatsAppVoucher={handleSettlementVoucherWhatsApp}
                 />
             )}
+
+            {whatsAppElement}
 
         </div >
     );

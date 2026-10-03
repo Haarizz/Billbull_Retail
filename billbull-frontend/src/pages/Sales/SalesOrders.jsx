@@ -50,6 +50,7 @@ import {
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
@@ -200,6 +201,8 @@ const SalesOrders = () => {
   // ✅ FIX 1: ADD ORDER ID STATE
   const [orderId, setOrderId] = useState(null);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
+  // WhatsApp: PDF via the Business API when configured, else download + wa.me chat.
+  const { openWhatsApp, whatsAppElement } = useWhatsAppDocumentSend();
   // Originating branch of the loaded SO — drives print/email header (PDF §7.1).
   const [loadedSoBranchId, setLoadedSoBranchId] = useState(null);
   const [overflowMenu, setOverflowMenu] = useState(null); // { id, order, top, right }
@@ -1191,6 +1194,47 @@ const SalesOrders = () => {
     };
   };
 
+  // Print HTML of the order loaded in the editor — what Print shows and what WhatsApp sends.
+  // Null when no default Sales Order template exists.
+  const buildSoHtml = async () => {
+    const templates = await getTemplatesByCategory('Sales Order (SO)');
+    const defaultTemplate = templates.find(t => t.isDefault);
+    if (!defaultTemplate) return null;
+    return generatePrintHtmlAsync(defaultTemplate, buildSoPrintData(), {
+      companyProfile: buildDocumentHeaderProfile({
+        company,
+        branches: availableBranches || [],
+        branchId: loadedSoBranchId ?? activeBranch?.id,
+      }),
+      billBullLogo
+    });
+  };
+  // Print data comes from editor state, and a list-row send loads the order into the editor
+  // first — so the dialog must call the builder from the latest render, not the click's.
+  const buildSoHtmlRef = useRef(buildSoHtml);
+  buildSoHtmlRef.current = buildSoHtml;
+
+  // `order` is a list row (loaded into the editor first); without one, sends the open order.
+  const handleOrderWhatsApp = (order = null) => {
+    if (order) handleLoadOrder(order);
+    const id = order ? order.id : orderId;
+    const number = order ? order.soNumber : soNumber;
+    const code = order ? order.customerCode : selectedCustomer?.code;
+    const full = customersList.find(c => c.code === code);
+    const total = order ? order.orderTotal : orderTotal;
+    const delivery = order ? order.expectedDeliveryDate : expectedDelivery;
+    openWhatsApp({
+      documentType: 'SALES_ORDER',
+      documentId: id,
+      documentNo: number,
+      customerName: full?.name || (order ? order.customerName : selectedCustomer?.name),
+      phone: full?.mobile || full?.phone || '',
+      amountText: `${orderCurrency} ${Number(total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      dateText: delivery ? formatDisplayDate(delivery) : '',
+      buildHtml: () => buildSoHtmlRef.current(),
+    });
+  };
+
   const handlePrintClick = async () => {
     setIsPrinting(true);
     try {
@@ -1822,7 +1866,7 @@ const SalesOrders = () => {
           {canExport('sales.order') && (
             <>
               <button
-                onClick={() => { setOverflowMenu(null); handleLoadOrder(overflowMenu.order); setIsEmailModalOpen(true); }}
+                onClick={() => { const o = overflowMenu.order; setOverflowMenu(null); handleOrderWhatsApp(o); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
               >
                 <MessageCircle size={13} className="text-green-500" /> WhatsApp
@@ -1909,10 +1953,8 @@ const SalesOrders = () => {
                 <Mail className="h-4 w-4" /> Email
               </button>
               <button onClick={() => {
-                const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
-                const phone = (fullCustomer?.mobile || fullCustomer?.phone || '').replace(/\D/g, '');
-                if (phone) window.open(`https://wa.me/${phone}`, '_blank');
-                else alert('No phone number found for this customer.');
+                if (!orderId) { alert('Please save the Sales Order before sending it on WhatsApp.'); return; }
+                handleOrderWhatsApp();
               }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                 <MessageCircle className="h-4 w-4" /> WhatsApp
               </button>
@@ -2158,6 +2200,15 @@ const SalesOrders = () => {
                             title="Send Email"
                           >
                             <Mail size={14} />
+                          </button>
+                        )}
+                        {canExport('sales.order') && (
+                          <button
+                            onClick={() => handleOrderWhatsApp(order)}
+                            className="p-1.5 hover:bg-emerald-50 rounded text-emerald-600 transition-colors"
+                            title="WhatsApp"
+                          >
+                            <MessageCircle size={14} />
                           </button>
                         )}
 
@@ -3194,6 +3245,8 @@ const SalesOrders = () => {
         apiFn={sendSalesOrderEmail}
         buildPayload={buildSoPrintData}
       />
+
+      {whatsAppElement}
     </main>
     </div>
   );
