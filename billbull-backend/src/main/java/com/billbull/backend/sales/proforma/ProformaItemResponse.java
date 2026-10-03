@@ -14,6 +14,7 @@ public class ProformaItemResponse {
 	private BigDecimal taxPercent;
 	private BigDecimal discountPercent;
 	private BigDecimal taxableAmount;
+	private BigDecimal footerDiscount;
 	private BigDecimal taxAmount;
 	private BigDecimal lineTotal;
 	private Integer foc;
@@ -147,5 +148,13 @@ public class ProformaItemResponse {
 
 	public void setImage(String image) {
 		this.image = image;
+	}
+
+	public BigDecimal getFooterDiscount() {
+		return footerDiscount;
+	}
+
+	public void setFooterDiscount(BigDecimal footerDiscount) {
+		this.footerDiscount = footerDiscount;
 	}
 }

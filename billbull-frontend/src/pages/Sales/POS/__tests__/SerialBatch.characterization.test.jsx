@@ -1770,7 +1770,6 @@ describe('source contract', () => {
 
   it('POSSales imports: the 4 APIs, AsyncSearchableDropdown and Wrench left with the child; everything else stays', () => {
     [
-      "import { createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';",
       "import { getAllCustomers, createCustomer, validateDuplicateCustomer } from '../../api/customerledgerApi';",
       "import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getNextInvoiceNumber } from '../../api/salesInvoiceApi';",
       '  posCreditBalance, getPosInvoices, lookupPosInvoice,',

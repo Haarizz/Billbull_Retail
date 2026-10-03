@@ -8,6 +8,7 @@ import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
 import { ScanLine } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
+import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
 
 /**
  * The Salesperson row that sits directly under the Customer bar in every POS sale layout.
@@ -142,7 +143,7 @@ const POSTouchScreen = React.memo((props) => {
     favouriteProductIds = new Set(), toggleFavourite,
     // quick creation modals
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
-    showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
+    showQuickProductModal, setShowQuickProductModal, handleQuickProductCreated,
   } = props;
 
   const [animatingHearts, setAnimatingHearts] = useState(new Set());
@@ -1742,180 +1743,22 @@ const POSTouchScreen = React.memo((props) => {
       />
 
       {/* ══ QUICK PRODUCT CREATION MODAL ══════════════════════════════════════ */}
-      {showQuickProductModal && quickProductForm && (
-        <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden flex flex-col">
-            {/* Header */}
-            <div className="bg-[#F5C742] px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-white/30 flex items-center justify-center text-[#1E293B]">
-                  <Package className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-black tracking-wide text-[#1E293B]">Quick Create & Auto-Add Product</h2>
-                  <p className="text-xs text-[#1E293B]/70 mt-0.5">Instantly add product to inventory and current cart</p>
-                </div>
-              </div>
-              <button type="button" onClick={() => setShowQuickProductModal(false)} className="text-[#1E293B]/70 hover:text-[#1E293B] transition-colors">
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-              {/* Duplicate Warning */}
-              {quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-900 shadow-inner space-y-3">
-                  <div className="flex items-center gap-2.5 text-amber-800">
-                    <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600" />
-                    <h3 className="text-sm font-bold">Potential Duplicate Products Detected!</h3>
-                  </div>
-                  <p className="text-xs text-amber-800/90">
-                    We found existing products matching the name, code, or barcode you entered:
-                  </p>
-                  <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                    {quickProductDuplicateWarning.map(dup => (
-                      <div key={dup.id} className="bg-white border border-amber-200/80 rounded-xl p-3 flex items-center justify-between shadow-sm">
-                        <div>
-                          <p className="text-sm font-bold text-gray-800">{dup.name}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            Code: {dup.code || 'N/A'} {dup.barcode ? `| Barcode: ${dup.barcode}` : ''} | Price: {formatCurrency ? formatCurrency(dup.sellingPrice) : dup.sellingPrice}
-                          </p>
-                        </div>
-                        <button type="button"
-                          onClick={() => {
-                            handleProductSelection(dup);
-                            setShowQuickProductModal(false);
-                            if (showFeedback) showFeedback('Added existing product to cart!', 'success');
-                          }}
-                          className="px-3 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-xs rounded-lg transition-colors shadow-sm">
-                          Add Existing to Cart
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-amber-700 italic pt-1 border-t border-amber-200/60">
-                    Or, if this is a distinct product variant, you can proceed to create a new item below.
-                  </p>
-                </div>
-              )}
-
-              {quickProductError && (
-                <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-xl text-xs font-bold flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
-                  <span>{quickProductError}</span>
-                </div>
-              )}
-
-              {/* Form Fields */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="col-span-1 sm:col-span-2">
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Product Name <span className="text-red-500">*</span></label>
-                  <input type="text" value={quickProductForm.name || ''}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, name: e.target.value })}
-                    placeholder="Enter item name"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Item Code / SKU <span className="text-red-500">*</span></label>
-                  <input type="text" value={quickProductForm.code || ''}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, code: e.target.value })}
-                    placeholder="e.g. PRD-001"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Barcode (EAN/UPC)</label>
-                  <input type="text" value={quickProductForm.barcode || ''}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, barcode: e.target.value })}
-                    placeholder="Scan or type barcode"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Category</label>
-                  <select value={quickProductForm.category || 'General'}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, category: e.target.value })}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white">
-                    {productCategories && productCategories.length > 0 ? (
-                      productCategories.map(cat => (
-                        <option key={cat.id || cat.name || cat} value={cat.name || cat}>
-                          {cat.name || cat}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="General">General</option>
-                    )}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Selling Price (AED) <span className="text-red-500">*</span></label>
-                  <input type="number" min="0" step="0.01" value={quickProductForm.sellingPrice || ''}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, sellingPrice: e.target.value })}
-                    placeholder="0.00"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Purchase Cost (AED)</label>
-                  <input type="number" min="0" step="0.01" value={quickProductForm.purchasePrice || ''}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, purchasePrice: e.target.value })}
-                    placeholder="0.00"
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Sales Tax (%)</label>
-                  <input type="number" min="0" max="100" step="0.01" placeholder="Branch default"
-                    value={quickProductForm.taxRate ?? ''}
-                    onChange={e => setQuickProductForm({ ...quickProductForm, taxRate: e.target.value === '' ? '' : e.target.value })}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                  <p className="text-[10px] text-gray-400 mt-1">Leave blank to use the branch's Default VAT Rate. Enter 0 for zero-rated.</p>
-                </div>
-                <div className="col-span-2 border-t border-gray-100 pt-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={quickProductForm.trackInventory || false}
-                      onChange={e => setQuickProductForm({ ...quickProductForm, trackInventory: e.target.checked })}
-                      className="w-4 h-4 text-[#e6b838] border-gray-300 rounded focus:ring-[#F5C742]" />
-                    <span className="text-sm font-bold text-gray-800">Track Inventory / Stock Levels</span>
-                  </label>
-                </div>
-                {quickProductForm.trackInventory && (
-                  <>
-                    <div>
-                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Initial Stock Quantity</label>
-                      <input type="number" value={quickProductForm.initialStock || ''}
-                        onChange={e => setQuickProductForm({ ...quickProductForm, initialStock: e.target.value })}
-                        placeholder="0"
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1 block">Low Stock Alert Quantity</label>
-                      <input type="number" value={quickProductForm.alertQuantity || ''}
-                        onChange={e => setQuickProductForm({ ...quickProductForm, alertQuantity: e.target.value })}
-                        placeholder="5"
-                        className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-[#F5C742] bg-white" />
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex gap-3">
-              <button type="button" onClick={() => setShowQuickProductModal(false)}
-                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm hover:bg-gray-100 transition-colors">
-                Cancel
-              </button>
-              <button type="button"
-                disabled={quickProductLoading || !quickProductForm.name || !quickProductForm.code || !quickProductForm.sellingPrice}
-                onClick={() => handleSaveQuickProduct(!!(quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0))}
-                className={`flex-1 py-3 rounded-xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed ${quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0
-                    ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/20 text-white'
-                    : 'bg-[#F5C742] hover:bg-[#e6b838] shadow-[#F5C742]/30 text-[#1E293B]'
-                  }`}>
-                {quickProductLoading ? 'Saving...' : (quickProductDuplicateWarning && quickProductDuplicateWarning.length > 0 ? 'Create New Product Anyway' : 'Save & Add to Cart')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <QuickAddProductModal
+        isOpen={showQuickProductModal}
+        source="pos"
+        zIndexClass="z-[250]"
+        title="Quick Create & Auto-Add Product"
+        subtitle="Instantly add product to inventory and current cart"
+        submitLabel="Save & Add to Cart"
+        useExistingLabel="Add Existing to Cart"
+        onClose={() => setShowQuickProductModal(false)}
+        onCreated={handleQuickProductCreated}
+        onUseExisting={(dup) => {
+          handleProductSelection(dup);
+          setShowQuickProductModal(false);
+          if (showFeedback) showFeedback('success', 'Added existing product to cart!');
+        }}
+      />
     </div>
   );
 });

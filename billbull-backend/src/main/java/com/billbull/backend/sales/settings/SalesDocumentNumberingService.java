@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,8 @@ import com.billbull.backend.sales.salesorder.SalesOrderRepository;
 public class SalesDocumentNumberingService {
 
     private static final int MIN_NEXT_NUMBER = 1;
+    // Revised quotations carry "<number> Rev NN" (see QuotationService.createRevision).
+    private static final Pattern REVISION_SUFFIX = Pattern.compile("\\s+Rev\\s*\\d+$", Pattern.CASE_INSENSITIVE);
 
     private final SalesDocumentNumberSettingRepository settingRepository;
     private final CustomerRepository customerRepository;
@@ -178,11 +181,18 @@ public class SalesDocumentNumberingService {
                 + "-";
     }
 
+    public static String stripRevisionSuffix(String documentNumber) {
+        if (documentNumber == null) {
+            return null;
+        }
+        return REVISION_SUFFIX.matcher(documentNumber.trim()).replaceFirst("");
+    }
+
     private Optional<Integer> parseSequence(String documentNumber, String prefix) {
         if (documentNumber == null || !documentNumber.startsWith(prefix)) {
             return Optional.empty();
         }
-        String sequence = documentNumber.substring(prefix.length());
+        String sequence = stripRevisionSuffix(documentNumber).substring(prefix.length());
         if (sequence.isBlank() || !sequence.chars().allMatch(Character::isDigit)) {
             return Optional.empty();
         }

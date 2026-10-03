@@ -1219,7 +1219,6 @@ describe('source contract', () => {
     expect(fromChild('../../posUtils')).toBe(path.resolve(__dirname, '../posUtils'));
     // the modules the parent still uses elsewhere stay imported there
     // (getProductsList and AsyncSearchableDropdown later left POSSales with the SerialBatch extraction, their last POSSales user)
-    expect(PARENT).toContain("import { createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';");
     expect(PARENT).not.toMatch(/\bAsyncSearchableDropdown\b/);
     expect(PARENT).toContain("import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';");
     expect(PARENT).toContain("import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings } from './POS/posUtils';");

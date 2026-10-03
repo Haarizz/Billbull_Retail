@@ -120,6 +120,12 @@ function RailCard({ title, icon: Icon, children, collapsible = false, defaultOpe
 }
 
 // A quotation may carry the customer as "Name - CODE"; strip the code for display.
+// Snapshot N captures the version that was live before revision N, i.e. Rev N-1.
+function snapshotVersionLabel(revision) {
+    const version = (Number(revision.revisionNumber) || 1) - 1;
+    return version > 0 ? `Rev ${String(version).padStart(2, '0')}` : 'Original';
+}
+
 function customerDisplayName(qtn) {
     const raw = qtn?.customer || qtn?.customerName || '';
     if (qtn?.customerCode && raw.endsWith(` - ${qtn.customerCode}`)) {
@@ -218,7 +224,6 @@ export default function QuotationPreview({
                         </h1>
                         {statusBadge && <span className={statusBadge.colorClasses}>{statusBadge.label}</span>}
                         {sourceType && <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${sourceType.color}`}>{sourceType.label}</span>}
-                        {revisions.length > 0 && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border bg-blue-50 text-blue-700 border-blue-200"><GitBranch size={10} /> Rev {revisions.length}</span>}
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                         <span className="flex items-center gap-1 font-medium text-slate-700 min-w-0 max-w-full">
@@ -355,7 +360,7 @@ export default function QuotationPreview({
                                     <tbody className="divide-y divide-slate-100">
                                         {revisions.map((r) => (
                                             <tr key={r.id ?? r.revisionNumber} className="hover:bg-slate-50/70 transition-colors">
-                                                <td className="px-4 py-2.5 font-medium text-blue-600 whitespace-nowrap">Rev {r.revisionNumber}</td>
+                                                <td className="px-4 py-2.5 font-medium text-blue-600 whitespace-nowrap">{snapshotVersionLabel(r)}</td>
                                                 <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{r.qtnNoDisplay || '—'}</td>
                                                 <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{formatDisplayDate(r.revisionDate)}</td>
                                                 <td className="px-4 py-2.5 text-slate-600 max-w-64 truncate" title={r.followUpNote || ''}>{r.followUpNote || '—'}</td>
@@ -377,7 +382,7 @@ export default function QuotationPreview({
                                     <div key={r.id ?? r.revisionNumber} className="border border-slate-200 rounded-lg p-3 bg-white">
                                         <div className="flex items-start justify-between gap-2">
                                             <div className="min-w-0">
-                                                <div className="font-medium text-blue-600 text-sm">Rev {r.revisionNumber}</div>
+                                                <div className="font-medium text-blue-600 text-sm">{snapshotVersionLabel(r)}</div>
                                                 <div className="text-[11px] text-slate-400">{formatDisplayDate(r.revisionDate)}{r.qtnNoDisplay ? ` · ${r.qtnNoDisplay}` : ''}</div>
                                             </div>
                                             <CurrencyAmount value={r.totalAmountSnapshot} currency={currency} className="font-bold text-slate-800 text-sm tabular-nums" />

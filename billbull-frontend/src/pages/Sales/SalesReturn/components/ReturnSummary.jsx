@@ -9,8 +9,15 @@ import { C } from '../constants';
  * contained within the refund rather than an addition to it, which is why the label
  * changes with the mode; showing "+ VAT" on an inclusive invoice would imply the customer
  * gets tax back twice.
+ *
+ * The split block below is the Phase 2 addition. A return reverses part of a sale, and the sale
+ * created a receivable that cash, card or bank receipts then settled some or all of. Reversing
+ * it means undoing both, in proportion to what each actually was — so the return value divides
+ * into the part that reduces what the customer still owes and the part that is genuinely owed
+ * back to them. Both figures come from the server's canonical invoice outstanding; the cashier
+ * needs to see them because they decide which refund methods are even possible.
  */
-export default function ReturnSummary({ summary }) {
+export default function ReturnSummary({ summary, split }) {
    const tiles = [
       { label: 'Items', value: summary.count, color: C.accentInk },
       { label: 'Qty', value: summary.totalQty, color: C.blue },
@@ -53,12 +60,41 @@ export default function ReturnSummary({ summary }) {
                </span>
             </div>
             <div className="flex justify-between pt-1.5 border-t" style={{ borderColor: C.border }}>
-               <span className="font-black text-sm" style={{ color: C.dark }}>Total Refund</span>
+               <span className="font-black text-sm" style={{ color: C.dark }}>Return Value</span>
                <span className="font-black text-lg" style={{ color: C.accentInk }}>
                   <CurrencyAmount value={summary.totalRefund} />
                </span>
             </div>
          </div>
+
+         {split && summary.totalRefund > 0 && (
+            <div className="mt-2 pt-2 border-t space-y-1 text-xs" style={{ borderColor: C.border }}>
+               {split.unpaidPortion > 0 && (
+                  <div className="flex justify-between">
+                     <span style={{ color: C.muted }}>
+                        Reduces Balance Owed
+                        <span className="ml-1 text-[10px]">(not yet paid for)</span>
+                     </span>
+                     <span className="font-semibold" style={{ color: C.blue }}>
+                        <CurrencyAmount value={split.unpaidPortion} />
+                     </span>
+                  </div>
+               )}
+               <div className="flex justify-between">
+                  <span className="font-black" style={{ color: C.dark }}>Refundable</span>
+                  <span className="font-black" style={{ color: split.paidPortion > 0 ? C.accentInk : C.muted }}>
+                     <CurrencyAmount value={split.paidPortion} />
+                  </span>
+               </div>
+               {split.refundBlocked && (
+                  <p className="text-[10px] leading-snug pt-1" style={{ color: C.muted }}>
+                     The customer has not paid for these goods — this return reduces their
+                     outstanding balance of <CurrencyAmount value={split.invoiceOutstanding} />{' '}
+                     instead of being paid back. No cash, card, bank or voucher refund applies.
+                  </p>
+               )}
+            </div>
+         )}
       </div>
    );
 }

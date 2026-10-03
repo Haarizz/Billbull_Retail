@@ -83,11 +83,19 @@ public class Quotation  implements com.billbull.backend.common.ownership.OwnedEn
     private BigDecimal totalAmount;
     private BigDecimal billDiscount;
 
-    @Column(name = "bill_discount_amount")
+    @Column(name = "bill_discount_amount", precision = 15, scale = 2)
     private BigDecimal billDiscountAmount;
 
     @Column(name = "bill_discount_type", length = 20)
     private String billDiscountType;
+
+    /**
+     * Request-only: the fixed footer amount the user typed when {@code billDiscountType} is
+     * "amount". Not persisted — the server allocates it and stores the result (capped at the
+     * eligible base) in {@code billDiscountAmount}.
+     */
+    @Transient
+    private BigDecimal billDiscountFixed;
 
     // ---------------- RELATIONSHIPS ----------------
 
@@ -199,6 +207,14 @@ public class Quotation  implements com.billbull.backend.common.ownership.OwnedEn
 
     public String getBillDiscountType() { return billDiscountType; }
     public void setBillDiscountType(String billDiscountType) { this.billDiscountType = billDiscountType; }
+
+    public BigDecimal getBillDiscountFixed() {
+        return billDiscountFixed;
+    }
+
+    public void setBillDiscountFixed(BigDecimal billDiscountFixed) {
+        this.billDiscountFixed = billDiscountFixed;
+    }
 
     public List<QuotationItem> getItems() { return items; }
     public void setItems(List<QuotationItem> items) { this.items = items; }

@@ -1,0 +1,1593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POS Sales Return — Implementation Audit</title>
+<style>
+:root{
+  --bg:#ffffff; --fg:#1e293b; --muted:#64748b; --rule:#e2e8f0;
+  --accent:#F5C742; --accent-soft:#FFF8E7; --accent-line:#FDE6A9;
+  --code-bg:#f5f6f8; --code-fg:#0f172a; --th-bg:#fafbfc;
+  --warn:#9a3412; --warn-bg:#fff7ed; --ok:#166534; --ok-bg:#f0fdf4;
+  --maxw:62rem;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1419; --fg:#e6e9ee; --muted:#94a3b8; --rule:#263040;
+    --accent:#F5C742; --accent-soft:#2a2316; --accent-line:#4a3d1c;
+    --code-bg:#171d26; --code-fg:#e6e9ee; --th-bg:#151b24;
+    --warn:#fdba74; --warn-bg:#2a1a0f; --ok:#86efac; --ok-bg:#0f2417;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1419; --fg:#e6e9ee; --muted:#94a3b8; --rule:#263040;
+  --accent:#F5C742; --accent-soft:#2a2316; --accent-line:#4a3d1c;
+  --code-bg:#171d26; --code-fg:#e6e9ee; --th-bg:#151b24;
+  --warn:#fdba74; --warn-bg:#2a1a0f; --ok:#86efac; --ok-bg:#0f2417;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+.wrap{max-width:var(--maxw); margin:0 auto; padding:3rem 16px 6rem}
+header.doc{border-bottom:3px solid var(--accent); padding-bottom:1.25rem; margin-bottom:2rem}
+h1{font-size:1.9rem; line-height:1.25; margin:0 0 .5rem; letter-spacing:-.015em}
+.meta{color:var(--muted); font-size:.875rem; margin:0}
+.lede{background:var(--accent-soft); border:1px solid var(--accent-line); border-radius:8px;
+  padding:1rem 1.15rem; margin:1.5rem 0 0; font-size:1.02rem}
+h2{font-size:1.3rem; margin:3rem 0 .85rem; padding-top:1.25rem; border-top:1px solid var(--rule); letter-spacing:-.01em}
+h3{font-size:1.02rem; margin:1.75rem 0 .6rem}
+h4{font-size:.95rem; margin:1.25rem 0 .4rem}
+p{margin:.7rem 0}
+ul,ol{margin:.7rem 0; padding-left:1.4rem}
+li{margin:.3rem 0}
+li>ul,li>ol{margin:.25rem 0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.86em;
+  background:var(--code-bg); color:var(--code-fg); padding:.1em .35em; border-radius:4px}
+pre{background:var(--code-bg); color:var(--code-fg); padding:.9rem 1rem; border-radius:8px;
+  overflow-x:auto; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.82rem; line-height:1.55; margin:1rem 0; border:1px solid var(--rule)}
+pre code{background:none; padding:0; font-size:inherit}
+.tablewrap{overflow-x:auto; margin:1.1rem 0; border:1px solid var(--rule); border-radius:8px}
+table{border-collapse:collapse; width:100%; font-size:.86rem}
+th,td{text-align:left; padding:.55rem .7rem; border-bottom:1px solid var(--rule); vertical-align:top}
+th{background:var(--th-bg); font-weight:600}
+tr:last-child td{border-bottom:0}
+.formula{background:var(--code-bg); border:1px solid var(--rule); border-radius:8px;
+  padding:.75rem 1rem; margin:.9rem 0; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.85rem; overflow-x:auto}
+nav.toc{background:var(--th-bg); border:1px solid var(--rule); border-radius:8px; padding:1.1rem 1.3rem; margin:2rem 0}
+nav.toc h2{font-size:.78rem; text-transform:uppercase; letter-spacing:.09em; color:var(--muted);
+  margin:0 0 .7rem; border:0; padding:0}
+nav.toc ol{margin:0; padding-left:1.5rem; columns:2; column-gap:2rem; font-size:.9rem}
+@media (max-width:640px){nav.toc ol{columns:1}}
+nav.toc a{color:var(--fg); text-decoration:none; border-bottom:1px solid transparent}
+nav.toc a:hover{border-bottom-color:var(--accent)}
+.risk{border-left:3px solid var(--accent); padding:.1rem 0 .1rem 1rem; margin:1.5rem 0}
+.risk h3{margin-top:0}
+.conf{display:inline-block; font-size:.74rem; font-weight:700; letter-spacing:.04em;
+  text-transform:uppercase; padding:.12rem .45rem; border-radius:4px; vertical-align:.08em}
+.conf-high{background:var(--warn-bg); color:var(--warn)}
+.conf-med{background:var(--accent-soft); color:#8a6410}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .conf-med{color:var(--accent)}}
+:root[data-theme="dark"] .conf-med{color:var(--accent)}
+.no{color:var(--warn); font-weight:600}
+.yes{color:var(--ok); font-weight:600}
+footer.doc{margin-top:4rem; padding-top:1.25rem; border-top:1px solid var(--rule);
+  color:var(--muted); font-size:.85rem}
+@media print{
+  :root{--bg:#fff; --fg:#000; --rule:#bbb; --code-bg:#f4f4f4; --th-bg:#f4f4f4}
+  body{font-size:10.5pt}
+  .wrap{max-width:none; padding:0}
+  nav.toc{break-inside:avoid}
+  h2{break-after:avoid; page-break-after:avoid}
+  table,pre,.tablewrap{break-inside:avoid}
+  a{color:#000; text-decoration:none}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>POS Sales Return — Implementation Audit</h1>
+  <p class="meta">BillBull Retail / ERP &middot; branch <code>feature/posclient</code> &middot; 1 October 2026 &middot; read-only audit</p>
+  <div class="lede">
+    A BillBull sales return is five loosely-coupled effects, not one transaction: it creates its own
+    <code>sales_returns</code> document, posts inbound stock movements, posts a GL journal, and settles the
+    customer only for two of the five refund methods. It never touches the original invoice, the invoice
+    balance that <em>is</em> the customer's outstanding, or the customer statement.
+    No code, schema, migration or data was changed.
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s1">Executive Summary</a></li>
+    <li><a href="#s2">Current Sales Return Flow</a></li>
+    <li><a href="#s3">Frontend Flow</a></li>
+    <li><a href="#s4">Backend Flow</a></li>
+    <li><a href="#s5">Database Records</a></li>
+    <li><a href="#s6">Stock Handling</a></li>
+    <li><a href="#s7">Amount Calculation</a></li>
+    <li><a href="#s8">Customer Outstanding</a></li>
+    <li><a href="#s9">Customer Statement</a></li>
+    <li><a href="#s10">Payment / Refund</a></li>
+    <li><a href="#s11">Tax / VAT</a></li>
+    <li><a href="#s12">COGS / Inventory Valuation</a></li>
+    <li><a href="#s13">Financial / Accounting Transactions</a></li>
+    <li><a href="#s14">POS Session / X-Report / Z-Report</a></li>
+    <li><a href="#s15">Day Close Impact</a></li>
+    <li><a href="#s16">Branch / Warehouse Handling</a></li>
+    <li><a href="#s17">Transaction Boundaries</a></li>
+    <li><a href="#s18">Idempotency / Duplicate Protection</a></li>
+    <li><a href="#s19">Current Validation Rules</a></li>
+    <li><a href="#s20">End-to-End Examples</a></li>
+    <li><a href="#s21">Source-of-Truth Matrix</a></li>
+    <li><a href="#s22">Possible Inconsistencies / Risks</a></li>
+    <li><a href="#s23">Open Questions</a></li>
+    <li><a href="#s24">Files and Methods Investigated</a></li>
+  </ol>
+</nav>
+
+<h2 id="s1">1. Executive Summary</h2>
+
+<p>A sales return in BillBull is a <strong>separate document</strong> (<code>sales_returns</code>), never an edit
+to the original invoice and never a negative invoice. Nothing happens until the return is moved to
+<code>APPROVED</code>; at that moment <code>SalesReturnService.updateStatus</code> runs five side effects in one
+database transaction, in this fixed order: batch restock, non-batch restock, GL journal, serial status flip,
+cash refund, credit-voucher issue.</p>
+
+<h3>What a return reliably does today</h3>
+<ol>
+  <li>Creates <code>sales_returns</code> + <code>sales_return_items</code> (+ <code>sales_return_item_batches</code>) rows.</li>
+  <li>Posts <strong>positive</strong> <code>stock_movements</code> rows (<code>source_type = SALES_RETURN</code>) for lines
+      marked condition <code>GOOD</code>, raising on-hand quantity.</li>
+  <li>Posts a GL journal: <code>Dr Sales Revenue (or Deferred Revenue) + Dr VAT Output / Cr Accounts Receivable</code>,
+      plus a second self-balancing <code>Dr Inventory / Cr COGS</code> entry when goods are restocked.</li>
+  <li>For <code>CASH_REFUND</code> only: books a <code>POS_CASH_MOVEMENT</code> <code>DROP_OUT</code> on the POS session,
+      which reduces expected drawer cash in the X-Report, Z-Report and day close.</li>
+  <li>For <code>CREDIT_VOUCHER</code> only: issues a <code>credit_vouchers</code> row with its own
+      <code>Dr AR / Cr Credit Vouchers Issued</code> journal.</li>
+</ol>
+
+<h3>What a return does not do</h3>
+<ol>
+  <li><strong>It never changes the original invoice.</strong> <code>sales_invoices.invoice_total</code>,
+      <code>amount_paid</code>, <code>balance</code> and <code>status</code> are untouched. The invoice is read and
+      row-locked, never written.</li>
+  <li><strong>It never changes customer outstanding.</strong> Outstanding is defined as
+      <code>SUM(sales_invoices.balance)</code> (<code>CustomerService</code>,
+      <code>SalesInvoiceRepository.sumOutstandingBalanceByCustomerCode</code>). No code path reduces it on a return —
+      including the <code>CUSTOMER_CREDIT</code> refund method, which has no implementation beyond the GL line.</li>
+  <li><strong>It never appears on the customer statement.</strong> <code>StatementService</code> reads sales invoices,
+      receipt vouchers, advance applications, opening invoices, purchase invoices and payment vouchers. It does not
+      inject <code>SalesReturnRepository</code> at all; its <code>PRI_RETURN_CREDIT</code> sort constant is declared
+      and never used.</li>
+  <li><strong>It creates no refund record for card or bank.</strong> <code>CARD_REFUND</code> and
+      <code>BANK_TRANSFER</code> are selectable, validated and stored, but settle nothing — no <code>payments</code>
+      row, no reversal, no cash movement. The GL credit to AR is left unsettled.</li>
+</ol>
+
+<p><strong>The single most important structural fact:</strong> the return's journal always credits Accounts
+Receivable, because it is modelled as a credit note against AR. Only <code>CASH_REFUND</code> (via the seeded
+<code>SALES_RETURN_REFUND</code> cash-movement category, mapped to AR) and <code>CREDIT_VOUCHER</code> post the
+matching debit that clears it. For the other three methods the AR control account carries a permanent credit that
+the AR sub-ledger (invoice balances) never mirrors.</p>
+
+<h2 id="s2">2. Current Sales Return Flow</h2>
+
+<p>There is <strong>one</strong> implementation shared by both entry points. POS &rarr; Actions &rarr; Return and
+Customer &amp; Sales &rarr; Sales Return render the same <code>SalesReturnScreen</code>; they differ only in the
+<code>entryPoint</code> marker and the POS context block. The previous inline POS wizard was removed (see the comment
+at <code>POSSales.jsx:9769</code>).</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>#</th><th>Step</th><th>File</th><th>Component / Class</th><th>Method</th><th>Table affected</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Open return modal</td><td><code>src/pages/Sales/POSSales.jsx:9777</code></td><td><code>POSSales</code></td><td>renders <code>SalesReturnScreen</code> with <code>posContext</code></td><td>—</td></tr>
+<tr><td>2</td><td>Find original invoice</td><td><code>.../SalesReturn/useSalesReturn.js</code></td><td><code>useSalesReturn</code></td><td><code>doSearch</code> &rarr; <code>GET /api/sales/returns/invoice-search</code></td><td>reads <code>sales_invoices</code>, <code>customers</code></td></tr>
+<tr><td>3</td><td>Load eligibility + lines</td><td>same</td><td><code>selectInvoice</code></td><td><code>SalesReturnEligibilityService.getEligibility</code></td><td>reads <code>sales_invoices</code>, <code>sales_invoice_items</code>, <code>sales_returns</code>, <code>batch_allocations</code></td></tr>
+<tr><td>4</td><td>Scan / add items, set qty</td><td>same</td><td>—</td><td><code>scanItem</code>, <code>changeQty</code>, <code>setQty</code></td><td>client state only</td></tr>
+<tr><td>5</td><td>Per-line condition + reason</td><td><code>components/ReturnLineDetails.jsx</code></td><td>—</td><td><code>updateLine</code></td><td>—</td></tr>
+<tr><td>6</td><td>Price / discount / VAT math</td><td><code>useSalesReturn.js</code></td><td><code>summary</code> memo</td><td>prorate from invoice line</td><td>—</td></tr>
+<tr><td>7</td><td>Pick refund method</td><td><code>components/RefundMethodSelector.jsx</code></td><td>—</td><td><code>setRefundMethod</code></td><td>—</td></tr>
+<tr><td>8</td><td>Confirm (save)</td><td><code>SalesReturnScreen.jsx</code></td><td><code>handleConfirm</code></td><td><code>saveSalesReturn</code> &rarr; <code>POST /api/sales/returns</code></td><td><strong>writes</strong> <code>sales_returns</code>, <code>sales_return_items</code>, <code>sales_return_item_batches</code> (status <code>DRAFT</code>)</td></tr>
+<tr><td>9</td><td>Confirm (approve)</td><td>same</td><td><code>approveDraft</code></td><td><code>updateSalesReturnStatus(id,'APPROVED')</code> &rarr; <code>PUT /{id}/status</code></td><td>—</td></tr>
+<tr><td>10</td><td>Row lock + revalidate</td><td><code>SalesReturnService.java</code></td><td><code>SalesReturnService</code></td><td><code>updateStatus</code> &rarr; <code>findByIdForUpdate</code>, <code>assertReturnableQuantitiesStillAvailable</code></td><td>locks <code>sales_returns</code>, <code>sales_invoices</code></td></tr>
+<tr><td>11</td><td>Authorization gate</td><td><code>SalesReturnAuthorizationService.java</code></td><td>—</td><td><code>resolveRequiredAuthorization</code>, <code>authorize</code></td><td><strong>writes</strong> <code>audit_logs</code>, stamps <code>sales_returns</code></td></tr>
+<tr><td>12</td><td>Batch restock</td><td><code>SalesReturnService.java</code></td><td>—</td><td><code>applyBatchReturns</code></td><td><strong>writes</strong> <code>batch_allocations</code>, <code>stock_movements</code></td></tr>
+<tr><td>13</td><td>Non-batch restock</td><td>same</td><td>—</td><td><code>applyNonBatchStockReturns</code> &rarr; <code>reverseOutboundStock</code></td><td><strong>writes</strong> <code>stock_movements</code>, <code>inventory_balances</code></td></tr>
+<tr><td>14</td><td>GL journal</td><td><code>PostingEngineService.java:1071</code></td><td><code>PostingEngineService</code></td><td><code>createJournalFromSalesReturn</code></td><td><strong>writes</strong> <code>journal_entries</code>, <code>journal_lines</code>, <code>ledger_entries</code>, <code>gl_account_balances</code></td></tr>
+<tr><td>15</td><td>Serial flip</td><td><code>SalesReturnService.java</code></td><td>—</td><td><code>applySerialReturns</code></td><td><strong>writes</strong> <code>serial_masters</code></td></tr>
+<tr><td>16</td><td>Cash payout</td><td><code>SalesReturnCashRefundService.java</code></td><td>—</td><td><code>recordCashRefund</code> &rarr; <code>PosSessionService.addCashMovement</code></td><td><strong>writes</strong> <code>pos_cash_movements</code>, + its own journal</td></tr>
+<tr><td>17</td><td>Voucher issue</td><td><code>CreditVoucherService.java</code></td><td>—</td><td><code>issueForSalesReturn</code></td><td><strong>writes</strong> <code>credit_vouchers</code>, <code>credit_voucher_transactions</code>, + its own journal</td></tr>
+<tr><td>18</td><td>Reporting read-back</td><td><code>PosSessionService</code>, <code>SalesReportDataService</code>, <code>InventoryReportDataService</code></td><td>—</td><td><code>buildReturnsSummary</code>, <code>sumReturns</code></td><td>reads <code>sales_returns</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<p>There are <strong>no events, listeners or scheduled jobs</strong> in the return path. Everything is a direct
+synchronous call inside <code>updateStatus</code>. The only background jobs that touch adjacent data are
+<code>GlBalanceRebuildJob</code> (recomputes <code>gl_account_balances</code>) and <code>AuditLogRetentionJob</code>;
+neither is return-specific.</p>
+
+<h2 id="s3">3. Frontend Flow</h2>
+
+<h3>Components (<code>billbull-frontend/src/pages/Sales/SalesReturn/</code>)</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>File</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>SalesReturnScreen.jsx</code></td><td>The workflow screen. Owns confirm, authorization retry, voucher display, printing.</td></tr>
+<tr><td><code>useSalesReturn.js</code></td><td>All workflow state and every calculation. 643 lines; no business rule lives in either caller.</td></tr>
+<tr><td><code>SalesReturnPage.jsx</code></td><td>Back-office register (list, stats, export) that hosts the screen on its <code>create</code> tab.</td></tr>
+<tr><td><code>components/InvoiceSearch.jsx</code>, <code>InvoiceSummary.jsx</code></td><td>&sect;8 invoice lookup and header.</td></tr>
+<tr><td><code>components/SoldItemsPane.jsx</code>, <code>ReturnItemsPane.jsx</code>, <code>ReturnLineDetails.jsx</code></td><td>Sold lines, selected return lines, per-line condition/reason/batches.</td></tr>
+<tr><td><code>components/ReturnSummary.jsx</code></td><td>Subtotal / discount / VAT / refund totals.</td></tr>
+<tr><td><code>components/RefundMethodSelector.jsx</code></td><td>&sect;14 refund method; greys out methods the backend blocked.</td></tr>
+<tr><td><code>components/AuthorizationModal.jsx</code></td><td>Supervisor credentials on a 401/403 from approve.</td></tr>
+<tr><td><code>components/CreditVoucherModal.jsx</code></td><td>The issued voucher card.</td></tr>
+<tr><td><code>constants.js</code></td><td><code>ENTRY_POINT</code>, and fallback condition/reason/refund-method vocabularies.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>API functions (<code>src/api/salesReturnApi.js</code>, all through <code>axiosConfig</code>)</h3>
+<p><code>searchReturnInvoices</code>, <code>getReturnEligibility</code>, <code>getReturnOptions</code>,
+<code>saveSalesReturn</code>, <code>updateSalesReturnStatus</code>, <code>getSalesReturnsPage</code>,
+<code>getSalesReturnById</code>, <code>getReturnableBatches</code>, <code>getNextSalesReturnNumber</code>,
+<code>getSalesReturnStats</code>, <code>deleteSalesReturn</code>.</p>
+
+<h3>What the client computes (<code>useSalesReturn.summary</code>)</h3>
+<div class="formula">ratio = returnQty / soldQty</div>
+<ul>
+  <li><code>gross = &Sigma; unitPrice &times; returnQty</code></li>
+  <li><code>discountReversal = &Sigma; lineDiscount &times; ratio</code></li>
+  <li><code>vatReversal = &Sigma; lineVat &times; ratio</code></li>
+  <li><code>netOfDiscount = gross &minus; discountReversal</code></li>
+  <li><code>totalRefund = taxInclusive ? netOfDiscount : netOfDiscount + vatReversal</code>, floored at 0, rounded to 2dp</li>
+</ul>
+
+<p><code>unitPrice</code>, <code>lineDiscount</code>, <code>lineVat</code> and <code>taxRate</code> all come from the
+<strong>eligibility payload</strong>, i.e. from the original invoice line — never from the product master and never
+recomputed from a current tax rate.</p>
+
+<h3>Payload shape (<code>buildPayload</code>)</h3>
+<p><code>subTotal = gross</code>, <code>taxAmount = vatReversal</code>, <code>totalAmount = totalRefund</code>,
+<code>refundAmount = totalRefund</code>,
+<code>returnAction = refundMethod === 'CREDIT_VOUCHER' ? 'Credit Note' : 'Refund'</code>. Each item carries
+<code>price</code>, <code>discountAmount</code>, <code>taxAmount</code>,
+<code>total = unitPrice &times; qty &minus; lineDiscount &times; ratio</code>, <code>condition</code>,
+<code>returnReason</code>, <code>returnReasonNotes</code>, <code>itemStatus</code> (<code>'Good'</code> when the
+condition is restockable, else <code>'Damaged'</code>) and its <code>batches</code>.</p>
+
+<h3>Confirm is two calls, not one</h3>
+<p><code>handleConfirm</code> does <code>saveSalesReturn</code> (creates the DRAFT) and then
+<code>approveDraft</code>. If the save succeeds and the approve fails for any reason other than 401/403, the user is
+told explicitly: <em>"saved as a draft but could not be posted &hellip; No stock or refund has been processed."</em>
+A 401/403 opens the supervisor dialog and re-approves the <strong>same</strong> draft, so no duplicate is created.</p>
+
+<h2 id="s4">4. Backend Flow</h2>
+
+<p><strong>Controller</strong> — <code>sales/returns/SalesReturnController.java</code>,
+<code>@RequestMapping("/api/sales/returns")</code>, <code>@PreAuthorize("isAuthenticated()")</code>, module gate
+<code>"sales.return"</code> via <code>ModulePermissionService</code>.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Endpoint</th><th>Method</th><th>Permission</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>GET /invoice-search</code></td><td><code>searchInvoices</code></td><td>view</td><td>&sect;8 find the original sale</td></tr>
+<tr><td><code>GET /eligibility</code></td><td><code>getEligibility</code></td><td>view</td><td>&sect;9 authoritative-but-advisory verdict + lines</td></tr>
+<tr><td><code>GET /options</code></td><td><code>getReturnOptions</code></td><td>view</td><td>condition / reason / refund-method vocabularies</td></tr>
+<tr><td><code>GET /returnable-batches</code></td><td><code>getReturnableBatches</code></td><td>view</td><td>batch lots still returnable</td></tr>
+<tr><td><code>POST /</code></td><td><code>saveReturn</code></td><td>create</td><td>create or update the return document</td></tr>
+<tr><td><code>PUT /{id}/status?status=</code></td><td><code>updateStatus</code></td><td>edit</td><td><strong>the only state-changing call</strong>; body may carry supervisor credentials</td></tr>
+<tr><td><code>DELETE /{id}</code></td><td><code>deleteReturn</code></td><td>edit + <code>ROLE_ADMIN</code></td><td>delete a non-approved return</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong><code>saveReturn</code></strong> (<code>SalesReturnService.saveReturn</code>) — rejects any modification of
+an <code>APPROVED</code> return; stamps the branch (existing return's branch on update, <strong>current user's
+branch</strong> on create); resolves the return number through <code>SalesDocumentNumberingService</code>; defaults
+status to <code>DRAFT</code> and <code>returnDate</code> to <code>LocalDate.now()</code>; then runs
+<code>normaliseLineConditions</code>, <code>applyEntryPointDefaults</code>, <code>prorateDiscountFromInvoice</code>.
+<strong>No stock, GL or money moves here.</strong></p>
+
+<p><strong><code>updateStatus(id, status, supervisorUsername, supervisorPassword)</code></strong> — the whole
+transaction, in order:</p>
+<ol>
+  <li><code>salesReturnRepository.findByIdForUpdate(id)</code> — <code>PESSIMISTIC_WRITE</code> row lock, taken
+      <strong>before</strong> status is read.</li>
+  <li>Re-read the full graph with <code>findByIdWithItems</code>; reject if already <code>APPROVED</code>.</li>
+  <li>If approving: <code>authorizationService.resolveRequiredAuthorization</code> &rarr; <code>authorize</code>
+      (supervisor credentials verified server-side, approver stamped, <code>audit_logs</code> written).</li>
+  <li><code>assertRefundMethodSettleable</code> — blocks <code>CUSTOMER_CREDIT</code> on a walk-in via
+      <code>SalesReturnCustomerAccountResolver</code>.</li>
+  <li><code>assertReturnableQuantitiesStillAvailable</code> — locks the invoice row
+      (<code>findByInvoiceNumberForUpdate</code>), recomputes sold minus already-approved-returned per item code, and
+      fails the whole return (HTTP 409) on any violation. <strong>Skipped entirely, with a warning log, when
+      <code>linkedInvoice</code> is null or blank.</strong></li>
+  <li>Set status, save.</li>
+  <li><code>applyBatchReturns</code> &rarr; <code>applyNonBatchStockReturns</code> &rarr;
+      <code>postJournalForApprovedReturn</code> &rarr; <code>applySerialReturns</code> &rarr;
+      <code>cashRefundService.recordCashRefund</code> &rarr; <code>issueCreditVoucherIfRequired</code>.</li>
+</ol>
+
+<h3>Collaborators</h3>
+<ul>
+  <li><code>SalesReturnEligibilityService</code> — read side (&sect;8/&sect;9). Explicitly documented as advisory:
+      <em>"Treat this as 'what to show the cashier', not 'what is permitted'."</em></li>
+  <li><code>SalesReturnAuthorizationPolicy</code> — <code>sales.return.window-days</code> (default 0 = unlimited) and
+      <code>sales.return.cash-approval-threshold-aed</code> (default 0 = disabled). An expired window escalates to
+      approval; it never blocks.</li>
+  <li><code>SalesReturnAuthorizationService</code> — reuses <code>PosCredentialVerificationService</code>; supervisor
+      roles <code>ADMIN, BRANCH_ADMIN, MANAGER, SUPERVISOR</code>.</li>
+  <li><code>SalesReturnCashRefundService</code> — delegates to <code>PosSessionService.addCashMovement</code> rather
+      than writing a second cash ledger.</li>
+  <li><code>SalesReturnCustomerAccountResolver</code> — walk-in detection (<code>null</code>, blank,
+      <code>"WALK-IN"</code>, or a code with no <code>customers</code> row).</li>
+</ul>
+
+<h2 id="s5">5. Database Records</h2>
+
+<p>A return is represented as a <strong>separate sales return document</strong>. Not a modified invoice, not a negative
+invoice, not a row in a <code>credit_notes</code> table (none exists). The phrase "credit note" appears only as a
+<code>returnAction</code> string value and as the GL transaction type <code>TX_CREDIT_NOTE</code>.</p>
+
+<h3>Written on save (DRAFT)</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Table</th><th>Entity</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>sales_returns</code></td><td><code>SalesReturn</code></td><td>Header. <code>IDENTITY</code> id (not <code>UuidV7</code>), does <strong>not</strong> extend <code>BaseEntity</code> — so no <code>isActive</code> soft-delete flag and no <code>createdAt/By</code> audit columns; it carries only <code>created_by_user_id</code> for ownership filtering.</td></tr>
+<tr><td><code>sales_return_items</code></td><td><code>SalesReturnItem</code></td><td>Per line: <code>itemCode</code>, <code>soldQty</code>, <code>returnQty</code>, <code>price</code>, <code>discountPercent</code>, <code>discountAmount</code>, <code>taxRate</code>, <code>taxAmount</code>, <code>total</code>, <code>itemStatus</code>, <code>return_condition</code>, <code>return_reason</code>, <code>return_reason_notes</code>.</td></tr>
+<tr><td><code>sales_return_item_batches</code></td><td><code>SalesReturnItemBatch</code></td><td><code>original_allocation_id</code>, <code>batch_master_id</code>, <code>batch_number</code>, <code>bin_code</code>, <code>quantity</code>, <code>expiry_date</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Written on approve</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Table</th><th>Written by</th><th>Direction / content</th></tr></thead>
+<tbody>
+<tr><td><code>stock_movements</code></td><td><code>StockMovementService.reverseOutboundStock</code></td><td><strong>Positive</strong> quantity, <code>source_type = SALES_RETURN</code>, <code>source_id = sales_returns.id</code>, <code>reference_no = returnNumber</code>. <code>unit_cost</code> is left <strong>null</strong>.</td></tr>
+<tr><td><code>inventory_balances</code></td><td><code>InventoryBalanceService.refresh</code></td><td>Re-derived <code>on_hand_qty</code>, <code>avg_cost</code>, <code>total_value</code>.</td></tr>
+<tr><td><code>batch_allocations</code></td><td><code>applyBatchReturns</code></td><td>Parent flipped to <code>RETURNED</code>, or split: parent decremented + sibling row with <code>source_document_type = SALES_RETURN</code>, <code>parent_allocation_id</code> set.</td></tr>
+<tr><td><code>serial_masters</code></td><td><code>applySerialReturns</code></td><td><code>SOLD &rarr; RETURNED</code>.</td></tr>
+<tr><td><code>journal_entries</code>, <code>journal_lines</code>, <code>ledger_entries</code>, <code>gl_account_balances</code></td><td><code>PostingEngineService</code></td><td>Two entries: <code>&lt;RET&gt;</code> and <code>&lt;RET&gt;-INV</code>.</td></tr>
+<tr><td><code>pos_cash_movements</code></td><td><code>SalesReturnCashRefundService</code></td><td><code>CASH_REFUND</code> only. <code>DROP_OUT</code>, <code>reference = returnNumber</code>, category <code>SALES_RETURN_REFUND</code>.</td></tr>
+<tr><td><code>credit_vouchers</code>, <code>credit_voucher_transactions</code></td><td><code>CreditVoucherService</code></td><td><code>CREDIT_VOUCHER</code> only.</td></tr>
+<tr><td><code>audit_logs</code></td><td><code>AuditLogService.logDomainEvent</code></td><td><strong>Only</strong> <code>RETURN_AUTHORIZED</code> / <code>RETURN_AUTHORIZATION_DENIED</code>, i.e. only when supervisor sign-off was required.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Never written by a return</h3>
+<p><code>sales_invoices</code> (read and row-locked only), <code>sales_invoice_items</code>, <code>payments</code>,
+<code>receipt_vouchers</code>, <code>customers.balance</code>, <code>opening_invoices</code>, any statement/ledger
+table other than the GL, <code>pos_audit_logs</code>, <code>tax_filings</code>, and <code>delivery_notes</code>.</p>
+
+<h3>Schema source</h3>
+<p>The tables themselves predate Flyway baselining (they come from Hibernate <code>ddl-auto=update</code>). Column
+additions live in <code>V7__money_types.sql</code> (numeric money types),
+<code>V14__pos_audit_return_void.sql</code> (<code>return_reason</code>, <code>return_reason_notes</code>),
+<code>V39__created_by_user_id.sql</code> (ownership column) and
+<code>V78__sales_return_line_condition_and_refund_context.sql</code> (<code>return_condition</code>,
+<code>refund_method</code>, <code>refund_amount</code>, <code>entry_point</code>, <code>pos_session_id</code>,
+<code>pos_terminal_id</code>, <code>pos_counter_name</code>, <code>trading_date</code>,
+<code>customer_mobile</code>, <code>linked_receipt_number</code>, the four <code>authorized_*</code> columns, plus
+indexes on <code>linked_invoice</code> and <code>pos_session_id</code>). <code>V78</code> also backfills
+<code>return_condition</code> from <code>itemStatus</code> and <code>refund_method</code> from the legacy prose in
+<code>internal_notes</code>.</p>
+
+<h3>Linkage is by string, not foreign key</h3>
+<p><code>sales_returns.linked_invoice</code> holds the invoice <em>number</em>; <code>pos_session_id</code> is a plain
+<code>bigint</code> with no FK (see the note in <code>V87__sales_payment_pos_session.sql</code> describing these as
+deliberately soft references). Every lookup from a return to its invoice is
+<code>salesInvoiceRepository.findByInvoiceNumber(...)</code>.</p>
+
+<h2 id="s6">6. Stock Handling</h2>
+
+<p>Stock is <strong>increased</strong> by a new inbound movement. The original sale's outbound movement is never
+deleted or reversed in place — consistent with <code>stock_movements</code> being an append-only ledger.</p>
+
+<p>The decision tree per return line, at approval:</p>
+<ol>
+  <li><strong>Does the line carry batch selections?</strong> If yes &rarr; <code>applyBatchReturns</code>. If no &rarr;
+      <code>applyNonBatchStockReturns</code>. The two are mutually exclusive, so <strong>a line cannot be restocked
+      twice</strong>.</li>
+  <li><strong>Is <code>itemStatus == "Good"</code>?</strong> (derived from <code>condition</code>: only
+      <code>GOOD</code> maps to <code>"Good"</code>; <code>DAMAGED</code>, <code>OPENED</code>,
+      <code>DEFECTIVE</code>, <code>EXPIRED</code> all map to <code>"Damaged"</code>.) If not &rarr; <strong>no stock
+      movement at all</strong>. For a batch line the allocation is still flipped to <code>RETURNED</code> for
+      traceability; <code>BatchMaster.status</code> is left untouched.</li>
+  <li><strong>Can a warehouse be resolved?</strong> If not &rarr; log a warning and <strong>skip</strong>, leaving
+      inventory and GL to disagree.</li>
+</ol>
+
+<h3>Batch-controlled lines (<code>applyBatchReturns</code>)</h3>
+<ul>
+  <li>Validates <code>&Sigma; batch.quantity == returnQty</code> (HTTP 400 otherwise).</li>
+  <li><code>batchAllocationRepository.findByIdForUpdate(parentId)</code> — pessimistic lock per allocation.</li>
+  <li>Validates the selected <code>batchNumber</code> matches the parent allocation's, and that the parent's
+      <code>productCode</code> matches the line's <code>itemCode</code>.</li>
+  <li>Validates <code>retQty &le; parentQty &minus; sumAlreadyReturned(parentId)</code>.</li>
+  <li>Warehouse comes from <code>parent.getBatchMaster().getWarehouseId()</code>; bin from
+      <code>parent.getBinId()</code>. Batch number and expiry are carried onto the movement, so batch identity is
+      preserved.</li>
+  <li>If <code>BatchMaster.warehouseId</code> is null, the restock is <strong>skipped</strong> with a warning.</li>
+</ul>
+
+<h3>Non-batch lines (<code>applyNonBatchStockReturns</code>)</h3>
+<ul>
+  <li>Warehouse comes from <code>resolveReturnWarehouseId</code>: the linked invoice's <strong>first delivery note's
+      warehouse</strong>. Order is: linked invoice &rarr; <code>linkedDeliveryNote</code> (comma-split) &rarr; first DN
+      with a warehouse &rarr; otherwise <code>null</code>.</li>
+  <li><code>null</code> means <strong>no stock movement is posted</strong>, with this log line: <em>"could not resolve
+      a source warehouse &hellip; Inventory and GL will mismatch until a manual adjustment is made."</em></li>
+  <li>No bin, no batch, no expiry on the movement.</li>
+</ul>
+
+<h3>What the movement carries back as reference</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Field</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td><code>source_type</code></td><td><code>SALES_RETURN</code></td></tr>
+<tr><td><code>source_id</code></td><td><code>sales_returns.id</code></td></tr>
+<tr><td><code>reference_no</code></td><td><code>returnNumber</code></td></tr>
+<tr><td><code>product_id</code>, <code>warehouse_id</code>, <code>bin_id</code></td><td>resolved as above</td></tr>
+<tr><td><code>batch_number</code>, <code>expiry_date</code></td><td>batch lines only</td></tr>
+<tr><td><code>branch_id</code></td><td>stamped by <code>StockMovementService.stampBranch</code></td></tr>
+<tr><td><code>movement_date</code></td><td><code>LocalDate.now()</code> — <strong>not</strong> the return date or trading date</td></tr>
+<tr><td><code>quantity</code></td><td>positive <code>returnQty</code></td></tr>
+<tr><td><code>unit_cost</code></td><td><strong>null</strong></td></tr>
+</tbody>
+</table>
+</div>
+
+<p>There is <strong>no</strong> reference to the invoice, the invoice item, the POS session or the user on the stock
+movement. Tracing a movement back to its sale requires two hops: movement &rarr; <code>source_id</code> &rarr;
+<code>sales_returns.linked_invoice</code>.</p>
+
+<p><strong>Serials</strong> (<code>applySerialReturns</code>) — builds <code>itemCode &rarr; serialNumber</code> from
+the original invoice, locks the serial row, and flips <code>SOLD &rarr; RETURNED</code>. Note it keys on
+<strong>item code</strong>, so a line with several serialized units of the same product only ever flips the one serial
+recorded on the invoice line. It also runs regardless of condition, so a scrapped unit's serial is still marked
+<code>RETURNED</code> rather than quarantined.</p>
+
+<p><strong>Reserved stock</strong> is not touched — there is no reservation concept on this path.</p>
+
+<p><strong>No double-stock risk from events</strong> — there is no listener, no event publisher and no invoice
+reversal in the return path. The only route to a duplicate movement is a second approval of the same return, which the
+row lock and the <code>APPROVED</code> guard prevent. Note that the unique index
+<code>ux_sm_outbound_source_identity</code> (<code>StockMovementIdentityConstraintConfig</code>) is
+<code>WHERE quantity &lt; 0</code>, so inbound return movements have <strong>no database-level dedup</strong>.</p>
+
+<h2 id="s7">7. Amount Calculation</h2>
+
+<p><strong>Every figure is prorated from the original invoice line.</strong> Not the current product price, not the
+current customer price, not a manually entered return price, not a weighted average. The source is
+<code>SalesReturnEligibilityService.getEligibility</code>, which copies <code>SalesInvoiceItem.price</code>,
+<code>.taxAmount</code>, <code>.netAmount</code>, <code>.taxRate</code> onto each
+<code>ReturnEligibilityLine</code>.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Input</th><th>Source field</th><th>How the return uses it</th></tr></thead>
+<tbody>
+<tr><td>Original selling price</td><td><code>SalesInvoiceItem.price</code></td><td><code>unitPrice</code>, used as-is</td></tr>
+<tr><td>Original quantity</td><td><code>SalesInvoiceItem.quantity</code></td><td><code>soldQty</code>, the proration denominator</td></tr>
+<tr><td>Returned quantity</td><td>user entry, capped at <code>availableQty</code></td><td><code>returnQty</code></td></tr>
+<tr><td>Line discount</td><td><code>SalesInvoiceItem.discount</code> (a <strong>percent</strong>) &times; price &times; qty</td><td>money value computed in <code>resolveLineDiscount</code></td></tr>
+<tr><td>Footer discount</td><td><code>InvoiceFooterDiscountShares.of(invoice)</code></td><td>the line's share is <strong>added</strong> to the line discount</td></tr>
+<tr><td>Tax</td><td><code>SalesInvoiceItem.taxAmount</code> (money)</td><td>prorated by <code>ratio</code></td></tr>
+<tr><td>Rounding</td><td><code>round2</code> on the client, <code>HALF_UP</code> scale 2 on the backend</td><td>per line and per total</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>The formulas</h3>
+<div class="formula">lineDiscount = price &times; soldQty &times; (discount% / 100) + footerShare</div>
+<div class="formula">returnedDiscount = lineDiscount &times; (returnQty / soldQty)
+vat&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= lineVat &times; (returnQty / soldQty)</div>
+<div class="formula">totalRefund = gross &minus; returnedDiscount                    (VAT inclusive)
+totalRefund = gross &minus; returnedDiscount + returnedVat      (VAT exclusive)</div>
+
+<h3>VAT mode detection</h3>
+<p><code>res.taxInclusive = Boolean.TRUE.equals(inv.getTaxInclusive()) || inv.getVatMode() ==
+VatMode.INCLUSIVE</code>. The second clause exists because back-office invoices recorded inclusive pricing in
+<code>vatMode</code> only, leaving <code>taxInclusive</code> false — which made refunds add VAT on top of an
+already-inclusive price.</p>
+
+<h3>What is stored on the header</h3>
+<p><code>subTotal = gross</code> (pre-discount, and in inclusive mode that gross <strong>contains VAT</strong>),
+<code>taxAmount = returnedVat</code>, <code>totalAmount = totalRefund</code>. There is no header discount column on
+<code>sales_returns</code>, so the discount is recoverable only as the residual
+<code>subTotal + taxAmount &minus; totalAmount</code> — which is exactly what <code>PostingEngineService</code>
+does.</p>
+
+<h3>Backend proration is effectively dormant for UI returns</h3>
+<p><code>SalesReturnService.prorateDiscountFromInvoice</code> skips any line where
+<code>discountAmount != null</code>, and <code>buildPayload</code> always sends a <code>discountAmount</code> (even
+<code>0</code>). It therefore only fires for API callers that omit the field.</p>
+
+<h3>Free items, promotions, overrides</h3>
+<p>A zero-price or promotional line reverses at whatever the invoice line recorded. There is no special handling and
+no link to any promotion record. Price overrides made at POS are already baked into
+<code>SalesInvoiceItem.price</code>, so they reverse correctly.</p>
+
+<h3>Does the return exactly reverse the sale?</h3>
+<p>For a full return, yes to the cent in exclusive mode. Two caveats: (a) per-line rounding at 2dp happens twice —
+once on the invoice, once on the prorated return — so a partial return of an odd fraction can differ by &plusmn;0.01
+per line from the invoice's own line split; (b) <code>soldQty</code> is taken from the <strong>first</strong> invoice
+line matching an item code (<code>invoiceItemByCode.putIfAbsent</code>), so an invoice that lists the same product on
+two lines at different prices will prorate against only one of them.</p>
+
+<h2 id="s8">8. Customer Outstanding</h2>
+
+<p><strong>A sales return does nothing to the customer's outstanding balance.</strong> This is derived, not
+asserted.</p>
+
+<p>Outstanding is defined in exactly one way across the system:</p>
+<div class="formula">outstanding(customer) = &Sigma; sales_invoices.balance + &Sigma; opening_invoices.outstanding</div>
+
+<ul>
+  <li><code>CustomerService.getAllCustomers</code> &rarr; <code>salesInvoiceRepo.sumOutstandingBalanceByCustomerCode()</code></li>
+  <li><code>CustomerService</code> detail view &rarr; <code>sumOutstandingBalanceForCustomerCode(code)</code> +
+      <code>openingInvoiceRepository.sumOutstandingForCustomer(code)</code></li>
+  <li>Credit-limit checks &rarr; <code>CustomerCreditService.assertWithinLimit</code> &rarr;
+      <code>invoiceRepo.findOutstandingBalanceByCustomerCode</code></li>
+  <li>AR aging &rarr; <code>FinancialReportService.generateARAgingReport</code>, which iterates
+      <code>salesInvoiceRepository.findAll()</code> and buckets <code>inv.getBalance()</code></li>
+  <li>AR sub-ledger reconciliation &rarr; <code>SalesInvoiceRepository.sumGlobalOutstandingBalance()</code></li>
+</ul>
+
+<p><code>SalesInvoice.balance</code> is maintained only by <code>SalesInvoiceService.recordPayment</code> and the
+invoice's own status transitions. <strong>No return code path writes it.</strong> <code>SalesReturnService</code>
+reads the invoice twice (<code>findByInvoiceNumber</code>, <code>findByInvoiceNumberForUpdate</code>) and never calls
+<code>save</code> on it.</p>
+
+<p>So the formula the business probably expects:</p>
+<pre><code>Original Customer Outstanding = X
+Sales Return                  = Y
+New Outstanding               = X - Y        &lt;-- NOT what happens</code></pre>
+
+<p>What actually happens:</p>
+<pre><code>Original Customer Outstanding = X
+Sales Return                  = Y
+New Outstanding               = X            &lt;-- unchanged, for every refund method</code></pre>
+
+<p><strong>Including <code>CUSTOMER_CREDIT</code>.</strong> The enum documents it as <em>"Credits the customer's
+account via the existing customer-credit mechanism"</em>, and <code>SalesReturnCustomerAccountResolver</code> goes to
+real trouble to block it for walk-ins on the grounds that <em>"the method posts to the customer's ledger"</em>. But no
+code posts it. Searching the backend for writers of customer credit turns up only
+<code>CustomerCreditService</code>, which is a <strong>read-only credit-limit guard</strong> — it has no mutator at
+all. A <code>CUSTOMER_CREDIT</code> return therefore stores <code>refund_method = CUSTOMER_CREDIT</code> on the row,
+posts <code>Cr AR</code> in the GL, and leaves the customer's receivable exactly as it was. There is no credit
+balance, no refund payable, and no adjustment record.</p>
+
+<p><strong>The one place the customer is genuinely credited</strong> is <code>CREDIT_VOUCHER</code>: a
+<code>credit_vouchers</code> row with <code>remaining_amount</code>, redeemable at a later checkout through the
+<code>VOUCHER</code> payment allocation in <code>PosCheckoutController.redeemVoucherAllocation</code>. That is store
+credit held outside the AR sub-ledger, not a reduction of outstanding.</p>
+
+<h2 id="s9">9. Customer Statement</h2>
+
+<p><strong>A sales return does not appear on the customer statement of account.</strong></p>
+
+<p><code>financials/statement/StatementService.java</code> is the only producer of the customer SoA
+(<code>StatementController</code> &rarr; <code>getCustomerStatement</code>). Its injected sources are:</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Source</th><th>Entries it contributes</th><th>Direction</th></tr></thead>
+<tbody>
+<tr><td><code>SalesInvoiceRepository.findStatementEntries</code></td><td>Sales invoices</td><td>Debit</td></tr>
+<tr><td><code>ReceiptVoucherRepository.findStatementEntriesByCustomerCode</code></td><td>Payments received</td><td>Credit</td></tr>
+<tr><td><code>AdvanceApplicationRepository</code></td><td>Advance applied to invoice</td><td>Credit</td></tr>
+<tr><td><code>OpeningInvoiceRepository</code></td><td>Migrated opening balance</td><td>Debit</td></tr>
+<tr><td><code>CustomerRepository</code></td><td>Fallback opening balance</td><td>Debit</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><code>SalesReturnRepository</code> is <strong>not</strong> injected. The class declares
+<code>private static final int PRI_RETURN_CREDIT = 6; // Row 7 — sales return / credit note</code> and that constant
+is <strong>never referenced anywhere in the file</strong> — the slot was reserved and never filled.
+(<code>PRI_REFUND</code> is used once, at line 288, for refund receipt vouchers.)</p>
+
+<p>Consequences:</p>
+<ul>
+  <li><strong>Transaction type:</strong> none emitted for a return.</li>
+  <li><strong>Debit / credit direction:</strong> n/a.</li>
+  <li><strong>Running balance effect:</strong> none. The SoA closing balance after a return equals the balance before it.</li>
+  <li><strong>Reference document, date, branch, POS session, description:</strong> none.</li>
+</ul>
+
+<p><strong>Is the statement consistent with outstanding?</strong> Yes — both ignore returns, so they agree with each
+other. Both disagree with the general ledger, which <em>has</em> been credited. The customer's SoA and the AR control
+account diverge by the return total until some other transaction happens to close the gap (a cash payout or a voucher
+issue does close the GL side, but the SoA still never shows the return).</p>
+
+<p><strong>A <code>CREDIT_VOUCHER</code> return does eventually surface on the statement</strong>, but indirectly and
+later: when the voucher is redeemed, the sale it settles is a normal invoice and the voucher leg reduces that
+invoice's balance. The return itself is still invisible.</p>
+
+<h2 id="s10">10. Payment / Refund</h2>
+
+<p>The refund method is a stored enum (<code>SalesReturnRefundMethod</code>), selected by the cashier and validated
+server-side. Five values exist; <strong>two of them settle anything.</strong></p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Method</th><th>Implemented settlement</th><th>Records created</th><th>AR left open in GL?</th></tr></thead>
+<tbody>
+<tr><td><code>CASH_REFUND</code></td><td class="yes">Yes</td><td><code>pos_cash_movements</code> <code>DROP_OUT</code> + its own <code>Dr AR / Cr Cash</code> journal</td><td>No — AR nets to zero</td></tr>
+<tr><td><code>CREDIT_VOUCHER</code></td><td class="yes">Yes</td><td><code>credit_vouchers</code>, <code>credit_voucher_transactions</code> + <code>Dr AR / Cr Credit Vouchers Issued</code></td><td>No — AR nets to zero</td></tr>
+<tr><td><code>CARD_REFUND</code></td><td class="no">No</td><td>none</td><td class="no">Yes</td></tr>
+<tr><td><code>BANK_TRANSFER</code></td><td class="no">No</td><td>none</td><td class="no">Yes</td></tr>
+<tr><td><code>CUSTOMER_CREDIT</code></td><td class="no">No</td><td>none</td><td class="no">Yes</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><code>SalesReturnService.updateStatus</code> calls exactly two settlement collaborators:
+<code>cashRefundService.recordCashRefund(saved)</code> — which returns <code>null</code> immediately unless
+<code>refundMethod.isCashDrawerAffecting()</code>, true only for <code>CASH_REFUND</code> — and
+<code>issueCreditVoucherIfRequired(saved)</code>, which returns immediately unless the method is
+<code>CREDIT_VOUCHER</code>. There is no third branch.</p>
+
+<h3>Cash sale &rarr; return</h3>
+<p>The original POS cash sale produced: invoice <code>PAID</code> with <code>balance = 0</code>, a
+<code>payments</code> row, a <code>receipt_vouchers</code> row, and session tender counters via
+<code>recordInvoiceOnSession</code>.</p>
+<p>On return with <code>CASH_REFUND</code>: physical cash leaves the drawer and is recorded as a
+<code>DROP_OUT</code> on <code>pos_session_id</code>, with <code>reference = returnNumber</code>,
+<code>business_date = session.sessionDate</code>, category <code>SALES_RETURN_REFUND</code> (GL override &rarr;
+Accounts Receivable). Expected drawer cash falls by the refund. The original <code>payments</code> row and
+<code>receipt_vouchers</code> row are <strong>not</strong> reversed, voided or linked — the refund is a fresh drawer
+movement with no pointer to the original tender.</p>
+<p>Two hard gates: <code>posSessionId</code> must be non-null (HTTP 400: <em>"Cash Refund requires an open POS
+session"</em>), and the amount must not exceed <code>availableCashInDrawer(session)</code>, i.e. the same
+expected-cash figure the X-Report shows (HTTP 400 otherwise). So a large refund against a card-heavy session is
+refused.</p>
+
+<h3>Card payment &rarr; return</h3>
+<p>Nothing is recorded. No refund transaction, no reversal of the original <code>payments</code> row, no
+card-settlement entry in <code>financials/settlement</code>. <code>CARD_REFUND</code> is documented in the enum as
+<em>"Reversal against the original card payment, via the existing payment architecture"</em>, but no code implements
+it. The return posts <code>Cr AR</code> and stops.</p>
+
+<h3>Credit sale &rarr; return</h3>
+<p>The original credit checkout recorded nothing (<code>PosCheckoutController</code>: <em>"CREDIT allocations
+intentionally record nothing: the amount stays outstanding on the customer's A/R ledger"</em>), so the invoice keeps a
+positive <code>balance</code>. On return, the customer's outstanding does <strong>not</strong> reduce — see
+&sect;8. The invoice <code>balance</code> is untouched whichever refund method is chosen.</p>
+
+<h3>Partial payment</h3>
+<pre><code>Sale total  = 10,000      invoice.balance = 4,000
+Paid        =  6,000      customer outstanding = 4,000
+Return      =  2,000</code></pre>
+<p>Current behaviour: <code>sales_returns.total_amount = 2,000</code>; stock for the returned lines comes back; GL
+posts <code>Dr Revenue 2,000-net + Dr VAT / Cr AR 2,000</code>. <code>invoice.balance</code> stays
+<strong>4,000</strong>, customer outstanding stays <strong>4,000</strong>. If the method is <code>CASH_REFUND</code>,
+2,000 physically leaves the drawer <em>in addition to</em> the 4,000 still owed — nothing allocates the credit against
+the unpaid portion first. There is no allocation logic of any kind between a return and an invoice's open balance.</p>
+
+<h3>Refund linkage</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Linked to</th><th>Where</th></tr></thead>
+<tbody>
+<tr><td>Original invoice</td><td><code>sales_returns.linked_invoice</code> (string), <code>linked_receipt_number</code></td></tr>
+<tr><td>Return document</td><td><code>pos_cash_movements.reference = returnNumber</code>; <code>credit_vouchers.source_return_id/source_return_number</code></td></tr>
+<tr><td>Customer</td><td><code>customer_code</code>, <code>customer_name</code>, <code>customer_mobile</code> snapshots on the return</td></tr>
+<tr><td>POS session / terminal / counter</td><td><code>pos_session_id</code>, <code>pos_terminal_id</code>, <code>pos_counter_name</code> on the return; the cash movement carries the session natively</td></tr>
+<tr><td>Cashier</td><td><code>pos_cash_movements.performed_by</code> / <code>performed_by_user_id</code>; the return itself carries <code>created_by_user_id</code></td></tr>
+<tr><td><strong>Original payment</strong></td><td class="no">not linked at all</td></tr>
+<tr><td><strong>Payment method of the original sale</strong></td><td class="no">not consulted; the cashier chooses the refund method freely</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="s11">11. Tax / VAT</h2>
+
+<p>VAT is reversed as a <strong>debit to VAT Output (2102)</strong> inside the return's own journal — a real reversal
+in the general ledger, not a negative tax transaction and not an edit to the original invoice's tax.</p>
+
+<pre><code>Dr VAT Output (2102)   taxAmount        (only when taxAmount &gt; 0)</code></pre>
+
+<p><strong>Returned tax</strong> = <code>&Sigma; (invoice line taxAmount &times; returnQty / soldQty)</code>, rounded
+2dp per line. It is taken from the invoice line's recorded tax money, so a line that was zero-rated or exempt on the
+sale reverses zero tax, and a rate that has since changed in the product master is irrelevant.</p>
+
+<h3>Exclusive sale</h3>
+<pre><code>Sale:    price 100, VAT 5% = 5, line total 105
+Return:  subTotal 100, taxAmount 5, totalAmount 105
+Journal: discount = 100 + 5 - 105 = 0
+         Dr Sales Revenue 100 / Dr VAT Output 5 / Cr AR 105</code></pre>
+<p>Correct and exact.</p>
+
+<h3>Inclusive sale</h3>
+<pre><code>Sale:    price 105 (VAT-inclusive), VAT portion 5
+Return:  subTotal 105  &lt;- gross, contains VAT
+         taxAmount 5
+         totalAmount 105  &lt;- VAT not added again
+Journal: discount = 105 + 5 - 105 = 5     &lt;- the residual absorbs the inclusive VAT
+         netRevenue = 105 - 5 = 100
+         Dr Sales Revenue 100 / Dr VAT Output 5 / Cr AR 105</code></pre>
+<p>Also correct — but by arithmetic coincidence rather than by design. The posting engine labels the residual
+<code>discountAmount</code>, and in inclusive mode that "discount" is actually the contained VAT. The entry balances
+and the revenue split is right; only the <em>name</em> of the intermediate figure is misleading. With a real discount
+on an inclusive line the same identity still holds (gross 105, discount 10, VAT portion 4.52, total 95 &rarr; residual
+14.52, net revenue 90.48 &rarr; 90.48 + 4.52 = 95).</p>
+
+<h3>Tax reporting</h3>
+<p>No tax-specific table is written. <code>financials/tax</code> (<code>TaxService</code>,
+<code>TaxConfiguration</code>, <code>TaxFiling</code>) does not reference <code>SalesReturn</code> at all. VAT
+reporting reaches returns only through the ledger: <code>FinancialReportService.getTaxReconciliation</code> /
+<code>getTaxDashboard</code> call <code>collectVatLines(fetchEntries(...))</code>, which reads
+<code>ledger_entries</code> by account role. Because the return debits 2102, output VAT in those reports is
+<strong>correctly net of returns</strong>.</p>
+
+<h3>Rounding</h3>
+<p>Two roundings compound: the invoice line's own tax was rounded when the sale was posted, and the prorated share is
+rounded again (<code>round2</code> on the client, <code>HALF_UP</code> scale 2 server-side). A partial return of an
+odd quantity can therefore differ by up to &plusmn;0.01 per line from a hand-computed share. The GL entry always
+balances regardless, because the AR leg is <code>totalAmount</code> and the revenue leg is derived as a residual from
+it.</p>
+
+<h2 id="s12">12. COGS / Inventory Valuation</h2>
+
+<p>COGS <em>is</em> reversed, and inventory <em>is</em> debited — in the GL. The inventory <em>sub-ledger</em>
+valuation is a different story.</p>
+
+<p><code>SalesReturnService.resolveActualCogs</code> resolves a per-line cost through three tiers, first hit
+wins:</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Tier</th><th>Source</th><th>Formula</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>DeliveryNoteBatchConsumption</code> rows for the invoice's first linked DN</td><td><code>unitCost = sumTotalCostByDnAndItem(dnId, itemCode) / deliveredQty</code>, then <code>&times; min(returnQty, deliveredQty)</code></td></tr>
+<tr><td>2</td><td><code>SalesInvoiceItem.cost</code> — the cost-at-sale snapshot stamped at POS checkout</td><td><code>cost &times; returnQty</code></td></tr>
+<tr><td>3</td><td><code>ProductPricing.cost</code> — current product-master cost</td><td><code>cost &times; returnQty</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Tier 1 is the exact batch/WAC cost at the moment of the original sale, which is what stops a later WAC movement
+from distorting the reversal. Tier 2 survives the product master's cost being changed or cleared afterwards. Tier 3 is
+the legacy fallback and logs a warning.</p>
+
+<p><strong>Scrap lines are excluded.</strong> Any line whose <code>itemStatus != "Good"</code> is skipped with
+<em>"status='&hellip;' (scrap); excluded from COGS reversal"</em> — no stock comes back, so the cost correctly stays
+on the books as a loss.</p>
+
+<p><strong>Missing cost is a hard stop, not a silent zero.</strong> If total COGS resolves to zero <em>and</em> at
+least one item had no resolvable cost, approval fails with HTTP 422 naming the items: <em>"no Cost Price is set for
+&hellip; Set the Cost Price under Inventory &rarr; Products &rarr; Pricing"</em>. An explicit <code>0.00</code> in
+<code>ProductPricing.cost</code> counts as missing, deliberately. A pure scrap return legitimately resolves to zero
+COGS and is allowed: <code>PostingEngineService</code> checks <code>restocksInventory</code> first and skips the
+inventory entry entirely when no line is resaleable.</p>
+
+<h3>The inventory entry</h3>
+<pre><code>Dr Inventory (1120)  costOfGoodsReturned
+Cr COGS      (5101)  costOfGoodsReturned</code></pre>
+<p>Posted as its own journal with reference <code>&lt;returnNumber&gt;-INV</code>, separate from and independent of
+the revenue entry.</p>
+
+<h3>Average cost / WAC is deliberately not moved</h3>
+<p><code>reverseOutboundStock</code> leaves <code>stock_movements.unit_cost</code> <strong>null</strong>. The WAC
+query (<code>StockMovementRepository.getWeightedAverageCost</code>) filters
+<code>unitCost IS NOT NULL AND unitCost &gt; 0</code>, so a return never shifts the weighted-average cost. For
+FIFO/FEFO, the restocked batch keeps its original batch number and expiry, so <code>DeliveryNoteService</code>'s batch
+picking sees it as the same lot it sold.</p>
+
+<h3>But the inventory sub-ledger value does not rise with the GL</h3>
+<p>Two different valuations exist and they diverge:</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Reader</th><th>Query</th><th>Does a return raise it?</th></tr></thead>
+<tbody>
+<tr><td><code>inventory_balances.total_value</code></td><td><code>avgCost &times; onHandQty</code>, recomputed by <code>InventoryBalanceService.refresh</code></td><td class="yes">Yes (quantity rose, WAC unchanged)</td></tr>
+<tr><td><code>SubLedgerReconciliationService.reconcileInventory</code></td><td><code>sumGlobalInventoryValue()</code> = <code>&Sigma; qty &times; unit_cost WHERE qty &gt; 0 AND unit_cost &gt; 0</code></td><td class="no">No — the return movement has no <code>unit_cost</code></td></tr>
+<tr><td>GL Inventory (1120)</td><td><code>ledger_entries</code> net balance</td><td class="yes">Yes, by <code>costOfGoodsReturned</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>So the Inventory control-account reconciliation picks up a difference equal to the COGS of every restocked return,
+permanently and cumulatively. (<code>ReconciliationLine.isBalanced()</code> tolerates only AED 1.00.)</p>
+
+<h2 id="s13">13. Financial / Accounting Transactions</h2>
+
+<p>There <strong>is</strong> a formal accounting layer.
+<code>PostingEngineService.createJournalFromSalesReturn(salesReturn, costOfGoodsReturned, revenueWasRecognized)</code>
+at <code>PostingEngineService.java:1071</code> is the single entry point, called from
+<code>SalesReturnService.postJournalForApprovedReturn</code>.</p>
+
+<h3>Entry 1 — revenue reversal (ref = <code>returnNumber</code>, type <code>TX_CREDIT_NOTE</code>, date = <code>returnDate</code>)</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Account</th><th>Code</th><th>Debit</th><th>Credit</th><th>Line narration</th></tr></thead>
+<tbody>
+<tr><td>Sales Revenue <strong>or</strong> Deferred Revenue</td><td><code>4101</code> / <code>2107</code></td><td><code>subTotal &minus; discount</code></td><td></td><td>Return Revenue Reversal</td></tr>
+<tr><td>VAT Output</td><td><code>2102</code></td><td><code>taxAmount</code> (if &gt; 0)</td><td></td><td>VAT Refund</td></tr>
+<tr><td>Accounts Receivable</td><td><code>1110</code></td><td></td><td><code>totalAmount</code></td><td>Return Credit Note</td></tr>
+</tbody>
+</table>
+</div>
+<p>where <code>discount = max(0, subTotal + taxAmount &minus; totalAmount)</code>.</p>
+
+<p><strong>Which revenue account</strong> is decided by <code>resolveRevenueRecognized</code>:
+<code>Sales Revenue</code> when the linked invoice's <code>deliveryStatus == DELIVERED</code>, otherwise
+<code>Deferred Revenue</code>. A missing or unlinked invoice defaults to <code>true</code> (debit Sales Revenue),
+documented as the safer, GL-verifiable choice.</p>
+
+<h3>Entry 2 — inventory restoration (ref = <code>returnNumber-INV</code>)</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Account</th><th>Code</th><th>Debit</th><th>Credit</th></tr></thead>
+<tbody>
+<tr><td>Inventory</td><td><code>1120</code></td><td><code>costOfGoodsReturned</code></td><td></td></tr>
+<tr><td>COGS</td><td><code>5101</code></td><td></td><td><code>costOfGoodsReturned</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Skipped entirely when no line is resaleable. Posted <em>before</em> entry 1 returns, but each entry self-balances
+so a skipped entry 2 leaves entry 1 intact.</p>
+
+<h3>Entry 3 — settlement, only for two methods</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Trigger</th><th>Debit</th><th>Credit</th><th>Posted by</th></tr></thead>
+<tbody>
+<tr><td><code>CASH_REFUND</code></td><td>Accounts Receivable <code>1110</code></td><td>Cash in Hand <code>1001</code></td><td><code>PosSessionService.addCashMovement</code> &rarr; <code>createJournalFromCashMovement</code>, using the category's GL override</td></tr>
+<tr><td><code>CREDIT_VOUCHER</code></td><td>Accounts Receivable <code>1100</code></td><td>Credit Vouchers Issued <code>2061</code></td><td><code>createJournalFromCreditVoucherIssue</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The net effect across entries 1 and 3 is the economically correct <code>Dr Revenue, Dr VAT, Cr Cash</code> (or
+<code>Cr Voucher Liability</code>), with AR netting to zero. <code>SalesReturnCashCategorySeeder</code> exists
+precisely to make this work: a default <code>DROP_OUT</code> would post
+<code>Dr General Expense (6099) / Cr Cash</code>, overstating both AR and expenses. If the AR account is missing from
+the chart of accounts the category is <strong>not</strong> seeded and cash refunds are refused outright rather than
+mis-posted.</p>
+
+<h3>What is never posted</h3>
+<ul>
+  <li>No <strong>refund liability</strong> account for <code>CARD_REFUND</code> / <code>BANK_TRANSFER</code>.</li>
+  <li>No <strong>customer credit</strong> posting for <code>CUSTOMER_CREDIT</code>.</li>
+  <li>No per-customer AR sub-ledger movement of any kind — AR is only ever touched at the control-account level, so
+      the GL knows the company owes money but not to whom.</li>
+</ul>
+
+<h3>Note on the AR account code</h3>
+<p>The return's own entry and the cash-refund override both resolve
+<code>PostingEngineService.ACC_ACCOUNTS_RECEIVABLE</code>, so they always agree. But the javadoc on
+<code>createJournalFromCreditVoucherIssue</code> writes AR as <code>1100</code> while
+<code>createJournalFromSalesReturn</code>'s javadoc writes <code>1110</code>. Both call the same constant, so this is
+a documentation inconsistency only — worth confirming which code the seeded chart of accounts actually uses.</p>
+
+<h3>Idempotency at the posting layer</h3>
+<p>Every journal method starts with <code>findDuplicate(ref)</code> and returns the existing entry if the reference was
+already posted. Because the reference is the return number (and <code>-INV</code>), a replayed approval cannot
+double-post the GL even if the status guard were bypassed.</p>
+
+<h2 id="s14">14. POS Session / X-Report / Z-Report</h2>
+
+<p>A return is treated as a <strong>post-sale transaction scoped to branch + date</strong>, not to a session.
+<code>sales_returns</code> carries <code>pos_session_id</code>, but no report filters on it.</p>
+
+<p><strong>X-Report</strong> (<code>PosSessionService.getXReport</code>) —
+<code>buildSessionReturnsSummary(session.branchId, session.sessionDate, invoices)</code> loads every approved return
+for that branch+date and then keeps only those whose <code>linkedInvoice</code> is in <strong>this session's own
+invoice numbers</strong>. That filter is the session attribution: a same-day return raised on another terminal cannot
+leak in. Published keys: <code>salesReturnCount</code>, <code>salesReturnTotal</code>,
+<code>creditNoteCount/Total</code>, <code>refundCount/Total</code>, <code>exchangeCount/Total</code>,
+<code>totalItemsReturned</code>.</p>
+
+<p><strong>Z-Report</strong> (<code>closeBusinessDate</code> path) — <code>buildReturnsSummary(branchId, date)</code>,
+unfiltered: the whole branch-day, as it aggregates the business day rather than a drawer. It additionally publishes
+<code>netQuantitySold = max(0, totalItemsSold &minus; totalQtyReturned)</code>.</p>
+
+<p><strong>Bucketing is driven by <code>returnAction</code></strong>, a free-text string:</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th><code>returnAction</code> value</th><th>Bucket</th></tr></thead>
+<tbody>
+<tr><td><code>"Credit Note"</code></td><td><code>creditNote*</code></td></tr>
+<tr><td><code>"Replacement"</code></td><td><code>exchange*</code></td></tr>
+<tr><td><code>"Refund"</code></td><td><code>refund*</code></td></tr>
+<tr><td>anything else</td><td>counted in <code>salesReturnTotal</code> only</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><code>buildPayload</code> only ever sends <code>"Credit Note"</code> (for <code>CREDIT_VOUCHER</code>) or
+<code>"Refund"</code> (for everything else). So the <strong>exchange buckets are always zero</strong> from the current
+UI, and the <strong>refund bucket lumps cash, card, bank and customer-credit refunds together</strong> even though
+only the cash ones moved money.</p>
+
+<h3>Which day gets the effect</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Figure</th><th>Date field used</th><th>Source</th></tr></thead>
+<tbody>
+<tr><td>Return in X/Z returns summary</td><td><code>sales_returns.return_date</code></td><td><code>findByReturnDateAndBranchWithItems</code></td></tr>
+<tr><td>POS "Returns" day badge</td><td><code>COALESCE(trading_date, return_date)</code></td><td><code>findDayReturnSnapshot</code></td></tr>
+<tr><td>Cash refund drawer movement</td><td><code>pos_sessions.session_date</code></td><td><code>addCashMovement</code></td></tr>
+<tr><td>GL revenue/VAT/AR journal</td><td><code>sales_returns.return_date</code></td><td><code>createBaseEntry</code></td></tr>
+<tr><td>GL cash-movement journal</td><td><code>session.sessionDate</code></td><td><code>createJournalFromCashMovement</code></td></tr>
+<tr><td>Stock movement</td><td><code>LocalDate.now()</code></td><td><code>reverseOutboundStock</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<p><code>return_date</code> is set client-side as <code>new Date().toISOString().slice(0,10)</code> — the browser's
+calendar date. <code>tradingDate</code> comes from the session. When a session's business date is yesterday and the
+clock has passed midnight, a single return lands in <strong>today's</strong> Z-Report returns summary, on
+<strong>today's</strong> GL revenue journal, with its drawer payout and cash journal on <strong>yesterday's</strong>
+business date. The two halves of one cash refund straddle the day boundary.</p>
+
+<p><strong>Original sale on a previous business day, return today:</strong> the return belongs wholly to today. It
+appears in today's Z-Report returns summary; today's session's X-Report shows it only if the original invoice belongs
+to that same session, which it cannot if the sale was a previous day — so <strong>a return against a prior-day sale
+appears in no X-Report at all</strong>, only in the Z-Report.</p>
+
+<h2 id="s15">15. Day Close Impact</h2>
+
+<p><strong>Cash reconciliation — yes, correctly.</strong> Expected cash is
+<code>opening + tender + dropIn &minus; dropOut</code>, computed once in
+<code>PosCashReconciliationService.reconcile</code> and reused by <code>closeSession()</code>,
+<code>getXReport()</code> and day close. A <code>CASH_REFUND</code> return's <code>DROP_OUT</code> therefore reduces
+expected drawer cash everywhere, automatically, with no report-specific code. This is the one place a return is fully
+wired into POS reconciliation.</p>
+
+<p><strong>Payment reconciliation — no.</strong> There is no per-tender reconciliation of refunds. A card refund
+produces no record, so card settlement (<code>financials/settlement.CardSettlement</code>) never sees it.</p>
+
+<p><strong>Net sales — not netted.</strong> <code>PosDayClose.netSales</code> is set from
+<code>summary["netSalesExTax"]</code>, which <code>PosSessionService</code> computes as
+<code>totalSales &minus; totalTax</code> over the day's invoices. Returns are published as separate keys
+(<code>salesReturnTotal</code>) and are <strong>not</strong> subtracted from gross or net sales. Only
+<code>netQuantitySold</code> nets returns, and only in quantity.</p>
+
+<p>A second mismatch inside the same summary: <code>salesReturnTotal</code> is the return's
+<code>totalAmount</code>, i.e. <strong>VAT-inclusive</strong>, while <code>netSalesExTax</code> is
+<strong>ex-tax</strong>. A consumer that subtracts one from the other over-deducts by the VAT.</p>
+
+<p><strong>Consolidated cash position — deliberately excludes refunds.</strong> The comment at
+<code>PosSessionService</code> is explicit: <em>"Cash Refunds/Returns are deliberately NOT included: SalesReturn has
+no payment-mode field today, so a 'cash refund' total cannot be computed without misclassifying every refund
+(cash+card+other) as cash. <code>cashRefundsSupported=false</code> flags this to the caller/frontend rather than
+silently reporting a wrong number."</em></p>
+<p>That comment is now <strong>stale</strong>: <code>V78</code> added <code>refund_method</code>, so a cash-only
+refund total <em>is</em> computable today. The flag still reports <code>false</code>.</p>
+
+<p><strong>Day-close gating.</strong> A return cannot be approved with a <code>CASH_REFUND</code> once closure has
+begun or the session has rolled to a new business day — <code>addCashMovement</code> runs
+<code>businessDayContinuationGate.assertMayContinue</code> and <code>closureWorkflowGate.assertMayOperate</code>, and
+rejects a closed session outright. Because the cash payout is the last step inside the approval transaction, that
+rejection rolls the <strong>entire return</strong> back: no stock, no journal, no document. Non-cash methods are
+unaffected and can be approved against a closed or stale session.</p>
+
+<h2 id="s16">16. Branch / Warehouse Handling</h2>
+
+<p>Three different branch/warehouse decisions are made from three different sources, and they are not cross-checked
+against each other.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Decision</th><th>Source</th><th>Code</th></tr></thead>
+<tbody>
+<tr><td>Branch stamped on the return</td><td><strong>the current user's branch</strong>, not the invoice's</td><td><code>saveReturn</code>: <code>setBranch(branchAccessService.getRequiredCurrentUserBranch())</code></td></tr>
+<tr><td>Branch on the stock movement</td><td>the <strong>warehouse's</strong> branch</td><td><code>StockMovementService.stampBranch</code></td></tr>
+<tr><td>Warehouse that receives batch lines</td><td><code>BatchMaster.warehouseId</code> of the originally sold lot</td><td><code>applyBatchReturns</code></td></tr>
+<tr><td>Warehouse that receives non-batch lines</td><td>the linked invoice's <strong>first delivery note's</strong> warehouse</td><td><code>resolveReturnWarehouseId</code></td></tr>
+<tr><td>Bin</td><td><code>BatchAllocation.binId</code> for batch lines; <strong>none</strong> for non-batch</td><td>as above</td></tr>
+<tr><td>Branch used by X/Z reports</td><td><code>sales_returns.branch_id</code></td><td><code>findByReturnDateAndBranchWithItems</code></td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The POS terminal's branch reaches the backend only as <code>posContext.branchId</code> used for printer resolution;
+it is never used to stamp the return. On update of an existing draft, the original branch is preserved and re-asserted
+(<code>assertTransactionBranchAccessible</code>).</p>
+
+<h3>Sale branch A, return branch A</h3>
+<p>Consistent. Return branch = user branch = invoice branch; the DN warehouse belongs to that branch; GL journals
+carry that branch.</p>
+
+<h3>Sale branch A, return branch B</h3>
+<p><strong>Not blocked, and handled inconsistently.</strong> <code>getEligibility</code> calls
+<code>assertTransactionBranchAccessible(inv.getBranchId())</code>, which refuses only when the caller cannot access
+branch A. A <code>BRANCH_ADMIN</code> in B is therefore stopped at the eligibility step. An <code>ADMIN</code> with
+global scope is not — and for that user:</p>
+<ul>
+  <li>the return document is stamped with <strong>branch B</strong> (the user's), so it shows in <strong>B's</strong>
+      Z-Report and B's returns register;</li>
+  <li>the GL journals carry <strong>branch B</strong>, so B's P&amp;L takes the revenue reversal for A's sale;</li>
+  <li>the stock goes back to <strong>A's</strong> warehouse (the DN's or the batch's), and the stock movement is
+      branch-stamped <strong>A</strong>.</li>
+</ul>
+<p>So a cross-branch return by a global admin splits the financial effect and the inventory effect across two
+branches. Nothing warns, logs or rejects.</p>
+
+<h3>Warehouse resolution failure</h3>
+<p>For non-batch lines, if the invoice has no <code>linkedDeliveryNote</code> — which is the normal shape for a
+straight POS sale that deducted stock without a DN — <code>resolveReturnWarehouseId</code> returns <code>null</code>
+and <strong>no stock movement is posted at all</strong>, while the GL still debits Inventory. The log line says so
+plainly: <em>"Inventory and GL will mismatch until a manual adjustment is made."</em> This is the single
+highest-impact conditional in the whole flow and it depends on data shape, not on configuration.</p>
+
+<h2 id="s17">17. Transaction Boundaries</h2>
+
+<p><code>SalesReturnService.updateStatus</code> is annotated <code>@Transactional</code>. Every side effect it invokes
+propagates <code>REQUIRED</code> and therefore joins that one transaction. The
+<code>SalesReturnCashRefundService</code> javadoc states the intent explicitly: <em>"a return is never reported as
+refunded without the matching drawer movement, and never reported as settled by voucher without the voucher actually
+existing."</em></p>
+
+<p><strong>Inside the approval transaction</strong> — all-or-nothing:</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Operation</th><th>Rolls back together?</th></tr></thead>
+<tbody>
+<tr><td><code>sales_returns.status = APPROVED</code></td><td class="yes">Yes</td></tr>
+<tr><td><code>batch_allocations</code> splits/flips</td><td class="yes">Yes</td></tr>
+<tr><td><code>stock_movements</code> rows</td><td class="yes">Yes</td></tr>
+<tr><td><code>serial_masters</code> flips</td><td class="yes">Yes</td></tr>
+<tr><td><code>journal_entries</code> / <code>journal_lines</code> / <code>ledger_entries</code></td><td class="yes">Yes</td></tr>
+<tr><td><code>pos_cash_movements</code> DROP_OUT</td><td class="yes">Yes</td></tr>
+<tr><td><code>credit_vouchers</code> + <code>credit_voucher_transactions</code></td><td class="yes">Yes</td></tr>
+<tr><td>Supervisor stamp on the return</td><td class="yes">Yes</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>So the stated failure scenarios resolve cleanly:</p>
+<ul>
+  <li><em>Return invoice saved + stock update fails</em> &rarr; the approval rolls back entirely. The return
+      <strong>remains a DRAFT</strong> (the <code>DRAFT</code> row was committed by the earlier, separate
+      <code>POST</code> call) and the frontend says so explicitly.</li>
+  <li><em>Stock updated + customer transaction fails</em> &rarr; there is no customer transaction to fail, but the
+      analogous case (stock updated, then the cash payout refused because the drawer is short or the session closed)
+      rolls the stock movements back too.</li>
+</ul>
+
+<p><strong>Outside the transaction</strong> — the three real boundary breaks:</p>
+<ol>
+  <li><strong>The document and its approval are two HTTP calls.</strong>
+      <code>POST /api/sales/returns</code> commits the <code>DRAFT</code> in its own transaction;
+      <code>PUT /{id}/status</code> is a separate one. A failure between them leaves an unposted draft — benign and
+      surfaced to the user, but it means the returns register can accumulate drafts that look like returns and are
+      not.</li>
+  <li><strong><code>InventoryBalanceService.refresh</code> is <code>REQUIRES_NEW</code>.</strong> It is called
+      synchronously from <code>reverseOutboundStock</code>, inside the approval transaction, and suspends it. The new
+      transaction therefore <strong>cannot see the stock movement that was just inserted but not yet
+      committed</strong>, so <code>inventory_balances</code> is re-derived from the pre-return ledger. The row is
+      written (and survives even if the approval rolls back), but with a stale on-hand quantity. The class comment
+      describes the intent as <em>"consistent with the stock movement already being visible"</em>, which holds for
+      callers that commit before refreshing — not for this one. Exceptions are swallowed and logged, never
+      propagated.</li>
+  <li><strong>Async POS audit.</strong> <code>PosAuditService</code> methods are <code>@Async</code> +
+      <code>REQUIRES_NEW</code>. Irrelevant here only because the return path never calls them (see &sect;18).</li>
+</ol>
+
+<p><strong>Lock ordering.</strong> Return row &rarr; invoice row &rarr; batch allocation rows &rarr; serial rows.
+Taken in that fixed order every time, which avoids deadlock between two concurrent returns. The invoice row lock is
+also what serialises two returns against the same sale.</p>
+
+<h2 id="s18">18. Idempotency / Duplicate Protection</h2>
+
+<p><strong>The primary guard is the row lock plus the terminal <code>APPROVED</code> state.</strong></p>
+
+<pre><code>salesReturnRepository.findByIdForUpdate(id)   // PESSIMISTIC_WRITE, before status is read
+...
+if (salesReturn.getStatus() == SalesReturnStatus.APPROVED)
+    throw new ResponseStatusException(BAD_REQUEST, "Approved returns cannot be modified.");</code></pre>
+
+<p>A double-clicked or retried approval blocks on the lock, then sees <code>APPROVED</code> and is rejected.
+<code>findByIdForUpdate</code> deliberately omits <code>JOIN FETCH</code> (some databases refuse
+<code>FOR UPDATE</code> alongside an outer join) and the full graph is re-read via <code>findByIdWithItems</code>
+inside the same transaction, returning the same managed instance.</p>
+
+<h3>Layered guards behind it</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Effect</th><th>Second line of defence</th></tr></thead>
+<tbody>
+<tr><td>GL journals</td><td><code>findDuplicate(ref)</code> on <code>returnNumber</code> and <code>returnNumber-INV</code> — returns the existing entry</td></tr>
+<tr><td>Cash payout</td><td><code>findByReferenceAndMovementTypeAndStatus(returnNumber, DROP_OUT, ACTIVE)</code> — reuses the existing movement. Voided movements are ignored on purpose, so a re-issued refund after a void is legitimate</td></tr>
+<tr><td>Credit voucher</td><td><code>findBySourceReturnNumber(returnNumber)</code> — one return, one voucher</td></tr>
+<tr><td>Batch allocations</td><td>per-allocation <code>findByIdForUpdate</code> + <code>retQty &le; parentQty &minus; sumAlreadyReturned</code></td></tr>
+<tr><td>Over-return across documents</td><td><code>assertReturnableQuantitiesStillAvailable</code> under the invoice row lock</td></tr>
+<tr><td>Return number</td><td><code>sales_returns.return_number</code> is <code>unique</code>; <code>existsByReturnNumber</code> in the numbering service</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>Stock movements have no idempotency key of their own.</strong> No duplicate check, and the unique index on
+<code>stock_movements</code> covers only <code>quantity &lt; 0</code>. They rely entirely on the status guard.</p>
+
+<h3>Gaps</h3>
+<ol>
+  <li><strong><code>POST /api/sales/returns</code> accepts a caller-supplied status.</strong> <code>saveReturn</code>
+      only defaults <code>status</code> to <code>DRAFT</code> when it is <code>null</code>. A client (or a
+      retried/replayed request) that posts <code>{"status":"APPROVED", ...}</code> creates a row that reads as a fully
+      approved return while <strong>no stock moved, no journal posted, no refund was paid, and no authorization was
+      checked</strong>. The UI never does this, but the endpoint permits it, and such a row then counts against
+      returnable quantity in <code>assertReturnableQuantitiesStillAvailable</code> and shows in every report as an
+      approved return.</li>
+  <li><strong>The frontend's save is not idempotent.</strong> <code>handleConfirm</code> has no request key; the guard
+      against a duplicate draft is <code>sr.submitting</code> and the disabled Confirm button. A dropped-response
+      retry at the network layer would create a second <code>DRAFT</code>. Approving both is then blocked by the
+      quantity revalidation — so the money is safe, but an orphan draft is possible.</li>
+  <li><strong>No POS audit trail.</strong> <code>PosAuditAction</code> declares <code>RETURN_INITIATED</code>,
+      <code>RETURN_APPROVED</code> and <code>RETURN_CANCELLED</code>; <code>PosAuditService.logReturnInitiated</code>
+      exists and <strong>has no callers</strong>; the other two actions are never used.
+      <code>SalesReturnController</code> autowires <code>AuditLogService</code> and never calls it. So an ordinary
+      return that needed no supervisor sign-off leaves <strong>no entry in any of the three audit
+      subsystems</strong> — only the GL journal and the return row itself record that it happened.</li>
+</ol>
+
+<h2 id="s19">19. Current Validation Rules</h2>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Rule</th><th>Where enforced</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td>Max returnable qty per item</td><td><code>assertReturnableQuantitiesStillAvailable</code> (backend, under invoice lock)</td><td><code>sold &minus; &Sigma; approved returns</code>; HTTP 409 and the <strong>whole return</strong> is rejected, never silently trimmed</td></tr>
+<tr><td>Same ceiling, advisory</td><td><code>ReturnEligibilityLine.availableQty</code>; <code>scanItem</code> / <code>setQty</code> clamp to it</td><td>UI cannot exceed it</td></tr>
+<tr><td>Partial return</td><td>allowed</td><td>any <code>returnQty &le; availableQty</code></td></tr>
+<tr><td>Multiple / successive returns</td><td>allowed</td><td>each approved return consumes quantity; only <code>APPROVED</code> counts (<code>countsAgainstReturnable</code>)</td></tr>
+<tr><td>Full return</td><td>allowed</td><td>no distinct "full return" concept</td></tr>
+<tr><td>More than sold</td><td>blocked</td><td>backend 409; also blocked per batch allocation</td></tr>
+<tr><td>Item not on the invoice</td><td>blocked</td><td><em>"X is not on invoice Y"</em></td></tr>
+<tr><td>Voided invoice lines</td><td>excluded</td><td><code>sellableItems</code> filters <code>voided</code>; <code>soldByCode</code> skips them</td></tr>
+<tr><td>Cancelled invoice</td><td>blocked</td><td><code>getEligibility</code> &rarr; <code>INVOICE_CANCELLED</code></td></tr>
+<tr><td>Draft invoice</td><td>blocked</td><td><code>INVOICE_DRAFT</code></td></tr>
+<tr><td>Fully returned invoice</td><td>blocked</td><td><code>FULLY_RETURNED</code></td></tr>
+<tr><td><strong>Return with no linked invoice</strong></td><td class="no">guard skipped</td><td>logs <em>"no linked invoice — skipping returnable-quantity revalidation"</em> and proceeds</td></tr>
+<tr><td>Batch quantities must sum to <code>returnQty</code></td><td><code>applyBatchReturns</code> (400) + client validation</td><td>both sides</td></tr>
+<tr><td>Batch number must match the sold lot</td><td><code>applyBatchReturns</code> (400)</td><td>prevents returning a different batch</td></tr>
+<tr><td>Product must match the allocation</td><td><code>applyBatchReturns</code> (400)</td><td>prevents cross-product allocation reference</td></tr>
+<tr><td>Condition + reason required per line</td><td>client only (<code>validationErrors</code>)</td><td>backend defaults a missing condition to <code>GOOD</code></td></tr>
+<tr><td>Remarks required when reason is <code>OTHER</code></td><td>client only</td><td>not enforced server-side</td></tr>
+<tr><td>Refund method required</td><td>client only</td><td>backend accepts a null <code>refundMethod</code> and then settles nothing</td></tr>
+<tr><td><code>CUSTOMER_CREDIT</code> on a walk-in</td><td><strong>both</strong></td><td>client greys out; backend 422 via <code>assertRefundMethodSettleable</code></td></tr>
+<tr><td><code>CASH_REFUND</code> needs an open session</td><td><strong>both</strong></td><td>client blocks; backend 400</td></tr>
+<tr><td>Cash refund &le; drawer cash</td><td>backend</td><td>400 from <code>addCashMovement</code></td></tr>
+<tr><td>Return window</td><td>advisory &rarr; approval</td><td><code>sales.return.window-days</code> (default 0 = unlimited); escalates to supervisor sign-off, <strong>never blocks</strong></td></tr>
+<tr><td>High-value cash refund</td><td>approval</td><td><code>sales.return.cash-approval-threshold-aed</code> (default 0 = disabled); cash only</td></tr>
+<tr><td>Approved return immutable</td><td>backend</td><td><code>saveReturn</code>, <code>updateStatus</code>, <code>deleteReturn</code> all reject it</td></tr>
+<tr><td>Delete</td><td><code>ROLE_ADMIN</code> + module edit, non-approved only</td><td>physical <code>deleteById</code>, not a soft delete</td></tr>
+<tr><td>Return after a refund</td><td>no rule</td><td>nothing links a return to a prior refund</td></tr>
+<tr><td>Return after invoice cancellation</td><td>blocked at eligibility</td><td>but a cancelled invoice is also not reachable via search filters</td></tr>
+<tr><td>Minimum voucher amount</td><td><code>CreditVoucherService</code></td><td><code>credit-voucher.minimum-amount</code>; 422 below it</td></tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>Not validated anywhere:</strong> that the refund method is compatible with how the sale was paid; that a
+cross-branch return is intended; that the returned quantity's value does not exceed the invoice's unpaid balance; that
+a serialized line's returned serial is the one physically handed back (it is taken from the invoice, not from the
+cashier).</p>
+
+<h2 id="s20">20. End-to-End Examples</h2>
+
+<p>All three use VAT-exclusive pricing at 18% and assume the product is non-batch, non-serialized, with a cost price
+of 600 and an invoice that <strong>does</strong> have a linked delivery note (so a warehouse resolves).</p>
+
+<h3>Example A — Cash sale, partial return</h3>
+<pre><code>Sale:    Product A, qty 2 @ 1,000 = 2,000 + VAT 360 = 2,360, paid CASH
+Return:  qty 1, condition GOOD, refund method CASH_REFUND</code></pre>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Effect</th><th>Before</th><th>After</th></tr></thead>
+<tbody>
+<tr><td>Stock on hand</td><td>8</td><td><strong>9</strong> (one positive <code>stock_movements</code> row, <code>unit_cost</code> null)</td></tr>
+<tr><td><code>inventory_balances.on_hand_qty</code></td><td>8</td><td>9 (recomputed — but see the <code>REQUIRES_NEW</code> note)</td></tr>
+<tr><td>Invoice total / paid / balance / status</td><td>2,360 / 2,360 / 0 / <code>PAID</code></td><td><strong>unchanged</strong></td></tr>
+<tr><td>New document</td><td>—</td><td><code>sales_returns</code>: subTotal 1,000, taxAmount 180, totalAmount 1,180, refundAmount 1,180</td></tr>
+<tr><td>Customer outstanding</td><td>0</td><td><strong>0</strong></td></tr>
+<tr><td>Customer statement</td><td>invoice 2,360 Dr, receipt 2,360 Cr, balance 0</td><td><strong>no new row</strong>; balance 0</td></tr>
+<tr><td>Cash drawer</td><td>expected X</td><td><strong>X &minus; 1,180</strong> (<code>DROP_OUT</code>, reference = return number)</td></tr>
+<tr><td>VAT Output (2102)</td><td>360 Cr from the sale</td><td>net <strong>180 Cr</strong></td></tr>
+<tr><td>GL — return entry</td><td>—</td><td>Dr Sales Revenue 1,000 / Dr VAT Output 180 / Cr AR 1,180</td></tr>
+<tr><td>GL — inventory entry</td><td>—</td><td>Dr Inventory 600 / Cr COGS 600</td></tr>
+<tr><td>GL — cash entry</td><td>—</td><td>Dr AR 1,180 / Cr Cash in Hand 1,180</td></tr>
+<tr><td>Net GL effect</td><td>—</td><td>Dr Revenue 1,000, Dr VAT 180, Cr Cash 1,180, Dr Inventory 600, Cr COGS 600. <strong>AR nets to zero.</strong></td></tr>
+<tr><td>X-Report</td><td>—</td><td><code>salesReturnTotal</code> 1,180, <code>refundTotal</code> 1,180, <code>totalItemsReturned</code> 1; expected cash down 1,180; <code>netSalesExTax</code> <strong>unchanged at 2,000</strong></td></tr>
+<tr><td>Inventory sub-ledger reconciliation</td><td>balanced</td><td class="no">off by 600 (GL Inventory up 600, <code>sumGlobalInventoryValue</code> unchanged)</td></tr>
+</tbody>
+</table>
+</div>
+<p>This is the best-supported path in the system: money, stock, GL and drawer all move coherently.</p>
+
+<h3>Example B — Credit sale (customer account)</h3>
+<pre><code>Sale:    Product A, qty 2 @ 1,000 = 2,360 total, CREDIT (nothing collected)
+         invoice.balance = 2,360, customer outstanding = 2,360
+Return:  qty 1, condition GOOD, refund method CUSTOMER_CREDIT</code></pre>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Effect</th><th>Before</th><th>After</th></tr></thead>
+<tbody>
+<tr><td>Stock on hand</td><td>8</td><td>9</td></tr>
+<tr><td>Invoice <code>balance</code></td><td>2,360</td><td><strong>2,360</strong></td></tr>
+<tr><td><strong>Customer outstanding</strong></td><td>2,360</td><td class="no">2,360 — unchanged</td></tr>
+<tr><td>Customer statement</td><td>invoice 2,360 Dr, closing 2,360</td><td><strong>unchanged</strong>, closing 2,360</td></tr>
+<tr><td>AR aging bucket</td><td>2,360</td><td>2,360</td></tr>
+<tr><td>Credit balance / refund payable</td><td>—</td><td class="no">none created</td></tr>
+<tr><td>GL AR (1110)</td><td>2,360 Dr from the sale</td><td><strong>1,180 Dr</strong> (the return credited 1,180, nothing debited it back)</td></tr>
+<tr><td>AR sub-ledger reconciliation</td><td>balanced</td><td class="no">off by 1,180, permanently</td></tr>
+<tr><td>X/Z report</td><td>—</td><td><code>refundTotal</code> 1,180 — reported as a refund although nothing was refunded</td></tr>
+</tbody>
+</table>
+</div>
+<p>The customer still owes the full 2,360 as far as every operational screen is concerned, while the ledger says
+1,180. This is the most consequential gap in the current implementation.</p>
+
+<h3>Example C — Previously paid sale, partial return, card original</h3>
+<pre><code>Sale:    total 10,000 (incl. VAT), paid 6,000 by CARD, balance 4,000
+Return:  value 2,000, condition GOOD, refund method CARD_REFUND</code></pre>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Effect</th><th>Before</th><th>After</th></tr></thead>
+<tbody>
+<tr><td>Stock</td><td>S</td><td>S + returned qty</td></tr>
+<tr><td>Invoice <code>amount_paid</code> / <code>balance</code></td><td>6,000 / 4,000</td><td><strong>6,000 / 4,000</strong></td></tr>
+<tr><td>Customer outstanding</td><td>4,000</td><td><strong>4,000</strong></td></tr>
+<tr><td>Statement</td><td>unchanged by the return</td><td>unchanged</td></tr>
+<tr><td>Original <code>payments</code> row</td><td>6,000 CARD</td><td class="no">not reversed, not linked</td></tr>
+<tr><td>New refund record</td><td>—</td><td class="no">none</td></tr>
+<tr><td>Card settlement</td><td>—</td><td class="no">not aware of the refund</td></tr>
+<tr><td>Cash drawer</td><td>unchanged</td><td>unchanged</td></tr>
+<tr><td>GL</td><td>AR 4,000 Dr open</td><td>AR <strong>2,000 Dr</strong>; revenue and VAT reversed for 2,000</td></tr>
+<tr><td>X/Z</td><td>—</td><td><code>refundTotal</code> 2,000, <code>cardRefundSales</code> <strong>unaffected</strong> (that key is derived from invoice payment buckets, not returns)</td></tr>
+</tbody>
+</table>
+</div>
+<p>Nothing tells anyone to actually refund the card, and nothing records it if they do out-of-band. The money stays
+with the business while the GL says it does not.</p>
+
+<h2 id="s21">21. Source-of-Truth Matrix</h2>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Area</th><th>Current behaviour</th><th>Source code</th><th>Database table</th><th>Direction / formula</th><th>Reference carried</th></tr></thead>
+<tbody>
+<tr><td>Sales Return document</td><td>Separate document; <code>DRAFT</code> then <code>APPROVED</code></td><td><code>SalesReturnService.saveReturn</code>, <code>.updateStatus</code></td><td><code>sales_returns</code>, <code>sales_return_items</code>, <code>sales_return_item_batches</code></td><td>new row; <code>totalAmount = gross &minus; discount (+ VAT if exclusive)</code></td><td><code>linked_invoice</code>, <code>linked_receipt_number</code>, <code>pos_session_id</code></td></tr>
+<tr><td>Stock</td><td>Increases for <code>GOOD</code> lines only</td><td><code>applyBatchReturns</code>, <code>applyNonBatchStockReturns</code> &rarr; <code>reverseOutboundStock</code></td><td><code>stock_movements</code></td><td><strong>+<code>returnQty</code></strong>, <code>unit_cost</code> null</td><td><code>source_type=SALES_RETURN</code>, <code>source_id</code>, <code>reference_no</code></td></tr>
+<tr><td>Inventory balance</td><td>Quantity recomputed; value = <code>WAC &times; qty</code></td><td><code>InventoryBalanceService.refresh</code> (<code>REQUIRES_NEW</code>)</td><td><code>inventory_balances</code></td><td>re-derived from the ledger</td><td>product + warehouse</td></tr>
+<tr><td>Batch allocation</td><td>Flip to <code>RETURNED</code>, or split</td><td><code>applyBatchReturns</code></td><td><code>batch_allocations</code></td><td>parent &minus; retQty, sibling + retQty</td><td><code>parent_allocation_id</code>, <code>source_document_type</code></td></tr>
+<tr><td>Serial</td><td><code>SOLD &rarr; RETURNED</code></td><td><code>applySerialReturns</code></td><td><code>serial_masters</code></td><td>status flip</td><td>serial number from the invoice line</td></tr>
+<tr><td>Customer outstanding</td><td class="no">No change</td><td>— (no writer exists)</td><td><code>sales_invoices.balance</code> (untouched)</td><td><code>&Sigma; balance</code> unchanged</td><td>—</td></tr>
+<tr><td>Customer statement</td><td class="no">No entry</td><td><code>StatementService</code> (no return source)</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>Payment</td><td class="no">No change; original tender not reversed or linked</td><td>—</td><td><code>payments</code> (untouched)</td><td>—</td><td>—</td></tr>
+<tr><td>Refund — cash</td><td><code>DROP_OUT</code> on the session</td><td><code>SalesReturnCashRefundService</code> &rarr; <code>addCashMovement</code></td><td><code>pos_cash_movements</code></td><td>&minus;<code>refundAmount</code> from expected cash</td><td><code>reference = returnNumber</code>, category <code>SALES_RETURN_REFUND</code></td></tr>
+<tr><td>Refund — voucher</td><td>Store credit issued</td><td><code>CreditVoucherService.issueForSalesReturn</code></td><td><code>credit_vouchers</code>, <code>credit_voucher_transactions</code></td><td><code>+amount</code> liability</td><td><code>source_return_id/number</code>, <code>source_invoice_number</code></td></tr>
+<tr><td>Refund — card / bank / customer credit</td><td class="no">Nothing</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+<tr><td>Tax</td><td>Reversed in the GL</td><td><code>createJournalFromSalesReturn</code></td><td><code>journal_lines</code>, <code>ledger_entries</code></td><td><strong>Dr</strong> VAT Output <code>2102</code> = <code>taxAmount</code></td><td><code>ref = returnNumber</code></td></tr>
+<tr><td>COGS</td><td>Reversed for restocked lines</td><td><code>resolveActualCogs</code> &rarr; posting engine</td><td><code>journal_lines</code></td><td><strong>Cr</strong> COGS <code>5101</code>; tiers DN cost &rarr; invoice cost-at-sale &rarr; product cost</td><td><code>ref = returnNumber-INV</code></td></tr>
+<tr><td>Financial transaction</td><td>Two (or three) journals</td><td><code>createJournalFromSalesReturn</code>, <code>createJournalFromCashMovement</code>, <code>createJournalFromCreditVoucherIssue</code></td><td><code>journal_entries</code>, <code>journal_lines</code>, <code>ledger_entries</code>, <code>gl_account_balances</code></td><td>Dr Revenue/Deferred + Dr VAT / Cr AR <code>1110</code>; Dr Inventory / Cr COGS; settlement Dr AR / Cr Cash or Voucher</td><td><code>returnNumber</code>, <code>returnNumber-INV</code>, voucher/movement refs</td></tr>
+<tr><td>POS session</td><td>Linked but not used for reporting scope</td><td><code>sales_returns.pos_session_id</code></td><td><code>sales_returns</code></td><td>—</td><td>session id, terminal, counter, trading date</td></tr>
+<tr><td>X-Report</td><td>Returns for this session's invoices only</td><td><code>buildSessionReturnsSummary</code></td><td>reads <code>sales_returns</code> by <code>return_date</code> + <code>branch_id</code>, then filters by invoice number</td><td><code>salesReturnTotal</code> etc.; <code>netSalesExTax</code> <strong>not</strong> netted</td><td>—</td></tr>
+<tr><td>Z-Report</td><td>All returns for branch + date</td><td><code>buildReturnsSummary</code></td><td>same query, unfiltered</td><td>adds <code>netQuantitySold = sold &minus; returned</code></td><td>—</td></tr>
+<tr><td>Day Close</td><td>Expected cash reduced for cash refunds; net sales not netted</td><td><code>PosCashReconciliationService.reconcile</code>, <code>PosDayClose</code></td><td><code>pos_day_closes</code></td><td><code>opening + tender + dropIn &minus; dropOut</code></td><td>session set</td></tr>
+<tr><td>Audit</td><td>Only supervisor-gated approvals</td><td><code>SalesReturnAuthorizationService</code></td><td><code>audit_logs</code></td><td><code>RETURN_AUTHORIZED</code> / <code>_DENIED</code></td><td>return number</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="s22">22. Possible Inconsistencies / Risks</h2>
+
+<p>Ranked by business impact. "Alternate" describes what a conventional retail ERP would typically do — not a claim
+that the current behaviour is a defect.</p>
+
+<div class="risk">
+<h3>R1 — Customer receivable never reduces <span class="conf conf-high">High confidence</span></h3>
+<ul>
+<li><strong>Observed:</strong> a return credits the AR control account in the GL but leaves
+<code>sales_invoices.balance</code>, customer outstanding, AR aging and the statement of account untouched, for every
+refund method.</li>
+<li><strong>Alternate:</strong> the credit is allocated against the original invoice's open balance, or held as a
+customer credit the next invoice can draw on.</li>
+<li><strong>Why they differ:</strong> no code was ever written to settle the AR credit outside the cash and voucher
+paths. <code>CUSTOMER_CREDIT</code> is documented and validated but unimplemented.</li>
+<li><strong>Code path:</strong> <code>SalesReturnService.updateStatus</code> (no AR settlement branch);
+<code>CustomerService</code> / <code>sumOutstandingBalanceByCustomerCode</code> as the outstanding definition.</li>
+<li><strong>Impact:</strong> a credit customer who returns goods is still chased for the full amount; the AR
+sub-ledger and the AR control account diverge permanently; <code>reconcileAR</code> reports a growing
+difference.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R2 — Card and bank refunds record nothing <span class="conf conf-high">High confidence</span></h3>
+<ul>
+<li><strong>Observed:</strong> <code>CARD_REFUND</code> and <code>BANK_TRANSFER</code> are selectable and stored, and
+settle nothing: no payment reversal, no refund record, no cash movement, no settlement entry.</li>
+<li><strong>Alternate:</strong> a negative payment / refund record linked to the original tender, visible to card
+settlement reconciliation.</li>
+<li><strong>Why:</strong> the enum documents the intent (<em>"via the existing payment architecture"</em>); the
+implementation branches only on <code>isCashDrawerAffecting()</code> and <code>CREDIT_VOUCHER</code>.</li>
+<li><strong>Impact:</strong> the business has no system record that a refund is owed or was paid; the GL credit to AR
+is never cleared.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R3 — Return absent from the customer statement <span class="conf conf-high">High confidence</span></h3>
+<ul>
+<li><strong>Observed:</strong> no SoA row. <code>StatementService.PRI_RETURN_CREDIT</code> is declared and unused —
+the slot was designed and never implemented.</li>
+<li><strong>Impact:</strong> the customer-facing statement cannot be used to explain a return; disputes have no
+document trail on the SoA.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R4 — Non-batch stock silently not restocked when no DN exists <span class="conf conf-high">High / Medium</span></h3>
+<ul>
+<li><strong>Observed:</strong> <code>resolveReturnWarehouseId</code> returns <code>null</code> unless the invoice has a
+<code>linkedDeliveryNote</code> with a warehouse, and the line is then skipped with a warning while the GL still
+debits Inventory.</li>
+<li><strong>Impact:</strong> physical goods come back, on-hand quantity does not rise, GL inventory does. The code's
+own log admits the mismatch.</li>
+<li><strong>Note:</strong> exposure depends on whether POS checkout always auto-generates a DN.
+<code>PosCheckoutController</code> comments say the <code>DRAFT &rarr; PAID</code> transition fires <em>"auto-DN
+generation, stock deduction"</em>, so for POS sales a DN usually exists — but back-office invoices that deducted stock
+by another route, and any invoice whose DN lacks a warehouse, fall through.</li>
+<li><strong>Confidence:</strong> High that the branch exists and skips; Medium on how often it is reached in
+production.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R5 — Inventory GL vs inventory valuation diverge on every return <span class="conf conf-high">High confidence</span></h3>
+<ul>
+<li><strong>Observed:</strong> the return's inbound <code>stock_movements</code> row has <code>unit_cost = null</code>,
+so <code>sumGlobalInventoryValue()</code> ignores it, while the GL debits Inventory by
+<code>costOfGoodsReturned</code>.</li>
+<li><strong>Alternate:</strong> stamp the resolved COGS unit cost on the movement.</li>
+<li><strong>Impact:</strong> <code>reconcileInventory</code> drifts by the COGS of every restocked return (tolerance is
+AED 1.00). Note the null is also what protects WAC from distortion, so this is a genuine trade-off, not an
+oversight.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R6 — Cross-branch return splits financial and inventory effect <span class="conf conf-high">High / Medium</span></h3>
+<ul>
+<li><strong>Observed:</strong> the return is stamped with the <strong>current user's</strong> branch while stock
+returns to the <strong>invoice's</strong> warehouse. An <code>ADMIN</code> with global scope can do this; a
+<code>BRANCH_ADMIN</code> is stopped at eligibility.</li>
+<li><strong>Impact:</strong> branch P&amp;L and branch Z-Report attribute the reversal to the wrong branch; branch
+stock levels move in the right one.</li>
+<li><strong>Confidence:</strong> High on the mechanism; Medium on whether cross-branch returns are intended to be
+possible at all.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R7 — <code>POST</code> accepts <code>status: APPROVED</code> <span class="conf conf-med">High code / Low exposure</span></h3>
+<ul>
+<li><strong>Observed:</strong> <code>saveReturn</code> defaults status only when null, so a direct API call can create
+an already-approved return with no stock, GL, refund or authorization.</li>
+<li><strong>Impact:</strong> a phantom approved return that consumes returnable quantity and appears in every report.
+Requires API access with create permission, so the practical risk is a buggy or replayed integration rather than the
+UI.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R8 — Day-boundary split between the return and its cash payout <span class="conf conf-med">High / Medium</span></h3>
+<ul>
+<li><strong>Observed:</strong> the return and its GL journal are dated <code>return_date</code> (the browser's calendar
+date); the drawer movement and its journal are dated <code>session.sessionDate</code>.</li>
+<li><strong>Impact:</strong> at a day boundary one cash refund lands in two different business days across the Z-Report
+and the GL. Period-close reconciliation will show an unexplained cash difference.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R9 — <code>netSales</code> in POS reports is not net of returns, and bases are mixed <span class="conf conf-high">High confidence</span></h3>
+<ul>
+<li><strong>Observed:</strong> <code>netSalesExTax</code> excludes returns entirely; <code>salesReturnTotal</code> is
+VAT-inclusive while <code>netSalesExTax</code> is ex-tax.</li>
+<li><strong>Impact:</strong> any consumer that nets the two over-deducts by the VAT. "Net sales" on the Z-Report and
+day close is really gross sales.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R10 — Refund buckets in X/Z misclassify <span class="conf conf-high">High confidence</span></h3>
+<ul>
+<li><strong>Observed:</strong> bucketing keys off the free-text <code>returnAction</code>, which the UI sets to
+<code>"Refund"</code> for cash, card, bank and customer credit alike. <code>"Replacement"</code> is never produced, so
+exchange buckets are dead. <code>refund_method</code> exists on the row and is not used by the reports.</li>
+<li><strong>Impact:</strong> <code>refundTotal</code> overstates refunds actually paid out; the stale
+<code>cashRefundsSupported=false</code> flag also suppresses a now-computable cash-refund figure.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R11 — No audit record for an ordinary return <span class="conf conf-high">High confidence</span></h3>
+<ul>
+<li><strong>Observed:</strong> <code>PosAuditService.logReturnInitiated</code> has no callers;
+<code>RETURN_APPROVED</code> / <code>RETURN_CANCELLED</code> are unused; <code>SalesReturnController</code> autowires
+<code>AuditLogService</code> without calling it. Only supervisor-gated approvals are audited.</li>
+<li><strong>Impact:</strong> a return that needed no sign-off — the common case, since both thresholds default to
+0/disabled — leaves no audit entry in any of the three audit subsystems.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R12 — <code>inventory_balances</code> refresh cannot see its own movement <span class="conf conf-med">Medium-high</span></h3>
+<ul>
+<li><strong>Observed:</strong> <code>InventoryBalanceService.refresh</code> is <code>REQUIRES_NEW</code> and is called
+from inside the approval transaction, so it recomputes from a ledger that does not yet contain the just-inserted
+movement.</li>
+<li><strong>Impact:</strong> the pre-aggregated balance lags by one return until the next movement for that
+product/warehouse refreshes it. Reports that read <code>inventory_balances</code> rather than the ledger show the
+stale number. Exceptions are swallowed.</li>
+<li><strong>Confidence:</strong> the propagation and call site are unambiguous; the exact visibility depends on the
+transaction isolation level in effect, which was not verified against a live database.</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R13 — Proration keys on item code, first line wins <span class="conf conf-med">Medium</span></h3>
+<ul>
+<li><strong>Observed:</strong> <code>invoiceItemByCode.putIfAbsent</code> and <code>soldByCode.merge</code> mean an
+invoice with the same product on two lines at different prices prorates against the first line's price while the
+quantity ceiling sums both.</li>
+<li><strong>Impact:</strong> refund value can be wrong for mixed-price repeat lines. Depends on whether POS ever writes
+two lines for one product (it merges by default, but a price override can split them).</li>
+</ul>
+</div>
+
+<div class="risk">
+<h3>R14 — Serial handling is per item code and ignores condition <span class="conf conf-med">Medium</span></h3>
+<ul>
+<li><strong>Observed:</strong> one serial per item code from the invoice; the flip to <code>RETURNED</code> happens
+even for a scrapped unit.</li>
+<li><strong>Impact:</strong> multi-unit serialized returns under-record; scrapped serials look resaleable.</li>
+</ul>
+</div>
+
+<h2 id="s23">23. Open Questions</h2>
+
+<p>These need a business or accounting decision; the code cannot answer them.</p>
+<ol>
+  <li><strong>Should a return reduce the customer's outstanding balance?</strong> If yes, by what mechanism — allocate
+      against the original invoice's open balance, or create a standalone customer credit the next invoice draws on?
+      The two give different aging behaviour.</li>
+  <li><strong>Is <code>CUSTOMER_CREDIT</code> meant to exist?</strong> It is documented, validated and unimplemented.
+      Either it needs an implementation or it should be removed from the vocabulary so cashiers cannot choose it.</li>
+  <li><strong>What is supposed to happen on a card refund?</strong> A record of an obligation, an actual reversal
+      through the card terminal, or an out-of-band process the system just notes? This determines whether
+      <code>CARD_REFUND</code> needs a payment record, a settlement entry, or both.</li>
+  <li><strong>Should the return appear on the customer statement of account?</strong> And if so, as a credit row dated
+      on <code>return_date</code>, with what description and reference?</li>
+  <li><strong>Should a return against an unpaid or partly-paid invoice be allowed to pay out cash at all</strong>, or
+      must the credit first be applied to the open balance?</li>
+  <li><strong>Are cross-branch returns permitted?</strong> Today a global admin can raise one, with the financial
+      effect landing in their own branch and the stock in the invoice's. If permitted, which branch should own the
+      reversal?</li>
+  <li><strong>Which business day owns a return?</strong> <code>return_date</code> (calendar),
+      <code>trading_date</code> (session), or the original sale's date? The answer should be the same for the
+      document, its GL journal, its stock movement and its drawer payout — currently all four can differ.</li>
+  <li><strong>Should "net sales" on the Z-Report and day close be net of returns?</strong> If yes, on which base
+      (ex-tax vs inclusive) — the two figures currently published are on different bases.</li>
+  <li><strong>Should a return without a linked invoice be possible?</strong> The code tolerates it and skips the
+      quantity guard entirely. If unlinked returns are a real business case, they need their own rules; if not, they
+      should be rejected.</li>
+  <li><strong>Should "exchange" / <code>Replacement</code> exist?</strong> The X/Z reports have buckets for it and the
+      UI never produces it. Is an exchange meant to be a return plus a new sale, or its own document?</li>
+  <li><strong>Should scrapped returns be routed anywhere?</strong> Today a <code>DAMAGED</code> /
+      <code>DEFECTIVE</code> / <code>EXPIRED</code> line restocks nothing, keeps the cost on the books, and leaves no
+      quarantine or supplier-claim record. The condition is captured but not acted on beyond the restock
+      decision.</li>
+  <li><strong>What should the inbound stock movement's unit cost be?</strong> Stamping the resolved COGS would
+      reconcile inventory with the GL but reintroduces WAC movement on returns. Which matters more here?</li>
+  <li><strong>Is <code>sales_returns</code> intentionally outside the <code>BaseEntity</code> / soft-delete
+      convention?</strong> It is one of the few entities with an <code>IDENTITY</code> id, no <code>isActive</code>
+      flag and a physical <code>deleteById</code>. Deliberate for an immutable financial document, or an
+      oversight?</li>
+  <li><strong>Which AR account code is live</strong> — <code>1110</code> or <code>1100</code>? The javadocs disagree
+      while the constant is shared. Worth confirming against the seeded chart of accounts per tenant.</li>
+</ol>
+
+<h2 id="s24">24. Files and Methods Investigated</h2>
+
+<h3>Backend — return module (<code>billbull-backend/src/main/java/com/billbull/backend/sales/returns/</code>)</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>File</th><th>Methods read</th></tr></thead>
+<tbody>
+<tr><td><code>SalesReturnService.java</code> (1171 lines)</td><td><code>saveReturn</code>, <code>updateStatus</code> (both overloads), <code>deleteReturn</code>, <code>normaliseLineConditions</code>, <code>applyEntryPointDefaults</code>, <code>prorateDiscountFromInvoice</code>, <code>assertRefundMethodSettleable</code>, <code>issueCreditVoucherIfRequired</code>, <code>assertReturnableQuantitiesStillAvailable</code>, <code>applyNonBatchStockReturns</code>, <code>resolveReturnWarehouseId</code>, <code>getReturnableBatchesForInvoice</code>, <code>applySerialReturns</code>, <code>applyBatchReturns</code>, <code>postJournalForApprovedReturn</code>, <code>resolveRevenueRecognized</code>, <code>resolveActualCogs</code>, <code>resolveSourceDnId</code>, <code>getReturnStats</code></td></tr>
+<tr><td><code>SalesReturnController.java</code></td><td>every endpoint</td></tr>
+<tr><td><code>SalesReturn.java</code>, <code>SalesReturnItem.java</code>, <code>SalesReturnItemBatch.java</code></td><td>full entities</td></tr>
+<tr><td><code>SalesReturnRepository.java</code></td><td>all queries, incl. <code>findByIdForUpdate</code>, <code>findByReturnDateAndBranchWithItems</code>, <code>findDayReturnSnapshot</code></td></tr>
+<tr><td><code>SalesReturnEligibilityService.java</code></td><td><code>searchInvoices</code>, <code>getEligibility</code>, <code>loadReturnedQtyByInvoice</code>, <code>countsAgainstReturnable</code>, <code>sellableItems</code>, <code>resolveLineDiscount</code></td></tr>
+<tr><td><code>SalesReturnCashRefundService.java</code></td><td><code>recordCashRefund</code>, <code>resolveRefundAmount</code>, <code>findExistingRefundMovement</code>, <code>findRefundCategory</code></td></tr>
+<tr><td><code>SalesReturnAuthorizationService.java</code>, <code>SalesReturnAuthorizationPolicy.java</code></td><td><code>resolveRequiredAuthorization</code>, <code>authorize</code>, <code>resolveAuthorizationReason</code>, <code>isReturnWindowExpired</code></td></tr>
+<tr><td><code>SalesReturnCustomerAccountResolver.java</code></td><td><code>isWalkIn</code>, <code>blockedReason</code></td></tr>
+<tr><td><code>SalesReturnRefundMethod.java</code>, <code>SalesReturnCondition.java</code>, <code>SalesReturnStatus.java</code>, <code>SalesReturnEntryPoint.java</code>, <code>SalesReturnReasonCode.java</code></td><td>full enums</td></tr>
+<tr><td><code>ReturnEligibilityResponse.java</code>, <code>ReturnEligibilityLine.java</code>, <code>ReturnInvoiceSearchResult.java</code>, <code>ReturnableBatchResponse.java</code></td><td>DTO shapes</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Backend — collaborating modules</h3>
+<ul>
+<li><code>financials/generalledger/postingengine/PostingEngineService.java</code> — <code>createJournalFromSalesReturn</code> (line 1071), <code>createJournalFromCreditVoucherIssue</code>, <code>createJournalFromCreditVoucherRedemption</code>, account constants</li>
+<li><code>config/SalesReturnCashCategorySeeder.java</code> — the <code>SALES_RETURN_REFUND</code> category and its AR GL override</li>
+<li><code>purchase/stockmovement/StockMovementService.java</code> — all three <code>reverseOutboundStock</code> overloads, <code>refreshBalance</code>, <code>normalizeBatchNumber</code></li>
+<li><code>purchase/stockmovement/StockMovementRepository.java</code> — <code>getWeightedAverageCost</code>, <code>sumGlobalInventoryValue</code>, <code>getAvailableStock</code></li>
+<li><code>purchase/stockmovement/StockSourceType.java</code></li>
+<li><code>inventory/balance/InventoryBalanceService.java</code> — <code>refresh</code> and its <code>REQUIRES_NEW</code> propagation</li>
+<li><code>config/StockMovementIdentityConstraintConfig.java</code> — the <code>quantity &lt; 0</code> unique index</li>
+<li><code>pos/session/PosSessionService.java</code> — <code>addCashMovement</code> (all overloads), <code>availableCashInDrawer</code>, <code>sumCashMovementsByType</code>, <code>getXReport</code>, the Z-Report/day-close summary, <code>buildReturnsSummary</code>, <code>buildSessionReturnsSummary</code>, <code>aggregateReturns</code>, the consolidated-cash-position comment block</li>
+<li><code>pos/checkout/PosCheckoutController.java</code> — status/payment/serial/QR steps, credit allocation behaviour, cost-at-sale stamping</li>
+<li><code>financials/statement/StatementService.java</code> — <code>getCustomerStatement</code>, the priority constants, every injected source</li>
+<li><code>financials/reports/FinancialReportService.java</code> — <code>generateARAgingReport</code>, <code>getTaxReconciliation</code>, VAT account roles</li>
+<li><code>financials/reports/SubLedgerReconciliationService.java</code> — <code>reconcileAR</code>, <code>reconcileAP</code>, <code>reconcileInventory</code></li>
+<li><code>sales/customerledger/CustomerService.java</code>, <code>CustomerCreditService.java</code>, <code>CustomerRepository.java</code></li>
+<li><code>sales/invoice/SalesInvoiceRepository.java</code> — the outstanding-balance queries</li>
+<li><code>sales/reports/SalesReportDataService.java</code> — <code>sumReturns</code>, <code>isApprovedReturn</code>, <code>customerSummaryRows</code></li>
+<li><code>sales/analytics/SalesAnalyticsService.java</code>, <code>inventory/reports/InventoryReportDataService.java</code>, <code>dashboard/DashboardService.java</code> — return read paths</li>
+<li><code>sales/voucher/CreditVoucherService.java</code> — <code>issueForSalesReturn</code></li>
+<li><code>settings/branch/BranchAccessService.java</code> — <code>assertTransactionBranchAccessible</code>, <code>getRequiredCurrentUserBranch</code></li>
+<li><code>pos/audit/PosAuditAction.java</code>, <code>PosAuditService.java</code> — the unused return actions</li>
+</ul>
+
+<h3>Migrations</h3>
+<p><code>V7__money_types.sql</code>, <code>V14__pos_audit_return_void.sql</code>,
+<code>V39__created_by_user_id.sql</code>,
+<code>V78__sales_return_line_condition_and_refund_context.sql</code>,
+<code>V87__sales_payment_pos_session.sql</code></p>
+
+<h3>Frontend</h3>
+<ul>
+<li><code>src/pages/Sales/SalesReturn/useSalesReturn.js</code>, <code>SalesReturnScreen.jsx</code>, <code>SalesReturnPage.jsx</code>, <code>constants.js</code></li>
+<li><code>src/pages/Sales/SalesReturn/components/</code> — all eleven components</li>
+<li><code>src/api/salesReturnApi.js</code>, <code>src/api/axiosConfig.js</code></li>
+<li><code>src/pages/Sales/POSSales.jsx</code> — the return-modal host and its <code>posContext</code></li>
+<li><code>src/utils/salesReturnPrint.js</code> (referenced; print path not audited in depth)</li>
+</ul>
+
+<h3>Tests consulted</h3>
+<p><code>SalesReturnAuthorizationTest</code>, <code>SalesReturnCashRefundServiceTest</code>,
+<code>SalesReturnConcurrencyTest</code>, <code>SalesReturnFooterDiscountTest</code>,
+<code>PostingEngineContractTest</code>, <code>PosSessionServiceTest</code>, <code>SalesReportVatTest</code>,
+<code>SalesReportDiscountTest</code>, <code>CreditVoucherServiceTest</code>, and the frontend
+<code>salesReturnVoucherFlow.test.jsx</code>, <code>salesReturnPrint.test.js</code>.</p>
+
+<h3>Not done</h3>
+<p>No code, migration, schema or data was modified. No tests were executed and no database was queried — every
+conclusion is read from source, schema migrations and existing test expectations. Runtime-dependent claims carry their
+confidence level in &sect;22.</p>
+
+<footer class="doc">
+  POS Sales Return — Implementation Audit &middot; BillBull Retail / ERP &middot; branch <code>feature/posclient</code>
+  &middot; compiled 1 October 2026 &middot; read-only; no code or data changed.
+</footer>
+
+</div>
+</body>
+</html>

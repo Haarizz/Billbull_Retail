@@ -22,6 +22,8 @@ export const ItemDescriptionHeader = React.memo(({
     );
 });
 
+const fmtMoney = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export const ItemDescriptionCell = React.memo(({
     item,
     isExpanded,
@@ -35,6 +37,12 @@ export const ItemDescriptionCell = React.memo(({
     showTaxDiscount = true,
     showSettings = true,
     isReadOnly = false,
+    // Sales documents only: this line's slice of the document footer discount, as computed
+    // by utils/footerDiscountAllocator ({ gross, itemDiscount, share, taxable, tax, total }).
+    // When present the chips show post-footer VAT and, if the document carries a footer
+    // discount, a Gross / Item Disc. / Footer Disc. / Taxable / VAT breakdown line.
+    footerAllocation = null,
+    showFooterBreakdown = false,
     module = 'sales',
     page = 'quotations',
     component = 'item_table'
@@ -144,16 +152,38 @@ export const ItemDescriptionCell = React.memo(({
                     </div>
                 )}
 
+                {/* Footer-discount breakdown: makes it explicit how much of the document's
+                    footer discount this product absorbed, separately from its own item discount. */}
+                {showFooterBreakdown && footerAllocation && !item.voided && (
+                    <div
+                        className="flex flex-wrap items-center gap-x-2 gap-y-0.5 w-full max-w-[360px] mt-0.5 text-[10px] font-medium"
+                        data-testid="footer-discount-breakdown"
+                    >
+                        <span className="text-slate-500 whitespace-nowrap">Gross {fmtMoney(footerAllocation.gross)}</span>
+                        {Number(footerAllocation.itemDiscount) > 0 && (
+                            <span className="text-orange-600 whitespace-nowrap">Item Disc. −{fmtMoney(footerAllocation.itemDiscount)}</span>
+                        )}
+                        <span
+                            className="text-violet-700 bg-violet-50 border border-violet-100 rounded px-1 whitespace-nowrap"
+                            title="This line's share of the document Footer Discount"
+                        >
+                            Footer Disc. −{fmtMoney(footerAllocation.share)}
+                        </span>
+                        <span className="text-slate-600 whitespace-nowrap">Taxable {fmtMoney(footerAllocation.taxable)}</span>
+                        <span className="text-slate-600 whitespace-nowrap">VAT {fmtMoney(footerAllocation.tax)}</span>
+                    </div>
+                )}
+
                 {/* Bottom Row: Metadata (Tax, Disc, FOC, Margin) & Actions */}
                 {(showTaxDiscount || showSettings) && (
                     <div className="flex items-center justify-between w-full max-w-[360px] mt-0.5">
                         {showTaxDiscount && (
                             <div className="flex items-center gap-3 overflow-hidden">
                                 <span className="text-[10px] text-slate-500 font-medium whitespace-nowrap">
-                                    Tax {Number(item.tax ?? 0)}% <span className="text-slate-400">({(item.taxAmt || 0).toFixed(2)})</span>
+                                    Tax {Number(item.tax ?? 0)}% <span className="text-slate-400">({Number(footerAllocation ? footerAllocation.tax : (item.taxAmt || 0)).toFixed(2)})</span>
                                 </span>
                                 <span className={`text-[10px] font-medium whitespace-nowrap ${getDiscountColor(item.disc)}`}>
-                                    Disc {Number(item.disc ?? 0)}%
+                                    {footerAllocation ? 'Item Disc.' : 'Disc'} {Number(item.disc ?? 0)}%
                                 </span>
                                 {item.foc > 0 && (
                                     <span className="text-[10px] text-emerald-600 font-black whitespace-nowrap bg-emerald-50 px-1 rounded border border-emerald-100">

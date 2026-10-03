@@ -29,6 +29,7 @@ import { getDepartments, getSubDepartmentsByDepartment } from "../../../api/depa
 import { createDepartment } from "../../../api/departmentsApi";
 import { createSubDepartment } from "../../../api/subDepartmentsApi";
 import { getUnits, createUnit } from "../../../api/unitsApi";
+import { getProductCategories, createProductCategory } from "../../../api/productCategoriesApi";
 import { getWarehouses } from "../../../api/warehouseApi";
 import ClassificationDropdown from "../../../components/ClassificationDropdown";
 import { getZones, getLocators, getBins } from "../../../api/warehouseLocationApi";
@@ -395,10 +396,13 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
 
   // Inline-create loading indicator — stores which field type is currently being saved
   const [creatingType, setCreatingType] = useState(null);
-  // Local category list — no backend entity, stored per session
-  const [categoriesLocal, setCategoriesLocal] = useState([
-    'General', 'Premium', 'Clearance',
-  ]);
+  // Category master (product_categories) — products store the name, so names are the values
+  const [categoriesLocal, setCategoriesLocal] = useState([]);
+  useEffect(() => {
+    getProductCategories()
+      .then(list => setCategoriesLocal((Array.isArray(list) ? list : []).map(c => c.name).filter(Boolean)))
+      .catch(() => setCategoriesLocal([]));
+  }, []);
   // Branch Tax Configuration — used only for the "Price Incl. Tax" metrics preview below, so
   // it matches what the resolver (BranchTaxResolutionService) would actually charge at sale
   // time: product's own Sales Tax if set, else the Branch Default VAT Rate, else 0 — and 0
@@ -761,9 +765,9 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
           }));
         }
       } else if (type === 'category') {
-        const newCat = name.trim();
-        setCategoriesLocal(prev => prev.includes(newCat) ? prev : [...prev, newCat]);
-        handleInputChange('category', newCat);
+        const created = await createProductCategory({ name: name.trim() });
+        setCategoriesLocal(prev => prev.includes(created.name) ? prev : [...prev, created.name]);
+        handleInputChange('category', created.name);
       }
     } catch (err) {
       console.error('Inline create failed:', err);
@@ -1178,11 +1182,13 @@ const AddProductWizard = ({ onCancel, onSave, initialData, brands: initialBrands
                   />
                 </div>
 
-                {/* Category — local session values, no backend entity */}
+                {/* Category — product_categories master, stored on the product by name */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">Category</label>
                   <ClassificationDropdown
-                    options={categoriesLocal.map(c => ({ value: c, label: c }))}
+                    /* Keep a product's existing category visible even if it is missing from the list. */
+                    options={[...new Set([...categoriesLocal, ...(formData.category ? [formData.category] : [])])]
+                      .map(c => ({ value: c, label: c }))}
                     value={formData.category}
                     onChange={(val) => handleInputChange('category', val)}
                     onCreateNew={(name) => handleInlineCreate('category', name)}

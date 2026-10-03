@@ -41,6 +41,8 @@ public class ProformaResponse {
 
     private BigDecimal subTotal;
     private BigDecimal billDiscount;
+    private BigDecimal billDiscountAmount;
+    private String billDiscountType;
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
     private Boolean taxInclusive;
@@ -250,4 +252,20 @@ public class ProformaResponse {
 
     public BranchInfo getBranch() { return branch; }
     public void setBranch(BranchInfo branch) { this.branch = branch; }
+
+	public BigDecimal getBillDiscountAmount() {
+		return billDiscountAmount;
+	}
+
+	public void setBillDiscountAmount(BigDecimal billDiscountAmount) {
+		this.billDiscountAmount = billDiscountAmount;
+	}
+
+	public String getBillDiscountType() {
+		return billDiscountType;
+	}
+
+	public void setBillDiscountType(String billDiscountType) {
+		this.billDiscountType = billDiscountType;
+	}
 }

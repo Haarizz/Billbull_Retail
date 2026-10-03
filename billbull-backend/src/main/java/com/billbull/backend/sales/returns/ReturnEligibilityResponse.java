@@ -56,6 +56,55 @@ public class ReturnEligibilityResponse {
     /** Refund method values that cannot be used on this invoice, mapped to the reason why. */
     public java.util.Map<String, String> blockedRefundMethods = new java.util.LinkedHashMap<>();
 
+    // ----- The economic split (Phase 2 §14) -----
+    //
+    // Server-derived, so the screen never computes them. Until the cashier has chosen lines
+    // there is no return value yet, so these describe the FULL remaining returnable value of
+    // the invoice: the worst case the cashier could reach. The screen recomputes the display
+    // split as lines are picked by applying the same min() against invoiceOutstanding, and the
+    // server computes the authoritative one again at approval under the invoice row lock. The
+    // figure that matters for enabling a refund method before any line is chosen is
+    // invoiceOutstanding, which is the only one of these the client cannot derive.
+
+    /**
+     * Canonical effective outstanding of this invoice:
+     * {@code max(0, invoiceTotal - receipts - advance applications - return credits applied)}.
+     *
+     * <p>The one figure the refund-method rules turn on. Already net of earlier return credits,
+     * so two successive returns against the same part-paid invoice cannot both claim the same
+     * unpaid portion.
+     */
+    public BigDecimal invoiceOutstanding;
+
+    /** Return credit already applied to this invoice by earlier approved returns. */
+    public BigDecimal returnCreditApplied;
+
+    /**
+     * Value of everything still returnable on this invoice — the ceiling for
+     * {@link #maxPaidPortion} below. Not a prediction of any particular return.
+     */
+    public BigDecimal returnableValue;
+
+    /**
+     * {@code min(returnableValue, invoiceOutstanding)} — the most of the remaining returnable
+     * value that could become a receivable credit rather than a refund.
+     */
+    public BigDecimal maxUnpaidPortion;
+
+    /**
+     * {@code returnableValue - maxUnpaidPortion} — the most that could ever be paid back on
+     * this invoice. <b>Zero means no money-moving refund method is legitimate at all</b>,
+     * whatever the cashier selects, because nothing on this invoice has been paid for yet.
+     */
+    public BigDecimal maxPaidPortion;
+
+    /**
+     * True when {@link #maxPaidPortion} is zero: cash, card, bank and voucher refunds are all
+     * impossible on this invoice and the only settlement is the receivable allocation. The
+     * reason is in {@link #blockedRefundMethods} for each affected method.
+     */
+    public boolean refundBlockedUnpaidInvoice;
+
     /** Original invoice VAT mode. Drives how the return reverses tax (§13). */
     public boolean taxInclusive;
 

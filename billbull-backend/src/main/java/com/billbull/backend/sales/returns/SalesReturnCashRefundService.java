@@ -124,13 +124,17 @@ public class SalesReturnCashRefundService {
     }
 
     /**
-     * The amount actually paid out. Prefers the explicit refund amount and falls back to the
-     * return total, which are equal unless a partial settlement was recorded.
+     * The amount actually paid out of the drawer: the return's <b>paid portion</b>, which
+     * {@code SalesReturnService.resolveSettlementSplit} stamps onto {@code refundAmount} under
+     * the invoice lock before this service is called.
+     *
+     * <p>The old fallback to {@code totalAmount} is deliberately gone. It meant a null (or a
+     * client-supplied) refund amount decided how much cash left the drawer, and on a part-paid
+     * invoice it paid out money the customer had never handed over. A null now pays nothing and
+     * the caller's zero-guard skips the movement, which is the safe direction to fail.
      */
     private BigDecimal resolveRefundAmount(SalesReturn salesReturn) {
-        BigDecimal amount = salesReturn.getRefundAmount() != null
-                ? salesReturn.getRefundAmount()
-                : salesReturn.getTotalAmount();
+        BigDecimal amount = salesReturn.getRefundAmount();
         return amount != null ? amount : BigDecimal.ZERO;
     }
 

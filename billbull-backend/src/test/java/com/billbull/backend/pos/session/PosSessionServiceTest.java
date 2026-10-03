@@ -136,7 +136,8 @@ class PosSessionServiceTest {
                 sessionTransferService, transferLogRepository, sessionTransferPolicy,
                 entityManager, effectiveCorrectionViewService,
                 new com.billbull.backend.pos.businessdate.BusinessDayContinuationGate(businessDayWindowService),
-                new PosSessionClosureWorkflowGate());
+                new PosSessionClosureWorkflowGate(),
+                new com.billbull.backend.sales.returns.reporting.SalesReturnReportingService(returnRepository));
         // These three collaborators are @Autowired fields rather than constructor arguments,
         // so they have to be injected reflectively. REAL instances, not mocks: the closure
         // authorization rules (owner-or-supervisor to begin, supervisor-only to cancel) are

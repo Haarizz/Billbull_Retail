@@ -172,6 +172,29 @@ public class PosAuditService {
                 "Return initiated for invoice: " + originalInvoiceNumber, null, null);
     }
 
+    /**
+     * A sales return that completed: stock moved, the ledger was posted, and the customer was
+     * settled.
+     *
+     * <p>{@link PosAuditAction#RETURN_APPROVED} existed here with no caller, so an ordinary
+     * approval left no POS audit trace at all — only the supervisor-gated ones were recorded,
+     * and those on a different trail, as an authorization rather than an approval. A refund is
+     * the single POS operation that hands money out of the drawer; it has to be on the terminal's
+     * own audit trail whether or not policy happened to require a signature.
+     */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void logReturnApproved(Long sessionId, String terminalId, Long branchId,
+                                   Long returnId, String returnNumber,
+                                   String refundMethod, java.math.BigDecimal settledAmount) {
+        save(sessionId, terminalId, branchId,
+                PosAuditAction.RETURN_APPROVED, "RETURN", String.valueOf(returnId),
+                "Return approved: " + returnNumber
+                        + " settled " + settledAmount
+                        + " by " + (refundMethod != null ? refundMethod : "no refund method"),
+                null, null);
+    }
+
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void logReceiptReprinted(Long sessionId, String terminalId, Long branchId,

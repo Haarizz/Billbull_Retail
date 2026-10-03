@@ -1,5 +1,7 @@
 package com.billbull.backend.sales.invoice;
 
+import com.billbull.backend.sales.common.FooterDiscountAllocator;
+import com.billbull.backend.sales.common.VatMode;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
@@ -307,6 +309,15 @@ public class SalesInvoiceService {
     public SalesInvoice save(SalesInvoice invoice) {
         SalesInvoice existing = invoice.getId() != null ? invoiceRepo.findById(invoice.getId()).orElse(null) : null;
 
+        // Return credit applied to this invoice is owned by the allocation ledger, not by the
+        // client. An editor round-trip that omits the field would otherwise null it and hand
+        // finalizeInvoiceTotals a zero credit, restoring a balance a return had already cleared
+        // until the next recompute happened to run. Restored from the persisted row, like the
+        // salesperson attribution below.
+        if (existing != null) {
+            invoice.setReturnCredited(existing.getReturnCredited());
+        }
+
         // History: snapshot the diff BEFORE the mutations below (branch snapshot, totals
         // recalculation, numbering) rewrite `invoice`. `existing` is a separately-loaded
         // instance, so it still holds the persisted values at this point. The events
@@ -373,6 +384,9 @@ public class SalesInvoiceService {
                 resolvedBranch != null ? resolvedBranch.getId() : invoice.getBranchId());
 
         Long resolvedSourceWarehouseId = branchDefaultWarehouseId;
+        // FOC quantity converted into the selling unit, captured while each line's product is
+        // already loaded below, so the footer-discount allocation can value FOC server-side.
+        java.util.Map<SalesInvoiceItem, BigDecimal> focInSellingUnit = new java.util.IdentityHashMap<>();
         if (invoice.getItems() != null) {
             java.util.List<com.billbull.backend.inventory.warehouse.WarehouseResolutionItem> resolutionItems = new java.util.ArrayList<>();
             for (SalesInvoiceItem item : invoice.getItems()) {
@@ -448,6 +462,7 @@ public class SalesInvoiceService {
                             + resolveBaseQty(product.getId(), item.getUnit(), item.getFoc() != null ? item.getFoc() : 0);
                     assignBatchBinIfNeeded(item, product, requiredQty);
                 }
+                focInSellingUnit.put(item, resolveFocInSellingUnit(product, item));
 
                 BigDecimal netAmount = nz(item.getNetAmount());
                 BigDecimal taxAmount = nz(item.getTaxAmount());
@@ -456,6 +471,15 @@ public class SalesInvoiceService {
                 subTotal = subTotal.add(netAmount).subtract(taxAmount).add(footerDisc);
                 taxTotal = taxTotal.add(taxAmount);
             }
+        }
+
+        // Footer discount: the server allocates it across the lines and the line money it
+        // writes replaces whatever the client sent (docs/footer-discount-audit-2026-10-01.md).
+        // Finalized documents and POS sales keep the legacy path - see shouldAllocateFooterDiscount.
+        if (invoice.getItems() != null && shouldAllocateFooterDiscount(invoice, existing)) {
+            FooterDiscountAllocator.Result allocation = applyFooterDiscountAllocation(invoice, focInSellingUnit);
+            subTotal = allocation.subTotal();
+            taxTotal = allocation.taxTotal();
         }
 
         // Finalize header money (subtotal/tax/discount/total/balance) + paid guard.
@@ -852,7 +876,14 @@ public class SalesInvoiceService {
         invoice.setSubTotal(subTotal);
         invoice.setTaxTotal(taxTotal);
         invoice.setInvoiceTotal(total);
-        invoice.setBalance(total.subtract(paid));
+        // Balance is projected by the one shared formula, never computed here. This path runs
+        // pre-persist on a client-supplied instance and must stay collaborator-free, so it feeds
+        // the invoice's own figures in rather than reading the ledgers; the ledger-backed
+        // recompute (InvoiceBalanceService.recomputeInvoiceBalance) owns the figures themselves
+        // and is what a receipt or a return approval calls. Both end in the same arithmetic, so
+        // the two can no longer drift apart. returnCredited is restored from the persisted row
+        // in save() before this runs, so an edit cannot silently drop an existing credit.
+        InvoiceBalanceService.applyMoney(invoice, paid, invoice.getReturnCredited());
     }
 
     /**
@@ -924,6 +955,91 @@ public class SalesInvoiceService {
 
     /** Null-safe money view: treats {@code null} as zero. */
     private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
+
+    /**
+     * Whether this save allocates the footer discount server-side.
+     *
+     * <ul>
+     *   <li>New and DRAFT invoices: yes - the server is the source of truth.</li>
+     *   <li>CONFIRMED/PAID/... invoices being edited: no. Their GL is already posted; the new
+     *       algorithm must never silently re-price a finalized document.</li>
+     *   <li>POS sales: no. POS still applies its bill discount header-only after VAT; moving POS
+     *       onto line allocation is a separate phase because it changes POS totals, receipts,
+     *       tendering and X/Z reports together.</li>
+     * </ul>
+     */
+    static boolean shouldAllocateFooterDiscount(SalesInvoice invoice, SalesInvoice existing) {
+        if (SalesType.POS_SALE.equals(invoice.getSalesType())) {
+            return false;
+        }
+        return existing == null || existing.getStatus() == null
+                || existing.getStatus() == SalesInvoiceStatus.DRAFT;
+    }
+
+    /**
+     * Allocates the header footer discount over the invoice lines with the shared
+     * {@link FooterDiscountAllocator} and writes the authoritative line money (gross, footer
+     * share, taxable, VAT, total) and header discount back onto the invoice.
+     * Package-private for tests.
+     */
+    FooterDiscountAllocator.Result applyFooterDiscountAllocation(
+            SalesInvoice invoice, java.util.Map<SalesInvoiceItem, BigDecimal> focInSellingUnit) {
+        BigDecimal percent = invoice.getBillDiscount() != null ? BigDecimal.valueOf(invoice.getBillDiscount()) : null;
+        FooterDiscountAllocator.DiscountType type = FooterDiscountAllocator.DiscountType.resolve(
+                invoice.getBillDiscountType(), percent, invoice.getBillDiscountAmount());
+        BigDecimal value = FooterDiscountAllocator.requestedValue(
+                type, percent, invoice.getBillDiscountFixed(), invoice.getBillDiscountAmount());
+        boolean inclusive = invoice.getVatMode() == VatMode.INCLUSIVE
+                || Boolean.TRUE.equals(invoice.getTaxInclusive());
+        VatMode vatMode = inclusive ? VatMode.INCLUSIVE : VatMode.EXCLUSIVE;
+
+        FooterDiscountAllocator.Result result = FooterDiscountAllocator.allocateLines(
+                invoice.getItems(),
+                item -> new FooterDiscountAllocator.LineSpec(
+                        BigDecimal.valueOf(item.getQuantity() != null ? item.getQuantity() : 0),
+                        item.getPrice(),
+                        focInSellingUnit != null && focInSellingUnit.containsKey(item)
+                                ? focInSellingUnit.get(item)
+                                : BigDecimal.valueOf(item.getFoc() != null ? item.getFoc() : 0),
+                        BigDecimal.valueOf(item.getDiscount() != null ? item.getDiscount() : 0d),
+                        BigDecimal.valueOf(item.getTaxRate() != null ? item.getTaxRate() : 0d),
+                        !item.isVoided()),
+                type, value, vatMode,
+                (item, base, line) -> {
+                    item.setGrossAmount(base.grossAmount());
+                    item.setFooterDiscount(line.footerShare());
+                    item.setTaxableAmount(line.taxableAmount());
+                    item.setTaxAmount(line.taxAmount());
+                    item.setNetAmount(line.lineTotal());
+                });
+
+        invoice.setVatMode(vatMode);
+        invoice.setTaxInclusive(inclusive);
+        invoice.setBillDiscountType(type.wireValue());
+        invoice.setBillDiscount(type == FooterDiscountAllocator.DiscountType.PERCENT && percent != null
+                ? percent.max(BigDecimal.ZERO).min(BigDecimal.valueOf(100)).doubleValue()
+                : 0d);
+        invoice.setBillDiscountAmount(result.footerAmount());
+        return result;
+    }
+
+    /** FOC quantity expressed in the line's selling unit (same rule as the editor). */
+    private BigDecimal resolveFocInSellingUnit(Product product, SalesInvoiceItem item) {
+        int foc = item.getFoc() != null ? item.getFoc() : 0;
+        Long productId = product != null ? product.getId() : null;
+        return FooterDiscountAllocator.focInSellingUnit(
+                BigDecimal.valueOf(foc), item.getUnit(), item.getFocUnit(),
+                unit -> packingConversion(productId, unit));
+    }
+
+    private BigDecimal packingConversion(Long productId, String unitName) {
+        if (productId == null || unitName == null || unitName.isBlank()) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion())
+                .orElse(null);
+    }
 
     void normalizeInvoiceItemFinancials(SalesInvoiceItem item, boolean linkedToDeliveryNote, boolean taxInclusive) {
         if (item == null) {

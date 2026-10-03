@@ -1,5 +1,8 @@
 package com.billbull.backend.sales.proforma;
 
+import com.billbull.backend.inventory.product.ProductPackingRepository;
+import com.billbull.backend.sales.common.FooterDiscountAllocator;
+import com.billbull.backend.sales.common.VatMode;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -36,6 +39,7 @@ public class ProformaService {
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
     private final WarehouseStockService warehouseStockService;
     private final SalesDocumentNumberingService numberingService;
+    private final ProductPackingRepository packingRepo;
 
     public ProformaService(
             ProformaRepository repo,
@@ -45,7 +49,8 @@ public class ProformaService {
             BranchAccessService branchAccessService,
             com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
             WarehouseStockService warehouseStockService,
-            SalesDocumentNumberingService numberingService) {
+            SalesDocumentNumberingService numberingService,
+            ProductPackingRepository packingRepo) {
         this.repo = repo;
         this.productRepo = productRepo;
         this.barcodeRepo = barcodeRepo;
@@ -54,6 +59,7 @@ public class ProformaService {
         this.ownershipAccessService = ownershipAccessService;
         this.warehouseStockService = warehouseStockService;
         this.numberingService = numberingService;
+        this.packingRepo = packingRepo;
     }
 
     @Transactional
@@ -239,73 +245,81 @@ public class ProformaService {
         boolean taxInclusive = Boolean.TRUE.equals(req.taxInclusive);
         pi.setTaxInclusive(taxInclusive);
 
-        BigDecimal taxableTotal = BigDecimal.ZERO;
-        BigDecimal tax = BigDecimal.ZERO;
-
         if (pi.getItems() == null) {
             pi.setItems(new ArrayList<>());
         }
 
-        for (ProformaItemRequest i : req.items) {
-            BigDecimal qty = i.quantity != null ? i.quantity : BigDecimal.ZERO;
-            BigDecimal price = i.price != null ? i.price : BigDecimal.ZERO;
-            BigDecimal taxRate = i.taxPercent != null ? i.taxPercent : BigDecimal.ZERO;
-            BigDecimal discRate = i.discountPercent != null ? i.discountPercent : BigDecimal.ZERO;
-
-            BigDecimal lineGross = qty.multiply(price);
-
-            // Note: Simplistic FOC deduction if units match.
-            // In a real system we'd use unit conversions here,
-            // matching the frontend logic exactly.
-            BigDecimal focValue = BigDecimal.ZERO;
-            if (i.foc != null && i.foc > 0) {
-                focValue = price.multiply(BigDecimal.valueOf(i.foc));
-                // Simplified: assuming foc uses same unit as quantity here for brevity
-                // but real logic should track unit conversions.
-            }
-            BigDecimal preDisc = lineGross.subtract(focValue).max(BigDecimal.ZERO);
-
-            // Route the (already FOC-adjusted) line value through the shared VAT
-            // helper as a qty=1 line, so discount% and inclusive/exclusive VAT
-            // extraction match SalesInvoiceService exactly.
-            com.billbull.backend.sales.common.VatCalculator.LineResult result =
-                    com.billbull.backend.sales.common.VatCalculator.compute(
-                            BigDecimal.ONE, preDisc, discRate, BigDecimal.ZERO, taxRate, taxInclusive);
-
+        for (ProformaItemRequest i : req.items != null ? req.items : List.<ProformaItemRequest>of()) {
             ProformaInvoiceItem item = new ProformaInvoiceItem();
             item.setProforma(pi);
             item.setItemCode(i.itemCode);
             item.setBarcode(i.barcode);
             item.setDescription(i.description);
             item.setUnit(i.unit);
-            item.setQuantity(qty);
-            item.setPrice(price);
-            item.setTaxPercent(taxRate);
-            item.setDiscountPercent(discRate);
+            item.setQuantity(i.quantity != null ? i.quantity : BigDecimal.ZERO);
+            item.setPrice(i.price != null ? i.price : BigDecimal.ZERO);
+            item.setTaxPercent(i.taxPercent != null ? i.taxPercent : BigDecimal.ZERO);
+            item.setDiscountPercent(i.discountPercent != null ? i.discountPercent : BigDecimal.ZERO);
             item.setFoc(i.foc);
             item.setFocUnit(i.focUnit);
             item.setRemarks(i.remarks);
             hydrateProformaItemDisplayData(item);
-            item.setTaxableAmount(result.taxableAmount.setScale(2, java.math.RoundingMode.HALF_UP));
-            item.setTaxAmount(result.taxAmount.setScale(2, java.math.RoundingMode.HALF_UP));
-            item.setLineTotal(result.netAmount.setScale(2, java.math.RoundingMode.HALF_UP));
-
             pi.getItems().add(item);
-
-            taxableTotal = taxableTotal.add(result.taxableAmount);
-            tax = tax.add(result.taxAmount);
         }
 
-        pi.setSubTotal(taxableTotal.setScale(2, java.math.RoundingMode.HALF_UP));
-        pi.setBillDiscount(req.billDiscount != null ? req.billDiscount : BigDecimal.ZERO);
+        // Footer discount: % or fixed amount, allocated across the lines BEFORE VAT by the
+        // shared allocator, exactly like Quotation / Sales Order / Sales Invoice. Previously VAT
+        // was calculated before the discount here, so the saved Proforma disagreed with its own
+        // preview (docs/footer-discount-audit-2026-10-01.md, C.2).
+        FooterDiscountAllocator.DiscountType type = FooterDiscountAllocator.DiscountType.resolve(
+                req.billDiscountType, req.billDiscount, req.billDiscountAmount);
+        BigDecimal value = FooterDiscountAllocator.requestedValue(
+                type, req.billDiscount, req.billDiscountAmount, null);
+        Map<String, Long> productIdByCode = new HashMap<>();
+        FooterDiscountAllocator.Result result = FooterDiscountAllocator.allocateLines(
+                pi.getItems(),
+                item -> new FooterDiscountAllocator.LineSpec(
+                        item.getQuantity(),
+                        item.getPrice(),
+                        FooterDiscountAllocator.focInSellingUnit(
+                                BigDecimal.valueOf(item.getFoc() != null ? item.getFoc() : 0),
+                                item.getUnit(), item.getFocUnit(),
+                                unit -> packingConversion(item.getItemCode(), unit, productIdByCode)),
+                        item.getDiscountPercent(),
+                        item.getTaxPercent(),
+                        true),
+                type, value, taxInclusive ? VatMode.INCLUSIVE : VatMode.EXCLUSIVE,
+                (item, lineBase, line) -> {
+                    item.setFooterDiscount(line.footerShare());
+                    item.setTaxableAmount(line.taxableAmount());
+                    item.setTaxAmount(line.taxAmount());
+                    item.setLineTotal(line.lineTotal());
+                });
 
-        BigDecimal billDiscAmount = taxableTotal.multiply(pi.getBillDiscount()).divide(BigDecimal.valueOf(100), 2, BigDecimal.ROUND_HALF_UP);
-
-        pi.setTaxTotal(tax.setScale(2, java.math.RoundingMode.HALF_UP));
-        pi.setGrandTotal(taxableTotal.subtract(billDiscAmount).add(tax).setScale(2, java.math.RoundingMode.HALF_UP));
+        pi.setBillDiscountType(type.wireValue());
+        pi.setBillDiscount(type == FooterDiscountAllocator.DiscountType.PERCENT && req.billDiscount != null
+                ? req.billDiscount.max(BigDecimal.ZERO).min(BigDecimal.valueOf(100))
+                : BigDecimal.ZERO);
+        pi.setBillDiscountAmount(result.footerAmount());
+        pi.setSubTotal(result.subTotal());
+        pi.setTaxTotal(result.taxTotal());
+        pi.setGrandTotal(result.lineTotal());
         pi.setBalanceDue(pi.getGrandTotal().subtract(pi.getAdvancePaid()));
 
         return pi;
+    }
+
+    private BigDecimal packingConversion(String itemCode, String unitName, Map<String, Long> productIdByCode) {
+        if (itemCode == null || itemCode.isBlank() || unitName == null || unitName.isBlank()) return null;
+        Long productId = productIdByCode.computeIfAbsent(itemCode, code -> productRepo.findByCodeAndIsActiveTrue(code)
+                .map(com.billbull.backend.inventory.product.Product::getId)
+                .orElse(null));
+        if (productId == null) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion())
+                .orElse(null);
     }
 
     /* ================= DTO MAPPER ================= */
@@ -338,6 +352,8 @@ public class ProformaService {
 
         res.setSubTotal(pi.getSubTotal());
         res.setBillDiscount(pi.getBillDiscount());
+        res.setBillDiscountAmount(pi.getBillDiscountAmount());
+        res.setBillDiscountType(pi.getBillDiscountType());
         res.setTaxTotal(pi.getTaxTotal());
         res.setGrandTotal(pi.getGrandTotal());
         res.setTaxInclusive(pi.getTaxInclusive());
@@ -366,6 +382,7 @@ public class ProformaService {
                     ir.setFocUnit(item.getFocUnit());
                     ir.setRemarks(item.getRemarks());
                     ir.setTaxableAmount(item.getTaxableAmount());
+                    ir.setFooterDiscount(item.getFooterDiscount());
                     ir.setTaxAmount(item.getTaxAmount());
                     ir.setLineTotal(item.getLineTotal());
                     return ir;

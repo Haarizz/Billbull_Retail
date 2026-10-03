@@ -78,7 +78,7 @@ class SalesInvoiceItemTaxTest {
                 () -> "expected " + expected + " but was " + actual);
     }
 
-    private static SalesInvoiceService newServiceWithMockedDeps() {
+    static SalesInvoiceService newServiceWithMockedDeps() {
         return new SalesInvoiceService(
                 mock(SalesInvoiceRepository.class),
                 mock(com.billbull.backend.financials.generalledger.postingengine.PostingEngineService.class),

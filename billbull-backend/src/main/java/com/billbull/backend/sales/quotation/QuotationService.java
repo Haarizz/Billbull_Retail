@@ -1,5 +1,7 @@
 package com.billbull.backend.sales.quotation;
 
+import com.billbull.backend.sales.common.FooterDiscountAllocator;
+import com.billbull.backend.sales.common.VatMode;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -339,8 +341,9 @@ public class QuotationService {
         }
 
         // Recalculate header totals from item-level values so the DB is always
-        // consistent regardless of what the frontend sends.
-        recalculateTotals(quotation);
+        // consistent regardless of what the frontend sends. Open quotations also get the
+        // footer discount allocated server-side first.
+        recalculateTotals(quotation, shouldAllocateFooterDiscount(existingQuotation));
 
         Quotation saved = quotationRepo.save(quotation);
         initialize(saved);
@@ -745,41 +748,104 @@ public class QuotationService {
     // -------------------------------------------------
 
     /**
-     * Recomputes subTotal, taxAmount, and totalAmount on the Quotation header from
-     * the item-level lineTotal / taxAmount values.  Mirrors the approach in
-     * SalesOrderService so the stored header totals are always authoritative.
+     * Converted, invoiced and expired quotations keep their stored line values; every other
+     * save allocates the footer discount server-side.
      */
-    private void recalculateTotals(Quotation quotation) {
-        double subTotal = 0;
-        double taxTotal = 0;
+    static boolean shouldAllocateFooterDiscount(Quotation existing) {
+        if (existing == null || existing.getStatus() == null) {
+            return true;
+        }
+        return existing.getStatus() != QuotationStatus.CONVERTED
+                && existing.getStatus() != QuotationStatus.INVOICED
+                && existing.getStatus() != QuotationStatus.EXPIRED;
+    }
 
+    /**
+     * Recomputes subTotal, taxAmount, and totalAmount on the Quotation header. With
+     * {@code allocate} the shared {@link FooterDiscountAllocator} first rewrites every line's
+     * footer share, VAT and line total; otherwise the stored line values are summed as-is.
+     * Either way the header identity is {@code total = Σ(lineTotal − tax + footer) − footer + Σtax}.
+     * Package-private for tests.
+     */
+    void recalculateTotals(Quotation quotation, boolean allocate) {
+        if (allocate && quotation.getItems() != null) {
+            applyFooterDiscountAllocation(quotation);
+        }
+
+        BigDecimal subTotal = BigDecimal.ZERO;
+        BigDecimal taxTotal = BigDecimal.ZERO;
         if (quotation.getItems() != null) {
             for (QuotationItem item : quotation.getItems()) {
-                double lineTotal = item.getLineTotal() != null ? item.getLineTotal().doubleValue() : 0;
-                double taxAmt    = item.getTaxAmount() != null ? item.getTaxAmount().doubleValue() : 0;
-                double footerDisc = item.getFooterDiscount() != null ? item.getFooterDiscount().doubleValue() : 0;
-                
-                subTotal += (lineTotal - taxAmt + footerDisc);
-                taxTotal += taxAmt;
+                BigDecimal taxAmt = nzMoney(item.getTaxAmount());
+                subTotal = subTotal.add(nzMoney(item.getLineTotal())).subtract(taxAmt)
+                        .add(nzMoney(item.getFooterDiscount()));
+                taxTotal = taxTotal.add(taxAmt);
             }
         }
+        subTotal = subTotal.setScale(2, RoundingMode.HALF_UP);
+        taxTotal = taxTotal.setScale(2, RoundingMode.HALF_UP);
 
-        subTotal = BigDecimal.valueOf(subTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        
-        double billDiscPct = quotation.getBillDiscount() != null ? quotation.getBillDiscount().doubleValue() : 0;
-        double billDiscAmt = quotation.getBillDiscountAmount() != null ? quotation.getBillDiscountAmount().doubleValue() : 0;
-        if (billDiscAmt == 0 && billDiscPct > 0) {
-            billDiscAmt = BigDecimal.valueOf(subTotal * (billDiscPct / 100))
-                    .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        BigDecimal billDiscAmt = nzMoney(quotation.getBillDiscountAmount());
+        BigDecimal billDiscPct = nzMoney(quotation.getBillDiscount());
+        if (billDiscAmt.signum() == 0 && billDiscPct.signum() > 0) {
+            billDiscAmt = subTotal.multiply(billDiscPct).divide(BigDecimal.valueOf(100))
+                    .setScale(2, RoundingMode.HALF_UP);
         }
 
-        taxTotal = BigDecimal.valueOf(taxTotal).setScale(2, RoundingMode.HALF_UP).doubleValue();
-        double total = BigDecimal.valueOf(subTotal - billDiscAmt + taxTotal)
-                .setScale(2, RoundingMode.HALF_UP).doubleValue();
+        quotation.setSubTotal(subTotal);
+        quotation.setTaxAmount(taxTotal);
+        quotation.setTotalAmount(subTotal.subtract(billDiscAmt).add(taxTotal).setScale(2, RoundingMode.HALF_UP));
+    }
 
-        quotation.setSubTotal(BigDecimal.valueOf(subTotal));
-        quotation.setTaxAmount(BigDecimal.valueOf(taxTotal));
-        quotation.setTotalAmount(BigDecimal.valueOf(total));
+    private void applyFooterDiscountAllocation(Quotation quotation) {
+        BigDecimal percent = quotation.getBillDiscount();
+        FooterDiscountAllocator.DiscountType type = FooterDiscountAllocator.DiscountType.resolve(
+                quotation.getBillDiscountType(), percent, quotation.getBillDiscountAmount());
+        BigDecimal value = FooterDiscountAllocator.requestedValue(
+                type, percent, quotation.getBillDiscountFixed(), quotation.getBillDiscountAmount());
+        VatMode vatMode = quotation.getVatMode() == VatMode.INCLUSIVE ? VatMode.INCLUSIVE : VatMode.EXCLUSIVE;
+
+        Map<String, Long> productIdByCode = new HashMap<>();
+        FooterDiscountAllocator.Result result = FooterDiscountAllocator.allocateLines(
+                quotation.getItems(),
+                item -> new FooterDiscountAllocator.LineSpec(
+                        item.getQuantity(),
+                        item.getPrice(),
+                        FooterDiscountAllocator.focInSellingUnit(item.getFoc(), item.getUnit(), item.getFocUnit(),
+                                unit -> packingConversion(item.getItemCode(), unit, productIdByCode)),
+                        item.getDiscount(),
+                        item.getTaxRate(),
+                        true),
+                type, value, vatMode,
+                (item, base, line) -> {
+                    item.setFooterDiscount(line.footerShare());
+                    item.setTaxAmount(line.taxAmount());
+                    item.setLineTotal(line.lineTotal());
+                });
+
+        quotation.setVatMode(vatMode);
+        quotation.setBillDiscountType(type.wireValue());
+        quotation.setBillDiscount(type == FooterDiscountAllocator.DiscountType.PERCENT && percent != null
+                ? percent.max(BigDecimal.ZERO).min(BigDecimal.valueOf(100))
+                : BigDecimal.ZERO);
+        quotation.setBillDiscountAmount(result.footerAmount());
+    }
+
+    private BigDecimal packingConversion(String itemCode, String unitName, Map<String, Long> productIdByCode) {
+        if (!hasText(itemCode) || !hasText(unitName)) return null;
+        Long productId = productIdByCode.computeIfAbsent(itemCode, code -> productRepo.findByCodeAndIsActiveTrue(code)
+                .map(com.billbull.backend.inventory.product.Product::getId)
+                .orElse(null));
+        if (productId == null) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(ProductPacking::getConversion)
+                .orElse(null);
+    }
+
+    private static BigDecimal nzMoney(BigDecimal v) {
+        return v != null ? v : BigDecimal.ZERO;
     }
 
     private Long resolveProductId(QuotationItem item) {
@@ -822,9 +888,11 @@ public class QuotationService {
         QuotationRevision revision = new QuotationRevision();
         revision.setRevisionNumber(current.getRevisions().size() + 1);
 
-        revision.setQtnNoDisplay(
-                current.getQtnNo() + " Rev " +
-                        String.format("%02d", revision.getRevisionNumber()));
+        // The snapshot keeps the number the superseded version carried; the live
+        // quotation moves on to "<base> Rev NN", so the newest version owns the
+        // revised number (print, email and downstream SO/invoice links follow it).
+        revision.setQtnNoDisplay(current.getQtnNo());
+        current.setQtnNo(revisedQtnNo(current.getQtnNo(), revision.getRevisionNumber()));
 
         revision.setRevisionDate(LocalDate.now());
         revision.setFollowUpNote(note);
@@ -839,6 +907,11 @@ public class QuotationService {
         Quotation saved = quotationRepo.save(current);
         initialize(saved);
         return saved;
+    }
+
+    static String revisedQtnNo(String qtnNo, int revisionNumber) {
+        String base = SalesDocumentNumberingService.stripRevisionSuffix(qtnNo);
+        return base + " Rev " + String.format("%02d", revisionNumber);
     }
 
     // -------------------------------------------------

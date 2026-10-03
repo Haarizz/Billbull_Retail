@@ -74,6 +74,7 @@ public class ProductService {
     // and cross-branch reference validation (§16), same helper the Dept/Brand/Unit services use.
     private final com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch;
     private final com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService;
+    private final com.billbull.backend.inventory.category.ProductCategoryService categoryService;
 
     public ProductService(
             ProductRepository productRepo,
@@ -102,7 +103,8 @@ public class ProductService {
             UserRepository userRepository,
             com.billbull.backend.inventory.scope.InventoryBranchScopeResolver branchScopeResolver,
             com.billbull.backend.inventory.scope.MasterDataBranchService masterBranch,
-            @org.springframework.context.annotation.Lazy com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService) {
+            @org.springframework.context.annotation.Lazy com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService,
+            com.billbull.backend.inventory.category.ProductCategoryService categoryService) {
         this.productRepo = productRepo;
         this.pricingRepo = pricingRepo;
         this.branchPricingRepo = branchPricingRepo;
@@ -130,6 +132,17 @@ public class ProductService {
         this.branchScopeResolver = branchScopeResolver;
         this.masterBranch = masterBranch;
         this.warehouseStockService = warehouseStockService;
+        this.categoryService = categoryService;
+    }
+
+    /**
+     * Keeps the category master (inventory.category) in step with what products carry: a new name
+     * is added to the list, and a known one is stored in its master spelling.
+     */
+    private void registerCategory(Product product) {
+        if (categoryService != null) {
+            product.setCategory(categoryService.registerIfMissing(product.getCategory()));
+        }
     }
 
     /** Phase 6: the active branch-id scope for catalog reads, or null when scoping is inactive. */
@@ -498,6 +511,7 @@ public class ProductService {
         // 1. Fetch real entities to prevent foreign key errors
         resolveRelationships(product);
         validateMasterReferences(product);
+        registerCategory(product);
 
         // 2. Save Product
         Product savedProduct = productRepo.save(product);
@@ -562,6 +576,7 @@ public class ProductService {
         resolveRelationships(updated,
                 existing.getSubDepartment() != null ? existing.getSubDepartment().getId() : null);
         validateMasterReferences(updated);
+        registerCategory(updated);
 
         // 2. Save Product
         Product savedProduct = productRepo.save(updated);

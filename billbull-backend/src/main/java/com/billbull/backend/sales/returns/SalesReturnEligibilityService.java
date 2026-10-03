@@ -70,6 +70,10 @@ public class SalesReturnEligibilityService {
     @Autowired
     private SalesReturnCustomerAccountResolver customerAccountResolver;
 
+    /** Canonical effective outstanding — the same owner the approval path splits against. */
+    @Autowired
+    private com.billbull.backend.sales.invoice.InvoiceBalanceService invoiceBalanceService;
+
     // ---------------------------------------------------------------
     // §8 — Find original invoice
     // ---------------------------------------------------------------
@@ -174,6 +178,27 @@ public class SalesReturnEligibilityService {
         // returning line data the caller is not entitled to see.
         branchAccessService.assertTransactionBranchAccessible(inv.getBranchId(), "Sales Return");
 
+        // The branch assert above is a permission check, and for a global ADMIN it returns true
+        // for every branch. That is the gap: an admin with the Branch Selector on B could load
+        // branch A's invoice into the return screen, and the resulting return would post the
+        // revenue reversal in B while the goods went back to A's delivery-note warehouse. There
+        // are no inter-branch due-to/due-from accounts to express that honestly, so cross-branch
+        // returns are not permitted. SalesReturnService refuses one at save and again at
+        // approval; refusing here too is what stops the cashier keying a whole return first.
+        //
+        // Returned before anything else is resolved, because an invoice that cannot be returned
+        // against at all has no refund methods, lines or batch lots worth computing.
+        Long activeBranchId = branchAccessService.getActiveBranchId();
+        if (inv.getBranchId() != null && activeBranchId != null
+                && !inv.getBranchId().equals(activeBranchId)) {
+            return ReturnEligibilityResponse.ineligible("INVOICE_OTHER_BRANCH",
+                    "Invoice " + inv.getInvoiceNumber() + " was sold by "
+                            + (inv.getBranchName() != null && !inv.getBranchName().isBlank()
+                                    ? inv.getBranchName() : "another branch")
+                            + ". Cross-branch returns are not supported — switch to that branch to"
+                            + " process this return.");
+        }
+
         ReturnEligibilityResponse res = new ReturnEligibilityResponse();
         res.invoiceId = inv.getId();
         res.invoiceNumber = inv.getInvoiceNumber();
@@ -188,7 +213,10 @@ public class SalesReturnEligibilityService {
         res.paymentMode = inv.getPaymentMode();
         res.invoiceTotal = inv.getInvoiceTotal();
         res.status = inv.getStatus() != null ? inv.getStatus().name() : null;
-        res.taxInclusive = Boolean.TRUE.equals(inv.getTaxInclusive());
+        // Back-office invoices recorded VAT-inclusive pricing in vatMode only (taxInclusive stayed
+        // false), which made refunds add VAT on top of an already VAT-inclusive price.
+        res.taxInclusive = Boolean.TRUE.equals(inv.getTaxInclusive())
+                || inv.getVatMode() == com.billbull.backend.sales.common.VatMode.INCLUSIVE;
 
         // §14 — which refund methods this particular sale can settle with. Computed here rather
         // than in the options endpoint because it depends on the invoice's customer, not on
@@ -200,6 +228,13 @@ public class SalesReturnEligibilityService {
                 res.blockedRefundMethods.put(method.name(), blocked);
             }
         }
+
+        // §14 — the economic split, from the canonical outstanding. Read outside a lock like
+        // everything else here, so it is "what to show the cashier"; SalesReturnService
+        // recomputes it under the invoice row lock at approval and that figure is the
+        // authoritative one. Resolved before the refund-method rules below, which depend on it.
+        res.invoiceOutstanding = invoiceBalanceService.effectiveOutstanding(inv);
+        res.returnCreditApplied = nz(inv.getReturnCredited());
         res.posSessionId = inv.getPosSessionId();
         res.posTerminalId = inv.getPosTerminalId();
         res.posCounterName = inv.getPosCounterName();
@@ -240,6 +275,10 @@ public class SalesReturnEligibilityService {
         }
 
         int totalReturnable = 0;
+        // Accumulated across the lines below and split against invoiceOutstanding afterwards.
+        BigDecimal returnableValue = BigDecimal.ZERO;
+        Map<SalesInvoiceItem, BigDecimal> footerShares =
+                com.billbull.backend.sales.invoice.InvoiceFooterDiscountShares.of(inv);
         for (SalesInvoiceItem it : sellableItems(inv)) {
             ReturnEligibilityLine line = new ReturnEligibilityLine();
             line.invoiceItemId = it.getId();
@@ -257,7 +296,7 @@ public class SalesReturnEligibilityService {
             line.lineTotal = it.getNetAmount();
             line.taxRate = it.getTaxRate();
             line.taxInclusive = res.taxInclusive;
-            line.lineDiscount = resolveLineDiscount(it);
+            line.lineDiscount = resolveLineDiscount(it, footerShares.get(it));
 
             line.serialControlled = it.getSerialNumber() != null && !it.getSerialNumber().isBlank();
 
@@ -270,10 +309,62 @@ public class SalesReturnEligibilityService {
                         .map(Product::isBatch).orElse(false);
             }
 
+            // Value still returnable on this line, at the price the customer actually paid:
+            // the line total (VAT-inclusive, net of discount) shared over the sold units. The
+            // split is a money comparison, so it has to be valued the same way the return total
+            // will be, not from the list price.
+            if (line.availableQty > 0 && line.soldQty > 0 && it.getNetAmount() != null) {
+                returnableValue = returnableValue.add(it.getNetAmount()
+                        .multiply(BigDecimal.valueOf(line.availableQty))
+                        .divide(BigDecimal.valueOf(line.soldQty), 2, java.math.RoundingMode.HALF_UP));
+            }
+
             totalReturnable += line.availableQty;
             res.lines.add(line);
         }
         res.totalReturnableQty = totalReturnable;
+
+        // §14 — the ceiling split for this invoice. maxPaidPortion == 0 is the case that makes
+        // every money-moving refund method illegitimate: the customer has not paid for anything
+        // still returnable, so there is nothing to hand back. Stated here, with the reason, so
+        // the screen can grey the controls out before the cashier picks a method rather than
+        // failing at approval — the same shape SalesReturnCustomerAccountResolver already uses
+        // for Customer Credit on a walk-in, and the read and write sides share the rule
+        // (SalesReturnRefundMethod.movesValueToCustomer) so they cannot disagree.
+        SalesReturnSettlementSplit ceiling =
+                SalesReturnSettlementSplit.of(returnableValue, res.invoiceOutstanding);
+        res.returnableValue = ceiling.returnValue();
+        res.maxUnpaidPortion = ceiling.unpaidPortion();
+        res.maxPaidPortion = ceiling.paidPortion();
+        res.refundBlockedUnpaidInvoice = !ceiling.hasPaidPortion() && ceiling.returnValue().signum() > 0;
+
+        if (res.refundBlockedUnpaidInvoice) {
+            String reason = "The customer has not paid for these goods — invoice "
+                    + inv.getInvoiceNumber() + " still has " + res.invoiceOutstanding
+                    + " outstanding. The return reduces what they owe instead of being paid back.";
+            for (SalesReturnRefundMethod method : SalesReturnRefundMethod.values()) {
+                if (method.movesValueToCustomer()) {
+                    res.blockedRefundMethods.putIfAbsent(method.name(), reason);
+                }
+            }
+            res.warnings.add("No refund can be paid out on this invoice: the full return value"
+                    + " credits the customer's outstanding balance instead.");
+        } else if (ceiling.hasUnpaidPortion()) {
+            res.warnings.add("Only " + res.maxPaidPortion + " of the " + res.returnableValue
+                    + " still returnable on this invoice has been paid for; the remaining "
+                    + res.maxUnpaidPortion + " reduces the customer's outstanding balance.");
+        }
+
+        // CUSTOMER_CREDIT on a paid portion needs the Customer Credit Notes Unapplied liability
+        // account, which does not exist in this chart of accounts (economic model §J decision 7
+        // — unapproved). Blocked here with the reason rather than failing at approval. The
+        // ordinary case, an unpaid or part-paid invoice, is unaffected.
+        if (ceiling.hasPaidPortion()) {
+            res.blockedRefundMethods.putIfAbsent(SalesReturnRefundMethod.CUSTOMER_CREDIT.name(),
+                    "Holding " + res.maxPaidPortion + " as customer credit needs the Customer"
+                            + " Credit Notes Unapplied liability account to be set up first."
+                            + " Refund the paid portion by cash, card, bank transfer or voucher.");
+        }
 
         if (res.eligible && totalReturnable <= 0) {
             res.eligible = false;
@@ -358,10 +449,11 @@ public class SalesReturnEligibilityService {
 
     /**
      * Money value of the discount on an original invoice line. {@code discount} is a
-     * percentage rate, so it is converted against the gross line value; any footer discount
-     * already allocated to the line is added on top.
+     * percentage rate, so it is converted against the gross line value; the line's footer
+     * discount share is added on top (stored share, or derived from the header for POS/older
+     * invoices — see InvoiceFooterDiscountShares).
      */
-    private BigDecimal resolveLineDiscount(SalesInvoiceItem it) {
+    private BigDecimal resolveLineDiscount(SalesInvoiceItem it, BigDecimal footerShare) {
         BigDecimal discount = BigDecimal.ZERO;
         if (it.getPrice() != null && it.getDiscount() != null && it.getDiscount() != 0d) {
             int qty = it.getQuantity() != null ? it.getQuantity() : 0;
@@ -370,8 +462,8 @@ public class SalesReturnEligibilityService {
                     .multiply(BigDecimal.valueOf(it.getDiscount() / 100.0))
                     .setScale(2, java.math.RoundingMode.HALF_UP);
         }
-        if (it.getFooterDiscount() != null) {
-            discount = discount.add(it.getFooterDiscount());
+        if (footerShare != null) {
+            discount = discount.add(footerShare);
         }
         return discount;
     }
@@ -408,6 +500,8 @@ public class SalesReturnEligibilityService {
             return null;
         }
     }
+
+    private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
 
     private static String firstNonBlank(String... values) {
         for (String v : values) {

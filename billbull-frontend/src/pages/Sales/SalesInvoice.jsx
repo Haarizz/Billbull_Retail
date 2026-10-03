@@ -79,7 +79,7 @@ import InvoicePreviewModal from './components/InvoicePreviewModal';
 import InvoiceSettlementModal from './components/InvoiceSettlementModal';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { generateDocFilename } from '../../utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
@@ -91,6 +91,7 @@ import KpiCards from '../../components/common/KpiCards';
 import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
 import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
@@ -364,6 +365,8 @@ const SalesInvoice = () => {
     // null | 'need-draft' | 'need-batches'
     const [batchGuideStep, setBatchGuideStep] = useState(null);
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
+    // WhatsApp: PDF via the Business API when configured, else download + wa.me chat.
+    const { openWhatsApp, whatsAppElement } = useWhatsAppDocumentSend();
 
     // --- FORM STATES ---
     const [status, setStatus] = useState('Draft');
@@ -477,9 +480,22 @@ const SalesInvoice = () => {
         taxAmt: i.taxAmount || i.taxAmt || 0,
         gross: i.grossAmount || i.gross || 0,
         net: i.netAmount || i.net || 0,
+        // Editor rows hold PRE-footer values (calculateRow recomputes them). The server's
+        // netAmount/taxAmount are POST-footer, so the stored footer share is added back
+        // here — re-deriving taxable as net − tax re-applied the footer discount (audit N1).
         taxableAmount: (i.netAmount != null || i.net != null)
-            ? Math.max(0, (i.netAmount ?? i.net ?? 0) - (i.taxAmount ?? i.taxAmt ?? 0))
+            ? Math.max(0, (i.netAmount ?? i.net ?? 0) - (i.taxAmount ?? i.taxAmt ?? 0) + (Number(i.footerDiscount) || 0))
             : Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
+        // Immutable snapshot of the server's authoritative line money, used to display
+        // saved/read-only documents exactly as stored (summarizeStoredSalesItems).
+        serverLine: (i.netAmount != null && i.taxAmount != null) ? {
+            netAmount: i.netAmount,
+            taxAmount: i.taxAmount,
+            footerDiscount: i.footerDiscount ?? null,
+            taxableAmount: i.taxableAmount ?? null,
+            grossAmount: i.grossAmount ?? null,
+        } : undefined,
+        focUnit: i.focUnit || i.unit || 'PCS',
         cost: i.cost || 0,
         gp: 0,
         foc: i.foc || 0,
@@ -504,6 +520,13 @@ const SalesInvoice = () => {
     ]);
     const [billDiscount, setBillDiscount] = useState(0);
     const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
+    // Every pre-fill / reload path takes the footer discount through ONE resolver so its type
+    // and value are never lost or reinterpreted (QTN/SO/PI -> Invoice, reopen).
+    const applySourceFooterDiscount = (src) => {
+        const { type, value } = resolveSourceFooterDiscount(src);
+        setBillDiscountType(type);
+        setBillDiscount(value);
+    };
     const [deliveryCharge, setDeliveryCharge] = useState(0);
     // Round Off is auto-computed (nearest ฿1.00) by default; the user can flip
     // `roundOffManual` on to override the figure by hand for edge cases.
@@ -874,7 +897,7 @@ const SalesInvoice = () => {
                 qty: Number(i.qty) || 0,
                 price: Number(i.price) || 0,
                 disc: Number(i.disc) || 0,
-                tax: Number(i.tax) || 5,
+                tax: Number(i.tax ?? i.taxRate ?? 5),
                 taxAmt: 0,
                 gross: 0,
                 net: 0,
@@ -916,11 +939,7 @@ const SalesInvoice = () => {
         }
 
         setItems(mappedItems.length > 0 ? mappedItems : [{ id: Date.now(), code: '', name: '', unit: 'PCS', qty: 0, price: 0, disc: 0, tax: 0, taxAmt: 0, gross: 0, net: 0, cost: 0 }]);
-        const fromQtnDiscType = fromQtn.billDiscountType === 'amount' ? 'amount' : 'percent';
-        setBillDiscountType(fromQtnDiscType);
-        setBillDiscount(fromQtnDiscType === 'amount'
-            ? Number(fromQtn.billDiscountFixed || fromQtn.billDiscountAmount || fromQtn.billDiscount) || 0
-            : Number(fromQtn.billDiscount) || 0);
+        applySourceFooterDiscount(fromQtn);
         setReference(fromQtn.qtnNo || '');
         setLinkedQuotation(fromQtn.qtnNo || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
@@ -960,7 +979,7 @@ const SalesInvoice = () => {
                 qty: Number(i.qty) || 0,
                 price: Number(i.price) || 0,
                 disc: Number(i.disc) || 0,
-                tax: Number(i.tax) || 5,
+                tax: Number(i.tax ?? i.taxRate ?? 5),
                 taxAmt: 0,
                 gross: 0,
                 net: 0,
@@ -1015,8 +1034,7 @@ const SalesInvoice = () => {
         setSalesType('STANDARD_FLOW');
         setLinkedSO(fromSO.soNumber || '');
         setLinkedPI(fromSO.linkedProforma || '');
-        setBillDiscountType(fromSO.billDiscountType === 'amount' ? 'amount' : 'percent');
-        setBillDiscount(Number(fromSO.billDiscount) || 0);
+        applySourceFooterDiscount(fromSO);
         setReference(fromSO.linkedQuotation || fromSO.linkedProforma || fromSO.soNumber || '');
         setInvoiceDate(new Date().toISOString().split('T')[0]);
         setStatus('Draft');
@@ -1236,9 +1254,18 @@ const SalesInvoice = () => {
     // CALCULATIONS
     // ==========================================
     // Total before round-off, used to derive the automatic rounding adjustment.
+    // Editable invoices: live allocation (identical to what the server will save).
+    // Read-only (finalized) invoices: the stored server values, never recomputed.
+    const summarizeInvoice = (extras) => (isReadOnlyInvoice
+        ? summarizeStoredSalesItems(items, {
+            billDiscountType,
+            billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
+            billDiscountAmount: billDiscountType === 'amount' ? billDiscount : 0,
+        }, extras, vatMode)
+        : summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), extras, vatMode));
     const preRoundSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: 0 }, vatMode),
-        [items, billDiscount, billDiscountType, deliveryCharge, vatMode]
+        () => summarizeInvoice({ deliveryCharge, roundOff: 0 }),
+        [items, billDiscount, billDiscountType, deliveryCharge, vatMode, isReadOnlyInvoice] // eslint-disable-line react-hooks/exhaustive-deps
     );
     // Auto round-off per the Sales Settings rule (mode + step). Default NEAREST 1.00.
     const autoRoundOff = useMemo(
@@ -1258,9 +1285,15 @@ const SalesInvoice = () => {
     }, [autoRoundOff, roundOffManual, isReadOnlyInvoice]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const invoiceSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), { deliveryCharge, roundOff: effectiveRoundOff }, vatMode),
-        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff, vatMode]
+        () => summarizeInvoice({ deliveryCharge, roundOff: effectiveRoundOff }),
+        [items, billDiscount, billDiscountType, deliveryCharge, effectiveRoundOff, vatMode, isReadOnlyInvoice] // eslint-disable-line react-hooks/exhaustive-deps
     );
+    // Each line's slice of the footer discount, keyed by row id (rows render reversed).
+    const footerLineById = useMemo(
+        () => new Map(items.map((it, i) => [it.id, invoiceSummary.lines?.[i]])),
+        [items, invoiceSummary]
+    );
+    const showFooterBreakdown = invoiceSummary.footerDiscountTotal > 0 && !invoiceSummary.headerOnlyFooter;
     const subTotal = invoiceSummary.grossTotal;
     const taxableSubTotal = invoiceSummary.subTotal;
     const totalDiscount = invoiceSummary.itemDiscountTotal;
@@ -1268,8 +1301,9 @@ const SalesInvoice = () => {
     const totalTax = invoiceSummary.tax;
     const netTotal = invoiceSummary.grandTotal;
     const totalCost = items.reduce((acc, i) => acc + ((Number(i.qty) || 0) * (Number(i.cost) || 0)), 0);
-    const totalProfit = taxableSubTotal - totalCost;
-    const marginPercent = taxableSubTotal > 0 ? (totalProfit / taxableSubTotal) * 100 : 0;
+    // Margin on revenue AFTER the footer discount (it reduces what the invoice earns).
+    const totalProfit = invoiceSummary.taxableTotal - totalCost;
+    const marginPercent = invoiceSummary.taxableTotal > 0 ? (totalProfit / invoiceSummary.taxableTotal) * 100 : 0;
 
     // Calculate Outstanding
     const previousOutstanding = customerOutstanding;
@@ -1434,10 +1468,7 @@ const SalesInvoice = () => {
             .filter(Boolean);
         if (linkedSoDiscounts.length === 1) {
             const singleSO = linkedSoDiscounts[0];
-            setBillDiscountType(singleSO.billDiscountType === 'amount' ? 'amount' : 'percent');
-            setBillDiscount(singleSO.billDiscountType === 'amount'
-                ? Number(singleSO.billDiscountFixed || singleSO.billDiscountAmount) || 0
-                : Number(singleSO.billDiscount) || 0);
+            applySourceFooterDiscount(singleSO);
             // Carry SO advance
             const soAdvance = Number(singleSO.advanceAmount);
             if (Number.isFinite(soAdvance) && soAdvance > 0) {
@@ -1530,7 +1561,7 @@ const SalesInvoice = () => {
 
         const so = salesOrdersList.find(s => s.soNumber === soNumber);
         if (so) {
-            setBillDiscount(Number(so.billDiscount) || 0);
+            applySourceFooterDiscount(so);
             // Resolve full customer master so the panel renders phone/balance/TRN/savedAddresses.
             const matched = resolveCustomer(
                 { customerCode: so.customerCode, customerName: so.customerName },
@@ -1605,10 +1636,7 @@ const SalesInvoice = () => {
                 const linkedSO = salesOrdersList.find(s => s.soNumber === dn.salesOrderNo);
 
                 if (linkedSO && linkedSO.items && linkedSO.items.length > 0) {
-                    setBillDiscountType(linkedSO.billDiscountType === 'amount' ? 'amount' : 'percent');
-                    setBillDiscount(linkedSO.billDiscountType === 'amount'
-                        ? Number(linkedSO.billDiscountFixed || linkedSO.billDiscountAmount) || 0
-                        : Number(linkedSO.billDiscount) || 0);
+                    applySourceFooterDiscount(linkedSO);
                     // Carry SO advance so invoice shows pre-paid amount
                     const soAdvance = Number(linkedSO.advanceAmount);
                     if (Number.isFinite(soAdvance) && soAdvance > 0) {
@@ -1773,7 +1801,7 @@ const SalesInvoice = () => {
             if (pi.salesOrderNo) {
                 setLinkedSO(pi.salesOrderNo);
             }
-            setBillDiscount(Number(pi.billDiscount) || 0);
+            applySourceFooterDiscount(pi);
 
             // Auto-fill items from PI
             if (pi.items && pi.items.length > 0) {
@@ -2174,13 +2202,10 @@ const SalesInvoice = () => {
             requestedFulfillmentType: 'Picking',
             customerNotes: invoiceNotes || '',
 
-            items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount)).map(i => {
-                const footerDisc = Number(i.allocatedFooterDiscount) || 0;
-                const preFooterTaxable = Number(i.taxableAmount) || Math.max(0, (Number(i.gross) || 0) * (1 - (Number(i.disc) || 0) / 100));
-                const postFooterTaxable = Math.max(0, preFooterTaxable - footerDisc);
-                const taxPercent = Number(i.tax) || 0;
-                const itemTax = postFooterTaxable * (taxPercent / 100);
-                const itemNet = postFooterTaxable + itemTax;
+            // Preview of the server's allocation — the backend recomputes these and is
+            // authoritative (SalesInvoiceService.applyFooterDiscountAllocation).
+            items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount), vatMode).map(i => {
+                const alloc = i.footerAllocation;
                 const qty = Number(i.qty) || 1;
 
                 return {
@@ -2201,12 +2226,14 @@ const SalesInvoice = () => {
                     price: Number(i.price) || 0,
                     cost: Number(i.cost),
                     discount: Number(i.disc) || 0,
-                    footerDiscount: footerDisc,
+                    footerDiscount: alloc.share,
                     taxRate: Number(i.tax),
-                    taxAmount: itemTax,
-                    grossAmount: Number(i.gross) || 0,
-                    netAmount: itemNet,
+                    taxAmount: alloc.tax,
+                    taxableAmount: alloc.taxable,
+                    grossAmount: alloc.gross,
+                    netAmount: alloc.total,
                     foc: Number(i.foc) || 0,
+                    focUnit: i.focUnit || null,
                     binId: i.binId || null,
                     warehouseId: (i.warehouseId && i.warehouseId !== '')
                         ? Number(i.warehouseId)
@@ -2257,7 +2284,7 @@ const SalesInvoice = () => {
             setInvoiceNo(savedInvoice.invoiceNumber || invoiceNo);
             setStatus(savedInvoice.status);
             if (Array.isArray(savedInvoice.items)) {
-                setItems(savedInvoice.items.map((i, index) => mapServerInvoiceItem(i, Date.now() + index)));
+                setItems(savedInvoice.items.map((i, index) => calculateRow(mapServerInvoiceItem(i, Date.now() + index))));
             }
 
             if (newStatus !== 'Draft') await verifyPickingNoteAfterSave(savedInvoice);
@@ -2286,7 +2313,7 @@ const SalesInvoice = () => {
         if (updatedInvoice?.id) {
             setInvoiceId(updatedInvoice.id);
             setStatus(updatedInvoice.status || status);
-            const updatedItems = (updatedInvoice.items || []).map((i, index) => mapServerInvoiceItem(i, Date.now() + index));
+            const updatedItems = (updatedInvoice.items || []).map((i, index) => calculateRow(mapServerInvoiceItem(i, Date.now() + index)));
             setItems(updatedItems);
             const allBatchesDone = updatedItems.every(i =>
                 !i.batchControlled ||
@@ -2351,10 +2378,7 @@ const SalesInvoice = () => {
         } else {
             setCarriedSoAdvance(0);
         }
-        setBillDiscountType(invoice.billDiscountType === 'amount' ? 'amount' : 'percent');
-        setBillDiscount(invoice.billDiscountType === 'amount'
-            ? Number(invoice.billDiscountFixed || invoice.billDiscountAmount) || 0
-            : Number(invoice.billDiscount) || 0);
+        applySourceFooterDiscount(invoice);
         setDeliveryCharge(Number(invoice.deliveryCharge) || 0);
         setRoundOff(Number(invoice.roundOff) || 0);
         setRoundOffManual(false);
@@ -2828,10 +2852,8 @@ const SalesInvoice = () => {
         const resolvedBillDiscount = Number(billDiscount) || 0;
         const resolvedDeliveryCharge = Number(deliveryCharge) || 0;
         const resolvedRoundOff = Number(effectiveRoundOff) || 0;
-        const resolvedSummary = summarizeSalesItems(items || [], makeFooterDiscount(billDiscountType, resolvedBillDiscount), {
-            deliveryCharge: resolvedDeliveryCharge,
-            roundOff: resolvedRoundOff
-        }, vatMode);
+        // Same summary the screen shows, so print == screen (live or stored values).
+        const resolvedSummary = invoiceSummary;
 
         return {
             title: getInvoiceDocumentTitle(resolvedSummary),
@@ -2846,7 +2868,7 @@ const SalesInvoice = () => {
                 email: fullCustomer?.email || '',
                 trn: fullCustomer?.trn
             },
-            items: (items || []).map(i => ({
+            items: (items || []).map((i, idx) => ({
                 code: i.itemCode || i.code,
                 name: i.itemName || i.name || '',
                 desc: i.description || i.shortDescription || i.desc || '',
@@ -2863,8 +2885,9 @@ const SalesInvoice = () => {
                 price: Number(i.price),
                 disc: Number(i.discount || i.disc),
                 tax: Number(i.taxRate || i.tax),
-                taxAmt: Number(i.taxAmount || i.taxAmt || 0),
-                total: Number(i.netAmount || i.net),
+                // Post-footer line money from the allocation, so printed lines add up
+                // to the printed totals.
+                ...printLineMoney(resolvedSummary.lines?.[idx], i),
                 image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
                 batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
                 batchNumber: Array.isArray(i.batchSelections)
@@ -2877,6 +2900,7 @@ const SalesInvoice = () => {
             })),
             totals: {
                 subTotal: resolvedSummary.grossTotal,
+                taxableAmount: resolvedSummary.taxableTotal,
                 tax: resolvedSummary.tax,
                 grandTotal: resolvedSummary.grandTotal,
                 currency: company?.currencySymbol || company?.currency || 'AED',
@@ -2942,7 +2966,7 @@ const SalesInvoice = () => {
     // using the default Sales Invoice print template. Returns the HTML string,
     // or null if no template could be resolved. `titleOverride` lets callers
     // stamp the document title (e.g. DRAFT INVOICE / TAX INVOICE) for previews.
-    const buildInvoiceHtml = async (dataToPrint, { chosenTemplate = null, titleOverride, forPdf = false } = {}) => {
+    const buildInvoiceHtml = async (dataToPrint, { chosenTemplate = null, titleOverride, forPdf = false, storedValues = false } = {}) => {
         // Resolve which template to print with: an explicit choice from the
         // dropdown, else the last-used one, else the category default, else first.
         let selectedTemplate = chosenTemplate;
@@ -2962,20 +2986,17 @@ const SalesInvoice = () => {
         if (!defaultTemplate) return null;
 
         {
-            // Only treat as percent-type when explicitly flagged — null/missing defaults to amount-safe (no % label).
-            const resolvedBillDiscountType = dataToPrint.billDiscountType === 'percent' ? 'percent' : 'amount';
-            // For percent-type, billDiscount is the percentage. For amount-type (or unknown), use billDiscountAmount.
-            const resolvedBillDiscount = resolvedBillDiscountType === 'percent'
-                ? Number(dataToPrint.billDiscount) || 0
-                : Number(dataToPrint.billDiscountAmount) || 0;
+            const { type: resolvedBillDiscountType, value: resolvedBillDiscount } = resolveSourceFooterDiscount(dataToPrint);
             const resolvedDeliveryCharge = Number(dataToPrint.deliveryCharge) || 0;
             const resolvedRoundOff = Number(dataToPrint.roundOff) || 0;
             const resolvedVatMode = dataToPrint.vatMode
                 || (dataToPrint.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
-            const resolvedSummary = summarizeSalesItems(dataToPrint.items || [], makeFooterDiscount(resolvedBillDiscountType, resolvedBillDiscount), {
-                deliveryCharge: resolvedDeliveryCharge,
-                roundOff: resolvedRoundOff
-            }, resolvedVatMode);
+            const printExtras = { deliveryCharge: resolvedDeliveryCharge, roundOff: resolvedRoundOff };
+            // Saved invoices print their STORED line money (never re-discounted — audit N1);
+            // an unsaved/editable form prints the live allocation.
+            const resolvedSummary = storedValues
+                ? summarizeStoredSalesItems(dataToPrint.items || [], dataToPrint, printExtras, resolvedVatMode)
+                : summarizeSalesItems(dataToPrint.items || [], makeFooterDiscount(resolvedBillDiscountType, resolvedBillDiscount), printExtras, resolvedVatMode);
 
             {
                 // Find Customer details
@@ -3005,7 +3026,7 @@ const SalesInvoice = () => {
                         // silently printing no TRN.
                         trn: fullCustomer?.trn || dataToPrint.customerTrn || ''
                     },
-                    items: (dataToPrint.items || []).map(i => {
+                    items: (dataToPrint.items || []).map((i, idx) => {
                         const isVoided = Boolean(i.voided ?? i.isVoided ?? false);
                         return {
                         code: i.itemCode || i.code,
@@ -3032,8 +3053,12 @@ const SalesInvoice = () => {
                         price: Number(i.price),
                         disc: Number(i.discount || i.disc),
                         tax: Number(i.taxRate || i.tax),
-                        taxAmt: (Number(i.taxAmount || i.taxAmt || 0) === 0 && isVoided) ? undefined : Number(i.taxAmount || i.taxAmt || 0),
-                        total: (Number(i.netAmount || i.net || 0) === 0 && isVoided) ? undefined : Number(i.netAmount || i.net),
+                        ...(isVoided
+                            ? {
+                                taxAmt: Number(i.taxAmount || i.taxAmt || 0) === 0 ? undefined : Number(i.taxAmount || i.taxAmt || 0),
+                                total: Number(i.netAmount || i.net || 0) === 0 ? undefined : Number(i.netAmount || i.net),
+                            }
+                            : printLineMoney(resolvedSummary.lines?.[idx], i)),
                         image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : '',
                         batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
                         // QA-030: provide both joined (legacy) and singular
@@ -3054,17 +3079,17 @@ const SalesInvoice = () => {
                         // True ex-VAT taxable base (after item + footer discount). Passed
                         // explicitly so the renderer doesn't (mis)derive it as
                         // subTotal − discount, which is wrong under VAT-inclusive pricing.
-                        taxableAmount: Math.max(0, (resolvedSummary.subTotal || 0) - (resolvedSummary.footerDiscountTotal || 0)),
+                        taxableAmount: resolvedSummary.taxableTotal,
                         tax: resolvedSummary.tax,
                         grandTotal: resolvedSummary.grandTotal,
                         currency: dataToPrint.currency || company?.currencySymbol || company?.currency || 'AED',
                         // Only show % label when type is explicitly percent; amount-type has no % label.
                         billDiscount: resolvedBillDiscountType === 'percent' ? resolvedBillDiscount : 0,
-                        billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (Number(dataToPrint.billDiscountAmount) || 0),
-                        discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (Number(dataToPrint.billDiscountAmount) || 0),
+                        billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.footerDiscountTotal || 0),
+                        discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.footerDiscountTotal || 0),
                         itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0,
-                        // Use API-stored amount (always correct AED value) rather than re-computed value.
-                        footerDiscountAmount: Number(dataToPrint.billDiscountAmount) || 0,
+                        // Equals Σ printed line footer shares (stored or live allocation).
+                        footerDiscountAmount: resolvedSummary.footerDiscountTotal || 0,
                         deliveryCharge: resolvedDeliveryCharge,
                         roundOff: resolvedRoundOff,
                         // Informational voided-lines disclosure (excluded from grandTotal).
@@ -3142,10 +3167,28 @@ const SalesInvoice = () => {
             // forPdf:false -> use the PRINT renderer (real @page / page-break CSS);
             // the backend renders it with headless Chromium for a correctly
             // paginated, vector PDF (same engine as the print preview).
-            const html = await buildInvoiceHtml(dataToPrint, { titleOverride, forPdf: false });
+            const html = await buildInvoiceHtml(dataToPrint, { titleOverride, forPdf: false, storedValues: Boolean(isListView) || isReadOnlyInvoice });
             if (html) await downloadPdfViaServer(html, dataToPrint.invoiceNumber || 'Sales-Invoice');
         } catch (e) { console.error('Download error:', e); }
         finally { setIsPrinting(false); }
+    };
+
+    // Sends the invoice PDF (same document as Download PDF) on WhatsApp. `invoice` is a list
+    // row; without one it sends the invoice open in the form (API path only once saved).
+    const handleWhatsAppClick = (invoice = null) => {
+        const isListView = invoice && invoice.invoiceNumber;
+        const source = isListView ? invoice : buildCurrentFormPrintSource();
+        const full = customersList.find(c => c.code === source.customerCode);
+        openWhatsApp({
+            documentType: 'SALES_INVOICE',
+            documentId: isListView ? invoice.id : invoiceId,
+            documentNo: source.invoiceNumber,
+            customerName: source.customerName || full?.name,
+            phone: (isListView ? invoice.customerPhone : selectedCustomer?.mobile) || full?.mobile || full?.phone || '',
+            amountText: formatCurrencyDisplay(isListView ? (invoice.invoiceTotal || 0) : netTotal, invoiceCurrency),
+            dateText: source.dueDate ? formatDisplayDate(source.dueDate) : '',
+            buildHtml: () => buildInvoiceHtml(source, { titleOverride: getInvoiceDocumentTitle(source), forPdf: false }),
+        });
     };
 
     const handlePrintClick = async (invoice = null, chosenTemplate = null) => {
@@ -3161,7 +3204,7 @@ const SalesInvoice = () => {
 
         setIsPrinting(true);
         try {
-            const html = await buildInvoiceHtml(dataToPrint, { chosenTemplate, titleOverride });
+            const html = await buildInvoiceHtml(dataToPrint, { chosenTemplate, titleOverride, storedValues: Boolean(isListView) || isReadOnlyInvoice });
             if (html) {
                 printHtml(html);
             } else {
@@ -3755,6 +3798,11 @@ const SalesInvoice = () => {
                                                             className="p-1 hover:bg-sky-100 rounded text-sky-500"
                                                             title="Send Email"
                                                         ><Mail size={14} /></button>
+                                                        <button
+                                                            onClick={() => handleWhatsAppClick(inv)}
+                                                            className="p-1 hover:bg-emerald-50 rounded text-emerald-600"
+                                                            title="WhatsApp"
+                                                        ><MessageCircle size={14} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -4246,6 +4294,8 @@ const SalesInvoice = () => {
                                                                             onOpenSettings={() => setSelectedAddonItem({ ...item })}
                                                                             showSettings={true}
                                                                             isReadOnly={isReadOnlyInvoice}
+                                                                            footerAllocation={footerLineById.get(item.id)}
+                                                                            showFooterBreakdown={showFooterBreakdown}
                                                                             page="salesInvoice"
                                                                         />
                                                                         )}
@@ -4393,7 +4443,11 @@ const SalesInvoice = () => {
                                                                     <td className="px-3 py-2 text-right">
 
                                                                         <div className={`font-bold text-[13px] flex flex-col items-end ${isVoided ? 'text-red-500' : 'text-slate-800'}`}>
-                                                                            {isVoided ? `- ${((item.net) || (item.total) || 0).toFixed(2)}` : ((item.net) || (item.total) || 0).toFixed(2)}
+                                                                            {isVoided
+                                                                                ? `- ${((item.net) || (item.total) || 0).toFixed(2)}`
+                                                                                : (showFooterBreakdown && footerLineById.get(item.id)
+                                                                                    ? Number(footerLineById.get(item.id).total).toFixed(2)
+                                                                                    : ((item.net) || (item.total) || 0).toFixed(2))}
                                                                         </div>
 
                                                                     </td>
@@ -4533,7 +4587,7 @@ const SalesInvoice = () => {
                                                 </div>
                                                 <div className="flex justify-between text-xs text-slate-600 items-center">
                                                     <span className="flex items-center gap-1.5">
-                                                        Footer Discount
+                                                        <span title={FOOTER_DISCOUNT_HELP} className="cursor-help border-b border-dotted border-slate-400">Footer Discount</span>
                                                         <button
                                                             type="button"
                                                             disabled={isReadOnlyInvoice}
@@ -4554,9 +4608,14 @@ const SalesInvoice = () => {
                                                     </span>
                                                     <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={invoiceCurrency} /></span>
                                                 </div>
+                                                {showFooterBreakdown && (
+                                                    <p className="text-[10px] leading-snug text-slate-400 -mt-1" data-testid="footer-discount-help">
+                                                        {FOOTER_DISCOUNT_HELP}
+                                                    </p>
+                                                )}
                                                 <div className="flex justify-between text-xs text-slate-600">
                                                     <span>Taxable Amount</span>
-                                                    <CurrencyAmount value={Math.max(0, taxableSubTotal - billDiscountAmount)} currency={invoiceCurrency} />
+                                                    <CurrencyAmount value={invoiceSummary.taxableTotal} currency={invoiceCurrency} />
                                                 </div>
                                                 <div className="flex justify-between text-xs text-slate-600">
                                                     <span>Total Tax (VAT)</span>
@@ -5094,12 +5153,7 @@ const SalesInvoice = () => {
                         if (!invoiceId) { alert('Please save the Sales Invoice before sending an email.'); return; }
                         setIsEmailModalOpen(true);
                     }}
-                    onWhatsApp={() => {
-                        const full = customersList.find(c => c.code === selectedCustomer?.code);
-                        const digits = String(full?.mobile || full?.phone || selectedCustomer?.mobile || '').replace(/[^0-9]/g, '');
-                        const msg = `Invoice ${invoiceNo} — ${formatCurrencyDisplay(netTotal, invoiceCurrency)}`;
-                        window.open(digits ? `https://wa.me/${digits}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-                    }}
+                    onWhatsApp={() => handleWhatsAppClick()}
                 />
             )}
 
@@ -5124,6 +5178,8 @@ const SalesInvoice = () => {
                     onWhatsAppVoucher={handleSettlementVoucherWhatsApp}
                 />
             )}
+
+            {whatsAppElement}
 
         </div >
     );

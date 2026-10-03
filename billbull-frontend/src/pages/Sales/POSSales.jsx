@@ -12,8 +12,6 @@ import { Separator } from '../../components/ui/separator';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
-import { createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';
-import { getUnits } from '../../api/unitsApi';
 import { getAllCustomers, createCustomer, validateDuplicateCustomer } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
@@ -557,14 +555,6 @@ export default function POSSales() {
 
   // Quick Product Creation Modal State
   const [showQuickProductModal, setShowQuickProductModal] = useState(false);
-  const [quickProductForm, setQuickProductForm] = useState({
-    name: '', code: '', barcode: '', salesPrice: '', costPrice: '', purchasePrice: '', category: '', brand: '',
-    uom: 'Pcs', tax: '5%', openingStock: '', lowStockAlert: '', status: 'Active',
-    sku: '', hsnSac: '', description: '', supplier: '', isBatch: false, isSerial: false, trackInventory: true, allowNegativeStock: false, isDiscountAllowed: true, expandMoreDetails: false
-  });
-  const [quickProductDuplicateWarning, setQuickProductDuplicateWarning] = useState(null);
-  const [quickProductLoading, setQuickProductLoading] = useState(false);
-  const [quickProductError, setQuickProductError] = useState(null);
 
   const [customerHistory, setCustomerHistory] = useState([]);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
@@ -4717,6 +4707,11 @@ export default function POSSales() {
     const zInvoiceCount = zSummary.invoiceCount ?? 0;
     const zTotalTax = zSummary.totalTax ?? 0;
     const zSalesExTax = zSummary.salesAmountExTax ?? 0;
+    // Backend-authoritative returns-aware figures (NetSalesReportingBlock), on the same
+    // VAT-inclusive basis as the Back Office Sales Report. Never recomputed here.
+    const zReturnValue = zSummary.reportingReturnValue ?? 0;
+    const zNetSalesInclTax = zSummary.reportingNetSales ?? 0;
+    const zNetSalesExTax = zSummary.reportingNetSalesExTax ?? 0;
     const zTotalDiscount = zSummary.totalDiscount ?? 0;
     const zTotalItemsSold = zSummary.totalItemsSold ?? 0;
     const zSessions = zReportData?.sessions || [];
@@ -4994,7 +4989,7 @@ export default function POSSales() {
           </div>
           <div className="flex flex-col gap-3 flex-1 justify-end">
             <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Gross Sales</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zTotalSales} /></span></div>
-            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Net Sales</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zSalesExTax} /></span></div>
+            <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Net Sales</span><span className="text-sm font-bold text-[#1E293B]"><CurrencyAmount amount={zNetSalesInclTax} /></span></div>
             <div className="flex justify-between items-center"><span className="text-xs text-gray-500 uppercase">Invoices</span><span className="text-sm font-bold text-[#1E293B]">{String(zInvoiceCount)}</span></div>
           </div>
         </div>
@@ -5523,9 +5518,11 @@ export default function POSSales() {
             rows={[
               ['Gross Sales', <CurrencyAmount key="z1g" amount={zTotalSales} />],
               ['Total Discount', zTotalDiscount > 0 ? `(${formatCurrencyStr(zTotalDiscount)})` : <CurrencyAmount key="z1d" amount={0} />],
-              ['Net Sales Before VAT', <CurrencyAmount key="z1n" amount={zSalesExTax} />],
+              ['Sales (Before VAT)', <CurrencyAmount key="z1n" amount={zSalesExTax} />],
               ['VAT Amount (5%)', <CurrencyAmount key="z1v" amount={zTotalTax} />],
-              ['Net Sales Including VAT', <span key="z1s" className="font-semibold text-[#327F74]"><CurrencyAmount amount={zTotalSales} /></span>],
+              ['Sales Returns', zReturnValue > 0 ? `(${formatCurrencyStr(zReturnValue)})` : <CurrencyAmount key="z1r" amount={0} />],
+              ['Net Sales Before VAT', <CurrencyAmount key="z1nx" amount={zNetSalesExTax} />],
+              ['Net Sales Including VAT', <span key="z1s" className="font-semibold text-[#327F74]"><CurrencyAmount amount={zNetSalesInclTax} /></span>],
             ]}
           />
 
@@ -5722,8 +5719,26 @@ export default function POSSales() {
             cols={['Description', 'Count', 'Amount']}
             rows={[
               ['Sales Returns', String(zSummary.salesReturnCount ?? 0), zSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(zSummary.salesReturnTotal)})` : <CurrencyAmount key="z8sr" amount={0} />],
+              // Refunds Processed and Credit Notes Issued are now derived from refund_method, not
+              // from the free-text returnAction. Only the three rows under "money paid out" are
+              // summed into Refunds Processed; a Customer Credit return is listed on its own and
+              // never counted as a refund, because no money left the drawer.
               ['Refunds Processed', String(zSummary.refundCount ?? 0), zSummary.refundTotal > 0 ? `(${formatCurrencyStr(zSummary.refundTotal)})` : <CurrencyAmount key="z8rf" amount={0} />],
+              ['  — Cash Refund', String(zSummary.returnCashRefundCount ?? 0), zSummary.returnCashRefundTotal > 0 ? `(${formatCurrencyStr(zSummary.returnCashRefundTotal)})` : <CurrencyAmount key="z8rc" amount={0} />],
+              ['  — Card Refund', String(zSummary.returnCardRefundCount ?? 0), zSummary.returnCardRefundTotal > 0 ? `(${formatCurrencyStr(zSummary.returnCardRefundTotal)})` : <CurrencyAmount key="z8rd" amount={0} />],
+              ['  — Bank Transfer', String(zSummary.returnBankRefundCount ?? 0), zSummary.returnBankRefundTotal > 0 ? `(${formatCurrencyStr(zSummary.returnBankRefundTotal)})` : <CurrencyAmount key="z8rb" amount={0} />],
               ['Credit Notes Issued', String(zSummary.creditNoteCount ?? 0), zSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(zSummary.creditNoteTotal)})` : <CurrencyAmount key="z8cn" amount={0} />],
+              ['  — Credit Voucher (liability)', String(zSummary.returnCreditVoucherCount ?? 0), <CurrencyAmount key="z8cv" amount={zSummary.returnCreditVoucherTotal ?? 0} />],
+              ['  — Customer Credit (no cash moved)', String(zSummary.returnCustomerCreditCount ?? 0), <CurrencyAmount key="z8cc" amount={zSummary.returnCustomerCreditTotal ?? 0} />],
+              ...((zSummary.returnLegacyPaidOutCount ?? 0) > 0
+                ? [['  — Legacy refund (instrument not recorded)', String(zSummary.returnLegacyPaidOutCount), <CurrencyAmount key="z8lp" amount={zSummary.returnLegacyPaidOutTotal ?? 0} />]]
+                : []),
+              ...((zSummary.returnLegacyLedgerCreditCount ?? 0) > 0
+                ? [['  — Legacy credit note (instrument not recorded)', String(zSummary.returnLegacyLedgerCreditCount), <CurrencyAmount key="z8lc" amount={zSummary.returnLegacyLedgerCreditTotal ?? 0} />]]
+                : []),
+              ...((zSummary.returnUnclassifiedCount ?? 0) > 0
+                ? [['Unclassified (no refund method, no action)', String(zSummary.returnUnclassifiedCount), <CurrencyAmount key="z8un" amount={zSummary.returnUnclassifiedTotal ?? 0} />]]
+                : []),
               ['Exchange Transactions', String(zSummary.exchangeCount ?? 0), <CurrencyAmount key="z8ex" amount={zSummary.exchangeTotal ?? 0} />],
               ['Total Refunds (Tender)', String(zSummary.totalRefundCount ?? 0), <CurrencyAmount key="z8tr" amount={zSummary.totalRefunds ?? 0} />],
             ]}
@@ -6582,8 +6597,24 @@ export default function POSSales() {
                 cols={['Description', 'Count', 'Amount']}
                 rows={[
                   ['Sales Returns', String(xSummary.salesReturnCount ?? 0), xSummary.salesReturnTotal > 0 ? `(${formatCurrencyStr(xSummary.salesReturnTotal)})` : <CurrencyAmount key="r9sr" amount={0} />],
+                  // Keyed on refund_method — see the Z-Report note. Cash Refund is the only row
+                  // here that should agree with a drawer payout.
                   ['Refunds Processed', String(xSummary.refundCount ?? 0), xSummary.refundTotal > 0 ? `(${formatCurrencyStr(xSummary.refundTotal)})` : <CurrencyAmount key="r9rf" amount={0} />],
+                  ['  — Cash Refund', String(xSummary.returnCashRefundCount ?? 0), xSummary.returnCashRefundTotal > 0 ? `(${formatCurrencyStr(xSummary.returnCashRefundTotal)})` : <CurrencyAmount key="r9rc" amount={0} />],
+                  ['  — Card Refund', String(xSummary.returnCardRefundCount ?? 0), xSummary.returnCardRefundTotal > 0 ? `(${formatCurrencyStr(xSummary.returnCardRefundTotal)})` : <CurrencyAmount key="r9rd" amount={0} />],
+                  ['  — Bank Transfer', String(xSummary.returnBankRefundCount ?? 0), xSummary.returnBankRefundTotal > 0 ? `(${formatCurrencyStr(xSummary.returnBankRefundTotal)})` : <CurrencyAmount key="r9rb" amount={0} />],
                   ['Credit Notes Issued', String(xSummary.creditNoteCount ?? 0), xSummary.creditNoteTotal > 0 ? `(${formatCurrencyStr(xSummary.creditNoteTotal)})` : <CurrencyAmount key="r9cn" amount={0} />],
+                  ['  — Credit Voucher (liability)', String(xSummary.returnCreditVoucherCount ?? 0), <CurrencyAmount key="r9cv" amount={xSummary.returnCreditVoucherTotal ?? 0} />],
+                  ['  — Customer Credit (no cash moved)', String(xSummary.returnCustomerCreditCount ?? 0), <CurrencyAmount key="r9cc" amount={xSummary.returnCustomerCreditTotal ?? 0} />],
+                  ...((xSummary.returnLegacyPaidOutCount ?? 0) > 0
+                    ? [['  — Legacy refund (instrument not recorded)', String(xSummary.returnLegacyPaidOutCount), <CurrencyAmount key="r9lp" amount={xSummary.returnLegacyPaidOutTotal ?? 0} />]]
+                    : []),
+                  ...((xSummary.returnLegacyLedgerCreditCount ?? 0) > 0
+                    ? [['  — Legacy credit note (instrument not recorded)', String(xSummary.returnLegacyLedgerCreditCount), <CurrencyAmount key="r9lc" amount={xSummary.returnLegacyLedgerCreditTotal ?? 0} />]]
+                    : []),
+                  ...((xSummary.returnUnclassifiedCount ?? 0) > 0
+                    ? [['Unclassified (no refund method, no action)', String(xSummary.returnUnclassifiedCount), <CurrencyAmount key="r9un" amount={xSummary.returnUnclassifiedTotal ?? 0} />]]
+                    : []),
                   ['Exchange Transactions', String(xSummary.exchangeCount ?? 0), <CurrencyAmount key="r9ex" amount={xSummary.exchangeTotal ?? 0} />],
                   ['Total Refunds (In-session)', String(xSummary.totalRefundCount ?? 0), <CurrencyAmount key="r9r" amount={xSummary.totalRefunds ?? 0} />],
                 ]}
@@ -6926,106 +6957,22 @@ export default function POSSales() {
     }
   }, [quickCustomerForm, loadPosCustomers, setSelectedCustomer, showDeliveryModal, setDeliveryCustomerId, setDeliveryAddress, showFeedback]);
 
-  const handleSaveQuickProduct = useCallback(async (overrideDuplicate = false) => {
-    try {
-      setQuickProductLoading(true);
-      setQuickProductError(null);
-
-      if (!overrideDuplicate) {
-        const duplicates = await validateDuplicateProductFromPos({
-          name: quickProductForm.name,
-          code: quickProductForm.code,
-          sku: quickProductForm.sku,
-          barcode: quickProductForm.barcode
-        });
-        if (duplicates && duplicates.length > 0) {
-          setQuickProductDuplicateWarning(duplicates);
-          setQuickProductLoading(false);
-          return;
-        }
-      }
-
-      const units = await getUnits();
-      const defaultUnit = units.find(u => u.name?.toLowerCase() === quickProductForm.uom?.toLowerCase()) || units[0];
-      if (!defaultUnit) {
-        throw new Error('No units configured. Please create a unit under Inventory > Units first.');
-      }
-
-      const formData = new FormData();
-      const productReq = {
-        product: {
-          name: quickProductForm.name || 'Unnamed Product',
-          code: quickProductForm.code || `PRD-${Date.now().toString().slice(-6)}`,
-          sku: quickProductForm.sku || `SKU-${Date.now().toString().slice(-6)}`,
-          category: quickProductForm.category || 'General',
-          status: 'ACTIVE',
-          productType: 'STOCK',
-          isBatch: false,
-          isSerial: false,
-          isDiscountAllowed: true,
-          availableInPos: true,
-          detailedDesc: quickProductForm.description,
-          brand: { id: 1 }
-        },
-        pricing: {
-          retailPrice: parseFloat(quickProductForm.sellingPrice) || 0,
-          cost: parseFloat(quickProductForm.purchasePrice) || 0,
-          purchasePrice: parseFloat(quickProductForm.purchasePrice) || 0
-        },
-        tax: {
-          // Blank means "not configured" -> falls back to the branch's Default VAT
-          // Rate at sale time; an explicit 0 is sent through as a zero-rated item.
-          salesTax: quickProductForm.taxRate === '' || quickProductForm.taxRate === null || quickProductForm.taxRate === undefined
-            ? null
-            : Number(quickProductForm.taxRate)
-        },
-        inventory: {
-          openingStock: parseFloat(quickProductForm.initialStock) || 0,
-          minStock: parseFloat(quickProductForm.alertQuantity) || 0,
-          trackInventory: quickProductForm.trackInventory || false,
-          allowNegativeStock: true,
-          defaultUnit: { id: defaultUnit.id },
-          packings: [
-            {
-              level: 'L1',
-              unit: defaultUnit.id,
-              conversion: 1,
-              baseQty: 1,
-              isSale: true,
-              isPurchase: true,
-              isLPO: false,
-              cost: parseFloat(quickProductForm.purchasePrice) || 0,
-              price: parseFloat(quickProductForm.sellingPrice) || 0,
-              barcode: quickProductForm.barcode || ''
-            }
-          ]
-        }
-      };
-
-      formData.append('data', JSON.stringify(productReq));
-
-      const newProdRes = await createProductFromPos(formData);
-      await loadPosProducts(0, false);
-
-      if (newProdRes && newProdRes.product) {
-        const mappedProduct = mapPosProductAggregateItem(newProdRes);
-        const res = handleProductSelection(mappedProduct);
-        if (res?.deferred) {
-          showFeedback('success', `${mappedProduct.name} created — confirm the entry to add it.`);
-        } else if (res && res.ok === false) {
-          showFeedback('error', res.reason || `${mappedProduct.name} created but could not be added.`);
-        } else {
-          showFeedback('success', `${mappedProduct.name} created and added to cart!`);
-        }
-      }
-
-      setShowQuickProductModal(false);
-    } catch (err) {
-      setQuickProductError(err.response?.data?.message || err.message || 'Failed to create product');
-    } finally {
-      setQuickProductLoading(false);
+  // QuickAddProductModal owns the form, duplicate check and create call; this only
+  // refreshes the catalog and drops the new product into the cart.
+  const handleQuickProductCreated = useCallback(async (newProdRes) => {
+    setShowQuickProductModal(false);
+    await loadPosProducts(0, false);
+    if (!newProdRes?.product) return;
+    const mappedProduct = mapPosProductAggregateItem(newProdRes);
+    const res = handleProductSelection(mappedProduct);
+    if (res?.deferred) {
+      showFeedback('success', `${mappedProduct.name} created — confirm the entry to add it.`);
+    } else if (res && res.ok === false) {
+      showFeedback('error', res.reason || `${mappedProduct.name} created but could not be added.`);
+    } else {
+      showFeedback('success', `${mappedProduct.name} created and added to cart!`);
     }
-  }, [quickProductForm, loadPosProducts, handleProductSelection, showFeedback]);
+  }, [loadPosProducts, handleProductSelection, showFeedback]);
 
   const handleCheckout = useCallback(() => {
     // Verification is asked for HERE, at Checkout, rather than at settlement: the cashier is told
@@ -7054,7 +7001,7 @@ export default function POSSales() {
   const touchScreenProps = {
     handleCheckout,
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
-    showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
+    showQuickProductModal, setShowQuickProductModal, handleQuickProductCreated,
     setCurrentView, currentSession, sessionId, posSettings,
     currentInvoice, currentInvoiceRef, invoiceCounter,
     posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,

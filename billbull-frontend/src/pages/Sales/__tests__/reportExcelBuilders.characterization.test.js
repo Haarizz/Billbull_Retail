@@ -37,6 +37,11 @@ const Z_REPORT = {
     creditInvoiceCount: 1,
     totalRefunds: 60,
     totalRefundCount: 1,
+    salesReturnTotal: 105,
+    reportingReturnValue: 105,
+    reportingNetSales: 3245.75,
+    reportingNetSalesExTax: 3091.19,
+    netSalesBasis: 'VAT_INCLUSIVE',
     expectedCash: 2450.5,
     cashDropIn: 100,
     cashDropOut: 250,
@@ -121,10 +126,19 @@ describe('buildZReportExcelSections', () => {
 
   it('carries the day sales figures through unmodified', () => {
     expect(findRow(rows, 'Gross Sales').Amount).toBe(3350.75);
-    expect(findRow(rows, 'Net Sales Before VAT').Amount).toBe(3191.19);
+    expect(findRow(rows, 'Sales (Before VAT)').Amount).toBe(3191.19);
     // CHARACTERIZED QUIRK: the label hard-codes "(5%)" regardless of the actual rate —
     // the same defect the Z view-model carries.
     expect(findRow(rows, 'VAT Amount (5%)').Amount).toBe(159.56);
+  });
+
+  it('deducts approved Sales Returns from both Net Sales rows', () => {
+    // The export used to emit 'Net Sales Including VAT' equal to Gross Sales and had no
+    // returns row at all, so a day with returns exported the same Net Sales as a day
+    // without any. Both figures are the backend's, on the VAT-inclusive reporting basis.
+    expect(findRow(rows, 'Sales Returns').Amount).toBe(105);
+    expect(findRow(rows, 'Net Sales Before VAT').Amount).toBe(3091.19);
+    expect(findRow(rows, 'Net Sales Including VAT').Amount).toBe(3245.75);
   });
 
   it('sums opening cash across every session of the day', () => {

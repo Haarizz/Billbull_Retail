@@ -50,6 +50,7 @@ import {
 } from '../../api/salesorderApi';
 import { getTemplatesByCategory } from '../../api/printTemplateApi';
 import { formatDisplayDate } from '../../utils/dateUtils';
+import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
@@ -64,7 +65,7 @@ import { useBranch } from '../../context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendSalesOrderEmail } from '../../api/salesorderApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -200,6 +201,8 @@ const SalesOrders = () => {
   // ✅ FIX 1: ADD ORDER ID STATE
   const [orderId, setOrderId] = useState(null);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false); // QA-040: Send-Email modal
+  // WhatsApp: PDF via the Business API when configured, else download + wa.me chat.
+  const { openWhatsApp, whatsAppElement } = useWhatsAppDocumentSend();
   // Originating branch of the loaded SO — drives print/email header (PDF §7.1).
   const [loadedSoBranchId, setLoadedSoBranchId] = useState(null);
   const [overflowMenu, setOverflowMenu] = useState(null); // { id, order, top, right }
@@ -656,9 +659,23 @@ const SalesOrders = () => {
     return () => document.removeEventListener('mousedown', handleOutside);
   }, [overflowMenu]);
 
+  // Every pre-fill / reload path takes the footer discount through ONE resolver so its
+  // type and value are never lost or reinterpreted (QTN/PI -> SO, reopen).
+  const applySourceFooterDiscount = (src) => {
+    const { type, value } = resolveSourceFooterDiscount(src);
+    setBillDiscountType(type);
+    setBillDiscount(value);
+  };
+
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode);
+    const itemSummary = isLocked
+      ? summarizeStoredSalesItems(items, {
+        billDiscountType,
+        billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
+        billDiscountAmount: billDiscountType === 'amount' ? billDiscount : 0,
+      }, {}, vatMode)
+      : summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode);
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
@@ -673,13 +690,16 @@ const SalesOrders = () => {
       return acc + (qty * unitCost);
     }, 0);
 
-    const profit = subTotal - totalCost;
-    const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
+    // Margin on revenue AFTER the footer discount.
+    const profit = itemSummary.taxableTotal - totalCost;
+    const marginPercent = itemSummary.taxableTotal > 0 ? (profit / itemSummary.taxableTotal) * 100 : 0;
 
-    return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
+    return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent, itemSummary };
   };
 
-  const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
+  const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent, itemSummary } = calculateTotals();
+  const orderLineFor = summaryLineLookup(items, itemSummary);
+  const showFooterBreakdown = itemSummary.footerDiscountTotal > 0 && !itemSummary.headerOnlyFooter;
 
   // --- ACTIONS ---
 
@@ -770,6 +790,10 @@ const SalesOrders = () => {
       tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 0,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
       total: Number(item.total ?? item.lineTotal) || 0,
+      // Saved order lines keep the server's stored (post-footer) money for display.
+      serverLine: (item.soItemId && item.lineTotal != null && item.taxAmount != null)
+        ? { lineTotal: item.lineTotal, taxAmount: item.taxAmount, footerDiscount: item.footerDiscount ?? null, taxableAmount: item.taxableAmount ?? null }
+        : undefined,
       binId: item.binId ?? null,
       binCode: item.binCode || '',
       // QA-001: carry productType through so SERVICE lines stay gated post-conversion
@@ -1134,8 +1158,7 @@ const SalesOrders = () => {
         price: Number(i.price),
         disc: Number(i.disc),
         tax: Number(i.tax),
-        taxAmt: Number(i.taxAmt || 0),
-        total: Number(i.total),
+        ...printLineMoney(orderLineFor(i), i),
         image: i.image ? getImageUrl(i.image) : '',
         batchNumber: i.batchNumber || '',
         batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
@@ -1143,6 +1166,7 @@ const SalesOrders = () => {
       })),
       totals: {
         subTotal: grossTotal,
+        taxableAmount: itemSummary.taxableTotal,
         tax: totalTax,
         grandTotal: orderTotal,
         currency: company?.currencySymbol || company?.currency || 'AED',
@@ -1168,6 +1192,47 @@ const SalesOrders = () => {
         };
       })()
     };
+  };
+
+  // Print HTML of the order loaded in the editor — what Print shows and what WhatsApp sends.
+  // Null when no default Sales Order template exists.
+  const buildSoHtml = async () => {
+    const templates = await getTemplatesByCategory('Sales Order (SO)');
+    const defaultTemplate = templates.find(t => t.isDefault);
+    if (!defaultTemplate) return null;
+    return generatePrintHtmlAsync(defaultTemplate, buildSoPrintData(), {
+      companyProfile: buildDocumentHeaderProfile({
+        company,
+        branches: availableBranches || [],
+        branchId: loadedSoBranchId ?? activeBranch?.id,
+      }),
+      billBullLogo
+    });
+  };
+  // Print data comes from editor state, and a list-row send loads the order into the editor
+  // first — so the dialog must call the builder from the latest render, not the click's.
+  const buildSoHtmlRef = useRef(buildSoHtml);
+  buildSoHtmlRef.current = buildSoHtml;
+
+  // `order` is a list row (loaded into the editor first); without one, sends the open order.
+  const handleOrderWhatsApp = (order = null) => {
+    if (order) handleLoadOrder(order);
+    const id = order ? order.id : orderId;
+    const number = order ? order.soNumber : soNumber;
+    const code = order ? order.customerCode : selectedCustomer?.code;
+    const full = customersList.find(c => c.code === code);
+    const total = order ? order.orderTotal : orderTotal;
+    const delivery = order ? order.expectedDeliveryDate : expectedDelivery;
+    openWhatsApp({
+      documentType: 'SALES_ORDER',
+      documentId: id,
+      documentNo: number,
+      customerName: full?.name || (order ? order.customerName : selectedCustomer?.name),
+      phone: full?.mobile || full?.phone || '',
+      amountText: `${orderCurrency} ${Number(total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      dateText: delivery ? formatDisplayDate(delivery) : '',
+      buildHtml: () => buildSoHtmlRef.current(),
+    });
   };
 
   const handlePrintClick = async () => {
@@ -1287,11 +1352,9 @@ const SalesOrders = () => {
       status: targetStatus,
 
       // Map Items
+      // Preview of the server's allocation — SalesOrderService recomputes it authoritatively.
       items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount), vatMode).map(i => {
-        const footerDisc = Number(i.allocatedFooterDiscount) || 0;
-        const itemNet = Math.max(0, Number(i.total || 0) - (Number(i.taxAmt || 0)) - footerDisc);
-        const taxPercent = Number(i.tax) || 0;
-        const itemTax = (itemNet) * (taxPercent / 100);
+        const alloc = i.footerAllocation;
         return {
           id: (orderId && i.soItemId) ? i.soItemId : null,
           itemCode: i.code,
@@ -1304,10 +1367,11 @@ const SalesOrders = () => {
           price: Number(i.price),
           cost: Number(i.cost),
           discount: Number(i.disc),
-          footerDiscount: footerDisc,
+          footerDiscount: alloc.share,
           taxRate: Number(i.tax),
-          taxAmount: itemTax,
-          lineTotal: itemNet + itemTax,
+          taxAmount: alloc.tax,
+          taxableAmount: alloc.taxable,
+          lineTotal: alloc.total,
           foc: Number(i.foc) || 0,
           focUnit: i.focUnit || i.unit || 'PCS',
           binId: i.binId || null
@@ -1463,10 +1527,7 @@ const SalesOrders = () => {
     setLinkedQtn(qtn.qtnNo);
     setLinkedPi('');
     setLinkedSourceSearch(qtn.qtnNo || '');
-    setBillDiscountType(qtn.billDiscountType === 'amount' ? 'amount' : 'percent');
-    setBillDiscount(qtn.billDiscountType === 'amount'
-      ? Number(qtn.billDiscountFixed || qtn.billDiscountAmount) || 0
-      : Number(qtn.billDiscount) || 0);
+    applySourceFooterDiscount(qtn);
 
     if (qtn.customer || qtn.customerId || qtn.customerCode) {
       // Centralised resolution: id → code → name → fuzzy. Falls back to a thin
@@ -1503,7 +1564,7 @@ const SalesOrders = () => {
     setLinkedPi(proforma.piNumber || '');
     setLinkedQtn('');
     setLinkedSourceSearch(proforma.piNumber || '');
-    setBillDiscount(Number(proforma.billDiscount) || 0);
+    applySourceFooterDiscount(proforma);
 
     const { customer: cust, shippingAddress: resolvedShipping } = hydrateCustomerFromSource(
       {
@@ -1558,10 +1619,7 @@ const SalesOrders = () => {
     }
 
     setAdvanceAmount(order.advanceAmount || 0);
-    setBillDiscountType(order.billDiscountType === 'amount' ? 'amount' : 'percent');
-    setBillDiscount(order.billDiscountType === 'amount'
-        ? Number(order.billDiscountFixed || order.billDiscountAmount) || 0
-        : Number(order.billDiscount) || 0);
+    applySourceFooterDiscount(order);
     setPaymentMethod(order.paymentMethod || 'Cash');
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
@@ -1808,7 +1866,7 @@ const SalesOrders = () => {
           {canExport('sales.order') && (
             <>
               <button
-                onClick={() => { setOverflowMenu(null); handleLoadOrder(overflowMenu.order); setIsEmailModalOpen(true); }}
+                onClick={() => { const o = overflowMenu.order; setOverflowMenu(null); handleOrderWhatsApp(o); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-slate-700 transition-colors"
               >
                 <MessageCircle size={13} className="text-green-500" /> WhatsApp
@@ -1895,10 +1953,8 @@ const SalesOrders = () => {
                 <Mail className="h-4 w-4" /> Email
               </button>
               <button onClick={() => {
-                const fullCustomer = customersList.find(c => c.code === selectedCustomer?.code);
-                const phone = (fullCustomer?.mobile || fullCustomer?.phone || '').replace(/\D/g, '');
-                if (phone) window.open(`https://wa.me/${phone}`, '_blank');
-                else alert('No phone number found for this customer.');
+                if (!orderId) { alert('Please save the Sales Order before sending it on WhatsApp.'); return; }
+                handleOrderWhatsApp();
               }} className="flex-1 sm:flex-none h-8 px-2.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 text-sm font-medium transition-colors">
                 <MessageCircle className="h-4 w-4" /> WhatsApp
               </button>
@@ -2144,6 +2200,15 @@ const SalesOrders = () => {
                             title="Send Email"
                           >
                             <Mail size={14} />
+                          </button>
+                        )}
+                        {canExport('sales.order') && (
+                          <button
+                            onClick={() => handleOrderWhatsApp(order)}
+                            className="p-1.5 hover:bg-emerald-50 rounded text-emerald-600 transition-colors"
+                            title="WhatsApp"
+                          >
+                            <MessageCircle size={14} />
                           </button>
                         )}
 
@@ -2550,6 +2615,8 @@ const SalesOrders = () => {
                               showSettings={Boolean(item.code || item.desc || item.remarks)}
                               showTaxDiscount={true}
                               onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
+                              footerAllocation={orderLineFor(item)}
+                              showFooterBreakdown={showFooterBreakdown}
                               page="sales_orders"
                             />
                             )}
@@ -2637,7 +2704,9 @@ const SalesOrders = () => {
                           {/* Line Total */}
                           <td className="p-2 text-center align-middle w-24">
                             <div className="font-bold text-slate-800 text-sm">
-                              {((item.total) || 0).toFixed(2)}
+                              {(showFooterBreakdown && orderLineFor(item)
+                                ? Number(orderLineFor(item).total)
+                                : Number(item.total || 0)).toFixed(2)}
                             </div>
                           </td>
 
@@ -2793,7 +2862,7 @@ const SalesOrders = () => {
                 </div>
                 <div className="flex justify-between text-slate-600 items-center">
                   <span className="flex items-center gap-1.5">
-                    Footer Discount
+                    <span title={FOOTER_DISCOUNT_HELP} className="cursor-help border-b border-dotted border-slate-400">Footer Discount</span>
                     <button
                       type="button"
                       disabled={isLocked}
@@ -2813,6 +2882,15 @@ const SalesOrders = () => {
                     />
                   </span>
                   <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={orderCurrency} /></span>
+                </div>
+                {showFooterBreakdown && (
+                  <p className="text-[10px] leading-snug text-slate-400 -mt-1" data-testid="footer-discount-help">
+                    {FOOTER_DISCOUNT_HELP}
+                  </p>
+                )}
+                <div className="flex justify-between text-slate-600">
+                  <span>Taxable Amount</span>
+                  <CurrencyAmount value={itemSummary.taxableTotal} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tax</span>
@@ -3167,6 +3245,8 @@ const SalesOrders = () => {
         apiFn={sendSalesOrderEmail}
         buildPayload={buildSoPrintData}
       />
+
+      {whatsAppElement}
     </main>
     </div>
   );

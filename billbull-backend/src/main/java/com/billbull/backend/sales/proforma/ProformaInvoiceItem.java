@@ -28,6 +28,9 @@ public class ProformaInvoiceItem {
 	private BigDecimal taxPercent;
 	private BigDecimal discountPercent;
 	private BigDecimal taxableAmount;
+	/** This line's share of the document footer discount (money). */
+	@Column(name = "footer_discount", precision = 15, scale = 2)
+	private BigDecimal footerDiscount;
 	private BigDecimal taxAmount;
 	private BigDecimal lineTotal;
 	private Integer foc;
@@ -164,4 +167,12 @@ public class ProformaInvoiceItem {
 	}
 
 	// getters & setters
+
+	public BigDecimal getFooterDiscount() {
+		return footerDiscount;
+	}
+
+	public void setFooterDiscount(BigDecimal footerDiscount) {
+		this.footerDiscount = footerDiscount;
+	}
 }

@@ -106,7 +106,7 @@ class PartyDetailPermissionTest {
 
     private SalesInvoiceController invoiceController() {
         return new SalesInvoiceController(salesInvoiceService, customerContactService,
-                modulePermissionService, emailSender, salespersonAttributionService);
+                modulePermissionService, emailSender, salespersonAttributionService, null, null);
     }
 
     @Test

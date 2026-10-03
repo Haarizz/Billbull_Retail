@@ -57,7 +57,7 @@ import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/sale
 import { resolveLineTaxRate, computeLineTaxTotals } from '../../utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
 import billBullLogo from '../../assets/billBullLogo.png';
 import { useCompany } from '../../context/CompanyContext';
 import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
@@ -341,12 +341,31 @@ const ProformaInvoice = () => {
 
   // Summary Calcs
   const [billDiscount, setBillDiscount] = useState(0);
+  // Footer discount type — Proforma now matches the other sales documents: % or fixed amount.
+  const [billDiscountType, setBillDiscountType] = useState('percent'); // 'percent' | 'amount'
   // VAT mode — drives line tax math (inclusive vs exclusive), mirrors Quotations/SalesOrders/SalesInvoice.
   const [vatMode, setVatMode] = useState('EXCLUSIVE');
+  // Every pre-fill / reload path takes the footer discount through ONE resolver
+  // (QTN/SO -> Proforma used to drop it entirely).
+  const applySourceFooterDiscount = (src) => {
+    const { type, value } = resolveSourceFooterDiscount(src);
+    setBillDiscountType(type);
+    setBillDiscount(value);
+  };
+  // Issued (read-only) Proformas show their stored server values; drafts show the live
+  // allocation, which is exactly what ProformaService saves.
   const proformaSummary = useMemo(
-    () => summarizeSalesItems(items, billDiscount, {}, vatMode),
-    [items, billDiscount, vatMode]
+    () => (isReadOnly
+      ? summarizeStoredSalesItems(items, {
+        billDiscountType,
+        billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
+        billDiscountAmount: billDiscountType === 'amount' ? billDiscount : 0,
+      }, {}, vatMode)
+      : summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode)),
+    [items, billDiscount, billDiscountType, vatMode, isReadOnly]
   );
+  const proformaLineFor = useMemo(() => summaryLineLookup(items, proformaSummary), [items, proformaSummary]);
+  const showFooterBreakdown = proformaSummary.footerDiscountTotal > 0 && !proformaSummary.headerOnlyFooter;
   const grossTotal = proformaSummary.grossTotal;
   const totalItemDiscount = proformaSummary.itemDiscountTotal;
   const subTotal = proformaSummary.subTotal;
@@ -569,17 +588,16 @@ const ProformaInvoice = () => {
         price: Number(i.price),
         disc: Number(i.disc),
         tax: Number(i.tax),
-        taxableAmount: Number(i.taxableAmount || 0),
-        taxAmt: Number(i.taxAmt || 0),
-        total: Number(i.total),
+        ...printLineMoney(proformaLineFor(i), i),
         image: i.image ? getImageUrl(i.image) : ''
       })),
       totals: {
         subTotal: grossTotal,
+        taxableAmount: proformaSummary.taxableTotal,
         tax: totalTax,
         grandTotal,
         currency: company?.currencySymbol || company?.currency || 'AED',
-        billDiscount: Number(billDiscount) || 0,
+        billDiscount: billDiscountType === 'percent' ? Number(billDiscount) || 0 : 0,
         billDiscountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
         discountAmount: (totalItemDiscount || 0) + (billDiscountAmount || 0),
         itemDiscountAmount: totalItemDiscount || 0,
@@ -913,7 +931,7 @@ const ProformaInvoice = () => {
       setLinkedSO(full.salesOrderNo || "");
       setReservationWarehouseId(full.warehouseId || defaultBranch?.defaultWarehouseId || null);
       setLiveStockMap({});
-      setBillDiscount(Number(full.billDiscount) || 0);
+      applySourceFooterDiscount(full);
       setVatMode(full.taxInclusive ? 'INCLUSIVE' : 'EXCLUSIVE');
       setSourceType(full.quotationNo ? 'Quotation' : full.salesOrderNo ? 'Sales Order' : 'None');
       setSourceSearch('');
@@ -925,7 +943,13 @@ const ProformaInvoice = () => {
 
       // Map Items safely by calculating correctly
       const mappedItems = (full.items || []).map((item, index) =>
-        normalizeProformaItem(item, item.id || Date.now() + index + Math.random())
+        ({
+          ...normalizeProformaItem(item, item.id || Date.now() + index + Math.random()),
+          // Stored (post-footer) server money, displayed as-is for issued Proformas.
+          serverLine: (item.lineTotal != null && item.taxAmount != null)
+            ? { lineTotal: item.lineTotal, taxAmount: item.taxAmount, footerDiscount: item.footerDiscount ?? null, taxableAmount: item.taxableAmount ?? null }
+            : undefined,
+        })
       );
       setItems(mappedItems.length > 0 ? mappedItems : [createBlankProformaItem()]);
 
@@ -1004,7 +1028,9 @@ const ProformaInvoice = () => {
         salesOrderNo: linkedSO || null,
         paymentMethod,
         advancePaid: finalAdvance,
-        billDiscount: Number(billDiscount),
+        billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+        billDiscountType,
+        billDiscountAmount: billDiscountType === 'amount' ? Number(billDiscount) : 0,
         taxInclusive: vatMode === 'INCLUSIVE',
         paymentNotes,
         notesToCustomer,
@@ -1124,7 +1150,9 @@ const ProformaInvoice = () => {
         salesOrderNo: linkedSO || null,
         paymentMethod,
         advancePaid: Number(advanceAmount),
-        billDiscount: Number(billDiscount),
+        billDiscount: billDiscountType === 'percent' ? Number(billDiscount) : 0,
+        billDiscountType,
+        billDiscountAmount: billDiscountType === 'amount' ? Number(billDiscount) : 0,
         taxInclusive: vatMode === 'INCLUSIVE',
         paymentNotes,
         notesToCustomer,
@@ -1259,6 +1287,7 @@ const ProformaInvoice = () => {
     setSourceSearch('');
     try {
       const full = await getQuotationById(qtn.id);
+      applySourceFooterDiscount(full);
       const matchedCust = customersList.find(c => c.code === (full.customerCode || qtn.customerCode) || c.name === (full.customerName || qtn.customerName));
       if (matchedCust) {
         setSelectedCustomer(matchedCust);
@@ -1292,6 +1321,7 @@ const ProformaInvoice = () => {
     setSourceSearch('');
     try {
       const full = await getSalesOrderById(so.id);
+      applySourceFooterDiscount(full);
       const matchedCust = customersList.find(c => c.code === (full.customerCode || so.customerCode));
       if (matchedCust) {
         setSelectedCustomer(matchedCust);
@@ -2072,6 +2102,8 @@ const ProformaInvoice = () => {
                                   showSettings={Boolean(item.code || item.desc || item.remarks)}
                                   showTaxDiscount={true}
                                   isReadOnly={isReadOnly}
+                                  footerAllocation={proformaLineFor(item)}
+                                  showFooterBreakdown={showFooterBreakdown}
                                   page="proforma_invoice"
                                 />
                                 )}
@@ -2130,7 +2162,7 @@ const ProformaInvoice = () => {
                                 </div>
                               </td>
                               <td className="p-2 text-center align-middle w-24">
-                                <div className="font-bold text-slate-800 text-sm">{Number(item.total || 0).toFixed(2)}</div>
+                                <div className="font-bold text-slate-800 text-sm">{(showFooterBreakdown && proformaLineFor(item) ? Number(proformaLineFor(item).total) : Number(item.total || 0)).toFixed(2)}</div>
                               </td>
                               <td className="p-2 text-center align-middle w-16">
                                 {!isReadOnly && (
@@ -2263,10 +2295,21 @@ const ProformaInvoice = () => {
                       </div>
                       <div className="flex justify-between text-slate-600 items-center">
                         <div className="flex items-center gap-2">
-                          <span>Discount (%)</span>
+                          <span title={FOOTER_DISCOUNT_HELP} className="cursor-help border-b border-dotted border-slate-400">Footer Discount</span>
+                          <button
+                            type="button"
+                            disabled={isReadOnly}
+                            onClick={() => { setBillDiscountType(t => (t === 'percent' ? 'amount' : 'percent')); setBillDiscount(0); }}
+                            className="text-[10px] px-1.5 py-0.5 rounded border border-slate-300 bg-slate-50 hover:bg-yellow-50 hover:border-yellow-400 disabled:cursor-not-allowed transition-colors"
+                            title="Toggle between percentage and fixed amount"
+                          >{billDiscountType === 'percent' ? '%' : currency || 'AED'}</button>
                           <input
                             type="number"
-                            className="w-10 p-1 text-center border border-slate-200/50 rounded text-xs focus:border-yellow-400 outline-none"
+                            min="0"
+                            max={billDiscountType === 'percent' ? 100 : undefined}
+                            step={billDiscountType === 'percent' ? 1 : 0.01}
+                            disabled={isReadOnly}
+                            className="w-16 p-1 text-center border border-slate-200/50 rounded text-xs focus:border-yellow-400 outline-none disabled:bg-slate-50"
                             value={billDiscount}
                             onChange={(e) => setBillDiscount(Number(e.target.value))}
                           />
@@ -2274,6 +2317,15 @@ const ProformaInvoice = () => {
                         <span className="font-medium">
                           {billDiscountAmount > 0 ? '-' : ''}<CurrencyAmount value={billDiscountAmount} currency={currency} />
                         </span>
+                      </div>
+                      {showFooterBreakdown && (
+                        <p className="text-[10px] leading-snug text-slate-400" data-testid="footer-discount-help">
+                          {FOOTER_DISCOUNT_HELP}
+                        </p>
+                      )}
+                      <div className="flex justify-between text-slate-600">
+                        <span>Taxable Amount</span>
+                        <CurrencyAmount value={proformaSummary.taxableTotal} currency={currency} className="font-medium" />
                       </div>
                       <div className="flex justify-between text-slate-600">
                         <span>Tax Total</span>

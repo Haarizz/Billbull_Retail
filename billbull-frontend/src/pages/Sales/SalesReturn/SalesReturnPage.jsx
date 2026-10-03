@@ -509,7 +509,7 @@ const SalesReturn = () => {
    // user clicks Save Draft on a record that can never be saved.
    const isLocked = String(returnStatus || '').toUpperCase() === 'APPROVED';
 
-   const handleSave = async (statusOverride = null) => {
+   const handleSave = async () => {
       if (isLocked) {
          alert('This return has already been approved and cannot be modified. Create a reversal instead.');
          return;
@@ -549,7 +549,10 @@ const SalesReturn = () => {
       const payload = {
          id: returnId,
          returnNumber: returnNo,
-         returnDate: returnDate,
+         // No returnDate and no status: the server stamps the branch's business day as the
+         // return's accounting date, and refuses an APPROVED status on this endpoint. Approval
+         // runs through updateSalesReturnStatus, which is the only path that moves stock, posts
+         // to the ledger and settles the refund.
          customerCode,
          customerName,
          linkedInvoice,
@@ -560,7 +563,6 @@ const SalesReturn = () => {
          reason,
          returnAction,
          internalNotes,
-         status: statusOverride || returnStatus,
          items: items.filter(i => i.returnQty > 0)
       };
 

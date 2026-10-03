@@ -18,7 +18,9 @@ import com.billbull.backend.sales.payment.TenderBucket;
 import com.billbull.backend.sales.returns.SalesReturn;
 import com.billbull.backend.sales.returns.SalesReturnItem;
 import com.billbull.backend.sales.returns.SalesReturnRepository;
-import com.billbull.backend.sales.returns.SalesReturnStatus;
+import com.billbull.backend.sales.returns.reporting.NetSalesReportingBlock;
+import com.billbull.backend.sales.returns.reporting.SalesReturnReportingService;
+import com.billbull.backend.sales.returns.reporting.SalesReturnReportingTotals;
 import com.billbull.backend.sales.salesorder.SalesOrder;
 import com.billbull.backend.sales.salesorder.SalesOrderItem;
 import com.billbull.backend.sales.salesorder.SalesOrderRepository;
@@ -50,6 +52,7 @@ public class SalesReportDataService {
     private final CustomerRepository customerRepository;
     private final ProductRepository productRepository;
     private final PaymentRepository paymentRepository;
+    private final SalesReturnReportingService returnReportingService;
 
     public SalesReportDataService(
             SalesInvoiceRepository invoiceRepository,
@@ -58,7 +61,8 @@ public class SalesReportDataService {
             DeliveryNoteRepository deliveryNoteRepository,
             CustomerRepository customerRepository,
             ProductRepository productRepository,
-            PaymentRepository paymentRepository) {
+            PaymentRepository paymentRepository,
+            SalesReturnReportingService returnReportingService) {
         this.invoiceRepository = invoiceRepository;
         this.returnRepository = returnRepository;
         this.orderRepository = orderRepository;
@@ -66,6 +70,7 @@ public class SalesReportDataService {
         this.customerRepository = customerRepository;
         this.productRepository = productRepository;
         this.paymentRepository = paymentRepository;
+        this.returnReportingService = returnReportingService;
     }
 
     @Transactional(readOnly = true)
@@ -228,7 +233,12 @@ public class SalesReportDataService {
                 .filter(invoice -> matchesInvoiceSearch(invoice, search))
                 .collect(Collectors.toList());
 
+        // Branch-scoped exactly like the invoices above. Without this filter the report
+        // subtracted EVERY branch's returns from the selected branch's sales, so on a
+        // multi-branch tenant a branch that had taken no returns at all could still show its
+        // Net Sales reduced — and the group total was the only figure that happened to be right.
         data.returns = returnRepository.findForReports(dateFrom, dateTo).stream()
+                .filter(salesReturn -> matchesReturnBranch(salesReturn, branchId))
                 .filter(salesReturn -> matchesCustomerCode(salesReturn.getCustomerCode(), customerCode))
                 .filter(salesReturn -> salesReturn.getItems() == null
                         || containsReturnItem(salesReturn.getItems(), data.itemCodeFilter))
@@ -319,18 +329,31 @@ public class SalesReportDataService {
     private SalesReportDataResponse salesSummary(SalesDataset data) {
         SalesReportDataResponse report = base("sales-summary", "Sales Summary Report",
                 "Total sales, net sales, VAT, COGS, gross profit and customer contribution.");
-        double grossSales = sumInvoices(data.invoices, true, true);
-        double returns = sumReturns(data.returns);
-        double tax = data.invoices.stream().filter(this::isRecognizedInvoice).mapToDouble(i -> n(i.getTaxTotal())).sum();
+        // One shared reporting block, the same one the POS X/Z reports publish, so Gross Sales,
+        // Returns, Net Sales and the VAT figures are the same arithmetic on the same basis in
+        // every report. Basis is VAT-inclusive — see NetSalesReportingBlock.
+        SalesReturnReportingTotals returnTotals = returnReportingService.totalsOf(data.returns);
+        NetSalesReportingBlock block = NetSalesReportingBlock.of(
+                java.math.BigDecimal.valueOf(sumInvoices(data.invoices, true, true)),
+                java.math.BigDecimal.valueOf(data.invoices.stream().filter(this::isRecognizedInvoice)
+                        .mapToDouble(i -> n(i.getTaxTotal())).sum()),
+                0, returnTotals);
+
+        double grossSales = block.grossSales().doubleValue();
+        double returns = block.returnValue().doubleValue();
         double discount = totalDiscount(data.invoices);
         double cost = totalCost(data);
-        double netSales = grossSales - returns;
+        double netSales = block.netSales().doubleValue();
 
         report.setCards(List.of(
                 card("Gross Sales", grossSales, "currency", data.invoices.size() + " invoices"),
                 card("Net Sales", netSales, "currency", "after returns"),
                 card("Gross Profit", netSales - cost, "currency", percentText(rate(netSales - cost, netSales))),
-                card("VAT Collected", tax, "currency", "invoice tax")
+                // Net of return VAT, which the return journal reverses out of VAT Output. The
+                // card used to show gross invoice tax while the Tax Summary report's Net VAT
+                // Payable on the same date range showed it net of returns, so the two reports
+                // disagreed about the period's VAT by the whole return VAT.
+                card("VAT Collected", block.netTax().doubleValue(), "currency", "output VAT after returns")
         ));
         report.setCharts(List.of(
                 chart("bar", "Daily Sales Trend", dailySalesRows(data), "grossSales", "netSales"),
@@ -1860,6 +1883,17 @@ public class SalesReportDataService {
         return branchId == null || Objects.equals(invoice.getBranchId(), branchId);
     }
 
+    /**
+     * Branch scope for a return. {@code SalesReturn} holds a {@code Branch} association rather
+     * than a {@code branchId} column, and approval refuses any return whose branch differs from
+     * the linked invoice's, so comparing this one id is the same scope the invoices get.
+     */
+    private boolean matchesReturnBranch(SalesReturn salesReturn, Long branchId) {
+        if (branchId == null) return true;
+        Long returnBranchId = salesReturn.getBranch() != null ? salesReturn.getBranch().getId() : null;
+        return Objects.equals(returnBranchId, branchId);
+    }
+
     private boolean matchesChannel(SalesInvoice invoice, String salesChannel) {
         if (isAll(salesChannel)) return true;
         return normalize(channelName(invoice)).equals(normalize(salesChannel));
@@ -1961,8 +1995,15 @@ public class SalesReportDataService {
         return data.invoices.stream().filter(this::isPosInvoice).collect(Collectors.toList());
     }
 
+    /**
+     * Whether a return counts in any returns figure on this report.
+     *
+     * <p>Delegates to the one shared rule rather than restating it. This used to also accept
+     * {@code status == null}, which let a DRAFT-era row with no status reach the Returns column
+     * and reduce Net Sales for goods that had moved no stock and posted no journal.
+     */
     private boolean isApprovedReturn(SalesReturn ret) {
-        return ret.getStatus() == null || ret.getStatus() == SalesReturnStatus.APPROVED;
+        return SalesReturnReportingService.isReportable(ret);
     }
 
     private double sumInvoices(List<SalesInvoice> invoices, boolean recognizedOnly, boolean includeTax) {
@@ -2008,9 +2049,23 @@ public class SalesReportDataService {
         };
     }
 
-    private double invoiceDiscount(SalesInvoice invoice) {
-        double lineDiscount = items(invoice).stream().mapToDouble(item -> n(item.getDiscount())).sum();
-        return n(invoice.getBillDiscount()) + lineDiscount;
+    /**
+     * Discount given on an invoice, in money: Σ item-discount amounts (live lines) plus the
+     * footer discount amount. {@code discount} and {@code billDiscount} are PERCENTAGE rates and
+     * must never be summed as money; amount-type footer discounts only exist in
+     * {@code billDiscountAmount}. Package-private for tests.
+     */
+    double invoiceDiscount(SalesInvoice invoice) {
+        double itemDiscount = items(invoice).stream()
+                .filter(this::isLiveItem)
+                .mapToDouble(item -> com.billbull.backend.sales.common.FooterDiscountAllocator.lineBase(
+                        java.math.BigDecimal.valueOf(ni(item.getQuantity())),
+                        item.getPrice(),
+                        java.math.BigDecimal.valueOf(ni(item.getFoc())),
+                        java.math.BigDecimal.valueOf(item.getDiscount() != null ? item.getDiscount() : 0d))
+                        .itemDiscount().doubleValue())
+                .sum();
+        return itemDiscount + n(invoice.getBillDiscountAmount());
     }
 
     private double invoiceTotal(SalesInvoice invoice) {

@@ -38,7 +38,7 @@ class SalesOrderAttachmentUploadTest {
 
     private SalesOrderController controller(Path uploadRoot) {
         return new SalesOrderController(service, attachmentRepo, auditLogService,
-                emailSender, modulePermissionService, uploadRoot.toString());
+                emailSender, modulePermissionService, null, null, uploadRoot.toString());
     }
 
     @Test

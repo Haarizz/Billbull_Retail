@@ -49,6 +49,13 @@ public class StatementService {
 
     private static final String ADVANCE_APPLICATION_TYPE = "ADVANCE_APPLICATION";
 
+    // Sales returns post Cr Accounts Receivable, and — for every refund method except
+    // Customer Credit — a matching Dr Accounts Receivable when the customer is settled.
+    // The SoA mirrors that as two rows so the sub-ledger reconciles line-for-line with GL
+    // account 1100 instead of silently diverging from it.
+    private static final String RETURN_CREDIT_TYPE = "RETURN_CREDIT";
+    private static final String RETURN_REFUND_TYPE = "RETURN_REFUND";
+
     @Autowired
     private SalesInvoiceRepository salesInvoiceRepository;
 
@@ -72,6 +79,19 @@ public class StatementService {
 
     @Autowired
     private VendorRepository vendorRepository;
+
+    @Autowired
+    private com.billbull.backend.sales.returns.SalesReturnRepository salesReturnRepository;
+
+    /**
+     * The return-credit allocation ledger. Supplies the statement's brought-forward return
+     * credit, replacing the old classification over {@code refund_method}: this sums the credit
+     * that was actually applied to an invoice, which is what the running balance has to agree
+     * with.
+     */
+    @Autowired
+    private com.billbull.backend.sales.returns.credit.SalesReturnCreditApplicationRepository
+            returnCreditApplicationRepository;
 
     public StatementResponse getCustomerStatement(String customerCode, LocalDate startDate, LocalDate endDate) {
         StatementResponse resp = new StatementResponse();
@@ -102,7 +122,17 @@ public class StatementService {
                     .orElse(BigDecimal.ZERO);
         }
 
-        BigDecimal openingBalance = dOpeningInvBalance.add(dInvBefore).subtract(dPayBefore);
+        // Return credits booked before the period reduce AR just as receipts do, so they belong
+        // in the brought-forward figure. Summed from the allocation ledger — credit that was
+        // ACTUALLY APPLIED to an invoice — rather than from a classification rule over
+        // refund_method. That is both narrower and exactly right: it counts the receivable that
+        // was really cancelled, not every return whose method happened to be Customer Credit.
+        BigDecimal dReturnsBefore = nullToZero(
+                returnCreditApplicationRepository.sumAppliedBeforeDate(customerCode, startDate));
+
+        BigDecimal openingBalance = dOpeningInvBalance.add(dInvBefore)
+                .subtract(dPayBefore)
+                .subtract(dReturnsBefore);
         resp.setOpeningBalance(openingBalance);
 
         // 2. Fetch Entries
@@ -118,6 +148,11 @@ public class StatementService {
         List<StatementEntryDTO> advanceApplications = buildAdvanceApplicationEntries(
                 customerCode, startDate, endDate);
 
+        // Sales returns / credit notes. Before this they were absent from the SoA entirely:
+        // the GL credited AR on approval, but the customer's statement still showed the full
+        // invoice outstanding, so the sub-ledger and account 1100 disagreed by the return total.
+        List<StatementEntryDTO> salesReturns = buildSalesReturnEntries(customerCode, startDate, endDate);
+
         List<StatementEntryDTO> combined = new ArrayList<>();
         StatementEntryDTO openingEntry = buildOpeningBalanceEntry(startDate, openingBalance, openingInvoices);
         if (openingEntry != null) {
@@ -126,6 +161,7 @@ public class StatementService {
         combined.addAll(invoices);
         combined.addAll(payments);
         combined.addAll(advanceApplications);
+        combined.addAll(salesReturns);
 
         // 3. Enrich FIRST so sortPriority is set before we sort.
         enrichCustomerEntries(combined);
@@ -179,6 +215,79 @@ public class StatementService {
         resp.setClosingBalance(runningBalance);
 
         return resp;
+    }
+
+    /**
+     * Statement rows for the customer's approved sales returns.
+     *
+     * <p>Each return produces a RETURN_CREDIT row for its full total, mirroring the
+     * {@code Cr Accounts Receivable} line the return journal posts. When the return was settled
+     * with something other than the customer's own account — cash from the drawer, a card or
+     * bank reversal, or a store-credit voucher — a second RETURN_REFUND debit row mirrors the
+     * offsetting {@code Dr Accounts Receivable} of that settlement, so the pair nets to zero and
+     * the running balance is unchanged while both legs stay visible and auditable.
+     *
+     * <p>A Customer Credit return gets only the credit row: there the credit <em>is</em> the
+     * settlement, and it stays on the account until a later invoice or refund consumes it.
+     */
+    private List<StatementEntryDTO> buildSalesReturnEntries(String customerCode, LocalDate startDate,
+            LocalDate endDate) {
+        if (customerCode == null || customerCode.isBlank()) {
+            return new ArrayList<>();
+        }
+        List<com.billbull.backend.sales.returns.SalesReturn> returns =
+                salesReturnRepository.findApprovedForStatement(customerCode, startDate, endDate);
+
+        List<StatementEntryDTO> entries = new ArrayList<>();
+        for (com.billbull.backend.sales.returns.SalesReturn r : returns) {
+            BigDecimal amount = nullToZero(r.getTotalAmount());
+            if (amount.compareTo(BigDecimal.ZERO) <= 0) continue;
+            LocalDate date = r.getReturnDate();
+            if (date == null) continue;
+
+            String invoiceRef = r.getLinkedInvoice() != null && !r.getLinkedInvoice().isBlank()
+                    ? r.getLinkedInvoice()
+                    : "-";
+
+            StatementEntryDTO credit = new StatementEntryDTO(date, date.atStartOfDay(),
+                    r.getReturnNumber(), RETURN_CREDIT_TYPE, BigDecimal.ZERO, amount);
+            credit.setSortPriority(PRI_RETURN_CREDIT);
+            credit.setDescription("Sales Return " + r.getReturnNumber()
+                    + (invoiceRef.equals("-") ? "" : " against " + invoiceRef));
+            credit.setReference(invoiceRef);
+            credit.setStatus("APPROVED");
+            entries.add(credit);
+
+            // RETURN_REFUND is emitted on the paid portion, not on the whole return value, and
+            // only when there is one. refundAmount holds the server-derived paid portion from
+            // approval (SalesReturnService.resolveSettlementSplit), so a part-paid invoice whose
+            // return was entirely a receivable credit no longer shows a refund debit that never
+            // happened. settlesOutsideReceivable() is still consulted so legacy CUSTOMER_CREDIT
+            // rows — which V78 backfilled refundAmount = total_amount for — keep behaving as
+            // they do today; for rows written under the Phase 2 model the two predicates agree
+            // by construction.
+            BigDecimal paidPortion = nullToZero(r.getRefundAmount());
+            if (paidPortion.compareTo(BigDecimal.ZERO) <= 0 || !r.settlesOutsideReceivable()) continue;
+
+            StatementEntryDTO refund = new StatementEntryDTO(date, date.atStartOfDay(),
+                    r.getReturnNumber(), RETURN_REFUND_TYPE, paidPortion, BigDecimal.ZERO);
+            refund.setSortPriority(PRI_REFUND);
+            refund.setDescription("Return settled by " + describeRefundMethod(r));
+            refund.setReference(r.getReturnNumber());
+            refund.setStatus("APPROVED");
+            entries.add(refund);
+        }
+        return entries;
+    }
+
+    private String describeRefundMethod(com.billbull.backend.sales.returns.SalesReturn r) {
+        if (r.getRefundMethod() != null) return r.getRefundMethod().getLabel();
+        String action = r.getReturnAction();
+        return action != null && !action.isBlank() ? action : "Refund";
+    }
+
+    private static BigDecimal nullToZero(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
     }
 
     // Manual advance applications (via AdvanceApplicationService.apply) live only in the
@@ -323,6 +432,8 @@ public class StatementService {
                 }
             } else if (ADVANCE_APPLICATION_TYPE.equals(type)) {
                 // sortPriority/description/reference already set in buildAdvanceApplicationEntries.
+            } else if (RETURN_CREDIT_TYPE.equals(type) || RETURN_REFUND_TYPE.equals(type)) {
+                // sortPriority/description/reference already set in buildSalesReturnEntries.
             } else {
                 entry.setSortPriority(PRI_DEFAULT);
                 if (entry.getDescription() == null) entry.setDescription(prettyType(type));

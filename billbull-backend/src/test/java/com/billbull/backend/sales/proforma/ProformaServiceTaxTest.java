@@ -40,7 +40,8 @@ class ProformaServiceTaxTest {
                 new com.billbull.backend.common.ownership.OwnershipAccessService(
                         mock(com.billbull.backend.security.RolePermissionRepository.class), false),
                 mock(WarehouseStockService.class),
-                mock(SalesDocumentNumberingService.class));
+                mock(SalesDocumentNumberingService.class),
+                mock(com.billbull.backend.inventory.product.ProductPackingRepository.class));
 
         ProformaItemRequest item = new ProformaItemRequest();
         item.quantity = BigDecimal.valueOf(12);

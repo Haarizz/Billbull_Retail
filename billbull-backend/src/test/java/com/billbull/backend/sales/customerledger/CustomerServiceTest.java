@@ -39,6 +39,8 @@ class CustomerServiceTest {
     private com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService;
     @Mock
     private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+    @Mock
+    private com.billbull.backend.sales.returns.SalesReturnRepository salesReturnRepository;
 
     private CustomerService service;
 
@@ -51,7 +53,11 @@ class CustomerServiceTest {
         ReflectionTestUtils.setField(service, "entityManager", entityManager);
         ReflectionTestUtils.setField(service, "effectiveCorrectionViewService", effectiveCorrectionViewService);
         ReflectionTestUtils.setField(service, "branchAccessService", branchAccessService);
-        
+        ReflectionTestUtils.setField(service, "salesReturnRepository", salesReturnRepository);
+
+        // Return credits need no stub here any more: they reach outstanding through
+        // sales_invoices.balance (InvoiceBalanceService folds the allocation ledger into it),
+        // not through a subtraction this service performs. See CustomerSummaryTest.
         org.mockito.Mockito.lenient().when(effectiveCorrectionViewService.resolveOverlays(
                 any(), org.mockito.ArgumentMatchers.anyList(), any()
         )).thenAnswer(inv -> inv.getArgument(1));

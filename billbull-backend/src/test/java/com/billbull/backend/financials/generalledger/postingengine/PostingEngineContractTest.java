@@ -351,7 +351,7 @@ class PostingEngineContractTest {
         SalesReturn ret = salesReturn("CN-001", 800.0, 40.0, 840.0);
         // costOfGoodsReturned = 500
         JournalEntry result = service.createJournalFromSalesReturn(
-                ret, new BigDecimal("500.00"), true);
+                ret, new BigDecimal("500.00"), true, true);
 
         assertBalanced(result);
         // Dr Sales Revenue (800)
@@ -367,7 +367,7 @@ class PostingEngineContractTest {
         SalesReturn ret = salesReturn("CN-002", 800.0, 40.0, 840.0);
         when(journalEntryRepository.existsByReference("CN-002-INV")).thenReturn(false);
 
-        service.createJournalFromSalesReturn(ret, new BigDecimal("500.00"), true);
+        service.createJournalFromSalesReturn(ret, new BigDecimal("500.00"), true, true);
 
         // Two entries: revenue reversal + COGS reversal
         verify(journalEntryRepository, times(2)).save(any());
@@ -382,7 +382,8 @@ class PostingEngineContractTest {
     void scrapSalesReturnPostsRefundWithoutInventoryEntry() {
         SalesReturn ret = salesReturn("CN-003", 800.0, 40.0, 840.0, "Damaged");
 
-        JournalEntry result = service.createJournalFromSalesReturn(ret, BigDecimal.ZERO, true);
+        // restocksInventory = false: the caller's restock plan found no resaleable line.
+        JournalEntry result = service.createJournalFromSalesReturn(ret, BigDecimal.ZERO, true, false);
 
         assertBalanced(result);
         assertLineExists(result, PostingEngineService.ACC_ACCOUNTS_RECEIVABLE, new BigDecimal("840.00"), false);
@@ -396,7 +397,7 @@ class PostingEngineContractTest {
         SalesReturn ret = salesReturn("CN-004", 800.0, 40.0, 840.0, "Good");
 
         assertThrows(PostingException.class,
-                () -> service.createJournalFromSalesReturn(ret, BigDecimal.ZERO, true));
+                () -> service.createJournalFromSalesReturn(ret, BigDecimal.ZERO, true, true));
     }
 
     // =========================================================
@@ -599,7 +600,7 @@ class PostingEngineContractTest {
         assertBalanced(service.createJournalFromInvoicePosting(salesInvoice("S1", "C1", 200.0, 10.0, 210.0)));
         assertBalanced(service.createJournalFromPaymentVoucher(paymentVoucher("P1", bd("300"), null), "V1"));
         assertBalanced(service.createJournalFromReceiptVoucher(receiptVoucher("R1", "C1", 210.0, null, ReceiptPurpose.AGAINST_INVOICE)));
-        assertBalanced(service.createJournalFromSalesReturn(salesReturn("CN1", 200.0, 10.0, 210.0), bd("120.00"), true));
+        assertBalanced(service.createJournalFromSalesReturn(salesReturn("CN1", 200.0, 10.0, 210.0), bd("120.00"), true, true));
         assertBalanced(service.createJournalFromPayrollRun("E1", "Name", bd("3000"), bd("2700"), BigDecimal.ZERO, bd("300"), 2026, 6, null, LocalDate.now()));
         assertBalanced(service.createJournalFromWpsDisbursement("W1", "2026/06", bd("2700"), LocalDate.now()));
         assertBalanced(service.createJournalFromBankCharge("BC1", bd("15"), "fee", LocalDate.now()));
@@ -724,8 +725,10 @@ class PostingEngineContractTest {
     }
 
     /**
-     * @param itemStatus "Good" restocks and reverses COGS; anything else is scrap, which posts
-     *                   no Inventory/COGS entry because no stock comes back.
+     * @param itemStatus the line condition the caller's restock plan would read. It no longer
+     *                   drives the posting itself — {@code restocksInventory} is passed in
+     *                   explicitly, because deciding it here as well as in the stock pass is how
+     *                   inventory came to be debited for goods that never arrived.
      */
     private static SalesReturn salesReturn(String returnNumber, double subTotal, double taxAmount,
                                            double totalAmount, String itemStatus) {

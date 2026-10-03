@@ -423,6 +423,59 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
       };
    }, [returnLines, eligibility]);
 
+   /**
+    * The economic split of this return, for display and for enabling refund methods.
+    *
+    * <p>Derived from the ONE figure the client cannot compute for itself — the server's
+    * canonical `invoiceOutstanding`, which is already net of receipts, applied advances and
+    * earlier return credits. The arithmetic here is a mirror of the server's so the screen can
+    * react as lines are picked; it is never the accounting decision. The server recomputes the
+    * split at approval, under a row lock on the invoice, and that figure is the authoritative
+    * one.
+    *
+    *   unpaidPortion = min(returnValue, invoiceOutstanding)   -> reduces what the customer owes
+    *   paidPortion   = returnValue - unpaidPortion            -> the only amount refundable
+    */
+   const split = useMemo(() => {
+      const returnValue = num(summary.totalRefund);
+      // A null outstanding (an older backend, or an unresolved invoice) is read as zero, which
+      // makes the whole return refundable — the same conservative answer the server gives.
+      const invoiceOutstanding = Math.max(0, num(eligibility?.invoiceOutstanding));
+      const unpaidPortion = Math.min(returnValue, invoiceOutstanding);
+      return {
+         returnValue: round2(returnValue),
+         invoiceOutstanding: round2(invoiceOutstanding),
+         unpaidPortion: round2(unpaidPortion),
+         paidPortion: round2(returnValue - unpaidPortion),
+         // True when nothing selected has been paid for, so no money-moving method applies.
+         refundBlocked: returnValue > 0 && returnValue - unpaidPortion <= 0,
+      };
+   }, [summary.totalRefund, eligibility]);
+
+   /**
+    * Why a refund method cannot be used, keyed by method value — the server's own reasons plus
+    * the ones that depend on which lines are selected.
+    *
+    * <p>The server's `blockedRefundMethods` is computed against the invoice's full remaining
+    * returnable value, so it cannot know that a smaller selection has no paid portion either.
+    * The same rule is applied here to the actual selection, with the same outcome: the control
+    * is greyed out with a stated reason rather than failing at approval.
+    */
+   const blockedRefundMethods = useMemo(() => {
+      const blocked = { ...(eligibility?.blockedRefundMethods || {}) };
+      if (split.refundBlocked) {
+         const reason = `The customer has not paid for these goods — invoice `
+            + `${eligibility?.invoiceNumber || ''} still has ${split.invoiceOutstanding} `
+            + `outstanding. The return reduces what they owe instead of being paid back.`;
+         for (const m of refundMethods) {
+            // Customer Credit is the one method that does not hand value back, so it stays
+            // available: on an unpaid or part-paid invoice it IS the correct settlement.
+            if (m.value !== 'CUSTOMER_CREDIT' && !blocked[m.value]) blocked[m.value] = reason;
+         }
+      }
+      return blocked;
+   }, [eligibility, refundMethods, split]);
+
    // =========================================================================
    // Validation
    // =========================================================================
@@ -466,7 +519,7 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
       // §14 — a method the backend has already said this sale cannot settle with (Customer
       // Credit on a walk-in, which has no ledger to credit). Repeated here so a method selected
       // before the invoice changed cannot survive into the payload.
-      const blockedReason = eligibility?.blockedRefundMethods?.[refundMethod];
+      const blockedReason = blockedRefundMethods?.[refundMethod];
       if (blockedReason) errors.push(blockedReason);
 
       // §6/§23 — a cash refund physically opens the drawer, so it needs a live POS session.
@@ -478,7 +531,7 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
       }
 
       return errors;
-   }, [eligibility, returnLines, refundMethod, refundMethods, posContext]);
+   }, [eligibility, returnLines, refundMethod, refundMethods, posContext, blockedRefundMethods]);
 
    const canConfirm = validationErrors.length === 0 && !submitting;
 
@@ -508,6 +561,7 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
          const condition = conditions.find((c) => c.value === rl.condition);
 
          return {
+            invoiceItemId: rl.invoiceItemId ?? null,
             itemCode: rl.itemCode,
             itemName: rl.itemName,
             unit: rl.unit,
@@ -547,7 +601,11 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
          // along so the backend keeps it rather than re-issuing one.
          ...(editing?.id ? { id: editing.id, returnNumber: editing.returnNumber } : {}),
 
-         returnDate: new Date().toISOString().slice(0, 10),
+         // No returnDate. It is the accounting date of a credit note, and the server stamps it
+         // from the open POS session's business day (back office: the branch's). This used to
+         // send new Date().toISOString().slice(0,10) — a UTC date — so in a UTC+4 branch every
+         // return taken between midnight and 04:00 local was booked to the previous day, while
+         // the drawer payout that funded it was booked to the current one.
          linkedInvoice: inv?.invoiceNumber,
          linkedReceiptNumber: inv?.receiptNumber || null,
          customerCode: inv?.customerCode,
@@ -560,7 +618,12 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
          taxInclusive: summary.taxInclusive,
 
          refundMethod,
-         refundAmount: summary.totalRefund,
+         // No refundAmount. It is the amount of money that actually leaves the business, and
+         // the server derives it at approval as the return's paid portion — what the customer
+         // has already paid for the goods coming back — under a row lock on the linked invoice.
+         // This used to send summary.totalRefund, which every settlement path then read as the
+         // payout figure, so on a part-paid invoice the browser could hand back cash the
+         // customer had never paid. `split` below is for display only.
          returnAction: refundMethod === 'CREDIT_VOUCHER' ? 'Credit Note' : 'Refund',
 
          // Header reason is retained for the returns register, but the authoritative
@@ -576,7 +639,8 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
          payload.posSessionId = posContext.sessionId ?? null;
          payload.posTerminalId = posContext.terminalId ?? null;
          payload.posCounterName = posContext.counterName ?? null;
-         payload.tradingDate = posContext.tradingDate ?? null;
+         // tradingDate is not sent either: the server resolves the session's business day from
+         // the session id above, which is the same value POS checkout stamps on the invoice.
       }
 
       // Advisory: the backend decides for itself whether sign-off is needed.
@@ -608,9 +672,14 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
 
       // settlement
       refundMethod, setRefundMethod, headerRemarks, setHeaderRemarks,
+      // Which methods cannot settle this return, and why. The server's reasons merged with the
+      // ones that depend on the current line selection.
+      blockedRefundMethods,
 
       // derived
       summary, validationErrors, canConfirm, authorizationRequired,
+      // The economic split, for display and for enabling refund controls. Never the payload.
+      split,
 
       // submission
       submitting, setSubmitting, completedReturn, setCompletedReturn, buildPayload,
@@ -620,6 +689,11 @@ export function useSalesReturn({ entryPoint, posContext = null } = {}) {
 /** Seeds a return line from a sold invoice line, defaulting condition to Good (§12). */
 function buildReturnLine(line) {
    return {
+      // The originating invoice line. Sent back on the payload so the server prorates the
+      // discount and resolves the cost against THIS line rather than the first line that
+      // happens to share the item code — which is wrong whenever one invoice carries the same
+      // product twice at different prices or costs.
+      invoiceItemId: line.invoiceItemId ?? null,
       itemCode: line.itemCode,
       itemName: line.itemName,
       barcode: line.barcode,

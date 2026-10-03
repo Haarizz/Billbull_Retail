@@ -42,8 +42,11 @@ import com.billbull.backend.sales.payment.Payment;
 import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.sales.returns.SalesReturn;
 import com.billbull.backend.sales.returns.SalesReturnItem;
+import com.billbull.backend.sales.returns.SalesReturnRefundMethod;
 import com.billbull.backend.sales.returns.SalesReturnRepository;
-import com.billbull.backend.sales.returns.SalesReturnStatus;
+import com.billbull.backend.sales.returns.reporting.NetSalesReportingBlock;
+import com.billbull.backend.sales.returns.reporting.SalesReturnReportingService;
+import com.billbull.backend.sales.returns.reporting.SalesReturnReportingTotals;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -96,6 +99,7 @@ public class PosSessionService {
     private final PosAuditLogRepository auditLogRepository;
     private final PosTerminalRepository terminalRepository;
     private final SalesReturnRepository returnRepository;
+    private final SalesReturnReportingService returnReportingService;
     private final PosDayCloseRepository dayCloseRepository;
     private final ObjectMapper objectMapper;
     private final PosTerminalActivityService terminalActivityService;
@@ -192,7 +196,8 @@ public class PosSessionService {
                              jakarta.persistence.EntityManager entityManager,
                              com.billbull.backend.pos.admin.EffectiveCorrectionViewService effectiveCorrectionViewService,
                              BusinessDayContinuationGate businessDayContinuationGate,
-                             PosSessionClosureWorkflowGate closureWorkflowGate) {
+                             PosSessionClosureWorkflowGate closureWorkflowGate,
+                             SalesReturnReportingService returnReportingService) {
         this.repo = repo;
         this.invoiceRepo = invoiceRepo;
         this.branchAccessService = branchAccessService;
@@ -204,6 +209,7 @@ public class PosSessionService {
         this.auditLogRepository = auditLogRepository;
         this.terminalRepository = terminalRepository;
         this.returnRepository = returnRepository;
+        this.returnReportingService = returnReportingService;
         this.dayCloseRepository = dayCloseRepository;
         this.objectMapper = objectMapper;
         this.terminalActivityService = terminalActivityService;
@@ -1948,8 +1954,19 @@ public class PosSessionService {
         // Consolidated Cash Position — additive, informational only, never feeds the
         // Expected Cash figure above. Customer Receipts/Advances are back-office vouchers
         // with no session linkage yet, so they're omitted here (Z-Report only).
+        // Sales Return figures for THIS session only — same source and shape as the Z-Report's
+        // Returns/Refund Summary (buildReturnsSummary), but restricted to returns linked to this
+        // session's own invoices. Returns are stored per branch+day with no posSessionId, so
+        // without this filter a same-day return made against a different session (another device,
+        // or another cashier's concurrent session) would leak into this X-Report. The Z-Report
+        // intentionally keeps the unfiltered branch+day view since it aggregates the whole
+        // business day. Resolved here because the cash position needs its cash-refund figure.
+        SalesReturnReportingTotals returns = buildSessionReturnsSummary(
+                session.getBranchId(), session.getSessionDate(), invoices);
+
         summary.put("cashPosition", buildCashPosition(session.getBranchId(), session.getSessionDate(),
-                List.of(sessionId), session.getOpeningCash(), tender.cash, cashDropIn, cashDropOut, false));
+                List.of(sessionId), session.getOpeningCash(), tender.cash, cashDropIn, cashDropOut, false,
+                returns.refund(SalesReturnRefundMethod.CASH_REFUND)));
 
         // Card refund attribution — sourced from actual refund Payment rows for this
         // session's invoices, not the generic (and unrelated) item-void counter.
@@ -1965,23 +1982,29 @@ public class PosSessionService {
         summary.put("totalRefunds", refunds.total);
         summary.put("totalRefundCount", refunds.countByBucket.values().stream().mapToLong(Long::longValue).sum());
 
-        // Sales Return module figures for THIS session only — same source and shape as
-        // the Z-Report's Returns/Refund Summary (buildReturnsSummary), but restricted to
-        // returns linked to this session's own invoices. Returns are stored per branch+day
-        // with no posSessionId, so without this filter a same-day return made against a
-        // different session (another device, or another cashier's concurrent session)
-        // would leak into this X-Report. The Z-Report intentionally keeps the unfiltered
-        // branch+day view since it aggregates the whole business day.
-        ReturnsSummary returns = buildSessionReturnsSummary(session.getBranchId(), session.getSessionDate(), invoices);
-        summary.put("salesReturnCount", returns.totalCount);
-        summary.put("salesReturnTotal", returns.totalAmount);
-        summary.put("creditNoteCount", returns.creditNoteCount);
-        summary.put("creditNoteTotal", returns.creditNoteTotal);
-        summary.put("refundCount", returns.refundCount);
-        summary.put("refundTotal", returns.refundTotal);
-        summary.put("exchangeCount", returns.exchangeCount);
-        summary.put("exchangeTotal", returns.exchangeTotal);
-        summary.put("totalItemsReturned", returns.totalQtyReturned);
+        putReturnRefundBuckets(summary, returns);
+        summary.put("salesReturnCount", returns.count());
+        summary.put("salesReturnTotal", returns.value());
+        summary.put("creditNoteCount", returns.creditNotesIssuedCount());
+        summary.put("creditNoteTotal", returns.creditNotesIssued());
+        summary.put("refundCount", returns.refundsPaidOutCount());
+        summary.put("refundTotal", returns.refundsPaidOut());
+        summary.put("exchangeCount", returns.exchangeCount());
+        summary.put("exchangeTotal", returns.exchange());
+        summary.put("totalItemsReturned", returns.quantity());
+
+        // ── Returns-aware sales figures, one basis across every report ──────────────────
+        // The existing totalSales / totalTax / netSalesExTax keys are left exactly as they are:
+        // netSalesExTax is the taxable base BEFORE returns, which is what the VAT section needs
+        // and what Day Close has always stored. Redefining it in place would restate every
+        // historical Z-Report. This block is additive and explicitly named, and it is the same
+        // arithmetic the Back Office Sales Report publishes, so the two can be compared
+        // key-for-key. Basis: VAT-inclusive. See NetSalesReportingBlock.
+        summary.putAll(NetSalesReportingBlock.of(
+                (BigDecimal) summary.getOrDefault("totalSales", BigDecimal.ZERO),
+                (BigDecimal) summary.getOrDefault("totalTax", BigDecimal.ZERO),
+                (Integer) summary.getOrDefault("totalItemsSold", 0),
+                returns).toSummaryMap());
 
         // Reopen tracking: more than one SESSION_OPENED audit entry for this session id
         // means the terminal was reopened after an earlier open (first open isn't a "reopen").
@@ -2295,19 +2318,33 @@ public class PosSessionService {
         // Returns / Refund Summary — sourced from the Sales Return module for this branch+date
         // (a Sales Return is a separate post-sale transaction, not a session-scoped concept,
         // so it's queried by branch/date like the rest of the Z-Report rather than by session).
-        ReturnsSummary returns = buildReturnsSummary(branchId, date);
-        summary.put("salesReturnCount", returns.totalCount);
-        summary.put("salesReturnTotal", returns.totalAmount);
-        summary.put("creditNoteCount", returns.creditNoteCount);
-        summary.put("creditNoteTotal", returns.creditNoteTotal);
-        summary.put("refundCount", returns.refundCount);
-        summary.put("refundTotal", returns.refundTotal);
-        summary.put("exchangeCount", returns.exchangeCount);
-        summary.put("exchangeTotal", returns.exchangeTotal);
-        summary.put("totalItemsReturned", returns.totalQtyReturned);
+        SalesReturnReportingTotals returns = buildReturnsSummary(branchId, date);
+        putReturnRefundBuckets(summary, returns);
+        summary.put("salesReturnCount", returns.count());
+        summary.put("salesReturnTotal", returns.value());
+        summary.put("creditNoteCount", returns.creditNotesIssuedCount());
+        summary.put("creditNoteTotal", returns.creditNotesIssued());
+        summary.put("refundCount", returns.refundsPaidOutCount());
+        summary.put("refundTotal", returns.refundsPaidOut());
+        summary.put("exchangeCount", returns.exchangeCount());
+        summary.put("exchangeTotal", returns.exchange());
+        summary.put("totalItemsReturned", returns.quantity());
+
+        // ── Returns-aware sales figures, one basis across every report ──────────────────
+        // The existing totalSales / totalTax / netSalesExTax keys are left exactly as they are:
+        // netSalesExTax is the taxable base BEFORE returns, which is what the VAT section needs
+        // and what Day Close has always stored. Redefining it in place would restate every
+        // historical Z-Report. This block is additive and explicitly named, and it is the same
+        // arithmetic the Back Office Sales Report publishes, so the two can be compared
+        // key-for-key. Basis: VAT-inclusive. See NetSalesReportingBlock.
+        summary.putAll(NetSalesReportingBlock.of(
+                (BigDecimal) summary.getOrDefault("totalSales", BigDecimal.ZERO),
+                (BigDecimal) summary.getOrDefault("totalTax", BigDecimal.ZERO),
+                (Integer) summary.getOrDefault("totalItemsSold", 0),
+                returns).toSummaryMap());
         // Net quantity sold must net out returns — previously this duplicated totalItemsSold.
         int totalItemsSold = (Integer) summary.getOrDefault("totalItemsSold", 0);
-        summary.put("netQuantitySold", Math.max(0, totalItemsSold - returns.totalQtyReturned));
+        summary.put("netQuantitySold", Math.max(0, totalItemsSold - returns.quantity()));
 
         // Consolidated Cash Position — additive, informational only; never feeds the
         // per-session Expected Cash figure or the Day Close reconciliation above. Cash
@@ -2343,7 +2380,8 @@ public class PosSessionService {
         summary.put("countedSessionsExpectedCash", dayCash.countedSessionsExpectedCash());
         summary.put("countedSessionsVariance", dayCash.countedSessionsVariance());
         summary.put("cashPosition", buildCashPosition(branchId, date, sessionIds,
-                openingCash, tender.cash, cashDropIn, cashDropOut, true));
+                openingCash, tender.cash, cashDropIn, cashDropOut, true,
+                returns.refund(SalesReturnRefundMethod.CASH_REFUND)));
 
         Map<String, Object> result = new java.util.LinkedHashMap<>();
         result.put("eligible", eligible);
@@ -2570,6 +2608,29 @@ public class PosSessionService {
 
         dayClose.setGrossSales((BigDecimal) summary.getOrDefault("grossSales", BigDecimal.ZERO));
         dayClose.setNetSales((BigDecimal) summary.getOrDefault("netSalesExTax", BigDecimal.ZERO));
+
+        // The returns-aware reporting basis, persisted as structured columns alongside — NOT in
+        // place of — the two above, whose historical meanings (line gross pre-discount; taxable
+        // base before returns) every existing row was written under and which are left alone.
+        //
+        // The figures are copied straight off the NetSalesReportingBlock the Z-Report already
+        // published, so Day Close performs no sales arithmetic of its own: no second
+        // gross − returns, no second gross − tax. One calculation, in one place
+        // (NetSalesReportingBlock.of), read back here by key.
+        //
+        // Null block = the report carried no reporting figures, which leaves the columns NULL
+        // rather than writing a zero that would read as a reported figure.
+        NetSalesReportingBlock reporting = NetSalesReportingBlock.fromSummaryMap(summary);
+        if (reporting != null) {
+            dayClose.setReportingGrossSales(reporting.grossSales());
+            dayClose.setReportingReturnValue(reporting.returnValue());
+            dayClose.setReportingNetSales(reporting.netSales());
+            dayClose.setReportingSalesTax(reporting.salesTax());
+            dayClose.setReportingReturnTax(reporting.returnTax());
+            dayClose.setReportingNetTax(reporting.netTax());
+            dayClose.setReportingNetSalesExTax(reporting.netSalesExTax());
+            dayClose.setReportingNetSalesBasis(reporting.basis());
+        }
         dayClose.setTotalDiscount((BigDecimal) summary.getOrDefault("totalDiscount", BigDecimal.ZERO));
         dayClose.setTotalVat((BigDecimal) summary.getOrDefault("totalTax", BigDecimal.ZERO));
         dayClose.setCashSales(cashSales);
@@ -2632,29 +2693,24 @@ public class PosSessionService {
                         + "See GET /api/pos/sessions/day-status (pendingDayCloseDate/hasPendingDayClose).");
     }
 
-    /** Returns/refund figures for a single business day + branch, sourced from the Sales
-     *  Return module (a post-sale transaction unrelated to any specific POS session). */
-    private static final class ReturnsSummary {
-        int totalCount;
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        int creditNoteCount;
-        BigDecimal creditNoteTotal = BigDecimal.ZERO;
-        int refundCount;
-        BigDecimal refundTotal = BigDecimal.ZERO;
-        int exchangeCount;
-        BigDecimal exchangeTotal = BigDecimal.ZERO;
-        int totalQtyReturned;
+    // ── Returns / refund figures ─────────────────────────────────────────────────────
+    //
+    // The aggregation itself lives in SalesReturnReportingService, not here. It used to be a
+    // private ReturnsSummary class with its own copy of the arithmetic, and the Back Office
+    // Sales Report had a second copy — so the two reports could, and did, disagree about the
+    // same day's returns. Both now read one implementation; this file only decides the SCOPE.
+
+    /** One business day + branch — the Z-Report scope. */
+    private SalesReturnReportingTotals buildReturnsSummary(Long branchId, LocalDate date) {
+        return returnReportingService.forBranchAndDate(branchId, date);
     }
 
-    private ReturnsSummary buildReturnsSummary(Long branchId, LocalDate date) {
-        return aggregateReturns(returnRepository.findByReturnDateAndBranchWithItems(date, branchId));
-    }
-
-    /** Same Sales Return source as {@link #buildReturnsSummary}, but restricted to returns
-     *  linked to invoices belonging to THIS session — required so the X-Report never picks
-     *  up a same-day return posted against another session (different device/terminal, or
-     *  a different cashier's concurrent session) sharing the same branch+date. */
-    private ReturnsSummary buildSessionReturnsSummary(Long branchId, LocalDate date, List<SalesInvoice> sessionInvoices) {
+    /** Same source as {@link #buildReturnsSummary}, but restricted to returns linked to invoices
+     *  belonging to THIS session — required so the X-Report never picks up a same-day return
+     *  posted against another session (different device/terminal, or a different cashier's
+     *  concurrent session) sharing the same branch+date. */
+    private SalesReturnReportingTotals buildSessionReturnsSummary(Long branchId, LocalDate date,
+                                                                  List<SalesInvoice> sessionInvoices) {
         java.util.Set<String> sessionInvoiceNumbers = sessionInvoices.stream()
                 .map(SalesInvoice::getInvoiceNumber)
                 .filter(java.util.Objects::nonNull)
@@ -2662,34 +2718,32 @@ public class PosSessionService {
         List<SalesReturn> returns = returnRepository.findByReturnDateAndBranchWithItems(date, branchId).stream()
                 .filter(r -> sessionInvoiceNumbers.contains(r.getLinkedInvoice()))
                 .toList();
-        return aggregateReturns(returns);
+        return returnReportingService.totalsOf(returns);
     }
 
-    private ReturnsSummary aggregateReturns(List<SalesReturn> returns) {
-        ReturnsSummary rs = new ReturnsSummary();
-        for (SalesReturn r : returns) {
-            if (r.getStatus() != SalesReturnStatus.APPROVED) continue;
-            BigDecimal amount = nz(r.getTotalAmount());
-            rs.totalCount++;
-            rs.totalAmount = rs.totalAmount.add(amount);
-            String action = r.getReturnAction() != null ? r.getReturnAction() : "";
-            if ("Credit Note".equalsIgnoreCase(action)) {
-                rs.creditNoteCount++;
-                rs.creditNoteTotal = rs.creditNoteTotal.add(amount);
-            } else if ("Replacement".equalsIgnoreCase(action)) {
-                rs.exchangeCount++;
-                rs.exchangeTotal = rs.exchangeTotal.add(amount);
-            } else if ("Refund".equalsIgnoreCase(action)) {
-                rs.refundCount++;
-                rs.refundTotal = rs.refundTotal.add(amount);
-            }
-            if (r.getItems() != null) {
-                for (SalesReturnItem it : r.getItems()) {
-                    rs.totalQtyReturned += it.getReturnQty() != null ? it.getReturnQty() : 0;
-                }
-            }
-        }
-        return rs;
+    /** The per-refund-method figures both the X-Report and the Z-Report publish. */
+    private void putReturnRefundBuckets(Map<String, Object> summary, SalesReturnReportingTotals returns) {
+        summary.put("returnCashRefundTotal", returns.refund(SalesReturnRefundMethod.CASH_REFUND));
+        summary.put("returnCashRefundCount", returns.refundCount(SalesReturnRefundMethod.CASH_REFUND));
+        summary.put("returnCardRefundTotal", returns.refund(SalesReturnRefundMethod.CARD_REFUND));
+        summary.put("returnCardRefundCount", returns.refundCount(SalesReturnRefundMethod.CARD_REFUND));
+        summary.put("returnBankRefundTotal", returns.refund(SalesReturnRefundMethod.BANK_TRANSFER));
+        summary.put("returnBankRefundCount", returns.refundCount(SalesReturnRefundMethod.BANK_TRANSFER));
+        summary.put("returnCreditVoucherTotal", returns.refund(SalesReturnRefundMethod.CREDIT_VOUCHER));
+        summary.put("returnCreditVoucherCount", returns.refundCount(SalesReturnRefundMethod.CREDIT_VOUCHER));
+        // Deliberately never added to any refund total: no money moved, and the credit sits on the
+        // customer's account until a later invoice or refund consumes it.
+        summary.put("returnCustomerCreditTotal", returns.refund(SalesReturnRefundMethod.CUSTOMER_CREDIT));
+        summary.put("returnCustomerCreditCount", returns.refundCount(SalesReturnRefundMethod.CUSTOMER_CREDIT));
+        // Pre-V78 rows: money left, or a credit was granted, but by which instrument is no
+        // longer recorded. Published so the per-method rows visibly do not have to add up to
+        // Refunds Processed on a historical day.
+        summary.put("returnLegacyPaidOutTotal", returns.legacyPaidOut());
+        summary.put("returnLegacyPaidOutCount", returns.legacyPaidOutCount());
+        summary.put("returnLegacyLedgerCreditTotal", returns.legacyLedgerCredit());
+        summary.put("returnLegacyLedgerCreditCount", returns.legacyLedgerCreditCount());
+        summary.put("returnUnclassifiedTotal", returns.unclassified());
+        summary.put("returnUnclassifiedCount", returns.unclassifiedCount());
     }
 
     // ── Consolidated Cash Position (additive — never feeds Expected Cash in Drawer) ───
@@ -2701,10 +2755,13 @@ public class PosSessionService {
     // (Customer Receipts, Customer Advances) and, where the data actually supports it,
     // cash-only Cash Drop/Cash Out detail sourced via a single batch query.
     //
-    // Cash Refunds/Returns are deliberately NOT included: SalesReturn has no
-    // payment-mode field today, so a "cash refund" total cannot be computed without
-    // misclassifying every refund (cash+card+other) as cash. cashRefundsSupported=false
-    // flags this to the caller/frontend rather than silently reporting a wrong number.
+    // Cash Refunds/Returns ARE now included, and are real. The comment that used to sit here
+    // said SalesReturn had no payment-mode field, so a cash-refund total could not be computed
+    // without misclassifying card and Customer Credit refunds as cash — true when it was written,
+    // and false since V78 added sales_returns.refund_method (backfilled for legacy rows). The
+    // figure published below is Σ refundAmount where refund_method = CASH_REFUND, which is the
+    // same population the drawer's SALES_RETURN_REFUND DROP_OUT movements were booked from, so
+    // the two cross-check. cashRefundsSupported is true from here on.
 
     private static final class ReceiptsAndAdvances {
         BigDecimal receiptsTotal = BigDecimal.ZERO;
@@ -2804,8 +2861,14 @@ public class PosSessionService {
     private Map<String, Object> buildCashPosition(Long branchId, LocalDate date, List<Long> sessionIds,
                                                    BigDecimal openingCash, BigDecimal cashSales,
                                                    BigDecimal cashDropIn, BigDecimal cashDropOut,
-                                                   boolean includeBackOfficeReceipts) {
+                                                   boolean includeBackOfficeReceipts,
+                                                   BigDecimal cashRefundsTotal) {
         Map<String, Object> result = new java.util.LinkedHashMap<>();
+        // Actual cash paid out for returns settled CASH_REFUND — not every return, and never a
+        // Customer Credit one. The frontend has read these two keys since before the data
+        // supported them.
+        result.put("cashRefundsSupported", Boolean.TRUE);
+        result.put("cashRefundsTotal", nz(cashRefundsTotal));
 
         List<PosCashMovement> movements = (sessionIds == null || sessionIds.isEmpty())
                 ? List.of()

@@ -1,0 +1,209 @@
+{
+  "_comment": "Shared parity fixtures for FooterDiscountAllocator.java and billbull-frontend/src/utils/footerDiscountAllocator.js. Both test suites load THIS file; expected values are hand-computed. foc is already expressed in selling units.",
+  "cases": [
+    {
+      "name": "screenshot regression - EXCLUSIVE, AED 100",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "amount", "value": 100 },
+      "lines": [
+        { "qty": 1, "price": 3500, "foc": 0, "disc": 20, "tax": 5 },
+        { "qty": 1, "price": 200, "foc": 0, "disc": 10, "tax": 20 }
+      ],
+      "expected": {
+        "footerAmount": "100.00",
+        "lines": [
+          { "base": "2800.00", "share": "93.96", "taxable": "2706.04", "tax": "135.30", "total": "2841.34" },
+          { "base": "180.00", "share": "6.04", "taxable": "173.96", "tax": "34.79", "total": "208.75" }
+        ],
+        "taxableTotal": "2880.00", "taxTotal": "170.09", "lineTotal": "3050.09", "subTotal": "2980.00"
+      }
+    },
+    {
+      "name": "screenshot regression - INCLUSIVE, AED 100 is customer-facing",
+      "vatMode": "INCLUSIVE",
+      "discount": { "type": "amount", "value": 100 },
+      "lines": [
+        { "qty": 1, "price": 3500, "foc": 0, "disc": 20, "tax": 5 },
+        { "qty": 1, "price": 200, "foc": 0, "disc": 10, "tax": 20 }
+      ],
+      "expected": {
+        "footerAmount": "100.00",
+        "lines": [
+          { "base": "2800.00", "share": "93.96", "taxable": "2577.18", "tax": "128.86", "total": "2706.04" },
+          { "base": "180.00", "share": "6.04", "taxable": "144.97", "tax": "28.99", "total": "173.96" }
+        ],
+        "taxableTotal": "2722.15", "taxTotal": "157.85", "lineTotal": "2880.00", "subTotal": "2822.15"
+      }
+    },
+    {
+      "name": "screenshot - EXCLUSIVE, 10 percent",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "percent", "value": 10 },
+      "lines": [
+        { "qty": 1, "price": 3500, "foc": 0, "disc": 20, "tax": 5 },
+        { "qty": 1, "price": 200, "foc": 0, "disc": 10, "tax": 20 }
+      ],
+      "expected": {
+        "footerAmount": "298.00",
+        "lines": [
+          { "base": "2800.00", "share": "280.00", "taxable": "2520.00", "tax": "126.00", "total": "2646.00" },
+          { "base": "180.00", "share": "18.00", "taxable": "162.00", "tax": "32.40", "total": "194.40" }
+        ],
+        "taxableTotal": "2682.00", "taxTotal": "158.40", "lineTotal": "2840.40", "subTotal": "2980.00"
+      }
+    },
+    {
+      "name": "0.10 across 3 equal lines - remainder cent to first line",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "amount", "value": 0.10 },
+      "lines": [
+        { "qty": 1, "price": 10, "foc": 0, "disc": 0, "tax": 5 },
+        { "qty": 1, "price": 10, "foc": 0, "disc": 0, "tax": 5 },
+        { "qty": 1, "price": 10, "foc": 0, "disc": 0, "tax": 5 }
+      ],
+      "expected": {
+        "footerAmount": "0.10",
+        "lines": [
+          { "base": "10.00", "share": "0.04", "taxable": "9.96", "tax": "0.50", "total": "10.46" },
+          { "base": "10.00", "share": "0.03", "taxable": "9.97", "tax": "0.50", "total": "10.47" },
+          { "base": "10.00", "share": "0.03", "taxable": "9.97", "tax": "0.50", "total": "10.47" }
+        ],
+        "taxableTotal": "29.90", "taxTotal": "1.50", "lineTotal": "31.40", "subTotal": "30.00"
+      }
+    },
+    {
+      "name": "uneven lines, mixed 5/20/0 VAT, largest-remainder distribution",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "amount", "value": 20 },
+      "lines": [
+        { "qty": 3, "price": 33.33, "foc": 0, "disc": 0, "tax": 5 },
+        { "qty": 1, "price": 50, "foc": 0, "disc": 15, "tax": 20 },
+        { "qty": 2, "price": 12.5, "foc": 0, "disc": 0, "tax": 0 }
+      ],
+      "expected": {
+        "footerAmount": "20.00",
+        "lines": [
+          { "base": "99.99", "share": "11.94", "taxable": "88.05", "tax": "4.40", "total": "92.45" },
+          { "base": "42.50", "share": "5.07", "taxable": "37.43", "tax": "7.49", "total": "44.92" },
+          { "base": "25.00", "share": "2.99", "taxable": "22.01", "tax": "0.00", "total": "22.01" }
+        ],
+        "taxableTotal": "147.49", "taxTotal": "11.89", "lineTotal": "159.38", "subTotal": "167.49"
+      }
+    },
+    {
+      "name": "100 percent footer discount",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "percent", "value": 100 },
+      "lines": [
+        { "qty": 2, "price": 50, "foc": 0, "disc": 0, "tax": 5 }
+      ],
+      "expected": {
+        "footerAmount": "100.00",
+        "lines": [
+          { "base": "100.00", "share": "100.00", "taxable": "0.00", "tax": "0.00", "total": "0.00" }
+        ],
+        "taxableTotal": "0.00", "taxTotal": "0.00", "lineTotal": "0.00", "subTotal": "100.00"
+      }
+    },
+    {
+      "name": "fixed amount above eligible base is capped",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "amount", "value": 80 },
+      "lines": [
+        { "qty": 1, "price": 30, "foc": 0, "disc": 0, "tax": 5 },
+        { "qty": 1, "price": 20, "foc": 0, "disc": 0, "tax": 20 }
+      ],
+      "expected": {
+        "footerAmount": "50.00",
+        "lines": [
+          { "base": "30.00", "share": "30.00", "taxable": "0.00", "tax": "0.00", "total": "0.00" },
+          { "base": "20.00", "share": "20.00", "taxable": "0.00", "tax": "0.00", "total": "0.00" }
+        ],
+        "taxableTotal": "0.00", "taxTotal": "0.00", "lineTotal": "0.00", "subTotal": "50.00"
+      }
+    },
+    {
+      "name": "voided line takes no share and is excluded from totals",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "amount", "value": 10 },
+      "lines": [
+        { "qty": 1, "price": 100, "foc": 0, "disc": 0, "tax": 5 },
+        { "qty": 1, "price": 100, "foc": 0, "disc": 0, "tax": 5, "voided": true }
+      ],
+      "expected": {
+        "footerAmount": "10.00",
+        "lines": [
+          { "base": "100.00", "share": "10.00", "taxable": "90.00", "tax": "4.50", "total": "94.50" },
+          { "base": "100.00", "share": "0.00", "taxable": "100.00", "tax": "5.00", "total": "105.00" }
+        ],
+        "taxableTotal": "90.00", "taxTotal": "4.50", "lineTotal": "94.50", "subTotal": "100.00"
+      }
+    },
+    {
+      "name": "zero-value line takes no share",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "amount", "value": 4 },
+      "lines": [
+        { "qty": 1, "price": 0, "foc": 0, "disc": 0, "tax": 5 },
+        { "qty": 1, "price": 40, "foc": 0, "disc": 0, "tax": 5 }
+      ],
+      "expected": {
+        "footerAmount": "4.00",
+        "lines": [
+          { "base": "0.00", "share": "0.00", "taxable": "0.00", "tax": "0.00", "total": "0.00" },
+          { "base": "40.00", "share": "4.00", "taxable": "36.00", "tax": "1.80", "total": "37.80" }
+        ],
+        "taxableTotal": "36.00", "taxTotal": "1.80", "lineTotal": "37.80", "subTotal": "40.00"
+      }
+    },
+    {
+      "name": "single line with FOC and item discount",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "amount", "value": 6 },
+      "lines": [
+        { "qty": 10, "price": 5, "foc": 2, "disc": 10, "tax": 5 }
+      ],
+      "expected": {
+        "footerAmount": "6.00",
+        "lines": [
+          { "base": "36.00", "share": "6.00", "taxable": "30.00", "tax": "1.50", "total": "31.50" }
+        ],
+        "taxableTotal": "30.00", "taxTotal": "1.50", "lineTotal": "31.50", "subTotal": "36.00"
+      }
+    },
+    {
+      "name": "INCLUSIVE percent with a zero-rated line",
+      "vatMode": "INCLUSIVE",
+      "discount": { "type": "percent", "value": 5 },
+      "lines": [
+        { "qty": 1, "price": 105, "foc": 0, "disc": 0, "tax": 5 },
+        { "qty": 1, "price": 50, "foc": 0, "disc": 0, "tax": 0 }
+      ],
+      "expected": {
+        "footerAmount": "7.75",
+        "lines": [
+          { "base": "105.00", "share": "5.25", "taxable": "95.00", "tax": "4.75", "total": "99.75" },
+          { "base": "50.00", "share": "2.50", "taxable": "47.50", "tax": "0.00", "total": "47.50" }
+        ],
+        "taxableTotal": "142.50", "taxTotal": "4.75", "lineTotal": "147.25", "subTotal": "150.25"
+      }
+    },
+    {
+      "name": "no footer discount leaves lines untouched",
+      "vatMode": "EXCLUSIVE",
+      "discount": { "type": "percent", "value": 0 },
+      "lines": [
+        { "qty": 1, "price": 3500, "foc": 0, "disc": 20, "tax": 5 },
+        { "qty": 1, "price": 200, "foc": 0, "disc": 10, "tax": 20 }
+      ],
+      "expected": {
+        "footerAmount": "0.00",
+        "lines": [
+          { "base": "2800.00", "share": "0.00", "taxable": "2800.00", "tax": "140.00", "total": "2940.00" },
+          { "base": "180.00", "share": "0.00", "taxable": "180.00", "tax": "36.00", "total": "216.00" }
+        ],
+        "taxableTotal": "2980.00", "taxTotal": "176.00", "lineTotal": "3156.00", "subTotal": "2980.00"
+      }
+    }
+  ]
+}

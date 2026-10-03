@@ -69,6 +69,14 @@ public class SalesOrder  implements com.billbull.backend.common.ownership.OwnedE
     @Column(name = "bill_discount_type", length = 20)
     private String billDiscountType;
 
+    /**
+     * Request-only: the fixed footer amount the user typed when {@code billDiscountType} is
+     * "amount". Not persisted — the server allocates it and stores the result (capped at the
+     * eligible base) in {@code billDiscountAmount}.
+     */
+    @Transient
+    private BigDecimal billDiscountFixed;
+
     private String paymentMethod;
     private String paymentReference;
     private String deliveryType;
@@ -240,6 +248,14 @@ public class SalesOrder  implements com.billbull.backend.common.ownership.OwnedE
 
     public void setBillDiscountType(String billDiscountType) {
         this.billDiscountType = billDiscountType;
+    }
+
+    public BigDecimal getBillDiscountFixed() {
+        return billDiscountFixed;
+    }
+
+    public void setBillDiscountFixed(BigDecimal billDiscountFixed) {
+        this.billDiscountFixed = billDiscountFixed;
     }
 
     public String getPaymentMethod() {

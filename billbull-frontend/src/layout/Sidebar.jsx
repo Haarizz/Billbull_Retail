@@ -15,7 +15,7 @@ import {
   Printer, Settings, FilePlus, Inbox, BookOpen,
   Receipt, PenTool, TrendingDown, Landmark, Percent,
   PieChart, Users, Wallet, Banknote, ShieldCheck, Mail,
-  UserCircle, TrendingUp, Hash, Search
+  UserCircle, TrendingUp, Hash, Search, MessageCircle
 } from "lucide-react";
 import { hasRole, logout, getUsernameFromToken } from "../api/auth";
 import { usePermissions } from "../context/PermissionContext";
@@ -284,6 +284,7 @@ const Sidebar = ({ children }) => {
       subItems: [
         { path: "/settings/company",            label: "Company Profile",     module: "userManagement.setup", icon: <Building2 size={14} /> },
         { path: "/settings/email",              label: "Email Settings",      module: "userManagement.setup", icon: <Mail size={14} /> },
+        { path: "/settings/whatsapp",           label: "WhatsApp Settings",   module: "userManagement.setup", icon: <MessageCircle size={14} /> },
         { path: "/settings/document-numbering", label: "Document Numbering",  module: "userManagement.setup", icon: <Hash size={14} /> },
       ],
     },

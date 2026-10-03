@@ -1,5 +1,7 @@
 package com.billbull.backend.sales.salesorder;
 
+import com.billbull.backend.sales.common.FooterDiscountAllocator;
+import com.billbull.backend.sales.common.VatMode;
 import org.hibernate.Hibernate;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Caching;
@@ -202,6 +204,14 @@ public class SalesOrderService {
                 subTotal = subTotal.add(lineTotal).subtract(taxAmount).add(footerDisc);
                 tax = tax.add(taxAmount);
             }
+        }
+
+        // Footer discount: allocated server-side across the lines; the allocator's line money
+        // replaces the client's (docs/footer-discount-audit-2026-10-01.md).
+        if (order.getItems() != null && shouldAllocateFooterDiscount(existingOrder)) {
+            FooterDiscountAllocator.Result allocation = applyFooterDiscountAllocation(order);
+            subTotal = allocation.subTotal();
+            tax = allocation.taxTotal();
         }
 
         subTotal = subTotal.setScale(2, RoundingMode.HALF_UP);
@@ -802,6 +812,71 @@ public class SalesOrderService {
                         || selection.status == BatchAllocationStatus.CONSUMED)
                 .mapToInt(selection -> selection.quantity != null ? selection.quantity : 0)
                 .sum();
+    }
+
+    /**
+     * New, DRAFT and CONFIRMED orders are (re)allocated on save. Once money has been taken or
+     * goods delivered/invoiced the stored line values are kept as they are.
+     */
+    static boolean shouldAllocateFooterDiscount(SalesOrder existingOrder) {
+        return existingOrder == null || existingOrder.getStatus() == null
+                || existingOrder.getStatus() == SalesOrderStatus.DRAFT
+                || existingOrder.getStatus() == SalesOrderStatus.CONFIRMED;
+    }
+
+    /** Package-private for tests: shared allocator over the order lines, written back in place. */
+    FooterDiscountAllocator.Result applyFooterDiscountAllocation(SalesOrder order) {
+        BigDecimal percent = order.getBillDiscount() != null ? BigDecimal.valueOf(order.getBillDiscount()) : null;
+        FooterDiscountAllocator.DiscountType type = FooterDiscountAllocator.DiscountType.resolve(
+                order.getBillDiscountType(), percent, order.getBillDiscountAmount());
+        BigDecimal value = FooterDiscountAllocator.requestedValue(
+                type, percent, order.getBillDiscountFixed(), order.getBillDiscountAmount());
+        VatMode vatMode = order.getVatMode() == VatMode.INCLUSIVE ? VatMode.INCLUSIVE : VatMode.EXCLUSIVE;
+
+        Map<String, Long> productIdByCode = new java.util.HashMap<>();
+        FooterDiscountAllocator.Result result = FooterDiscountAllocator.allocateLines(
+                order.getItems(),
+                item -> new FooterDiscountAllocator.LineSpec(
+                        BigDecimal.valueOf(item.getQuantity() != null ? item.getQuantity() : 0),
+                        item.getPrice(),
+                        FooterDiscountAllocator.focInSellingUnit(
+                                BigDecimal.valueOf(item.getFoc() != null ? item.getFoc() : 0),
+                                item.getUnit(), item.getFocUnit(),
+                                unit -> packingConversion(productIdFor(item.getItemCode(), productIdByCode), unit)),
+                        BigDecimal.valueOf(item.getDiscount() != null ? item.getDiscount() : 0d),
+                        BigDecimal.valueOf(item.getTaxRate() != null ? item.getTaxRate() : 0d),
+                        true),
+                type, value, vatMode,
+                (item, base, line) -> {
+                    item.setFooterDiscount(line.footerShare());
+                    item.setTaxableAmount(line.taxableAmount());
+                    item.setTaxAmount(line.taxAmount());
+                    item.setLineTotal(line.lineTotal());
+                });
+
+        order.setVatMode(vatMode);
+        order.setBillDiscountType(type.wireValue());
+        order.setBillDiscount(type == FooterDiscountAllocator.DiscountType.PERCENT && percent != null
+                ? percent.max(BigDecimal.ZERO).min(BigDecimal.valueOf(100)).doubleValue()
+                : 0d);
+        order.setBillDiscountAmount(result.footerAmount());
+        return result;
+    }
+
+    private Long productIdFor(String itemCode, Map<String, Long> cache) {
+        if (itemCode == null || itemCode.isBlank()) return null;
+        return cache.computeIfAbsent(itemCode, code -> productRepo.findByCodeAndIsActiveTrue(code)
+                .map(com.billbull.backend.inventory.product.Product::getId)
+                .orElse(null));
+    }
+
+    private BigDecimal packingConversion(Long productId, String unitName) {
+        if (productId == null || unitName == null || unitName.isBlank()) return null;
+        return packingRepo.findByProductId(productId).stream()
+                .filter(p -> p.getUnit() != null && unitName.equalsIgnoreCase(p.getUnit().getName()))
+                .findFirst()
+                .map(p -> p.getConversion())
+                .orElse(null);
     }
 
     private int calculateLineBaseQty(Long productId, String unitName, Integer qty, String focUnit, Integer foc) {

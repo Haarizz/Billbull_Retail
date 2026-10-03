@@ -103,6 +103,15 @@ const X_REPORT = {
     reconciliationStatus: 'SHORT',
     totalRefunds: 60,
     totalRefundCount: 1,
+    // Sales Return figures are a different population from the refund Payment rows above:
+    // totalRefunds counts card refunds against this session's invoices, salesReturnTotal is
+    // the approved Sales Return value. The two legitimately differ, which is why the Returns
+    // KPI reads the latter — the same figure the Returns/Refund section reports.
+    salesReturnTotal: 105,
+    reportingReturnValue: 105,
+    reportingNetSales: 2345.75,
+    reportingNetSalesExTax: 2234.05,
+    netSalesBasis: 'VAT_INCLUSIVE',
     cardRefundSales: 60,
     cardRefundCount: 1,
     voidAmount: 25,
@@ -176,6 +185,11 @@ const Z_REPORT = {
     totalPaid: 3350.75,
     voidAmount: 25,
     totalRefunds: 60,
+    salesReturnTotal: 105,
+    reportingReturnValue: 105,
+    reportingNetSales: 3245.75,
+    reportingNetSalesExTax: 3091.19,
+    netSalesBasis: 'VAT_INCLUSIVE',
     expectedCash: 2450.5,
     countedCash: 2146.35,
     cashVariance: -304.15,
@@ -255,7 +269,9 @@ describe('buildXReportViewModel', () => {
     expect(kpi(vm, 'Card Sales').value).toBe('AED 800.25');
     expect(kpi(vm, 'Credit Sales').value).toBe('AED 300.00');
     expect(kpi(vm, 'Online / Bank Transfer').value).toBe('AED 150.00');
-    expect(kpi(vm, 'Returns').value).toBe('AED 60.00');
+    // The approved Sales Return value, not totalRefunds — see the fixture note.
+    expect(kpi(vm, 'Returns').value).toBe('AED 105.00');
+    expect(kpi(vm, 'Net Sales').value).toBe('AED 2345.75');
     expect(kpi(vm, 'Discounts').value).toBe('AED 45.50');
   });
 
@@ -369,12 +385,17 @@ describe('buildZReportViewModel', () => {
   it('reports the day sales summary from backend figures', () => {
     const sales = section(vm, '2. Sales Summary');
 
+    // Net Sales Including VAT used to repeat Gross Sales verbatim, because returns were never
+    // deducted anywhere in this section. Both netted rows now come from the backend's
+    // NetSalesReportingBlock, on the documented VAT-inclusive basis.
     expect(sales.rows).toEqual([
       ['Gross Sales', 'AED 3350.75'],
       ['Total Discount', '(AED 60.00)'],
-      ['Net Sales Before VAT', 'AED 3191.19'],
+      ['Sales (Before VAT)', 'AED 3191.19'],
       ['VAT Amount (5%)', 'AED 159.56'],
-      ['Net Sales Including VAT', 'AED 3350.75'],
+      ['Sales Returns', '(AED 105.00)'],
+      ['Net Sales Before VAT', 'AED 3091.19'],
+      ['Net Sales Including VAT', 'AED 3245.75'],
     ]);
   });
 
@@ -441,6 +462,57 @@ describe('buildZReportViewModel', () => {
     const empty = buildZReportViewModel({}, {});
     expect(empty.sections.length).toBeGreaterThan(0);
     expect(JSON.stringify(empty)).toContain('AED 0.00');
+  });
+
+  // ── persisted Day Close reporting columns ──────────────────────────────────────────
+  //
+  // A Z-Report opened from the back office is handed detail.persistedReporting: the Day Close
+  // row's own reporting columns, which exist only for a snapshot closed after V112. They are
+  // preferred over the stored JSON because they are the queryable record of the day; a
+  // historical snapshot has none, and nothing may reinterpret its stored gross_sales /
+  // net_sales (POS line gross; pre-returns taxable base) as the reporting basis.
+
+  it('prefers the persisted Day Close reporting columns when the caller supplies them', () => {
+    const vmPersisted = buildZReportViewModel(Z_REPORT, {
+      currency: 'AED',
+      businessDate: '2026-09-07',
+      persistedReporting: {
+        netSalesBasis: 'VAT_INCLUSIVE',
+        reportingNetSales: 9000,
+        reportingNetSalesExTax: 8571.43,
+      },
+    });
+    const sales = section(vmPersisted, '2. Sales Summary');
+
+    expect(sales.rows).toContainEqual(['Net Sales Including VAT', 'AED 9000.00']);
+    expect(sales.rows).toContainEqual(['Net Sales Before VAT', 'AED 8571.43']);
+  });
+
+  it('falls back to the stored report JSON for a historical snapshot with no persisted columns', () => {
+    const vmHistorical = buildZReportViewModel(Z_REPORT, {
+      currency: 'AED',
+      businessDate: '2026-09-07',
+      persistedReporting: null,
+    });
+    const sales = section(vmHistorical, '2. Sales Summary');
+
+    // Exactly what the stored snapshot says — unchanged from the case above this block.
+    expect(sales.rows).toContainEqual(['Net Sales Including VAT', 'AED 3245.75']);
+    expect(sales.rows).toContainEqual(['Net Sales Before VAT', 'AED 3091.19']);
+  });
+
+  it('does not substitute a historical row gross or net column for the reporting basis', () => {
+    // The nightmare case: a historical Day Close carries net_sales = the PRE-RETURNS taxable
+    // base. If that ever leaked in as Net Sales, every closed day would quietly restate.
+    const vmHistorical = buildZReportViewModel(Z_REPORT, {
+      currency: 'AED',
+      persistedReporting: undefined,
+    });
+    const sales = section(vmHistorical, '2. Sales Summary');
+
+    expect(sales.rows).toContainEqual(['Net Sales Including VAT', 'AED 3245.75']);
+    // 3191.19 is the pre-returns taxable base. It must never surface as Net Sales.
+    expect(sales.rows).not.toContainEqual(['Net Sales Including VAT', 'AED 3191.19']);
   });
 });
 

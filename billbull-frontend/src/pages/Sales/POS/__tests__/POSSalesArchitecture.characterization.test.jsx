@@ -554,8 +554,8 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 231 top-level useState pairs', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(231);
+  it('declares 227 top-level useState pairs', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(227);
   });
 
   it('declares 16 top-level refs', () => {
