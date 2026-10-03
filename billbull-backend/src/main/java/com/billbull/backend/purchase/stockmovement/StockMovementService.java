@@ -407,6 +407,20 @@ public class StockMovementService {
         reverseOutboundStock(sourceType, sourceId, productId, warehouseId, null, null, null, qty, ref);
     }
 
+    /** Warehouse-level reversal that stamps the document's unit cost and business date. */
+    public void reverseOutboundStock(
+            StockSourceType sourceType,
+            Long sourceId,
+            Long productId,
+            Long warehouseId,
+            Integer qty,
+            String ref,
+            java.math.BigDecimal unitCost,
+            LocalDate movementDate) {
+        reverseOutboundStock(sourceType, sourceId, productId, warehouseId, null, null, null,
+                null, null, qty, ref, unitCost, movementDate);
+    }
+
     /** Full hierarchy reversal */
     public void reverseOutboundStock(
             StockSourceType sourceType,
@@ -435,6 +449,43 @@ public class StockMovementService {
             LocalDate expiryDate,
             Integer qty,
             String ref) {
+        reverseOutboundStock(sourceType, sourceId, productId, warehouseId, binId, zoneId, locatorId,
+                batchNumber, expiryDate, qty, ref, null, null);
+    }
+
+    /**
+     * Full hierarchy reversal, carrying the unit cost and business date of the document that
+     * caused it.
+     *
+     * <p><b>unitCost</b> — an inbound movement with no unit cost is invisible to
+     * {@code getWeightedAverageCost} and {@code sumGlobalInventoryValue}, so a restocked sales
+     * return raised on-hand quantity while contributing nothing to inventory <em>value</em> — all
+     * while its GL entry debited account 1200 by the resolved cost. The two valuations then
+     * differed by the cost of every restocked return, permanently, against a 1.00 AED
+     * reconciliation tolerance. The argument for the null was WAC protection, which no longer
+     * applies: the cost now resolved is the cost the units left at, so re-entering them at it
+     * restores the pre-sale weighted average exactly. Passing {@code null} keeps the old
+     * behaviour for callers that genuinely have no cost to stamp.
+     *
+     * <p><b>movementDate</b> — {@code LocalDate.now()} is the server's calendar date, which is
+     * not the document's business date: in a UTC+4 branch a return taken at 00:30 local posted its
+     * journal on the business day and its stock movement on the previous one. Passing
+     * {@code null} keeps the clock default.
+     */
+    public void reverseOutboundStock(
+            StockSourceType sourceType,
+            Long sourceId,
+            Long productId,
+            Long warehouseId,
+            Long binId,
+            Long zoneId,
+            Long locatorId,
+            String batchNumber,
+            LocalDate expiryDate,
+            Integer qty,
+            String ref,
+            java.math.BigDecimal unitCost,
+            LocalDate movementDate) {
 
         if (productId == null)
             throw new IllegalArgumentException("Product ID is required for stock reversal");
@@ -452,7 +503,8 @@ public class StockMovementService {
         sm.setZoneId(zoneId);
         sm.setLocatorId(locatorId);
         sm.setQuantity(qty); // positive for returning outbound stock
-        sm.setMovementDate(LocalDate.now());
+        sm.setUnitCost(unitCost);
+        sm.setMovementDate(movementDate != null ? movementDate : LocalDate.now());
         sm.setReferenceNo(ref);
         sm.setBatchNumber(normalizeBatchNumber(batchNumber));
         sm.setExpiryDate(expiryDate);

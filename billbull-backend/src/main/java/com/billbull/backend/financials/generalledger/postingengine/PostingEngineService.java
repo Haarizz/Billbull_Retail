@@ -1044,34 +1044,54 @@ public class PostingEngineService {
         /**
          * Generates the accounting entry for an approved sales return.
          *
-         * The revenue account to reverse depends on whether revenue was
-         * already recognized (DN was delivered) or is still deferred:
+         * <p>Account codes below are the live {@code ACC_*} constants on this class. An earlier
+         * version of this javadoc named 4101 / 2102 / 1110 / 1120 / 5101, none of which this
+         * method has ever posted to — harmless to execution, actively misleading to anyone
+         * designing against it.
          *
-         *   revenueWasRecognized = true  (DN already delivered):
-         *     Dr Sales Revenue (4101) [subTotal - discount]
-         *     Dr VAT Output (2102)    [taxAmount]  (if > 0)
-         *     Cr Accounts Receivable (1110) [totalAmount]
+         * <pre>
+         * revenueWasRecognized = true  (DN already delivered):
+         *   Dr Sales Revenue          (4001)  [subTotal - discount]
+         *   Dr VAT Output             (2100)  [taxAmount]  (if &gt; 0)
+         *   Cr Accounts Receivable    (1100)  [totalAmount]
          *
-         *   revenueWasRecognized = false (DN not yet delivered / revenue deferred):
-         *     Dr Deferred Revenue (2107) [subTotal - discount]
-         *     Dr VAT Output (2102)       [taxAmount]  (if > 0)
-         *     Cr Accounts Receivable (1110) [totalAmount]
+         * revenueWasRecognized = false (DN not yet delivered / revenue deferred):
+         *   Dr Deferred Revenue       (2051)  [subTotal - discount]
+         *   Dr VAT Output             (2100)  [taxAmount]  (if &gt; 0)
+         *   Cr Accounts Receivable    (1100)  [totalAmount]
+         * </pre>
          *
-         * discount is derived as subTotal + taxAmount - totalAmount so the entry always
+         * <p>discount is derived as {@code subTotal + taxAmount - totalAmount} so the entry always
          * balances regardless of any item-level discount breakdown.
          *
-         * COGS reversal (only if costOfGoodsReturned > 0):
-         *   Dr Inventory (1120) / Cr COGS (5101)
+         * <p>A second, self-balancing entry referenced {@code {returnNumber}-INV} posts the
+         * inventory leg when — and only when — {@code restocksInventory} is true:
+         *
+         * <pre>
+         *   Dr Inventory              (1200)  [costOfGoodsReturned]
+         *   Cr COGS                   (5001)  [costOfGoodsReturned]
+         * </pre>
+         *
+         * <p>Both entries are dated on {@code salesReturn.returnDate}, which the service stamps
+         * as the authoritative business date.
          *
          * @param salesReturn           the approved sales return entity
-         * @param costOfGoodsReturned   actual cost from product master (0 if unknown)
+         * @param costOfGoodsReturned   the value of the stock that physically came back — the sum
+         *                              of {@code quantity × unitCost} over the inbound movements
+         *                              actually posted for this return
          * @param revenueWasRecognized  true if revenue was already recognized at DN delivery
+         * @param restocksInventory     whether any stock physically returned. Supplied by the
+         *                              caller's restock plan rather than re-derived from line
+         *                              conditions here: when two predicates decided this
+         *                              independently, a resaleable line with no resolvable
+         *                              warehouse moved no stock and still debited 1200
          */
         @Transactional
         public JournalEntry createJournalFromSalesReturn(
                         SalesReturn salesReturn,
                         BigDecimal costOfGoodsReturned,
-                        boolean revenueWasRecognized) {
+                        boolean revenueWasRecognized,
+                        boolean restocksInventory) {
 
                 String ref = salesReturn.getReturnNumber();
                 { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
@@ -1099,7 +1119,8 @@ public class PostingEngineService {
                 addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
                                 "Return Credit Note", BigDecimal.ZERO, totalAmount);
 
-                // COGS reversal — only when goods actually come back into stock.
+                // COGS reversal — only when goods actually came back into stock, as decided by
+                // the caller's restock plan.
                 //
                 // A scrap return (Damaged/Opened/Defective/Expired) restocks nothing: no stock
                 // movement is posted and the cost stays on the books as a loss, so a zero COGS
@@ -1108,13 +1129,13 @@ public class PostingEngineService {
                 // this guard was for — it exists to catch a resaleable return whose cost is
                 // unknown, where inventory rises physically with no matching GL entry.
                 //
+                // This predicate used to be computed here, from line conditions, independently of
+                // the two predicates that decided whether a stock movement was written. They
+                // could disagree, and when they did this entry debited inventory for goods that
+                // never arrived. It is now the single verdict the stock pass acted on.
+                //
                 // The two entries are independent and each self-balances, so omitting the
                 // inventory entry leaves the revenue/VAT/AR entry above intact.
-                boolean restocksInventory = salesReturn.getItems() != null
-                                && salesReturn.getItems().stream().anyMatch(i ->
-                                                i.getReturnQty() != null && i.getReturnQty() > 0
-                                                && "Good".equalsIgnoreCase(i.getItemStatus()));
-
                 if (!restocksInventory) {
                         log.info("Sales Return {}: no resaleable lines — scrap return, so no Inventory/COGS "
                                         + "entry is posted and the cost stays on the books as a loss.", ref);
@@ -1132,6 +1153,51 @@ public class PostingEngineService {
                 addLine(invEntry, "Inventory", ACC_INVENTORY, "Inventory increase", costOfGoodsReturned, BigDecimal.ZERO);
                 addLine(invEntry, "COGS",      ACC_COGS,      "COGS reversal",      BigDecimal.ZERO, costOfGoodsReturned);
                 post(invEntry);
+
+                return post(entry);
+        }
+
+        /**
+         * Settlement of a Sales Return refunded to a card or by bank transfer.
+         *
+         * <pre>
+         * Dr Accounts Receivable   (1100)  [amount]
+         * Cr Merchant Clearing     (1013)  — card refund
+         * Cr Bank Account (Main)   (1010)  — bank transfer
+         * </pre>
+         *
+         * <p>Every other refund method already clears the AR credit the return journal leaves
+         * behind: a cash refund through the drawer DROP_OUT (its category posts to AR), a
+         * voucher through {@link #createJournalFromCreditVoucherIssue}, and Customer Credit by
+         * design, because there the credit on the account <em>is</em> the settlement.
+         *
+         * <p>Card and bank refunds had no such entry, so AR stayed credited for money that had
+         * physically left the business and the bank/merchant account never moved. The shape here
+         * is deliberately the same as the voucher posting — the refund method only changes which
+         * account faces AR, never the return posting itself.
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnRefundSettlement(
+                        SalesReturn salesReturn,
+                        BigDecimal amount,
+                        boolean viaBank) {
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String ref = salesReturn.getReturnNumber() + "-RFND";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String settlementAccount = viaBank ? ACC_BANK : ACC_MERCHANT_CLEARING;
+                String settlementName    = viaBank ? "Bank Account" : "Merchant Clearing";
+
+                JournalEntry entry = createBaseEntry(salesReturn.getReturnDate(), ref,
+                                "Sales Return refund " + salesReturn.getReturnNumber(),
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Settle return by " + settlementName, amount, BigDecimal.ZERO);
+                addLine(entry, settlementName, settlementAccount,
+                                "Refund paid for " + salesReturn.getReturnNumber(), BigDecimal.ZERO, amount);
 
                 return post(entry);
         }
@@ -1360,8 +1426,8 @@ public class PostingEngineService {
         /**
          * Applies a customer advance against a sales invoice (PDF §5).
          *
-         * Dr Customer Advance (2104) [amount]
-         * Cr Accounts Receivable (1110) [amount]
+         * Dr Customer Advances Received (2060) [amount]
+         * Cr Accounts Receivable      (1100) [amount]
          */
         @Transactional
         public JournalEntry createJournalFromAdvanceApplication(
@@ -1381,8 +1447,8 @@ public class PostingEngineService {
         /**
          * Refunds an unused customer advance back to bank/cash (PDF §5).
          *
-         * Dr Customer Advance (2104) [refundAmount]
-         * Cr Bank/Cash              [refundAmount]
+         * Dr Customer Advances Received (2060) [refundAmount]
+         * Cr Bank/Cash (resolved from the payment mode) [refundAmount]
          */
         @Transactional
         public JournalEntry createJournalFromAdvanceRefund(

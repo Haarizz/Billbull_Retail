@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
    RotateCcw, CheckCircle2, X, Printer, Loader2, AlertCircle, ShieldCheck, Store, Building2,
@@ -17,6 +17,7 @@ import CreditVoucherModal from './components/CreditVoucherModal';
 import { printSalesReturnReceipt, printCreditVoucher } from '../../../utils/salesReturnPrint';
 import { getPosPrinters } from '../../../api/posPrinterApi';
 import { getCreditVoucherByReturn } from '../../../api/creditVoucherApi';
+import { useCompany } from '../../../context/CompanyContext';
 
 /**
  * The single Sales Return workflow, shared by both entry points (§7, §26, §34):
@@ -61,6 +62,12 @@ export default function SalesReturnScreen({
    const [voucherLoading, setVoucherLoading] = useState(false);
    const [voucherError, setVoucherError] = useState(null);
    const [printing, setPrinting] = useState(false);
+   // The return number a receipt has actually come out for. Drives the REPRINT marking, so a
+   // second copy is never passed off as the original — and it is set only after the print
+   // pipeline reports success, because a failed attempt produced no paper to reprint.
+   const [printedReturnNumber, setPrintedReturnNumber] = useState(null);
+
+   const { company } = useCompany();
 
    const isPos = entryPoint === ENTRY_POINT.POS;
    const readOnly = sr.submitting || Boolean(sr.completedReturn);
@@ -241,37 +248,79 @@ export default function SalesReturnScreen({
     * Printing is downstream of the transaction. A failure here reports the failure and offers
     * a reprint — it never rolls back a return that has already posted.
     */
+   /**
+    * The branded header every other thermal document in the system carries — company name,
+    * branch, TRN, address, logo. Returns and vouchers were printing with none of it, so the
+    * paper the customer took away named no business at all; a voucher with no issuer on it is
+    * not something a second branch or a disputed redemption can be settled against.
+    */
+   const printHeader = useMemo(() => ({
+      companyName: company?.companyName || '',
+      header: sr.eligibility?.branchName || '',
+      trn: company?.trn || '',
+      showTrn: Boolean(company?.trn),
+      outletAddress: company?.address || '',
+      outletPhone: company?.phone || '',
+      logoDataUrl: company?.logoUrl || null,
+      showLogo: Boolean(company?.logoUrl),
+   }), [company, sr.eligibility?.branchName]);
+
    const runPrint = useCallback(async (job, { label }) => {
       setPrinting(true);
       try {
+         // Branch-wide fetch, narrowed client-side by resolvePrinterForContext — the same
+         // shape every other POS print path uses. Passing terminalId to the backend instead
+         // filters server-side for an exact terminal match, which silently drops every
+         // branch-scoped printer (terminalId null) and left returns with nothing to print to
+         // on terminals whose receipt printer is configured at branch level.
          const printers = await getPosPrinters({
             branchId: posContext?.branchId ?? sr.eligibility?.branchId ?? undefined,
-            terminalId: posContext?.terminalId ?? undefined,
+            deviceType: 'RECEIPT_PRINTER',
          });
-         const printer = await job(printers || []);
+         const result = await job(printers || []);
+         const printer = result?.printer || null;
          toast.success(`${label} sent to ${printer?.deviceName || 'printer'}.`);
+
+         // A text/GDI fallback means the driver refused raw ESC/POS. The paper came out, so
+         // this is a warning and not a failure — but it is never silent, because text mode
+         // drops every binary command, the voucher barcode included.
+         if (result?.fallbackUsed) {
+            toast.warning(
+               `${label} printed in text compatibility mode — `
+               + `"${printer?.deviceName || 'the printer'}" rejected raw ESC/POS`
+               + `${result.escPosError ? ` (${result.escPosError})` : ''}.`
+               + (result.barcodePrinted === false
+                  ? ' The voucher barcode is NOT on this copy — the code must be keyed in at redemption.'
+                  : ' Install the vendor or Generic / Text Only driver for full print quality.'),
+            );
+         }
+         return result;
       } catch (err) {
          toast.error(`${label} could not be printed: ${err?.message || 'printer error'}. `
             + 'The transaction is unaffected — you can reprint.');
+         return null;
       } finally {
          setPrinting(false);
       }
    }, [posContext, sr.eligibility]);
 
-   const handlePrintReceipt = useCallback((isReprint = false) => {
+   const handlePrintReceipt = useCallback(async (isReprint = false) => {
       const ret = sr.completedReturn;
-      if (!ret) return;
-      return runPrint(
+      if (!ret) return null;
+      const result = await runPrint(
          (printers) => printSalesReturnReceipt(ret, {
             printers,
             branchId: posContext?.branchId ?? sr.eligibility?.branchId ?? null,
             terminalId: posContext?.terminalId ?? null,
+            header: printHeader,
             isReprint,
             voucher: issuedVoucher,
          }),
          { label: `Return receipt ${ret.returnNumber}` },
       );
-   }, [sr.completedReturn, sr.eligibility, posContext, issuedVoucher, runPrint]);
+      if (result) setPrintedReturnNumber(ret.returnNumber);
+      return result;
+   }, [sr.completedReturn, sr.eligibility, posContext, issuedVoucher, printHeader, runPrint]);
 
    const handlePrintVoucher = useCallback((voucher, { reprint = false } = {}) => {
       if (!voucher) return;
@@ -280,11 +329,41 @@ export default function SalesReturnScreen({
             printers,
             branchId: posContext?.branchId ?? sr.eligibility?.branchId ?? null,
             terminalId: posContext?.terminalId ?? null,
+            header: printHeader,
             isReprint: reprint,
          }),
          { label: `Voucher ${voucher.voucherNumber}` },
       );
-   }, [sr.eligibility, posContext, runPrint]);
+   }, [sr.eligibility, posContext, printHeader, runPrint]);
+
+   /**
+    * At a POS counter the receipt is part of handing the refund over, not an optional extra,
+    * so a confirmed return prints itself and the cashier presses Confirm once instead of
+    * Confirm then Print. The register entry point keeps the manual button: back-office returns
+    * are often raised at a desk with no receipt printer, where auto-printing would do nothing
+    * but raise a printer error on every return.
+    *
+    * Guarded on the return number rather than a flag, so it fires exactly once per return,
+    * survives the re-renders voucher loading causes, and does not re-fire for a manual reprint.
+    * The guard is set before printing, not after: a printer failure must not turn into a loop
+    * of retries — it surfaces as the usual toast and the button below becomes the retry.
+    *
+    * A voucher-settled return waits for the voucher lookup to settle so the paper names the
+    * voucher the customer walks out with, instead of printing just before it is known.
+    */
+   const autoPrintedRef = useRef(null);
+   const receiptAlreadyPrinted = Boolean(sr.completedReturn?.returnNumber)
+      && printedReturnNumber === sr.completedReturn.returnNumber;
+
+   useEffect(() => {
+      if (!isPos) return;
+      const ret = sr.completedReturn;
+      if (!ret?.returnNumber) return;
+      if (autoPrintedRef.current === ret.returnNumber) return;
+      if (ret.refundMethod === 'CREDIT_VOUCHER' && voucherLoading) return;
+      autoPrintedRef.current = ret.returnNumber;
+      handlePrintReceipt(false);
+   }, [isPos, sr.completedReturn, voucherLoading, handlePrintReceipt]);
 
    // =========================================================================
    // Render
@@ -399,14 +478,18 @@ export default function SalesReturnScreen({
                      />
 
                      <div className="border-t" style={{ borderColor: C.border }}>
-                        <ReturnSummary summary={sr.summary} />
+                        <ReturnSummary summary={sr.summary} split={sr.split} />
 
+                        {/* blockedMethods carries the server's reasons merged with the ones
+                            that depend on the current selection, so a method with no paid
+                            portion to move is greyed out with the reason shown rather than
+                            failing at approval. */}
                         <RefundMethodSelector
                            methods={sr.refundMethods}
                            value={sr.refundMethod}
                            onChange={sr.setRefundMethod}
                            hasPosSession={Boolean(posContext?.sessionId)}
-                           blockedMethods={sr.eligibility.blockedRefundMethods || {}}
+                           blockedMethods={sr.blockedRefundMethods || {}}
                            disabled={readOnly}
                         />
 
@@ -462,14 +545,15 @@ export default function SalesReturnScreen({
 
                      {sr.completedReturn ? (
                         <button
-                           onClick={() => handlePrintReceipt(false)}
+                           onClick={() => handlePrintReceipt(receiptAlreadyPrinted)}
                            disabled={printing}
                            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black disabled:opacity-60"
                            style={{ background: C.accent, color: C.onAccent }}
                         >
                            {printing
                               ? <><Loader2 className="h-4 w-4 animate-spin" />Printing…</>
-                              : <><Printer className="h-4 w-4" />Print Return Receipt</>}
+                              : <><Printer className="h-4 w-4" />
+                                 {receiptAlreadyPrinted ? 'Reprint Return Receipt' : 'Print Return Receipt'}</>}
                         </button>
                      ) : (
                         <button
@@ -513,11 +597,13 @@ export default function SalesReturnScreen({
 
          {/* §15 — opens only when the backend refuses the approval for want of sign-off.
              It never decides on its own that approval is needed; the server does. */}
+         {/* refundAmount is the server-derived paid portion, not the return total: a supervisor
+             signing off a cash refund has to see the figure that actually leaves the drawer. */}
          <AuthorizationModal
             open={Boolean(pendingAuth)}
             reasonCode={pendingAuth?.reasonCode}
             returnNumber={pendingAuth?.draft?.returnNumber}
-            refundAmount={sr.summary.totalRefund}
+            refundAmount={sr.split.paidPortion}
             submitting={authSubmitting}
             error={authError}
             onCancel={handleCancelAuthorization}
@@ -532,6 +618,7 @@ export default function SalesReturnScreen({
             loading={voucherLoading}
             error={voucherError}
             branchName={sr.eligibility?.branchName}
+            companyName={company?.companyName}
             onClose={() => { setIssuedVoucher(null); setVoucherError(null); }}
             onRetry={() => sr.completedReturn && loadIssuedVoucher(sr.completedReturn)}
             onPrint={handlePrintVoucher}

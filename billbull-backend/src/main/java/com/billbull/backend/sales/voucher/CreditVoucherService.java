@@ -93,6 +93,30 @@ public class CreditVoucherService {
                                              String customerName,
                                              String customerMobile,
                                              Branch branch) {
+        return issueForSalesReturn(returnId, returnNumber, invoiceNumber, amount,
+                customerCode, customerName, customerMobile, branch, null);
+    }
+
+    /**
+     * As above, issued on the originating return's authoritative business date.
+     *
+     * <p>{@code businessDate} drives the voucher's issue date, its expiry window, its ISSUED
+     * transaction row and the date of its {@code Dr AR / Cr 2061} journal. It used to be
+     * {@code LocalDate.now()} — the server's calendar date — so a voucher issued at 00:30 in a
+     * UTC+4 branch carried an issue date one day after the return that created it, and the two
+     * legs of one settlement landed on different days' reports. A {@code null} keeps the clock
+     * default for callers with no business date to supply.
+     */
+    @Transactional
+    public CreditVoucher issueForSalesReturn(Long returnId,
+                                             String returnNumber,
+                                             String invoiceNumber,
+                                             BigDecimal amount,
+                                             String customerCode,
+                                             String customerName,
+                                             String customerMobile,
+                                             Branch branch,
+                                             LocalDate businessDate) {
 
         if (returnNumber == null || returnNumber.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -118,7 +142,7 @@ public class CreditVoucherService {
             return existing.get();
         }
 
-        LocalDate issueDate = LocalDate.now();
+        LocalDate issueDate = businessDate != null ? businessDate : LocalDate.now();
 
         CreditVoucher voucher = new CreditVoucher();
         voucher.setVoucherNumber(codeGenerator.generateVoucherNumber());

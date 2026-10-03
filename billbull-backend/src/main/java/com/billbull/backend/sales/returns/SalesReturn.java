@@ -313,4 +313,37 @@ public class SalesReturn  implements com.billbull.backend.common.ownership.Owned
     public void setCreatedByUserId(Long createdByUserId) {
         this.createdByUserId = createdByUserId;
     }
+
+    /**
+     * True when settling this return hands the customer value from somewhere other than their
+     * ledger — cash from the drawer, a card/bank reversal, or a store-credit voucher.
+     *
+     * <p>This is the single rule the AR sub-ledger and the Customer SoA both read. The return
+     * journal always posts {@code Cr Accounts Receivable} for the full total; what differs by
+     * refund method is whether a second entry posts {@code Dr Accounts Receivable} to clear it:
+     *
+     * <ul>
+     *   <li>CASH_REFUND — cleared by the drawer DROP_OUT, whose category posts to AR.</li>
+     *   <li>CREDIT_VOUCHER — cleared by the voucher-issue journal (AR → store-credit liability).</li>
+     *   <li>CARD_REFUND / BANK_TRANSFER — cleared by the refund-settlement journal.</li>
+     *   <li>CUSTOMER_CREDIT — <b>not</b> cleared: the credit is the settlement, and it stays on
+     *       the customer's account until a later invoice or refund consumes it.</li>
+     * </ul>
+     *
+     * <p>Legacy rows written before {@code refundMethod} existed kept the method as prose. For
+     * those, {@code returnAction} decides: a plain credit note stays on the ledger, anything
+     * else was paid out.
+     *
+     * <p>Not named {@code getX} on purpose — this is a classification rule, not a persisted
+     * column, and it must not appear in the entity's JSON.
+     */
+    public boolean settlesOutsideReceivable() {
+        if (refundMethod != null) {
+            return refundMethod != SalesReturnRefundMethod.CUSTOMER_CREDIT;
+        }
+        if (returnAction == null || returnAction.isBlank()) {
+            return false;
+        }
+        return !returnAction.toUpperCase().contains("CREDIT");
+    }
 }

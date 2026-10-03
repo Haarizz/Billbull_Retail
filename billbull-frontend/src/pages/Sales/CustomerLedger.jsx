@@ -2191,6 +2191,14 @@ const CustomerSOAView = ({ customers = [] }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [isPrinting, setIsPrinting] = useState(false);
 
+    // "Total Sales" is what was invoiced, so it sums the invoice rows only — the same rows its
+    // own count is taken from. totalDebit is the ledger's debit column, which also carries the
+    // settlement leg of a refunded sales return, and using it here made a refunded return read
+    // as extra sales.
+    const statementInvoicedTotal = useMemo(() => (statementData?.entries || [])
+        .filter(e => e.type === 'INVOICE')
+        .reduce((sum, e) => sum + (Number(e.debit) || 0), 0), [statementData]);
+
     useEffect(() => {
         if (customers.length > 0 && !selectedCustomerCode) {
             setSelectedCustomerCode(customers[0].code);
@@ -2399,7 +2407,7 @@ const CustomerSOAView = ({ customers = [] }) => {
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
                     <div className="text-xs text-slate-500 mb-1">Total Sales ({statementData?.entries?.filter(e => e.type === 'INVOICE').length || 0})</div>
                     <div className="text-xl font-bold text-green-600">
-                        <CurrencyAmount value={statementData?.totalDebit || 0} currency={currency} />
+                        <CurrencyAmount value={statementInvoicedTotal} currency={currency} />
                     </div>
                 </div>
                 <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm">
@@ -2439,7 +2447,8 @@ const CustomerSOAView = ({ customers = [] }) => {
                                         <span className={`px-2 py-0.5 border rounded text-[10px] ${entry.type === 'INVOICE' ? 'text-blue-600 bg-blue-50 border-blue-100' :
                                             (entry.type || '').includes('PAYMENT') ? 'text-green-600 bg-green-50 border-green-100' :
                                                 entry.type === 'OPENING_BALANCE' ? 'text-orange-700 bg-orange-50 border-orange-100' :
-                                                    'text-slate-500 bg-slate-50'
+                                                    (entry.type || '').startsWith('RETURN_') ? 'text-rose-600 bg-rose-50 border-rose-100' :
+                                                        'text-slate-500 bg-slate-50'
                                             }`}>{formatStatementEntryType(entry.type)}</span>
                                     </td>
                                     <td className="px-6 py-3 text-slate-600">{entry.documentNo || '-'}</td>

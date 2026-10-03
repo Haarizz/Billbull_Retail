@@ -147,21 +147,48 @@ class SalesReturnCashRefundServiceTest {
         verify(posSessionService, never()).addCashMovement(anyLong(), anyString(), any(), anyString(), anyString(), anyLong());
     }
 
+    /**
+     * The old {@code refundAmount ?? totalAmount} fallback is gone, deliberately (R15 / Phase 2
+     * §7). It meant a null refund amount paid out the full return value, and on a part-paid
+     * invoice that was cash the customer had never handed over. The amount is now the
+     * server-derived paid portion, stamped onto {@code refundAmount} under the invoice lock
+     * before this service runs, so a null means "nothing is payable" and nothing is paid.
+     *
+     * <p>This replaces a case that asserted the fallback. The behaviour change is the point of
+     * the phase, not an accommodation: failing closed is the only safe direction for a drawer
+     * payout.
+     */
     @Test
-    void refundAmountFallsBackToTheReturnTotalWhenNotSetExplicitly() {
+    void aNullRefundAmountPaysNothingRatherThanFallingBackToTheReturnTotal() {
+        stubCategory();
+        stubNoExistingMovement();
+
+        SalesReturn ret = cashReturn("SR-1", null);
+        ret.setTotalAmount(new BigDecimal("77.00"));
+
+        assertNull(service.recordCashRefund(ret));
+        verify(posSessionService, never()).addCashMovement(anyLong(), anyString(), any(),
+                anyString(), anyString(), anyLong());
+    }
+
+    /** The ordinary path: the stamped paid portion is exactly what leaves the drawer. */
+    @Test
+    void theStampedPaidPortionIsWhatLeavesTheDrawer() {
         stubCategory();
         stubNoExistingMovement();
         when(posSessionService.addCashMovement(anyLong(), anyString(), any(), anyString(), anyString(), anyLong()))
                 .thenReturn(new PosCashMovement());
 
-        SalesReturn ret = cashReturn("SR-1", null);
-        ret.setTotalAmount(new BigDecimal("77.00"));
+        // A 5,000 return against an invoice with 2,000 outstanding: 3,000 is the paid portion.
+        SalesReturn ret = cashReturn("SR-1", new BigDecimal("3000.00"));
+        ret.setTotalAmount(new BigDecimal("5000.00"));
         service.recordCashRefund(ret);
 
         ArgumentCaptor<BigDecimal> amount = ArgumentCaptor.forClass(BigDecimal.class);
         verify(posSessionService).addCashMovement(anyLong(), anyString(), amount.capture(),
                 anyString(), anyString(), anyLong());
-        assertEquals(0, new BigDecimal("77.00").compareTo(amount.getValue()));
+        assertEquals(0, new BigDecimal("3000.00").compareTo(amount.getValue()),
+                "The drawer pays the paid portion, never the full return value.");
     }
 
     // ---------------------------------------------------------------

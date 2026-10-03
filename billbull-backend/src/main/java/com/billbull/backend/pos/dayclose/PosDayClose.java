@@ -78,6 +78,57 @@ public class PosDayClose {
     @Column(name = "expected_cash", precision = 19, scale = 4)
     private BigDecimal expectedCash = BigDecimal.ZERO;
 
+    // ── Returns-aware reporting snapshot (additive) ───────────────────────────────────────
+    //
+    // grossSales and netSales above keep the meanings they have always had, and neither is the
+    // reporting basis: grossSales is the POS LINE GROSS before discount, and netSales is the
+    // taxable base BEFORE returns (totalSales - totalTax), despite its name. Every historical
+    // row was written under those meanings, so they are not redefined.
+    //
+    // These columns carry the one shared reporting basis instead -- VAT-INCLUSIVE, as declared
+    // by SalesReturnReportingTotals.NET_SALES_BASIS -- copied verbatim from the
+    // NetSalesReportingBlock the Z-Report already published. No arithmetic happens here or in
+    // the Day Close service: there is exactly one implementation of the calculation.
+    //
+    // All nullable with no backfill. NULL means "snapshot taken before the reporting basis was
+    // persisted", which is the truth; a zero would assert a figure that was never reported.
+    // pos_day_closes rows are immutable at the DB level (PosDayCloseLockTriggerInstaller), so
+    // these are forward-fill only by construction.
+
+    /** Sigma invoiceTotal for the day, VAT-inclusive, before returns. */
+    @Column(name = "reporting_gross_sales", precision = 19, scale = 4)
+    private BigDecimal reportingGrossSales;
+
+    /** Approved Sales Returns for the branch + business date, VAT-inclusive. */
+    @Column(name = "reporting_return_value", precision = 19, scale = 4)
+    private BigDecimal reportingReturnValue;
+
+    /** reportingGrossSales - reportingReturnValue, on the declared VAT-inclusive basis. */
+    @Column(name = "reporting_net_sales", precision = 19, scale = 4)
+    private BigDecimal reportingNetSales;
+
+    /** Output VAT on the day's sales, before returns. */
+    @Column(name = "reporting_sales_tax", precision = 19, scale = 4)
+    private BigDecimal reportingSalesTax;
+
+    /** VAT on the day's approved returns. */
+    @Column(name = "reporting_return_tax", precision = 19, scale = 4)
+    private BigDecimal reportingReturnTax;
+
+    /** reportingSalesTax - reportingReturnTax. */
+    @Column(name = "reporting_net_tax", precision = 19, scale = 4)
+    private BigDecimal reportingNetTax;
+
+    /** (gross - salesTax) - (returnValue - returnTax) -- never a VAT-inclusive return netted
+     *  off an ex-VAT sales figure. */
+    @Column(name = "reporting_net_sales_ex_tax", precision = 19, scale = 4)
+    private BigDecimal reportingNetSalesExTax;
+
+    /** The basis the figures above were computed on, stored per row rather than assumed by the
+     *  reader -- so a later basis change is detectable instead of silently restating old rows. */
+    @Column(name = "reporting_net_sales_basis", length = 20)
+    private String reportingNetSalesBasis;
+
     // ── Physical drawer reconciliation for the day ───────────────────────────────────────
     // Summed from the frozen per-session snapshots, never re-derived from the day's
     // transactions -- a day-level re-derivation would be a second cash model competing with
@@ -331,6 +382,38 @@ public class PosDayClose {
 
     public PosDayCloseStatus getStatus() { return status; }
     public void setStatus(PosDayCloseStatus status) { this.status = status; }
+
+    public BigDecimal getReportingGrossSales() { return reportingGrossSales; }
+    public void setReportingGrossSales(BigDecimal reportingGrossSales) { this.reportingGrossSales = reportingGrossSales; }
+
+    public BigDecimal getReportingReturnValue() { return reportingReturnValue; }
+    public void setReportingReturnValue(BigDecimal reportingReturnValue) { this.reportingReturnValue = reportingReturnValue; }
+
+    public BigDecimal getReportingNetSales() { return reportingNetSales; }
+    public void setReportingNetSales(BigDecimal reportingNetSales) { this.reportingNetSales = reportingNetSales; }
+
+    public BigDecimal getReportingSalesTax() { return reportingSalesTax; }
+    public void setReportingSalesTax(BigDecimal reportingSalesTax) { this.reportingSalesTax = reportingSalesTax; }
+
+    public BigDecimal getReportingReturnTax() { return reportingReturnTax; }
+    public void setReportingReturnTax(BigDecimal reportingReturnTax) { this.reportingReturnTax = reportingReturnTax; }
+
+    public BigDecimal getReportingNetTax() { return reportingNetTax; }
+    public void setReportingNetTax(BigDecimal reportingNetTax) { this.reportingNetTax = reportingNetTax; }
+
+    public BigDecimal getReportingNetSalesExTax() { return reportingNetSalesExTax; }
+    public void setReportingNetSalesExTax(BigDecimal reportingNetSalesExTax) { this.reportingNetSalesExTax = reportingNetSalesExTax; }
+
+    public String getReportingNetSalesBasis() { return reportingNetSalesBasis; }
+    public void setReportingNetSalesBasis(String reportingNetSalesBasis) { this.reportingNetSalesBasis = reportingNetSalesBasis; }
+
+    /** True when this snapshot carries the returns-aware reporting figures, i.e. it was written
+     *  after V112. False for a historical row, whose stored gross_sales / net_sales must NOT be
+     *  reinterpreted as the reporting basis. */
+    @jakarta.persistence.Transient
+    public boolean hasReportingSnapshot() {
+        return reportingNetSales != null;
+    }
 
     public BigDecimal getExpectedCash() {
         return expectedCash;

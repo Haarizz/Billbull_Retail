@@ -72,8 +72,12 @@ public class SalesAnalyticsService {
         var branchF     = CompletableFuture.supplyAsync(() -> invoiceRepo.findBranchPerformanceBetween(dateFrom, dateTo, branchId), POOL);
         var topCustF    = CompletableFuture.supplyAsync(() -> invoiceRepo.sumInvoiceTotalByCustomerCode(), POOL);
         var topCustOutF = CompletableFuture.supplyAsync(() -> invoiceRepo.sumOutstandingBalanceByCustomerCode(), POOL);
-        var returnsF    = CompletableFuture.supplyAsync(() -> orZero(returnRepo.getTotalReturnsBetweenDates(dateFrom, dateTo)), POOL);
-        var returnCntF  = CompletableFuture.supplyAsync(() -> returnRepo.findByReturnDateBetween(dateFrom, dateTo).size(), POOL);
+        // Branch-scoped and APPROVED-only, like every other metric in this response. Both of
+        // these were neither: the value ignored branchId entirely (so a branch-filtered
+        // analytics view subtracted the whole group's returns) and the count was a row count
+        // over findByReturnDateBetween, which includes DRAFT and CANCELLED returns.
+        var returnsF    = CompletableFuture.supplyAsync(() -> orZero(returnRepo.getTotalReturnsBetweenDates(dateFrom, dateTo, branchId)), POOL);
+        var returnCntF  = CompletableFuture.supplyAsync(() -> returnRepo.countApprovedBetweenDates(dateFrom, dateTo, branchId), POOL);
         var quotCountF  = CompletableFuture.supplyAsync(() -> quotationRepo.countByStatus(QuotationStatus.PENDING_APPROVAL) + quotationRepo.countByStatus(QuotationStatus.APPROVED), POOL);
         var quotTotalF  = CompletableFuture.supplyAsync(() ->
                 quotationRepo.countByStatus(QuotationStatus.PENDING_APPROVAL)

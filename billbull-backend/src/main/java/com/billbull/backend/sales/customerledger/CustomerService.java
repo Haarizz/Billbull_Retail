@@ -52,6 +52,9 @@ public class CustomerService {
     private OpeningInvoiceRepository openingInvoiceRepository;
 
     @Autowired
+    private com.billbull.backend.sales.returns.SalesReturnRepository salesReturnRepository;
+
+    @Autowired
     private EntityManager entityManager;
 
     @Autowired
@@ -94,6 +97,13 @@ public class CustomerService {
                 openingOutstanding.put((String) row[0], new BigDecimal(row[1].toString()));
             }
         }
+        // No return-credit subtraction here any more, and deliberately so. A return's unpaid
+        // portion is now an allocation row folded into sales_invoices.balance by
+        // InvoiceBalanceService, so the per-invoice outstanding read above is ALREADY net of
+        // return credits. The old subtraction was a second, independent definition of
+        // outstanding that keyed on refund_method; five other AR surfaces never had it, so the
+        // Customer List, AR aging, the credit-limit check and reconcileAR all disagreed. One
+        // definition now, in the data rather than in each formula.
         // Also bulk-fetch invoice totals for totalSales display (unchanged)
         Map<String, BigDecimal> invoiceTotals = new HashMap<>();
         for (Object[] row : salesInvoiceRepo.sumInvoiceTotalByCustomerCode()) {
@@ -270,6 +280,10 @@ public class CustomerService {
             if (fetched != null) overdue = fetched;
         }
 
+        // Same formula as getAllCustomers above, so the summary card and the list can never
+        // disagree — and now the same formula as AR aging, the credit-limit check and
+        // reconcileAR too, because return credits reach it through sales_invoices.balance
+        // instead of through a subtraction only these two surfaces performed.
         BigDecimal outstanding = invOutstanding.add(opnOutstanding);
         BigDecimal totalSales = openingBalance.add(invoiced);
 

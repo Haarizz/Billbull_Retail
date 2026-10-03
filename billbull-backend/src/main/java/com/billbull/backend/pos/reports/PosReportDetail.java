@@ -2,6 +2,7 @@ package com.billbull.backend.pos.reports;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /** Full detail response for {@code GET /api/pos/reports/x/{id}} / {@code /z/{id}} — the
@@ -22,6 +23,13 @@ public class PosReportDetail {
     private Map<String, Object> report;
     private boolean skipped;
     private String skipReason;
+    /** Z only: the returns-aware reporting figures as PERSISTED on the Day Close row, or null
+     *  for a historical snapshot written before they existed. Never reconstructed and never
+     *  back-filled from the stored gross_sales / net_sales, whose meanings predate the reporting
+     *  basis — see PosDayClose. A client that wants the authoritative Net Sales for a day reads
+     *  this when present and falls back to the stored report JSON when it is null, which is also
+     *  the signal that it is looking at a snapshot taken under the old reporting definition. */
+    private Map<String, Object> persistedReporting;
 
     public static PosReportDetail fromX(PosXReportSnapshot s, Map<String, Object> report) {
         PosReportDetail d = new PosReportDetail();
@@ -53,7 +61,27 @@ public class PosReportDetail {
         d.report = report;
         d.skipped = z.isSkipped();
         d.skipReason = z.getSkipReason();
+        d.persistedReporting = persistedReporting(z);
         return d;
+    }
+
+    /** The persisted reporting block, or null when this row predates it. Preferred over the
+     *  stored report JSON for a new snapshot; a null is left as a null so the caller can tell a
+     *  historical snapshot apart from a day that genuinely reported zero. */
+    private static Map<String, Object> persistedReporting(com.billbull.backend.pos.dayclose.PosDayClose z) {
+        if (!z.hasReportingSnapshot()) {
+            return null;
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("netSalesBasis", z.getReportingNetSalesBasis());
+        m.put("reportingGrossSales", z.getReportingGrossSales());
+        m.put("reportingReturnValue", z.getReportingReturnValue());
+        m.put("reportingNetSales", z.getReportingNetSales());
+        m.put("reportingSalesTax", z.getReportingSalesTax());
+        m.put("reportingReturnTax", z.getReportingReturnTax());
+        m.put("reportingNetTax", z.getReportingNetTax());
+        m.put("reportingNetSalesExTax", z.getReportingNetSalesExTax());
+        return m;
     }
 
     public Long getId() { return id; }
@@ -70,4 +98,5 @@ public class PosReportDetail {
     public Map<String, Object> getReport() { return report; }
     public boolean isSkipped() { return skipped; }
     public String getSkipReason() { return skipReason; }
+    public Map<String, Object> getPersistedReporting() { return persistedReporting; }
 }

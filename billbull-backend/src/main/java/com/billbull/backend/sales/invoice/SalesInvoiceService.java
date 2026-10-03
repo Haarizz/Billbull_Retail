@@ -307,6 +307,15 @@ public class SalesInvoiceService {
     public SalesInvoice save(SalesInvoice invoice) {
         SalesInvoice existing = invoice.getId() != null ? invoiceRepo.findById(invoice.getId()).orElse(null) : null;
 
+        // Return credit applied to this invoice is owned by the allocation ledger, not by the
+        // client. An editor round-trip that omits the field would otherwise null it and hand
+        // finalizeInvoiceTotals a zero credit, restoring a balance a return had already cleared
+        // until the next recompute happened to run. Restored from the persisted row, like the
+        // salesperson attribution below.
+        if (existing != null) {
+            invoice.setReturnCredited(existing.getReturnCredited());
+        }
+
         // History: snapshot the diff BEFORE the mutations below (branch snapshot, totals
         // recalculation, numbering) rewrite `invoice`. `existing` is a separately-loaded
         // instance, so it still holds the persisted values at this point. The events
@@ -852,7 +861,14 @@ public class SalesInvoiceService {
         invoice.setSubTotal(subTotal);
         invoice.setTaxTotal(taxTotal);
         invoice.setInvoiceTotal(total);
-        invoice.setBalance(total.subtract(paid));
+        // Balance is projected by the one shared formula, never computed here. This path runs
+        // pre-persist on a client-supplied instance and must stay collaborator-free, so it feeds
+        // the invoice's own figures in rather than reading the ledgers; the ledger-backed
+        // recompute (InvoiceBalanceService.recomputeInvoiceBalance) owns the figures themselves
+        // and is what a receipt or a return approval calls. Both end in the same arithmetic, so
+        // the two can no longer drift apart. returnCredited is restored from the persisted row
+        // in save() before this runs, so an edit cannot silently drop an existing credit.
+        InvoiceBalanceService.applyMoney(invoice, paid, invoice.getReturnCredited());
     }
 
     /**

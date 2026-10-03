@@ -91,6 +91,17 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     @Column(precision = 15, scale = 2)
     private BigDecimal amountPaid;
+    /**
+     * Sales Return credit applied to this invoice — the sum of its {@code APPLIED}
+     * {@code sales_return_credit_applications} rows, maintained by
+     * {@link InvoiceBalanceService#recomputeInvoiceBalance}.
+     *
+     * <p>Derived, so not required for correctness; stored because an invoice screen that shows a
+     * reduced balance with no visible reason is a support ticket. An invoice reading
+     * total 10,000 / paid 6,000 / credited 2,000 / balance 2,000 explains itself.
+     */
+    @Column(name = "return_credited", precision = 15, scale = 2)
+    private BigDecimal returnCredited;
     @Column(precision = 15, scale = 2)
     private BigDecimal balance;
     /** Bill-level discount as a PERCENTAGE rate (not money) — paired with {@link #billDiscountAmount}. */
@@ -490,6 +501,14 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     public void setAmountPaid(BigDecimal amountPaid) {
         this.amountPaid = amountPaid;
+    }
+
+    public BigDecimal getReturnCredited() {
+        return returnCredited;
+    }
+
+    public void setReturnCredited(BigDecimal returnCredited) {
+        this.returnCredited = returnCredited;
     }
 
     public BigDecimal getBalance() {

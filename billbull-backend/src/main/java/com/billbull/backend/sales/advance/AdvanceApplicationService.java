@@ -160,7 +160,11 @@ public class AdvanceApplicationService {
 
     /**
      * Applies an advance receipt against a sales invoice.
-     * Posts: Dr Customer Advance (2104) / Cr Accounts Receivable (1110)
+     * Posts: Dr Customer Advances Received (2060) / Cr Accounts Receivable (1100)
+     *
+     * <p>Account codes are the live {@code PostingEngineService.ACC_CUSTOMER_ADVANCE} and
+     * {@code ACC_ACCOUNTS_RECEIVABLE} constants. This javadoc previously named 2104 / 1110,
+     * neither of which exists in the chart of accounts.
      *
      * Validates the invoice and both balances so this is safe to call from a
      * manual/user-supplied request as well as internal auto-apply flows —
@@ -227,7 +231,8 @@ public class AdvanceApplicationService {
 
     /**
      * Refunds an open customer advance back to bank/cash.
-     * Posts: Dr Customer Advance (2104) / Cr Bank (1102)
+     * Posts: Dr Customer Advances Received (2060) / Cr the resolved settlement account for the
+     * payment mode — Bank Account (1010) for a bank refund, Cash (1001) for a till payout.
      */
     @Transactional
     public AdvanceApplication refund(Long advanceReceiptId, BigDecimal amount, String paymentMode) {

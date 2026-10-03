@@ -4218,7 +4218,14 @@ function POSReportsBrowser({ reportType }: { reportType: "X" | "Z" }) {
     if (reportType === "X") {
       return buildXReportViewModelShared(detail.report, { currency });
     }
-    return buildZReportViewModelShared(detail.report, { currency, businessDate: detail.businessDate });
+    // persistedReporting is the Day Close row's own reporting columns, present only for a
+    // snapshot closed after V112. Historical rows pass null and keep rendering from their
+    // stored JSON exactly as generated -- see buildZReportViewModel.
+    return buildZReportViewModelShared(detail.report, {
+      currency,
+      businessDate: detail.businessDate,
+      persistedReporting: detail.persistedReporting || null,
+    });
   }
 
   async function handlePrint(detail: any) {

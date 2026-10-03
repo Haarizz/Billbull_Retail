@@ -62,7 +62,8 @@ class SalesReportVatTest {
     @BeforeEach
     void setUp() {
         service = new SalesReportDataService(invoiceRepository, returnRepository, orderRepository,
-                deliveryNoteRepository, customerRepository, productRepository, paymentRepository);
+                deliveryNoteRepository, customerRepository, productRepository, paymentRepository,
+                new com.billbull.backend.sales.returns.reporting.SalesReturnReportingService(returnRepository));
 
         lenient().when(productRepository.findActiveProductReportBasics()).thenReturn(List.of());
         lenient().when(customerRepository.findAll()).thenReturn(List.of());

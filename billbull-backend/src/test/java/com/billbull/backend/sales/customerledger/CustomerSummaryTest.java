@@ -47,6 +47,7 @@ class CustomerSummaryTest {
     @Mock private OpeningInvoiceRepository openingInvoiceRepository;
     @Mock private AuditLogService auditLogService;
     @Mock private ModulePermissionService modulePermissionService;
+    @Mock private com.billbull.backend.sales.returns.SalesReturnRepository salesReturnRepository;
 
     private CustomerService service;
 
@@ -56,6 +57,7 @@ class CustomerSummaryTest {
         ReflectionTestUtils.setField(service, "repository", repository);
         ReflectionTestUtils.setField(service, "salesInvoiceRepo", salesInvoiceRepo);
         ReflectionTestUtils.setField(service, "openingInvoiceRepository", openingInvoiceRepository);
+        ReflectionTestUtils.setField(service, "salesReturnRepository", salesReturnRepository);
     }
 
     private CustomerController controller() {
@@ -90,6 +92,50 @@ class CustomerSummaryTest {
     private void stubOverdue(String code, long count, String amount) {
         when(salesInvoiceRepo.overdueSummaryForCustomerCode(eq(code), any(LocalDate.class)))
                 .thenReturn(new CustomerOverdueSummary(count, new BigDecimal(amount)));
+    }
+
+    // -- Return credits -------------------------------------------------------
+
+    /**
+     * A return credit still has to reach outstanding — but it now arrives through
+     * {@code sales_invoices.balance} rather than through a subtraction this surface performed by
+     * itself.
+     *
+     * <p>The old shape was a second definition of effective outstanding: only the Customer List,
+     * this summary card and the statement opening balance subtracted return credits, so the
+     * credit-limit check, AR aging, the AR reports and {@code reconcileAR} disagreed with them by
+     * every ledger-credit return ever booked. The unpaid portion of a return is now an immutable
+     * row in {@code sales_return_credit_applications} that
+     * {@code InvoiceBalanceService.recomputeInvoiceBalance} folds into the invoice's own balance,
+     * so the figure read here is already net of it — and so is every other AR surface's.
+     *
+     * <p>Hence the stub: an invoice of 1,000 with a 250 credit applied reports an outstanding
+     * balance of 750, and this service adds nothing and subtracts nothing.
+     */
+    @Test
+    void anOutstandingReturnCreditReducesOutstandingSoItMatchesTheStatement() {
+        Customer c = customer(7L, "CUS-007", "Al Noor Trading", new BigDecimal("0.00"));
+        when(repository.findById(7L)).thenReturn(Optional.of(c));
+        stubReceivables("CUS-007", "1000.00", "750.00", "0.00");
+
+        CustomerSummaryResponse s = service.getCustomerSummary(7L);
+
+        assertThat(s.getOutstanding()).isEqualByComparingTo("750.00");
+    }
+
+    /**
+     * A refunded return was settled outside the ledger, so it must not move outstanding.
+     *
+     * <p>Under the split model this is the fully-paid case: the whole return value is a paid
+     * portion, no allocation row is written, and the invoice balance is therefore untouched.
+     */
+    @Test
+    void aRefundedReturnLeavesOutstandingAlone() {
+        Customer c = customer(7L, "CUS-007", "Al Noor Trading", new BigDecimal("0.00"));
+        when(repository.findById(7L)).thenReturn(Optional.of(c));
+        stubReceivables("CUS-007", "1000.00", "1000.00", "0.00");
+
+        assertThat(service.getCustomerSummary(7L).getOutstanding()).isEqualByComparingTo("1000.00");
     }
 
     // -- Total paid -----------------------------------------------------------

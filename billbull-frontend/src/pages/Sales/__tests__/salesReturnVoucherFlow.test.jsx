@@ -32,6 +32,7 @@ vi.mock('sonner', () => ({
 }));
 
 import SalesReturnScreen from '../SalesReturn/SalesReturnScreen';
+import { CompanyProvider } from '../../../context/CompanyContext';
 import { ENTRY_POINT } from '../SalesReturn/constants';
 import {
    searchReturnInvoices, getReturnEligibility, getReturnOptions,
@@ -39,7 +40,7 @@ import {
 } from '../../../api/salesReturnApi';
 import { getCreditVoucherByReturn } from '../../../api/creditVoucherApi';
 import { getPosPrinters } from '../../../api/posPrinterApi';
-import { printCreditVoucher } from '../../../utils/salesReturnPrint';
+import { printCreditVoucher, printSalesReturnReceipt } from '../../../utils/salesReturnPrint';
 
 const ELIGIBILITY = {
    eligible: true,
@@ -85,9 +86,18 @@ const VOUCHER = {
    redeemable: true,
 };
 
+/**
+ * The screen reads the company profile for the printed/branded header, so it mounts under the
+ * same provider the app gives it. Without a token the provider fetches nothing, which is the
+ * "profile not loaded yet" case the screen has to tolerate anyway.
+ */
+const renderScreen = (props = {}) => render(
+   <CompanyProvider><SalesReturnScreen {...props} /></CompanyProvider>,
+);
+
 /** Drives the workflow up to (but not including) Confirm, settling on Credit Voucher. */
 async function setUpReturn(user, props = {}) {
-   render(<SalesReturnScreen entryPoint={ENTRY_POINT.SALES_RETURN} {...props} />);
+   renderScreen({ entryPoint: ENTRY_POINT.SALES_RETURN, ...props });
 
    // Invoice: a single exact match auto-selects, which is the scan-a-receipt path.
    const search = await screen.findByPlaceholderText(/invoice|receipt|scan/i);
@@ -113,7 +123,8 @@ describe('Sales Return → Credit Voucher', () => {
       getReturnEligibility.mockResolvedValue(ELIGIBILITY);
       saveSalesReturn.mockResolvedValue(SAVED_DRAFT);
       getPosPrinters.mockResolvedValue([{ id: 1, deviceName: 'Counter Printer' }]);
-      printCreditVoucher.mockResolvedValue({ deviceName: 'Counter Printer' });
+      printCreditVoucher.mockResolvedValue({ printer: { deviceName: 'Counter Printer' } });
+      printSalesReturnReceipt.mockResolvedValue({ printer: { deviceName: 'Counter Printer' } });
    });
 
    it('opens the voucher card with the persisted voucher after a confirmed return', async () => {
@@ -153,6 +164,32 @@ describe('Sales Return → Credit Voucher', () => {
 
       expect(await screen.findByText('Credit Voucher Generated')).toBeInTheDocument();
       expect(screen.getByText('VC-QFPRO-7702')).toBeInTheDocument();
+   });
+
+   it('loads the branch receipt printers rather than filtering by terminal server-side', async () => {
+      // Regression guard: the fetch used to pass terminalId, and the backend filters that
+      // for an exact match — so a branch-scoped printer (terminalId null, how POS receipt
+      // printers are normally configured) never came back and the return receipt silently
+      // failed with "no printer configured". Terminal preference is the resolver's job,
+      // and it needs the whole branch list to rank against.
+      const user = userEvent.setup();
+      updateSalesReturnStatus.mockResolvedValue({
+         ...SAVED_DRAFT, status: 'APPROVED', issuedVoucher: VOUCHER,
+      });
+
+      await setUpReturn(user, {
+         entryPoint: ENTRY_POINT.POS,
+         posContext: { branchId: 3, terminalId: 'T2', counterName: 'Counter 2', sessionId: 77 },
+      });
+      await user.click(screen.getByRole('button', { name: /Confirm Sales Return/ }));
+      await screen.findByText('Credit Voucher Generated');
+      await user.click(screen.getByRole('button', { name: /Print Voucher/ }));
+
+      await waitFor(() => expect(getPosPrinters).toHaveBeenCalled());
+      const params = getPosPrinters.mock.calls.at(-1)[0];
+      expect(params).toEqual({ branchId: 3, deviceType: 'RECEIPT_PRINTER' });
+      // The terminal still reaches the resolver, which keeps branch-scoped printers eligible.
+      expect(printCreditVoucher.mock.calls.at(-1)[1]).toMatchObject({ terminalId: 'T2' });
    });
 
    it('notifies completion without the host having to close the screen', async () => {
@@ -273,7 +310,7 @@ describe('Sales Return → Credit Voucher', () => {
          ...SAVED_DRAFT, refundMethod: 'CARD_REFUND', status: 'APPROVED',
       });
 
-      const { container } = render(<SalesReturnScreen entryPoint={ENTRY_POINT.SALES_RETURN} />);
+      const { container } = renderScreen({ entryPoint: ENTRY_POINT.SALES_RETURN });
       expect(container).toBeTruthy();
 
       const search = await screen.findByPlaceholderText(/invoice|receipt|scan/i);
@@ -287,5 +324,113 @@ describe('Sales Return → Credit Voucher', () => {
       await waitFor(() => expect(updateSalesReturnStatus).toHaveBeenCalled());
       expect(screen.queryByText('Credit Voucher Generated')).not.toBeInTheDocument();
       expect(getCreditVoucherByReturn).not.toHaveBeenCalled();
+   });
+});
+
+describe('Sales Return → receipt printing on confirm', () => {
+   beforeEach(() => {
+      vi.clearAllMocks();
+      getReturnOptions.mockResolvedValue(null);
+      searchReturnInvoices.mockResolvedValue([
+         { invoiceNumber: 'INV-2026-0172', receiptNumber: 'RCP-00482' },
+      ]);
+      getReturnEligibility.mockResolvedValue(ELIGIBILITY);
+      saveSalesReturn.mockResolvedValue(SAVED_DRAFT);
+      getPosPrinters.mockResolvedValue([{ id: 1, deviceName: 'Counter Printer' }]);
+      printCreditVoucher.mockResolvedValue({ printer: { deviceName: 'Counter Printer' } });
+      printSalesReturnReceipt.mockResolvedValue({ printer: { deviceName: 'Counter Printer' } });
+   });
+
+   it('prints the receipt automatically when a POS return is confirmed', async () => {
+      // The cashier presses Confirm once. The receipt is part of handing over the refund,
+      // not a second deliberate action.
+      const user = userEvent.setup();
+      updateSalesReturnStatus.mockResolvedValue({
+         ...SAVED_DRAFT, refundMethod: 'CASH_REFUND', status: 'APPROVED',
+      });
+
+      await setUpReturn(user, { entryPoint: ENTRY_POINT.POS, posContext: { branchId: 3, terminalId: 'T2', counterName: 'Counter 2', sessionId: 77 } });
+      await user.click(screen.getByRole('button', { name: /Confirm Sales Return/ }));
+
+      await waitFor(() => expect(printSalesReturnReceipt).toHaveBeenCalledTimes(1));
+      expect(printSalesReturnReceipt.mock.calls[0][0]).toMatchObject({ returnNumber: 'SR-2026-0017' });
+      // The automatic copy is the original, not a reprint.
+      expect(printSalesReturnReceipt.mock.calls[0][1]).toMatchObject({
+         isReprint: false, terminalId: 'T2', branchId: 3,
+      });
+   });
+
+   it('auto-prints once and marks every later copy a reprint', async () => {
+      // Printing twice is a reprint whichever button started it — an unmarked second copy of
+      // a refund receipt is exactly what a duplicate-refund claim is built on.
+      const user = userEvent.setup();
+      updateSalesReturnStatus.mockResolvedValue({
+         ...SAVED_DRAFT, refundMethod: 'CASH_REFUND', status: 'APPROVED',
+      });
+
+      await setUpReturn(user, { entryPoint: ENTRY_POINT.POS, posContext: { branchId: 3, terminalId: 'T2', counterName: 'Counter 2', sessionId: 77 } });
+      await user.click(screen.getByRole('button', { name: /Confirm Sales Return/ }));
+      await waitFor(() => expect(printSalesReturnReceipt).toHaveBeenCalledTimes(1));
+
+      const reprint = await screen.findByRole('button', { name: /Reprint Return Receipt/ });
+      await user.click(reprint);
+
+      await waitFor(() => expect(printSalesReturnReceipt).toHaveBeenCalledTimes(2));
+      expect(printSalesReturnReceipt.mock.calls[1][1]).toMatchObject({ isReprint: true });
+      // §20 — paper only. Nothing was re-saved or re-approved.
+      expect(saveSalesReturn).toHaveBeenCalledTimes(1);
+      expect(updateSalesReturnStatus).toHaveBeenCalledTimes(1);
+   });
+
+   it('leaves the register entry point on the manual button', async () => {
+      // A back-office return is often raised at a desk with no receipt printer, where
+      // auto-printing would only produce a printer error on every return.
+      const user = userEvent.setup();
+      updateSalesReturnStatus.mockResolvedValue({
+         ...SAVED_DRAFT, refundMethod: 'CASH_REFUND', status: 'APPROVED',
+      });
+
+      await setUpReturn(user);
+      await user.click(screen.getByRole('button', { name: /Confirm Sales Return/ }));
+
+      const print = await screen.findByRole('button', { name: /Print Return Receipt/ });
+      expect(printSalesReturnReceipt).not.toHaveBeenCalled();
+
+      await user.click(print);
+      await waitFor(() => expect(printSalesReturnReceipt).toHaveBeenCalledTimes(1));
+      expect(printSalesReturnReceipt.mock.calls[0][1]).toMatchObject({ isReprint: false });
+   });
+
+   it('waits for the voucher lookup so the auto-printed receipt names the voucher', async () => {
+      // The approval named no voucher, so it is read back. Printing before that resolves would
+      // hand the customer a receipt with no voucher number on it.
+      const user = userEvent.setup();
+      updateSalesReturnStatus.mockResolvedValue({ ...SAVED_DRAFT, status: 'APPROVED' });
+      getCreditVoucherByReturn.mockResolvedValue(VOUCHER);
+
+      await setUpReturn(user, { entryPoint: ENTRY_POINT.POS, posContext: { branchId: 3, terminalId: 'T2', counterName: 'Counter 2', sessionId: 77 } });
+      await user.click(screen.getByRole('button', { name: /Confirm Sales Return/ }));
+
+      await waitFor(() => expect(printSalesReturnReceipt).toHaveBeenCalledTimes(1));
+      expect(printSalesReturnReceipt.mock.calls[0][1]).toMatchObject({ voucher: VOUCHER });
+   });
+
+   it('does not retry forever when the printer fails', async () => {
+      // The auto-print guard is set before printing, so a printer error surfaces once as a
+      // toast and the button becomes the retry — it never becomes a render loop.
+      const user = userEvent.setup();
+      updateSalesReturnStatus.mockResolvedValue({
+         ...SAVED_DRAFT, refundMethod: 'CASH_REFUND', status: 'APPROVED',
+      });
+      printSalesReturnReceipt.mockRejectedValue(new Error('No receipt printer is configured.'));
+
+      await setUpReturn(user, { entryPoint: ENTRY_POINT.POS, posContext: { branchId: 3, terminalId: 'T2', counterName: 'Counter 2', sessionId: 77 } });
+      await user.click(screen.getByRole('button', { name: /Confirm Sales Return/ }));
+
+      await waitFor(() => expect(printSalesReturnReceipt).toHaveBeenCalledTimes(1));
+      // Still the original, not a reprint: no paper came out, so there is nothing to reprint.
+      expect(await screen.findByRole('button', { name: /Print Return Receipt/ })).toBeInTheDocument();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(printSalesReturnReceipt).toHaveBeenCalledTimes(1);
    });
 });

@@ -135,7 +135,7 @@ export function buildSalesReturnReceiptBody(ret, {
   out.push(hr);
   out.push(buildFixedWidthLine(t('RETURNED_ITEMS'), money(ret.subTotal), cols));
   out.push(buildFixedWidthLine(
-    Boolean(ret.taxInclusive) ? t('VAT_REVERSAL_INCL') : t('VAT_REVERSAL'),
+    ret.taxInclusive ? t('VAT_REVERSAL_INCL') : t('VAT_REVERSAL'),
     money(ret.taxAmount), cols,
   ));
   out.push(buildFixedWidthLine(t('TOTAL_REFUND'), money(ret.totalAmount), cols));
@@ -214,25 +214,63 @@ export function buildCreditVoucherBody(voucher, {
 }
 
 /**
- * Resolves the printer for the current context and sends an ESC/POS document through the
- * production pipeline, creating the print job trail.
+ * Paper width to lay the document out at.
+ *
+ * The configured printer decides, not the caller: a 48-column document sent to a 58mm head
+ * does not fail, it prints wrapped and unreadable, and the operator has no way to tell that
+ * the width was the problem. The caller's value is only a fallback for a printer record with
+ * no paper size on it.
+ */
+const printerPaperSize = (printer, requested) => {
+  const configured = String(printer?.paperSize || '').toLowerCase();
+  if (configured.includes('58')) return '58mm';
+  if (configured.includes('80')) return '80mm';
+  return String(requested || '').includes('58') ? '58mm' : '80mm';
+};
+
+/**
+ * Resolves the printer for the current context, builds the document at that printer's paper
+ * width, and sends it through the production pipeline, creating the print job trail.
+ *
+ * The printer is resolved BEFORE the document is built, because the document's layout depends
+ * on it. `build` is therefore a function of the resolved paper size rather than a finished
+ * payload, and returns both the ESC/POS bytes and the same content as plain text.
+ *
+ * The plain text is not optional. It is what the agent falls back to when a v4/WSD-class
+ * driver refuses raw ESC/POS, and it is what lands in the print job record as a human-readable
+ * payload — without it the audit trail holds only "[ESC/POS binary receipt]" and a driver
+ * rejection means no paper at all.
  *
  * Failure is surfaced, never swallowed: the caller must be able to tell the operator that
  * the paper did not come out, while leaving the underlying transaction untouched.
  */
-async function dispatch(base64, { printers, branchId, terminalId, title, sourceType, sourceRefId }) {
+async function dispatch(build, { printers, branchId, terminalId, paperSize, title, sourceType, sourceRefId }) {
   const printer = resolvePrinterForContext(printers || [], { branchId, terminalId });
   if (!printer) {
     throw new Error('No receipt printer is configured for this terminal. '
       + 'Configure one under POS → Devices, then reprint.');
   }
-  await sendEscPosReceiptToConfiguredPrinter(printer, {
+
+  const effectivePaperSize = printerPaperSize(printer, paperSize);
+  const { base64, text } = await build(effectivePaperSize);
+
+  const result = await sendEscPosReceiptToConfiguredPrinter(printer, {
     dataBase64: base64,
+    receiptText: text,
     title,
     sourceType,
     sourceRefId,
   });
-  return printer;
+
+  // fallbackUsed means the driver rejected raw ESC/POS and the agent printed plain text
+  // instead. Reported rather than returned silently: text mode drops everything binary,
+  // which for a voucher means the barcode is simply not on the paper.
+  return {
+    printer,
+    paperSize: effectivePaperSize,
+    fallbackUsed: result?.fallbackUsed || null,
+    escPosError: result?.escPosError || null,
+  };
 }
 
 /**
@@ -249,11 +287,16 @@ export async function printSalesReturnReceipt(ret, {
     throw new Error('Cannot print: the sales return has not been saved yet.');
   }
 
-  const body = buildSalesReturnReceiptBody(ret, { paperSize, isReprint, voucher });
-  const base64 = await buildEscPosDocumentBase64(body, { ...header, paperSize });
-
-  return dispatch(base64, {
-    printers, branchId, terminalId,
+  return dispatch(async (effectivePaperSize) => {
+    const body = buildSalesReturnReceiptBody(ret, {
+      paperSize: effectivePaperSize, isReprint, voucher,
+    });
+    return {
+      base64: await buildEscPosDocumentBase64(body, { ...header, paperSize: effectivePaperSize }),
+      text: body,
+    };
+  }, {
+    printers, branchId, terminalId, paperSize,
     title: `Sales Return ${ret.returnNumber}`,
     sourceType: 'SALES_RETURN',
     sourceRefId: ret.id != null ? String(ret.id) : ret.returnNumber,
@@ -275,19 +318,30 @@ export async function printCreditVoucher(voucher, {
     throw new Error('Cannot print: this voucher has no persisted code.');
   }
 
-  const body = buildCreditVoucherBody(voucher, { paperSize, isReprint, terms });
   const barcodeValue = voucher.barcodeValue || String(voucher.voucherCode).replace(/-/g, '');
 
-  const base64 = await buildEscPosDocumentBase64(body, {
-    ...header,
-    paperSize,
-    barcode: { value: barcodeValue },
-  });
-
-  return dispatch(base64, {
-    printers, branchId, terminalId,
+  const result = await dispatch(async (effectivePaperSize) => {
+    const body = buildCreditVoucherBody(voucher, {
+      paperSize: effectivePaperSize, isReprint, terms,
+    });
+    return {
+      base64: await buildEscPosDocumentBase64(body, {
+        ...header,
+        paperSize: effectivePaperSize,
+        barcode: { value: barcodeValue },
+      }),
+      // The text fallback cannot carry a barcode — it is a binary ESC/POS command — so the
+      // printed code is all the customer has to work with. It is already in the body above,
+      // which is why a barcode-less voucher is still a usable one, and why the caller is told
+      // the symbol is missing rather than left to discover it at redemption.
+      text: body,
+    };
+  }, {
+    printers, branchId, terminalId, paperSize,
     title: `Credit Voucher ${voucher.voucherNumber || voucher.voucherCode}`,
     sourceType: 'CREDIT_VOUCHER',
     sourceRefId: voucher.id != null ? String(voucher.id) : voucher.voucherCode,
   });
+
+  return { ...result, barcodePrinted: !result.fallbackUsed };
 }

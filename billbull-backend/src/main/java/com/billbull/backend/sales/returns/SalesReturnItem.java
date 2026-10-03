@@ -16,6 +16,24 @@ public class SalesReturnItem {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * The originating {@code sales_invoice_items.id} this line is returning, when the client
+     * supplied it. The eligibility response already carries it per line
+     * ({@code ReturnEligibilityLine.invoiceItemId}).
+     *
+     * <p>Why it matters: proration, cost resolution and restock all used to match the original
+     * invoice line by item code alone, taking the first match. When the same product appears on
+     * one invoice twice — two lines at different prices, or at different costs after a price
+     * change — every return line for that product got the first line's discount and cost, so one
+     * of them was valued wrong in both the refund and the inventory journal. Matching on the
+     * line id removes the ambiguity entirely.
+     *
+     * <p>Nullable forever. Legacy rows have no value and any caller that omits it falls back to
+     * the item-code match, which is correct whenever the product appears once — the common case.
+     */
+    @Column(name = "invoice_item_id")
+    private Long invoiceItemId;
+
     private String itemCode;
     private String itemName;
     private String unit;
@@ -76,6 +94,14 @@ public class SalesReturnItem {
 
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public Long getInvoiceItemId() {
+        return invoiceItemId;
+    }
+
+    public void setInvoiceItemId(Long invoiceItemId) {
+        this.invoiceItemId = invoiceItemId;
     }
 
     public String getItemCode() {

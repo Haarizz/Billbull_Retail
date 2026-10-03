@@ -4,15 +4,12 @@ import com.billbull.backend.financials.generalledger.postingengine.PostingEngine
 import com.billbull.backend.inventory.batch.BatchAllocation;
 import com.billbull.backend.inventory.batch.BatchAllocationRepository;
 import com.billbull.backend.inventory.batch.BatchAllocationStatus;
-import com.billbull.backend.inventory.batch.BatchMaster;
-import com.billbull.backend.inventory.batch.BatchMasterRepository;
 import com.billbull.backend.inventory.batch.BatchSelectionService;
 import com.billbull.backend.inventory.batch.BatchStatus;
 import com.billbull.backend.inventory.serial.SerialMaster;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.inventory.product.Product;
-import com.billbull.backend.inventory.product.ProductPricingRepository;
 import com.billbull.backend.inventory.product.ProductRepository;
 import com.billbull.backend.purchase.stockmovement.StockMovementService;
 import com.billbull.backend.purchase.stockmovement.StockSourceType;
@@ -21,7 +18,11 @@ import com.billbull.backend.sales.delivery.DeliveryNoteRepository;
 import com.billbull.backend.sales.invoice.DeliveryStatus;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
+import com.billbull.backend.sales.invoice.InvoiceBalanceService;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.sales.returns.credit.SalesReturnCreditApplication;
+import com.billbull.backend.sales.returns.credit.SalesReturnCreditApplicationRepository;
+import com.billbull.backend.sales.returns.credit.SalesReturnCreditApplicationStatus;
 import com.billbull.backend.sales.settings.SalesDocumentNumberingService;
 import com.billbull.backend.sales.voucher.CreditVoucher;
 import com.billbull.backend.sales.voucher.CreditVoucherResponse;
@@ -63,16 +64,10 @@ public class SalesReturnService {
     private ProductRepository productRepository;
 
     @Autowired
-    private ProductPricingRepository productPricingRepository;
-
-    @Autowired
     private BatchSelectionService batchSelectionService;
 
     @Autowired
     private BatchAllocationRepository batchAllocationRepository;
-
-    @Autowired
-    private BatchMasterRepository batchMasterRepository;
 
     @Autowired
     private DeliveryNoteRepository deliveryNoteRepository;
@@ -93,9 +88,6 @@ public class SalesReturnService {
     private com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
 
     @Autowired
-    private com.billbull.backend.sales.delivery.DeliveryNoteBatchConsumptionRepository consumptionRepo;
-
-    @Autowired
     private SerialMasterRepository serialMasterRepository;
 
     @Autowired
@@ -109,6 +101,32 @@ public class SalesReturnService {
 
     @Autowired
     private SalesReturnCustomerAccountResolver customerAccountResolver;
+
+    @Autowired
+    private com.billbull.backend.pos.session.PosSessionRepository posSessionRepository;
+
+    @Autowired
+    private com.billbull.backend.pos.businessdate.BusinessDayWindowService businessDayWindowService;
+
+    @Autowired
+    private com.billbull.backend.pos.businessdate.BusinessDayClock businessDayClock;
+
+    @Autowired
+    private com.billbull.backend.pos.audit.PosAuditService posAuditService;
+
+    @Autowired
+    private com.billbull.backend.security.AuditLogService auditLogService;
+
+    @Autowired
+    private SalesReturnRestockPlanner restockPlanner;
+
+    /** The one owner of amountPaid / returnCredited / balance / status on a sales invoice. */
+    @Autowired
+    private InvoiceBalanceService invoiceBalanceService;
+
+    /** The return-credit allocation ledger — where the unpaid portion of a return is recorded. */
+    @Autowired
+    private SalesReturnCreditApplicationRepository returnCreditApplicationRepository;
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllReturns() {
@@ -191,13 +209,21 @@ public class SalesReturnService {
                     salesReturn.getReturnNumber()));
         }
 
+        // The creation endpoint may never hand out an APPROVED return (§R7). Approval is what
+        // moves stock, posts to the GL and pays cash out of the drawer, and it runs only through
+        // updateStatus — under the row lock, after authorization, after the quantity revalidation.
+        // A POST that could set APPROVED directly would mint a return with every one of those
+        // effects recorded as done and none of them performed: a phantom credit note. The server
+        // decides the creation status regardless of what the client sends.
+        assertCreationStatusAllowed(salesReturn.getStatus());
+
         if (salesReturn.getStatus() == null) {
             salesReturn.setStatus(SalesReturnStatus.DRAFT);
         }
 
-        if (salesReturn.getReturnDate() == null) {
-            salesReturn.setReturnDate(LocalDate.now());
-        }
+        // §16 — the business date is the server's to decide, never the client's. See
+        // resolveAuthoritativeBusinessDate: COALESCE(session tradingDate, branch Business Day).
+        stampAuthoritativeBusinessDate(salesReturn, existingReturn);
 
         if (salesReturn.getItems() != null) {
             salesReturn.getItems().forEach(item -> item.setSalesReturn(salesReturn));
@@ -207,7 +233,25 @@ public class SalesReturnService {
         applyEntryPointDefaults(salesReturn);
         prorateDiscountFromInvoice(salesReturn);
 
-        return salesReturnRepository.save(salesReturn);
+        // One branch must own every leg of a return. Checked at creation so the cashier is told
+        // immediately, and again at approval so a draft raised before this guard existed cannot
+        // post a split.
+        assertReturnBranchMatchesInvoice(salesReturn);
+
+        boolean isNew = salesReturn.getId() == null;
+        SalesReturn saved = salesReturnRepository.save(salesReturn);
+
+        if (isNew && saved.getEntryPoint() == SalesReturnEntryPoint.POS) {
+            // RETURN_INITIATED has existed on PosAuditAction with no caller. A POS return that is
+            // started and abandoned leaves no other trace, which is exactly the pattern a
+            // loss-prevention review looks for.
+            posAuditService.logReturnInitiated(
+                    saved.getPosSessionId(), saved.getPosTerminalId(),
+                    saved.getBranch() != null ? saved.getBranch().getId() : null,
+                    saved.getId(), saved.getLinkedInvoice());
+        }
+
+        return saved;
     }
 
     /**
@@ -251,13 +295,168 @@ public class SalesReturnService {
         }
     }
 
+    // ---------------------------------------------------------------
+    // 'R7' Creation status - the server decides, never the client
+    // ---------------------------------------------------------------
+
+    /**
+     * Rejects an APPROVED status supplied to the creation/update endpoint.
+     *
+     * <p>Approval is not a value a document can be created with: it is the transition that
+     * locks the return row, resolves authorization, revalidates returnable quantities under
+     * the invoice lock, restocks, posts the GL, and pays cash out of the drawer. All of that
+     * lives in {@link #updateStatus}. A POST that could write APPROVED directly would record a
+     * return whose every effect is claimed as done and none of it performed - a phantom credit
+     * note with no stock movement, no journal and no payout.
+     *
+     * <p>CANCELLED stays allowed: cancelling a draft is a plain field change with no side effect.
+     */
+    private void assertCreationStatusAllowed(SalesReturnStatus requested) {
+        if (requested == SalesReturnStatus.APPROVED) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.BAD_REQUEST,
+                    "A sales return cannot be created or saved as APPROVED. Save it first, then"
+                            + " approve it through PUT /api/sales/returns/{id}/status?status=APPROVED,"
+                            + " which is the only path that moves stock, posts to the ledger and"
+                            + " settles the refund.");
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Business date - server-authoritative, one value for every leg
+    // ---------------------------------------------------------------
+
+    /**
+     * Stamps the return's authoritative business date onto both {@code returnDate} and
+     * {@code tradingDate}, ignoring whatever the client sent.
+     *
+     * <p>The client used to derive {@code returnDate} as
+     * {@code new Date().toISOString().slice(0,10)} - a <em>UTC</em> calendar date. In a UTC+4
+     * branch every return taken between midnight and 04:00 local was therefore dated to the
+     * previous day before any trading-day logic ran, which split the return from the drawer
+     * payout that funded it.
+     *
+     * <p>Writing the same value to both columns is what makes every downstream leg agree: the
+     * return journal, the inventory journal and the card/bank settlement journal all post on
+     * {@code returnDate}; the stock movement and the credit voucher now take it explicitly; the
+     * customer statement and the X/Z reports query {@code returnDate}; and the dashboard POS
+     * badge matches {@code COALESCE(tradingDate, returnDate)}. With the two columns equal, that
+     * COALESCE is the same date as everything else by construction.
+     *
+     * <p>Stamped on creation only. A draft keeps the business date it was raised on, so a return
+     * saved before midnight and approved after it still posts to the day the goods came back -
+     * and no client can shift an existing return's accounting date by re-saving it.
+     */
+    private void stampAuthoritativeBusinessDate(SalesReturn salesReturn, SalesReturn existingReturn) {
+        if (existingReturn != null) {
+            // Carry the original forward verbatim; an update may not move the accounting date.
+            salesReturn.setReturnDate(existingReturn.getReturnDate());
+            salesReturn.setTradingDate(existingReturn.getTradingDate());
+            return;
+        }
+        LocalDate businessDate = resolveAuthoritativeBusinessDate(salesReturn);
+        salesReturn.setReturnDate(businessDate);
+        salesReturn.setTradingDate(businessDate);
+    }
+
+    /**
+     * The one business date for this return, resolved exactly as POS checkout resolves the date
+     * it stamps on the sales invoice ({@code PosCheckoutController.posBusinessDate}):
+     * {@code COALESCE(session.tradingDate, session.sessionDate, branch Business Day)}.
+     *
+     * <p>Mirroring the invoice is the point. A return and the sale it reverses have to land on
+     * the same business day for the day's reports to net, and the invoice's rule is already the
+     * system's answer to "which day is it" at a POS terminal.
+     *
+     * <p>Back-office returns have no session, so they take the branch's current Business Day from
+     * {@code BusinessDayWindowService} - the same authority POS session management and day close
+     * use. The Business Day clock is the last resort, and it reads the configured POS timezone
+     * rather than the server's, which is the whole point.
+     */
+    LocalDate resolveAuthoritativeBusinessDate(SalesReturn salesReturn) {
+        Long sessionId = salesReturn.getPosSessionId();
+        if (sessionId != null) {
+            com.billbull.backend.pos.session.PosSession session =
+                    posSessionRepository.findById(sessionId).orElse(null);
+            if (session != null) {
+                if (session.getTradingDate() != null) return session.getTradingDate();
+                if (session.getSessionDate() != null) return session.getSessionDate();
+            }
+            log.warn("[SalesReturn] POS session {} carries no business date; falling back to the"
+                    + " branch Business Day for {}.", sessionId, salesReturn.getReturnNumber());
+        }
+
+        Long branchId = salesReturn.getBranch() != null ? salesReturn.getBranch().getId() : null;
+        try {
+            LocalDate tradingDate = businessDayWindowService.currentTradingDate(branchId);
+            if (tradingDate != null) return tradingDate;
+        } catch (RuntimeException e) {
+            log.warn("[SalesReturn] Could not resolve the Business Day for branch {}: {}. Using the"
+                    + " Business Day clock instead.", branchId, e.getMessage());
+        }
+        return businessDayClock.now().toLocalDate();
+    }
+
+    // ---------------------------------------------------------------
+    // Branch attribution - one branch owns every leg of a return
+    // ---------------------------------------------------------------
+
+    /**
+     * Refuses a return whose own branch differs from the branch that raised the linked invoice.
+     *
+     * <p>A cross-branch return splits itself in two: the revenue/VAT/AR reversal posts in the
+     * branch the return was raised in, while the goods go back to the warehouse on the selling
+     * branch's delivery note. Branch B's P&amp;L then carries a reversal for a sale it never
+     * made, and branch A's stock rises for a credit note it never issued.
+     *
+     * <p>Modelling that honestly needs inter-branch due-to/due-from accounts and a defined
+     * transfer price, neither of which exists in this chart of accounts - so the rule is that it
+     * is not permitted, and the selling branch owns every leg.
+     *
+     * <p>{@code assertTransactionBranchAccessible} already stopped this for a BRANCH_ADMIN, whose
+     * branch scope excludes the other branch's invoice. It never stopped a global ADMIN, for whom
+     * that check returns true for every branch: an admin with the Branch Selector on B could
+     * raise a return against A's invoice and get exactly the split above. This closes the gap for
+     * every role, by comparing the two branches rather than the caller's rights.
+     */
+    private void assertReturnBranchMatchesInvoice(SalesReturn salesReturn) {
+        String linkedInvoice = salesReturn.getLinkedInvoice();
+        if (linkedInvoice == null || linkedInvoice.isBlank()) return;
+
+        Long returnBranchId = salesReturn.getBranch() != null ? salesReturn.getBranch().getId() : null;
+        if (returnBranchId == null) return; // legacy/branchless document - nothing to split
+
+        Optional<SalesInvoice> invoiceOpt = salesInvoiceRepository.findByInvoiceNumber(linkedInvoice);
+        if (invoiceOpt.isEmpty()) return; // a missing invoice is reported by the callers that need it
+
+        Long invoiceBranchId = invoiceOpt.get().getBranchId();
+        if (invoiceBranchId == null) return; // legacy invoice with no branch
+
+        if (!invoiceBranchId.equals(returnBranchId)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Invoice " + linkedInvoice + " was sold by another branch ("
+                            + describeBranch(invoiceOpt.get().getBranchName(), invoiceBranchId)
+                            + "), and this return would be raised in "
+                            + describeBranch(salesReturn.getBranch().getName(), returnBranchId)
+                            + ". Cross-branch returns are not supported: the revenue reversal and"
+                            + " the returned stock would land in different branches' books. Switch"
+                            + " to the selling branch and process the return there.");
+        }
+    }
+
+    private static String describeBranch(String name, Long id) {
+        return name != null && !name.isBlank() ? name : "branch #" + id;
+    }
+
     /**
      * Backfills discountPercent/discountAmount on each return line from the matching line
      * on the linked original invoice (matched by itemCode), prorating the invoice line's
-     * discount amount by returnQty/soldQty so partial returns carry a proportional discount.
+     * discount amount (item discount + footer-discount share) by returnQty/soldQty so partial
+     * returns carry a proportional discount.
      * Leaves any discount already supplied by the caller untouched.
      */
-    private void prorateDiscountFromInvoice(SalesReturn salesReturn) {
+    void prorateDiscountFromInvoice(SalesReturn salesReturn) {
         if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
         String linkedInvoice = salesReturn.getLinkedInvoice();
         if (linkedInvoice == null || linkedInvoice.isBlank()) return;
@@ -265,8 +464,17 @@ public class SalesReturnService {
         Optional<SalesInvoice> invoiceOpt = salesInvoiceRepository.findByInvoiceNumber(linkedInvoice);
         if (invoiceOpt.isEmpty() || invoiceOpt.get().getItems() == null) return;
 
+        Map<SalesInvoiceItem, BigDecimal> footerShares =
+                com.billbull.backend.sales.invoice.InvoiceFooterDiscountShares.of(invoiceOpt.get());
+        // Two indexes, strongest identity first. The id map is exact; the code map keeps the
+        // first matching line, which is only ever consulted for a return line that carries no
+        // invoice line id (a legacy row, or a client that does not send it).
+        Map<Long, SalesInvoiceItem> invoiceItemById = new HashMap<>();
         Map<String, SalesInvoiceItem> invoiceItemByCode = new HashMap<>();
         for (SalesInvoiceItem ii : invoiceOpt.get().getItems()) {
+            if (ii.getId() != null) {
+                invoiceItemById.put(ii.getId(), ii);
+            }
             if (ii.getItemCode() != null) {
                 invoiceItemByCode.putIfAbsent(ii.getItemCode(), ii);
             }
@@ -274,7 +482,7 @@ public class SalesReturnService {
 
         for (SalesReturnItem item : salesReturn.getItems()) {
             if (item.getDiscountAmount() != null) continue; // caller already supplied a value
-            SalesInvoiceItem invoiceItem = invoiceItemByCode.get(item.getItemCode());
+            SalesInvoiceItem invoiceItem = resolveInvoiceLine(item, invoiceItemById, invoiceItemByCode);
             if (invoiceItem == null) continue;
 
             item.setDiscountPercent(invoiceItem.getDiscount());
@@ -287,6 +495,11 @@ public class SalesReturnService {
                             .multiply(BigDecimal.valueOf(invoiceItem.getDiscount() / 100.0)
                                     .setScale(6, java.math.RoundingMode.HALF_UP))
                     : BigDecimal.ZERO;
+            // The line's footer-discount share is part of the discount the customer received.
+            BigDecimal footerShare = footerShares.get(invoiceItem);
+            if (footerShare != null) {
+                invoiceLineDiscountAmt = invoiceLineDiscountAmt.add(footerShare);
+            }
 
             if (soldQty > 0 && returnQty > 0) {
                 BigDecimal proratedDiscount = invoiceLineDiscountAmt
@@ -297,6 +510,32 @@ public class SalesReturnService {
                 item.setDiscountAmount(BigDecimal.ZERO);
             }
         }
+    }
+
+    /**
+     * The original invoice line a return line came from, by the strongest identity available.
+     *
+     * <p>Prefers the persisted {@code invoiceItemId} and falls back to the item code. The
+     * fallback is what the whole module used to do, and it is wrong in exactly one shape: the
+     * same product on one invoice twice, at different prices or different costs. The first
+     * matching line then won for both return lines, so one of them was prorated and valued
+     * against money the customer never paid for it.
+     *
+     * <p>Shared by proration and by the restock plan's cost resolution, so a return line cannot
+     * be priced off one invoice line and costed off another.
+     */
+    static SalesInvoiceItem resolveInvoiceLine(SalesReturnItem item,
+                                               Map<Long, SalesInvoiceItem> byId,
+                                               Map<String, SalesInvoiceItem> byCode) {
+        if (item == null) return null;
+        if (item.getInvoiceItemId() != null) {
+            SalesInvoiceItem exact = byId.get(item.getInvoiceItemId());
+            if (exact != null) return exact;
+            log.warn("[SalesReturn] return line for '{}' names invoice item id {} which is not on"
+                            + " the linked invoice — falling back to the item-code match.",
+                    item.getItemCode(), item.getInvoiceItemId());
+        }
+        return item.getItemCode() != null ? byCode.get(item.getItemCode()) : null;
     }
 
     @Transactional
@@ -391,10 +630,20 @@ public class SalesReturnService {
                     org.springframework.http.HttpStatus.BAD_REQUEST, "Approved returns cannot be modified.");
         }
 
+        // Kept in scope for the approval audit entry below, which records why sign-off was (or
+        // was not) required alongside who gave it.
+        String requiredAuthorization = null;
+
+        // The row-locked linked invoice, held for the whole transaction once the quantity guard
+        // takes it. The economic split must be computed from THIS instance — see §6 of the
+        // Phase 2 brief: a split read from a second, unlocked query could be stale, and two
+        // concurrent returns would then both claim the same outstanding balance.
+        SalesInvoice lockedInvoice = null;
+
         if (status == SalesReturnStatus.APPROVED) {
             // §15/§10 — authorization is resolved from persisted state and enforced here, so a
             // direct API call cannot skip it by omitting whatever flag the UI would have sent.
-            String requiredAuthorization = authorizationService.resolveRequiredAuthorization(salesReturn);
+            requiredAuthorization = authorizationService.resolveRequiredAuthorization(salesReturn);
             if (requiredAuthorization != null) {
                 authorizationService.authorize(salesReturn, requiredAuthorization,
                         supervisorUsername, supervisorPassword);
@@ -406,27 +655,122 @@ public class SalesReturnService {
             // ledger credit against a customer who has no ledger.
             assertRefundMethodSettleable(salesReturn);
 
+            // One branch owns every leg: the revenue reversal and the returned stock cannot be
+            // allowed to land in two different branches' books.
+            assertReturnBranchMatchesInvoice(salesReturn);
+
             // §29 — revalidate against persisted data under a lock BEFORE anything is written.
-            // Whatever the client was shown when it built this return is stale by now.
-            assertReturnableQuantitiesStillAvailable(salesReturn);
+            // Whatever the client was shown when it built this return is stale by now. The
+            // returned row is the LOCKED invoice; the economic split below is computed from it
+            // inside this same lock, which is what stops two concurrent returns from both
+            // consuming the same outstanding balance.
+            lockedInvoice = assertReturnableQuantitiesStillAvailable(salesReturn);
         }
 
         salesReturn.setStatus(status);
         SalesReturn saved = salesReturnRepository.save(salesReturn);
 
         if (status == SalesReturnStatus.APPROVED) {
-            applyBatchReturns(saved);
-            applyNonBatchStockReturns(saved);
-            postJournalForApprovedReturn(saved);
+            // §C — the economic split, resolved FIRST and from the locked invoice, because every
+            // step below depends on it: what the settlement pays out, what the allocation
+            // credits, and which refund methods are legitimate at all. This also overwrites the
+            // client-supplied refundAmount with the server's figure, so no browser can decide
+            // how much money leaves the drawer.
+            SalesReturnSettlementSplit split = resolveSettlementSplit(saved, lockedInvoice);
+            assertSettlementMethodMatchesSplit(saved, split);
+
+            // One restock decision, resolved before anything is written, read by all three of the
+            // steps that used to decide it for themselves: the batch stock pass, the non-batch
+            // stock pass, and the inventory journal. See SalesReturnRestockPlan.
+            SalesReturnRestockPlan restockPlan = restockPlanner.plan(saved);
+            assertRestockCostsResolved(saved, restockPlan);
+
+            applyBatchReturns(saved, restockPlan);
+            applyNonBatchStockReturns(saved, restockPlan);
+            // Unchanged on purpose: Cr AR for the FULL return value, every method, every time.
+            // The settlement leg below debits back only the paid portion, so the net credit to
+            // AR is exactly the unpaid portion — which is exactly what the allocation reduces
+            // the invoice balance by. GL AR and the AR sub-ledger therefore agree by
+            // construction, with no new journal shape and no per-method branching.
+            postJournalForApprovedReturn(saved, restockPlan);
+            // The unpaid portion, as an allocation row plus a canonical balance recompute.
+            // Never a direct write to invoice.balance.
+            applyReturnCreditToInvoice(saved, split, lockedInvoice);
             applySerialReturns(saved);
-            // Last, because these are the steps that hand value to the customer. Both share this
-            // transaction, so a failure anywhere above rolls them back with everything else — a
-            // return is never reported as refunded without the matching drawer movement, and never
-            // reported as settled by voucher without the voucher actually existing.
+            // Last, because these are the steps that hand value to the customer, and they now
+            // move the paid portion and nothing else. All share this transaction, so a failure
+            // anywhere above rolls them back with everything else — a return is never reported
+            // as refunded without the matching drawer movement, and never reported as settled by
+            // voucher without the voucher actually existing.
             cashRefundService.recordCashRefund(saved);
-            issueCreditVoucherIfRequired(saved);
+            issueCreditVoucherIfRequired(saved, split);
+            postRefundSettlementIfRequired(saved, split);
+
+            // Audited only here, after every effect has succeeded. Reached for every approval,
+            // not only the supervisor-gated ones: RETURN_AUTHORIZED records that a supervisor
+            // signed off, which is a different fact from "this return was approved and posted",
+            // and an ordinary approval previously produced no audit record at all.
+            auditApproval(saved, requiredAuthorization, split);
         }
         return saved;
+    }
+
+    /**
+     * Audit trail for a completed approval, on both of the trails that matter.
+     *
+     * <p>{@code AuditLogService} is the security/domain trail a compliance review reads;
+     * {@code PosAuditService} is the per-terminal POS trail the X-Report and shift
+     * investigations read. Both are fire-and-forget on their own transactions, so neither can
+     * roll back an approval that has already handed the customer value.
+     */
+    private void auditApproval(SalesReturn saved, String requiredAuthorization,
+                               SalesReturnSettlementSplit split) {
+        java.math.BigDecimal settled = split.paidPortion();
+
+        auditLogService.logDomainEvent("SALES_RETURN", saved.getReturnNumber(), "RETURN_APPROVED",
+                String.format("Return %s approved: total %s, invoice outstanding %s,"
+                                + " receivable credited %s, settled %s by %s, invoice %s,"
+                                + " customer %s, business date %s, branch %s. Authorization: %s.",
+                        saved.getReturnNumber(), saved.getTotalAmount(),
+                        split.invoiceOutstanding(), split.unpaidPortion(), settled,
+                        saved.getRefundMethod(), saved.getLinkedInvoice(),
+                        saved.getCustomerCode() != null ? saved.getCustomerCode() : "walk-in",
+                        saved.getReturnDate(),
+                        saved.getBranch() != null ? saved.getBranch().getName() : "unassigned",
+                        requiredAuthorization != null
+                                ? requiredAuthorization + " signed off by " + saved.getAuthorizedByUsername()
+                                : "not required by policy"));
+
+        posAuditService.logReturnApproved(
+                saved.getPosSessionId(), saved.getPosTerminalId(),
+                saved.getBranch() != null ? saved.getBranch().getId() : null,
+                saved.getId(), saved.getReturnNumber(),
+                saved.getRefundMethod() != null ? saved.getRefundMethod().name() : null,
+                settled);
+    }
+
+    /**
+     * Refuses the approval when any resaleable line has no resolvable cost.
+     *
+     * <p>Restocking a unit whose cost is unknown raises on-hand quantity with nothing to value it
+     * at, which is the one outcome the three-tier cost hierarchy exists to prevent. The message
+     * names the offending item codes, because the posting engine's own guard rejects with a
+     * generic "resolve the product WAC" that forces a cashier to read the logs.
+     *
+     * <p>Previously this fired only when the <em>whole</em> return resolved to zero cost, so a
+     * two-line return where one line had a cost approved happily and silently dropped the other
+     * line's inventory value.
+     */
+    private void assertRestockCostsResolved(SalesReturn salesReturn, SalesReturnRestockPlan plan) {
+        List<String> missing = plan.unresolvedCostItemCodes();
+        if (missing.isEmpty()) return;
+
+        throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                "Cannot approve " + salesReturn.getReturnNumber() + ": no Cost Price is set for "
+                        + String.join(", ", missing)
+                        + ". Set the Cost Price under Inventory → Products → Pricing for "
+                        + (missing.size() > 1 ? "these items" : "this item") + ", then retry.");
     }
 
     /**
@@ -462,14 +806,16 @@ public class SalesReturnService {
      * persisted code, balance and expiry in the same response — the frontend never invents any of
      * those (§25).
      */
-    private void issueCreditVoucherIfRequired(SalesReturn salesReturn) {
+    private void issueCreditVoucherIfRequired(SalesReturn salesReturn, SalesReturnSettlementSplit split) {
         if (salesReturn.getRefundMethod() != SalesReturnRefundMethod.CREDIT_VOUCHER) {
             return;
         }
 
-        java.math.BigDecimal amount = salesReturn.getRefundAmount() != null
-                ? salesReturn.getRefundAmount()
-                : salesReturn.getTotalAmount();
+        // The paid portion, and never the full total: a voucher is redeemable value handed to
+        // the customer, and value they have not yet paid for cannot be handed back. A return
+        // with no paid portion never reaches here — assertSettlementMethodMatchesSplit refuses
+        // the method outright, with a reason, rather than issuing a zero-value voucher.
+        java.math.BigDecimal amount = split.paidPortion();
 
         CreditVoucher voucher = creditVoucherService.issueForSalesReturn(
                 salesReturn.getId(),
@@ -479,9 +825,231 @@ public class SalesReturnService {
                 salesReturn.getCustomerCode(),
                 salesReturn.getCustomerName(),
                 salesReturn.getCustomerMobile(),
-                salesReturn.getBranch());
+                salesReturn.getBranch(),
+                // The return's business date, so the voucher, its liability journal and the
+                // return itself all land on the same day's reports.
+                salesReturn.getReturnDate());
 
         salesReturn.setIssuedVoucher(CreditVoucherResponse.from(voucher));
+    }
+
+    /**
+     * Clears the AR credit for a return refunded to a card or by bank transfer.
+     *
+     * <p>The return journal always posts {@code Cr Accounts Receivable} for the full total, and
+     * every refund method has to say what clears it. Cash does so through the drawer movement
+     * {@link SalesReturnCashRefundService} books, a voucher through its issue journal, and
+     * Customer Credit deliberately leaves the credit on the account. Card and bank refunds had
+     * nothing: the money left the business but AR stayed credited and the bank/merchant account
+     * never moved, so both the trial balance and the customer's statement were wrong by the
+     * refund amount.
+     *
+     * <p>Posted last, alongside the other settlement steps, and inside the same transaction —
+     * a failure here rolls the whole approval back.
+     */
+    private void postRefundSettlementIfRequired(SalesReturn salesReturn, SalesReturnSettlementSplit split) {
+        SalesReturnRefundMethod method = salesReturn.getRefundMethod();
+        if (method != SalesReturnRefundMethod.CARD_REFUND && method != SalesReturnRefundMethod.BANK_TRANSFER) {
+            return;
+        }
+
+        // Settles the paid portion only. The old fallback to totalAmount is gone: it was the
+        // path by which a client-supplied figure (or a null) decided how much money left the
+        // business, and the server now owns that number outright.
+        java.math.BigDecimal amount = split.paidPortion();
+        if (amount.signum() <= 0) {
+            // Unreachable via assertSettlementMethodMatchesSplit, which refuses the method when
+            // there is nothing to pay back. Guarded anyway so a future caller cannot post a
+            // zero-value settlement journal.
+            return;
+        }
+
+        postingEngineService.createJournalFromSalesReturnRefundSettlement(
+                salesReturn, amount, method == SalesReturnRefundMethod.BANK_TRANSFER);
+    }
+
+    // ---------------------------------------------------------------
+    // Phase 2 — the economic split
+    // ---------------------------------------------------------------
+
+    /**
+     * Computes the return's economic split from the linked invoice's real payment history and
+     * stamps the paid portion onto {@code refundAmount}.
+     *
+     * <pre>
+     * returnValue        = sales_returns.total_amount
+     * invoiceOutstanding = InvoiceBalanceService.effectiveOutstanding(lockedInvoice)
+     * unpaidPortion      = min(returnValue, invoiceOutstanding)
+     * paidPortion        = returnValue - unpaidPortion
+     * </pre>
+     *
+     * <p><b>The server is the accounting authority.</b> {@code refundAmount} arrives from the
+     * client — the return screen sends the full refund total — and used to be accepted as the
+     * amount actually paid out, with every settlement path reading
+     * {@code refundAmount ?? totalAmount}. It is now <em>overwritten</em>, not defaulted: a
+     * client that sends a larger figure, or no figure, cannot change how much money leaves the
+     * drawer. Nothing downstream reads the client's value again.
+     *
+     * <p>Must be called with {@code lockedInvoice} being the row-locked instance taken by
+     * {@link #assertReturnableQuantitiesStillAvailable}. The outstanding is read from the
+     * allocation ledgers through the one canonical definition, so it is already net of earlier
+     * return credits — which is what stops two successive returns against the same part-paid
+     * invoice from both claiming the same unpaid portion.
+     *
+     * <p>No linked invoice means no receivable to split against, so the whole return is a paid
+     * portion. That is the same answer the model gives for a fully paid sale, and it is the
+     * conservative one: it never credits AR for a receivable nobody can point to.
+     */
+    private SalesReturnSettlementSplit resolveSettlementSplit(SalesReturn salesReturn, SalesInvoice lockedInvoice) {
+        BigDecimal returnValue = salesReturn.getTotalAmount();
+
+        SalesReturnSettlementSplit split;
+        if (lockedInvoice == null) {
+            split = SalesReturnSettlementSplit.fullyPaid(returnValue);
+            log.warn("[SalesReturn] {} has no resolvable linked invoice — the whole return value {}"
+                            + " is treated as a paid portion (no receivable to credit).",
+                    salesReturn.getReturnNumber(), split.returnValue());
+        } else {
+            split = SalesReturnSettlementSplit.of(
+                    returnValue, invoiceBalanceService.effectiveOutstanding(lockedInvoice));
+        }
+
+        // Invariant 1 (§22): returnValue == unpaidPortion + paidPortion. True by construction —
+        // asserted because it is the identity the whole model rests on, and a silent break here
+        // would show up only as an unexplained AR drift weeks later.
+        if (!split.isConsistent()) {
+            throw new IllegalStateException("Return split does not reconcile for "
+                    + salesReturn.getReturnNumber() + ": value " + split.returnValue()
+                    + " != unpaid " + split.unpaidPortion() + " + paid " + split.paidPortion());
+        }
+
+        BigDecimal clientSupplied = salesReturn.getRefundAmount();
+        salesReturn.setRefundAmount(split.paidPortion());
+        salesReturnRepository.save(salesReturn);
+
+        if (clientSupplied != null && clientSupplied.compareTo(split.paidPortion()) != 0) {
+            log.info("[SalesReturn] {} — client-supplied refundAmount {} overridden with the"
+                            + " server-derived paid portion {} (return {} vs invoice outstanding {}).",
+                    salesReturn.getReturnNumber(), clientSupplied, split.paidPortion(),
+                    split.returnValue(), split.invoiceOutstanding());
+        }
+        log.info("[SalesReturn] {} split: value={} invoiceOutstanding={} unpaidPortion={} paidPortion={}",
+                salesReturn.getReturnNumber(), split.returnValue(), split.invoiceOutstanding(),
+                split.unpaidPortion(), split.paidPortion());
+        return split;
+    }
+
+    /**
+     * Refuses a refund method that cannot settle this return's paid portion (§11 / §04).
+     *
+     * <p>The refund method applies to the paid portion and to nothing else. When the paid
+     * portion is zero, the customer has not yet paid for the goods they are returning, so there
+     * is no money, voucher or store credit that could legitimately be handed back — the only
+     * settlement is the AR allocation. Under the old model a cashier could press Cash Refund on
+     * a part-paid invoice, hand over the cash, and leave the customer still owing the full
+     * balance; that outcome is now unreachable rather than merely discouraged.
+     *
+     * <p>Enforced server-side even though the return screen disables the controls, for the same
+     * reason {@link #assertRefundMethodSettleable} is: the screen is a hint, and a return posted
+     * straight through the API must not be able to route around the accounting.
+     *
+     * <p><b>CUSTOMER_CREDIT with a paid portion is blocked pending finance sign-off.</b> Under
+     * the target model that case issues held customer credit — {@code Dr 1100 / Cr 2062
+     * Customer Credit Notes Unapplied} — but account 2062 does not exist in this chart of
+     * accounts and its creation is an unapproved business decision (economic model §J decision
+     * 7). Posting the paid portion with no settlement leg would credit GL 1100 for value the
+     * sub-ledger never records, so the method is refused with a stated reason rather than
+     * silently booking an unbacked credit. CUSTOMER_CREDIT remains fully available for the
+     * ordinary case — an unpaid or part-paid invoice, where the whole return is an AR
+     * allocation.
+     */
+    private void assertSettlementMethodMatchesSplit(SalesReturn salesReturn, SalesReturnSettlementSplit split) {
+        SalesReturnRefundMethod method = salesReturn.getRefundMethod();
+        if (method == null) return;
+
+        if (!split.hasPaidPortion() && method.movesValueToCustomer()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Cannot settle " + salesReturn.getReturnNumber() + " by "
+                            + method.getLabel() + ": the customer has not paid for these goods."
+                            + " Invoice " + salesReturn.getLinkedInvoice() + " still has "
+                            + split.invoiceOutstanding() + " outstanding, so the full return value of "
+                            + split.returnValue() + " reduces what they owe instead of being paid back."
+                            + " Settle this return as Customer Credit.");
+        }
+
+        if (method == SalesReturnRefundMethod.CUSTOMER_CREDIT && split.hasPaidPortion()) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
+                    "Cannot settle " + salesReturn.getReturnNumber() + " as Customer Credit: "
+                            + split.paidPortion() + " of this return has already been paid by the"
+                            + " customer and would have to be held as customer credit, which needs"
+                            + " the Customer Credit Notes Unapplied liability account to be set up"
+                            + " first. Refund the paid portion by cash, card, bank transfer or"
+                            + " credit voucher.");
+        }
+    }
+
+    /**
+     * Represents the unpaid portion as an allocation row and recomputes the invoice balance.
+     *
+     * <p>This is the only thing that reduces the linked invoice's outstanding, and it does so
+     * through the ledger rather than by writing the column: the balance stays a projection
+     * derived by {@link InvoiceBalanceService#recomputeInvoiceBalance}. A direct
+     * {@code invoice.setBalance(...)} here would survive exactly until the next receipt against
+     * that invoice, whose own recompute would silently erase it — which is precisely when the
+     * credit matters most.
+     *
+     * <p>No GL entry of its own. The return journal already credited AR for the full return
+     * value and the settlement leg debits back only the paid portion, so the residue <em>is</em>
+     * the receivable reduction; posting an allocation journal would double-count it.
+     *
+     * <p>Idempotent on {@code (return_number, invoice_number)} where status is APPLIED — the
+     * approval row lock is the primary guard, the unique index is the one that holds regardless,
+     * and the pre-check here turns a constraint violation into a no-op on a retry.
+     */
+    private void applyReturnCreditToInvoice(SalesReturn salesReturn, SalesReturnSettlementSplit split,
+                                            SalesInvoice lockedInvoice) {
+        if (!split.hasUnpaidPortion()) {
+            log.debug("[SalesReturn] {} has no unpaid portion — no allocation row written.",
+                    salesReturn.getReturnNumber());
+            return;
+        }
+        if (lockedInvoice == null) {
+            // resolveSettlementSplit cannot produce an unpaid portion without a locked invoice.
+            log.warn("[SalesReturn] {} resolved an unpaid portion of {} with no linked invoice —"
+                            + " allocation skipped.",
+                    salesReturn.getReturnNumber(), split.unpaidPortion());
+            return;
+        }
+
+        String invoiceNumber = lockedInvoice.getInvoiceNumber();
+        if (returnCreditApplicationRepository.existsByReturnNumberAndInvoiceNumberAndStatus(
+                salesReturn.getReturnNumber(), invoiceNumber,
+                SalesReturnCreditApplicationStatus.APPLIED)) {
+            log.info("[SalesReturn] {} already has an APPLIED credit allocation against {} —"
+                            + " not written again.",
+                    salesReturn.getReturnNumber(), invoiceNumber);
+            return;
+        }
+
+        returnCreditApplicationRepository.save(SalesReturnCreditApplication.applied(
+                salesReturn.getId(),
+                salesReturn.getReturnNumber(),
+                invoiceNumber,
+                // The allocation belongs to the invoice's customer, which is the account whose
+                // receivable it cancels — not to whatever the return row happens to carry.
+                lockedInvoice.getCustomerCode() != null
+                        ? lockedInvoice.getCustomerCode()
+                        : salesReturn.getCustomerCode(),
+                split.unpaidPortion(),
+                // The return's authoritative business date, so the document, its journals, the
+                // stock movement, the drawer movement and this row all land on one day.
+                salesReturn.getReturnDate()));
+
+        BigDecimal balance = invoiceBalanceService.recomputeInvoiceBalance(lockedInvoice);
+        log.info("[SalesReturn] {} allocated {} against invoice {} — balance recomputed to {}.",
+                salesReturn.getReturnNumber(), split.unpaidPortion(), invoiceNumber, balance);
     }
 
     // ---------------------------------------------------------------
@@ -501,16 +1069,23 @@ public class SalesReturnService {
      * <p>Deliberately fails the whole return rather than silently trimming quantities: a cashier
      * who has already handed over cash for 2 units must be told the second unit was rejected,
      * not have it disappear from the receipt.
+     *
+     * @return the row-locked invoice, which the caller uses to compute the economic split
+     *         <em>inside this same lock</em> (§C refinement 1). {@code null} when the return has
+     *         no linked invoice or no lines, in which case there is no outstanding to split
+     *         against. Returning the locked instance rather than re-reading it is the point: a
+     *         split computed from a second, unlocked read could be stale, and two concurrent
+     *         returns could then both consume the same outstanding balance.
      */
-    private void assertReturnableQuantitiesStillAvailable(SalesReturn salesReturn) {
-        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
+    private SalesInvoice assertReturnableQuantitiesStillAvailable(SalesReturn salesReturn) {
+        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return null;
 
         String linkedInvoice = salesReturn.getLinkedInvoice();
         if (linkedInvoice == null || linkedInvoice.isBlank()) {
             // Unlinked returns have no invoice to over-return against; nothing to serialise on.
             log.warn("[SalesReturn] {} has no linked invoice — skipping returnable-quantity revalidation.",
                     salesReturn.getReturnNumber());
-            return;
+            return null;
         }
 
         Optional<SalesInvoice> lockedOpt = salesInvoiceRepository.findByInvoiceNumberForUpdate(linkedInvoice);
@@ -573,43 +1148,34 @@ public class SalesReturnService {
                             + " started (another return may have been processed). " + String.join("; ", violations)
                             + ". Reload the invoice and try again.");
         }
+
+        return invoice;
     }
 
     // ---------------------------------------------------------------
-    // applyNonBatchStockReturns — for return lines without batch selections
-    // (non-batch-controlled products), post a positive StockMovement on
-    // "Good" condition so on-hand quantity reflects the return. Damaged
-    // lines are scrapped: no stock movement, and their cost is excluded
-    // from the COGS reversal in resolveActualCogs.
+    // applyNonBatchStockReturns — posts the inbound StockMovement for every
+    // non-batch line the restock plan says puts goods back into stock, stamped
+    // with the plan's resolved unit cost and the return's business date.
+    //
+    // The plan — not this method — decides whether a line restocks, so the
+    // inventory journal debits exactly what these movements are worth. Lines the
+    // plan excludes (scrap, or no destination warehouse) are already logged there.
     // ---------------------------------------------------------------
-    private void applyNonBatchStockReturns(SalesReturn salesReturn) {
+    private void applyNonBatchStockReturns(SalesReturn salesReturn, SalesReturnRestockPlan plan) {
         if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
-
-        Long resolvedWarehouseId = resolveReturnWarehouseId(salesReturn);
 
         for (SalesReturnItem item : salesReturn.getItems()) {
             if (item.getBatches() != null && !item.getBatches().isEmpty()) {
                 continue; // batch-controlled line handled by applyBatchReturns
             }
-            int returnQty = item.getReturnQty() != null ? item.getReturnQty() : 0;
-            if (returnQty <= 0) continue;
-
-            boolean isScrap = !"Good".equalsIgnoreCase(item.getItemStatus());
-            if (isScrap) {
-                log.info("[SalesReturn] {} — non-batch line '{}' marked Damaged (scrap); no stock movement posted.",
-                        salesReturn.getReturnNumber(), item.getItemCode());
-                continue;
-            }
+            SalesReturnRestockPlan.LineRestock line = plan.forLine(item);
+            if (!line.restocks()) continue;
 
             Optional<Product> productOpt = productRepository.findByCodeAndIsActiveTrue(item.getItemCode());
             if (productOpt.isEmpty()) {
+                // Unreachable in practice: the plan cannot resolve a cost for an item that is not
+                // in the product master, so such a line is rejected before this point.
                 log.warn("[SalesReturn] {} — item '{}' not found in product master; cannot post return stock movement.",
-                        salesReturn.getReturnNumber(), item.getItemCode());
-                continue;
-            }
-
-            if (resolvedWarehouseId == null) {
-                log.warn("[SalesReturn] {} — could not resolve a source warehouse for non-batch return of '{}'; stock movement NOT posted. Inventory and GL will mismatch until a manual adjustment is made.",
                         salesReturn.getReturnNumber(), item.getItemCode());
                 continue;
             }
@@ -618,43 +1184,17 @@ public class SalesReturnService {
                     StockSourceType.SALES_RETURN,
                     salesReturn.getId(),
                     productOpt.get().getId(),
-                    resolvedWarehouseId,
-                    returnQty,
-                    salesReturn.getReturnNumber());
+                    line.warehouseId(),
+                    line.restockQty(),
+                    salesReturn.getReturnNumber(),
+                    line.unitCost(),
+                    salesReturn.getReturnDate());
 
-            log.info("[SalesReturn] {} — non-batch line '{}' restocked qty={} to warehouseId={}.",
-                    salesReturn.getReturnNumber(), item.getItemCode(), returnQty, resolvedWarehouseId);
+            log.info("[SalesReturn] {} — non-batch line '{}' restocked qty={} at unit cost {} to"
+                            + " warehouseId={} on business date {}.",
+                    salesReturn.getReturnNumber(), item.getItemCode(), line.restockQty(),
+                    line.unitCost(), line.warehouseId(), salesReturn.getReturnDate());
         }
-    }
-
-    /**
-     * Resolves the warehouse where returned goods physically arrive.
-     * Order: linked invoice's first DN → first DN of any linked invoice match → null.
-     * Returning null forces the caller to log+skip rather than guess.
-     */
-    private Long resolveReturnWarehouseId(SalesReturn salesReturn) {
-        String linkedInvoice = salesReturn.getLinkedInvoice();
-        if (linkedInvoice == null || linkedInvoice.isBlank()) return null;
-
-        Optional<SalesInvoice> invoiceOpt = salesInvoiceRepository.findByInvoiceNumber(linkedInvoice);
-        if (invoiceOpt.isEmpty()) return null;
-
-        SalesInvoice invoice = invoiceOpt.get();
-        if (invoice.getLinkedDeliveryNote() == null || invoice.getLinkedDeliveryNote().isBlank()) return null;
-
-        List<String> dnNumbers = Arrays.stream(invoice.getLinkedDeliveryNote().split(","))
-                .map(String::trim)
-                .filter(s -> !s.isBlank())
-                .toList();
-        if (dnNumbers.isEmpty()) return null;
-
-        List<DeliveryNote> notes = deliveryNoteRepository.findByDnNumberIn(dnNumbers);
-        for (DeliveryNote note : notes) {
-            if (note.getWarehouse() != null && note.getWarehouse().getId() != null) {
-                return note.getWarehouse().getId();
-            }
-        }
-        return null;
     }
 
     // ---------------------------------------------------------------
@@ -785,40 +1325,92 @@ public class SalesReturnService {
     }
 
     // ---------------------------------------------------------------
-    // §5.5 applySerialReturns — validate returned serial matches sold serial on the
-    // original invoice, then flip SerialStatus → RETURNED.
+    // §5.5 applySerialReturns — validate the returned serial against the serial sold on the
+    // original invoice line, then move the unit to the state its actual condition warrants.
     // ---------------------------------------------------------------
+
+    /**
+     * Moves each returned unit's serial out of SOLD, into the state its <b>line condition</b>
+     * warrants (§20B).
+     *
+     * <p>Two defects fixed here, both of which matter more now that the inventory journal
+     * consumes the restock plan.
+     *
+     * <p><b>Condition was ignored.</b> Every returned serial became RETURNED regardless of
+     * whether the unit came back resaleable or physically broken, so the serial register could
+     * not tell a good return from a write-off. A scrap condition now lands on DEFECTIVE. As it
+     * stands neither state is resaleable — {@code DeliveryNoteService} only picks AVAILABLE or
+     * RESERVED — so this changes no stock outcome today; it makes the distinction durable, so a
+     * later change that makes RETURNED units saleable again cannot quietly release a damaged
+     * unit with it.
+     *
+     * <p><b>The serial was matched by item code, last line winning.</b> On an invoice carrying
+     * the same product twice, each with its own serial, the map kept only the last line's serial
+     * and flipped that unit for every return line of that product — marking a unit returned that
+     * the customer still has, while leaving the returned one SOLD. Matching runs through the
+     * resolved invoice line first ({@link #resolveInvoiceLine}), and each serial is consumed at
+     * most once per return.
+     */
     private void applySerialReturns(SalesReturn salesReturn) {
         if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) return;
+        if (salesReturn.getLinkedInvoice() == null || salesReturn.getLinkedInvoice().isBlank()) return;
 
-        // Build a map of itemCode → serialNumber from the original linked invoice.
-        Map<String, String> soldSerialByCode = new java.util.HashMap<>();
-        if (salesReturn.getLinkedInvoice() != null && !salesReturn.getLinkedInvoice().isBlank()) {
-            salesInvoiceRepository
-                    .findByInvoiceNumber(salesReturn.getLinkedInvoice())
-                    .ifPresent(inv -> {
-                        if (inv.getItems() != null) {
-                            for (com.billbull.backend.sales.invoice.SalesInvoiceItem si : inv.getItems()) {
-                                if (si.getSerialNumber() != null && !si.getSerialNumber().isBlank()
-                                        && si.getItemCode() != null) {
-                                    soldSerialByCode.put(si.getItemCode(), si.getSerialNumber());
-                                }
-                            }
-                        }
-                    });
+        Optional<SalesInvoice> invoiceOpt =
+                salesInvoiceRepository.findByInvoiceNumber(salesReturn.getLinkedInvoice());
+        if (invoiceOpt.isEmpty() || invoiceOpt.get().getItems() == null) return;
+
+        Map<Long, SalesInvoiceItem> invoiceItemById = new HashMap<>();
+        Map<String, SalesInvoiceItem> invoiceItemByCode = new HashMap<>();
+        // Serials still unclaimed per item code, in invoice-line order, for return lines that
+        // carry no invoice line id. One serial is consumed per matching return line instead of
+        // the same one being reused.
+        Map<String, List<String>> unclaimedSerialsByCode = new LinkedHashMap<>();
+        for (SalesInvoiceItem si : invoiceOpt.get().getItems()) {
+            if (si.getId() != null) invoiceItemById.put(si.getId(), si);
+            if (si.getItemCode() == null) continue;
+            invoiceItemByCode.putIfAbsent(si.getItemCode(), si);
+            if (si.getSerialNumber() != null && !si.getSerialNumber().isBlank()) {
+                unclaimedSerialsByCode
+                        .computeIfAbsent(si.getItemCode(), k -> new ArrayList<>())
+                        .add(si.getSerialNumber());
+            }
         }
 
         for (SalesReturnItem item : salesReturn.getItems()) {
             if (item.getItemCode() == null) continue;
-            String soldSerial = soldSerialByCode.get(item.getItemCode());
+
+            String soldSerial = null;
+            SalesInvoiceItem matchedLine = resolveInvoiceLine(item, invoiceItemById, invoiceItemByCode);
+            if (item.getInvoiceItemId() != null && matchedLine != null
+                    && matchedLine.getSerialNumber() != null && !matchedLine.getSerialNumber().isBlank()) {
+                soldSerial = matchedLine.getSerialNumber();
+                List<String> pool = unclaimedSerialsByCode.get(item.getItemCode());
+                if (pool != null) pool.remove(soldSerial);
+            } else {
+                List<String> pool = unclaimedSerialsByCode.get(item.getItemCode());
+                if (pool != null && !pool.isEmpty()) {
+                    soldSerial = pool.remove(0);
+                }
+            }
             if (soldSerial == null) continue;
 
-            serialMasterRepository.findBySerialNumberForUpdate(soldSerial).ifPresent(serial -> {
+            SalesReturnCondition condition = item.getEffectiveCondition();
+            // Unknown condition is treated as scrap, the same direction
+            // SalesReturnCondition.fromLegacyItemStatus already fails in: never silently promote
+            // a unit whose condition nobody recorded.
+            SerialStatus target = condition != null && condition.isRestockable()
+                    ? SerialStatus.RETURNED
+                    : SerialStatus.DEFECTIVE;
+
+            final String serialNumber = soldSerial;
+            serialMasterRepository.findBySerialNumberForUpdate(serialNumber).ifPresent(serial -> {
                 if (serial.getStatus() == SerialStatus.SOLD) {
-                    serial.setStatus(SerialStatus.RETURNED);
+                    serial.setStatus(target);
                     serialMasterRepository.save(serial);
-                    log.info("[SalesReturn] {} — serial {} marked RETURNED for item '{}'.",
-                            salesReturn.getReturnNumber(), soldSerial, item.getItemCode());
+                    log.info("[SalesReturn] {} — serial {} for item '{}' returned in condition {};"
+                                    + " marked {}.",
+                            salesReturn.getReturnNumber(), serialNumber, item.getItemCode(),
+                            condition, target);
                 }
             });
         }
@@ -829,13 +1421,14 @@ public class SalesReturnService {
     // post positive StockMovement on APPROVED.
     // ---------------------------------------------------------------
 
-    private void applyBatchReturns(SalesReturn salesReturn) {
+    private void applyBatchReturns(SalesReturn salesReturn, SalesReturnRestockPlan plan) {
         if (salesReturn.getItems() == null) return;
 
         for (SalesReturnItem item : salesReturn.getItems()) {
             if (item.getBatches() == null || item.getBatches().isEmpty()) {
                 continue; // non-batch line or no batches selected — skip
             }
+            SalesReturnRestockPlan.LineRestock restock = plan.forLine(item);
 
             // Validate sum matches returnQty
             int batchSum = item.getBatches().stream()
@@ -848,8 +1441,6 @@ public class SalesReturnService {
                         "Batch quantities (" + batchSum + ") must equal return quantity ("
                                 + returnQty + ") for item " + item.getItemCode());
             }
-
-            boolean isScrap = !"Good".equalsIgnoreCase(item.getItemStatus());
 
             for (SalesReturnItemBatch sel : item.getBatches()) {
                 Long parentId = sel.getOriginalAllocationId();
@@ -922,35 +1513,33 @@ public class SalesReturnService {
                     batchAllocationRepository.save(ret);
                 }
 
-                // Restock only "Good" returns. "Damaged" = scrap — allocation flip is kept
-                // for traceability, but no stock physically returns to the bin and the
-                // BatchMaster status is left untouched (manual quarantine remains an
-                // admin action, not a per-line side-effect).
-                if (!isScrap) {
-                    BatchMaster bm = parent.getBatchMaster();
-                    Long warehouseId = bm != null ? bm.getWarehouseId() : null;
-                    if (warehouseId != null) {
-                        stockMovementService.reverseOutboundStock(
-                                StockSourceType.SALES_RETURN,
-                                salesReturn.getId(),
-                                parent.getProductId(),
-                                warehouseId,
-                                parent.getBinId(),
-                                null,
-                                null,
-                                parent.getBatchNumber(),
-                                parent.getExpiryDate(),
-                                retQty,
-                                salesReturn.getReturnNumber());
-                    } else {
-                        log.warn("[SalesReturn] {} — batch {} has no warehouseId on BatchMaster; "
-                                + "skipping restock stock movement.",
-                                salesReturn.getReturnNumber(), parent.getBatchNumber());
-                    }
+                // Whether this lot physically returns to its bin is the restock plan's call,
+                // and the same call the inventory journal's amount is built from. A scrap
+                // condition or a batch master with no warehouse yields no destination here, and
+                // the allocation flip above is kept either way for traceability — the BatchMaster
+                // status is left untouched, because quarantine stays an admin action rather than a
+                // per-line side effect.
+                Long warehouseId = restock.restocks() ? restock.batchWarehouseId(parentId) : null;
+                if (warehouseId != null) {
+                    stockMovementService.reverseOutboundStock(
+                            StockSourceType.SALES_RETURN,
+                            salesReturn.getId(),
+                            parent.getProductId(),
+                            warehouseId,
+                            parent.getBinId(),
+                            null,
+                            null,
+                            parent.getBatchNumber(),
+                            parent.getExpiryDate(),
+                            retQty,
+                            salesReturn.getReturnNumber(),
+                            restock.unitCost(),
+                            salesReturn.getReturnDate());
                 } else {
-                    log.info("[SalesReturn] {} — line {} marked Damaged (scrap); allocation {} "
-                            + "split/flipped to RETURNED, no stock movement posted.",
-                            salesReturn.getReturnNumber(), item.getItemCode(), parent.getId());
+                    log.info("[SalesReturn] {} — line {} allocation {} split/flipped to RETURNED"
+                                    + " without a stock movement (condition {} / no batch warehouse).",
+                            salesReturn.getReturnNumber(), item.getItemCode(), parent.getId(),
+                            item.getCondition());
                 }
             }
         }
@@ -961,33 +1550,30 @@ public class SalesReturnService {
     // ---------------------------------------------------------------
 
     /**
-     * Determines:
-     *  1. Whether revenue was already recognized (linked invoice was delivered)
-     *     so the correct account is debited (Sales Revenue vs Deferred Revenue).
-     *  2. The actual COGS to reverse using real product cost from the product
-     *     master, instead of a fictional percentage.
+     * Posts the approved return's journals.
+     *
+     * <p>Two decisions feed it. The revenue account depends on whether revenue was already
+     * recognized (the linked invoice was delivered) — Sales Revenue if so, Deferred Revenue if
+     * not. The inventory leg depends entirely on {@code plan}: it posts if and only if at least
+     * one line actually restocked, for exactly the value of the stock movements that were
+     * written. Nothing here re-derives either fact from line conditions.
      */
-    private void postJournalForApprovedReturn(SalesReturn salesReturn) {
-        // --- 1. Determine revenue account (recognized vs deferred) ---
+    private void postJournalForApprovedReturn(SalesReturn salesReturn, SalesReturnRestockPlan plan) {
         boolean revenueWasRecognized = resolveRevenueRecognized(salesReturn);
 
-        // --- 2. Calculate COGS using actual product cost ---
-        CogsResolution cogs = resolveActualCogs(salesReturn);
+        BigDecimal restockCost = plan.totalRestockCost();
+        boolean restocksInventory = plan.restocksAnything();
 
-        // Fail fast with the specific item(s) at fault — PostingEngineService's guard would
-        // otherwise reject with a generic "no product cost" message that forces a cashier to
-        // dig through logs to find out which line is actually missing a Cost Price.
-        if (cogs.total.compareTo(BigDecimal.ZERO) <= 0 && !cogs.missingCostItemCodes.isEmpty()) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY,
-                    "Cannot approve " + salesReturn.getReturnNumber() + ": no Cost Price is set for "
-                    + String.join(", ", cogs.missingCostItemCodes)
-                    + ". Set the Cost Price under Inventory → Products → Pricing for "
-                    + (cogs.missingCostItemCodes.size() > 1 ? "these items" : "this item") + ", then retry.");
+        if (!plan.unresolvedWarehouseItemCodes().isEmpty()) {
+            log.warn("[SalesReturn] {} — {} resaleable line(s) had no destination warehouse and are"
+                            + " excluded from both the stock movements and the inventory journal: {}."
+                            + " Account 1200 is not debited for goods the system could not place.",
+                    salesReturn.getReturnNumber(), plan.unresolvedWarehouseItemCodes().size(),
+                    String.join(", ", plan.unresolvedWarehouseItemCodes()));
         }
 
-        // --- 3. Post ---
-        postingEngineService.createJournalFromSalesReturn(salesReturn, cogs.total, revenueWasRecognized);
+        postingEngineService.createJournalFromSalesReturn(
+                salesReturn, restockCost, revenueWasRecognized, restocksInventory);
     }
 
     /**
@@ -1021,143 +1607,4 @@ public class SalesReturnService {
         return recognized;
     }
 
-    /**
-     * Resolves the COGS to reverse for an approved sales return.
-     *
-     * Priority order:
-     *   1. Original DN delivery cost snapshot (DeliveryNoteBatchConsumption rows) — exact
-     *      batch/WAC cost at the time of the original sale; prevents WAC distortion.
-     *   2. Cost-at-sale snapshot on the original invoice line (SalesInvoiceItem.cost) — set
-     *      at checkout for POS sales (and at order/delivery time for SO/DN sales). Survives
-     *      the product's cost later being changed or cleared in the product master.
-     *   3. Current product master cost (ProductPricing.cost) — last-resort fallback for
-     *      legacy rows from before either snapshot existed.
-     *
-     * Damaged returns are excluded — no stock is restored, so COGS stays on the books.
-     */
-    private static final class CogsResolution {
-        final BigDecimal total;
-        final List<String> missingCostItemCodes;
-        CogsResolution(BigDecimal total, List<String> missingCostItemCodes) {
-            this.total = total;
-            this.missingCostItemCodes = missingCostItemCodes;
-        }
-    }
-
-    private CogsResolution resolveActualCogs(SalesReturn salesReturn) {
-        if (salesReturn.getItems() == null || salesReturn.getItems().isEmpty()) {
-            return new CogsResolution(BigDecimal.ZERO, List.of());
-        }
-
-        // Resolve source DN id once (may be null for non-DN-linked returns)
-        Long sourceDnId = resolveSourceDnId(salesReturn);
-
-        // Resolve the original invoice's line items once, keyed by item code, for the
-        // cost-at-sale fallback (tier 2).
-        Map<String, BigDecimal> invoiceCostByCode = new java.util.HashMap<>();
-        String linkedInvoice = salesReturn.getLinkedInvoice();
-        if (linkedInvoice != null && !linkedInvoice.isBlank()) {
-            salesInvoiceRepository.findByInvoiceNumber(linkedInvoice).ifPresent(inv -> {
-                if (inv.getItems() != null) {
-                    inv.getItems().forEach(ii -> {
-                        if (ii.getItemCode() != null && ii.getCost() != null && ii.getCost().compareTo(BigDecimal.ZERO) > 0) {
-                            invoiceCostByCode.putIfAbsent(ii.getItemCode(), ii.getCost());
-                        }
-                    });
-                }
-            });
-        }
-
-        BigDecimal totalCogs = BigDecimal.ZERO;
-        List<String> missingCostItemCodes = new ArrayList<>();
-
-        for (SalesReturnItem item : salesReturn.getItems()) {
-            String itemCode  = item.getItemCode();
-            int    returnQty = item.getReturnQty() != null ? item.getReturnQty() : 0;
-
-            if (itemCode == null || returnQty <= 0) continue;
-
-            if (!"Good".equalsIgnoreCase(item.getItemStatus())) {
-                log.info("[SalesReturn] {} — item '{}' status='{}' (scrap); excluded from COGS reversal.",
-                        salesReturn.getReturnNumber(), itemCode, item.getItemStatus());
-                continue;
-            }
-
-            BigDecimal itemCogs = BigDecimal.ZERO;
-
-            // 1. Try original DN cost snapshot
-            if (sourceDnId != null) {
-                BigDecimal dnCost = consumptionRepo.sumTotalCostByDnAndItem(sourceDnId, itemCode);
-                if (dnCost != null && dnCost.compareTo(BigDecimal.ZERO) > 0) {
-                    // Scale by (returnQty / originalDeliveredQty) for partial returns
-                    List<com.billbull.backend.sales.delivery.DeliveryNoteBatchConsumption> rows =
-                            consumptionRepo.findByDeliveryNoteId(sourceDnId).stream()
-                                    .filter(r -> itemCode.equals(r.getItemCode()))
-                                    .toList();
-                    int deliveredQty = rows.stream().mapToInt(r -> r.getQuantity() != null ? r.getQuantity() : 0).sum();
-                    if (deliveredQty > 0) {
-                        BigDecimal unitCost = dnCost.divide(BigDecimal.valueOf(deliveredQty), 4, java.math.RoundingMode.HALF_UP);
-                        itemCogs = unitCost.multiply(BigDecimal.valueOf(Math.min(returnQty, deliveredQty)));
-                        log.info("[SalesReturn] {} — item '{}' using original DN cost: qty={} unitCost={} itemCogs={}",
-                                salesReturn.getReturnNumber(), itemCode, returnQty, unitCost, itemCogs);
-                    }
-                }
-            }
-
-            // 2. Fall back to the original invoice line's cost-at-sale snapshot
-            if (itemCogs.compareTo(BigDecimal.ZERO) == 0) {
-                BigDecimal saleCost = invoiceCostByCode.get(itemCode);
-                if (saleCost != null) {
-                    itemCogs = saleCost.multiply(BigDecimal.valueOf(returnQty));
-                    log.info("[SalesReturn] {} — item '{}' using invoice cost-at-sale: qty={} unitCost={} itemCogs={}",
-                            salesReturn.getReturnNumber(), itemCode, returnQty, saleCost, itemCogs);
-                }
-            }
-
-            // 3. Last resort: current product-master cost
-            if (itemCogs.compareTo(BigDecimal.ZERO) == 0) {
-                Optional<Product> productOpt = productRepository.findByCodeAndIsActiveTrue(itemCode);
-                if (productOpt.isEmpty()) {
-                    log.warn("[SalesReturn] {} — item '{}' not in product master; COGS=0, post manual journal.",
-                            salesReturn.getReturnNumber(), itemCode);
-                    missingCostItemCodes.add(itemCode);
-                    continue;
-                }
-                Optional<com.billbull.backend.inventory.product.ProductPricing> pricingOpt =
-                        productPricingRepository.findByProductId(productOpt.get().getId());
-                // An explicit 0.00 counts as missing, not as a real cost: it yields the same
-                // zero COGS as a null but would otherwise slip past the caller's friendly guard
-                // (which keys off this list) and surface as the posting engine's generic
-                // "resolve the product WAC" error, naming no item.
-                if (pricingOpt.isEmpty() || pricingOpt.get().getCost() == null
-                        || pricingOpt.get().getCost().compareTo(BigDecimal.ZERO) <= 0) {
-                    log.warn("[SalesReturn] {} — no cost for product '{}'; COGS=0, post manual journal.",
-                            salesReturn.getReturnNumber(), itemCode);
-                    missingCostItemCodes.add(itemCode);
-                    continue;
-                }
-                BigDecimal unitCost = pricingOpt.get().getCost();
-                itemCogs = unitCost.multiply(BigDecimal.valueOf(returnQty));
-                log.warn("[SalesReturn] {} — item '{}' using product-master cost (no DN history or invoice snapshot): unitCost={} itemCogs={}",
-                        salesReturn.getReturnNumber(), itemCode, unitCost, itemCogs);
-            }
-
-            totalCogs = totalCogs.add(itemCogs);
-        }
-
-        if (totalCogs.compareTo(BigDecimal.ZERO) == 0) {
-            log.warn("[SalesReturn] {} — COGS resolved to ZERO. Review cost records.",
-                    salesReturn.getReturnNumber());
-        }
-        return new CogsResolution(totalCogs, missingCostItemCodes);
-    }
-
-    /** Returns the delivery note id linked to the return's source invoice, or null. */
-    private Long resolveSourceDnId(SalesReturn salesReturn) {
-        String linkedInvoice = salesReturn.getLinkedInvoice();
-        if (linkedInvoice == null || linkedInvoice.isBlank()) return null;
-        List<com.billbull.backend.sales.delivery.DeliveryNote> dns =
-                deliveryNoteRepository.findByLinkedInvoiceNumber(linkedInvoice);
-        return dns.isEmpty() ? null : dns.get(0).getId();
-    }
 }

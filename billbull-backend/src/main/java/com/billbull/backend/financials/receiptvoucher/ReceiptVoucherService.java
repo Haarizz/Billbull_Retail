@@ -53,7 +53,7 @@ public class ReceiptVoucherService {
     private final CustomerRepository customerRepository;
     private final BranchAccessService branchAccessService;
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
-    private final com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
+    private final com.billbull.backend.sales.invoice.InvoiceBalanceService invoiceBalanceService;
     private final EntityManager entityManager;
     private final EffectiveCorrectionViewService effectiveCorrectionViewService;
 
@@ -66,7 +66,7 @@ public class ReceiptVoucherService {
             CustomerRepository customerRepository,
             BranchAccessService branchAccessService,
             com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
-            com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository,
+            com.billbull.backend.sales.invoice.InvoiceBalanceService invoiceBalanceService,
             EntityManager entityManager,
             EffectiveCorrectionViewService effectiveCorrectionViewService,
             @Value("${file.upload-dir:uploads/receipts}") String uploadDir) {
@@ -78,7 +78,7 @@ public class ReceiptVoucherService {
         this.customerRepository = customerRepository;
         this.branchAccessService = branchAccessService;
         this.ownershipAccessService = ownershipAccessService;
-        this.advanceApplicationRepository = advanceApplicationRepository;
+        this.invoiceBalanceService = invoiceBalanceService;
         this.entityManager = entityManager;
         this.effectiveCorrectionViewService = effectiveCorrectionViewService;
         this.fileStorageLocation = Paths.get(uploadDir).toAbsolutePath().normalize();
@@ -449,33 +449,14 @@ public class ReceiptVoucherService {
             return;
         }
 
-        salesInvoiceRepository.findById(salesInvoiceId).ifPresent(invoice -> {
-            if (invoice.getStatus() == SalesInvoiceStatus.CANCELLED) {
-                return;
-            }
-
-            BigDecimal totalPaid = repository.findBySalesInvoiceId(salesInvoiceId).stream()
-                    .filter(receipt -> isCompletedStatus(receipt.getStatus()))
-                    .map(ReceiptVoucher::getAmount)
-                    .filter(Objects::nonNull)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-            // Advances applied via AdvanceApplicationService.apply() settle AR through
-            // a GL journal + AdvanceApplication row, not a ReceiptVoucher linked by
-            // salesInvoiceId — fold them in here so amountPaid/balance/status stay
-            // accurate for invoices settled wholly or partly by an advance.
-            totalPaid = totalPaid.add(
-                    advanceApplicationRepository.sumAppliedByInvoiceNumber(invoice.getInvoiceNumber()));
-
-            BigDecimal invoiceTotal = invoice.getInvoiceTotal() != null ? invoice.getInvoiceTotal() : BigDecimal.ZERO;
-            BigDecimal balance = invoiceTotal.subtract(totalPaid).max(BigDecimal.ZERO);
-
-            invoice.setAmountPaid(totalPaid);
-            invoice.setBalance(balance);
-            invoice.setStatus(resolveInvoiceStatus(invoice, totalPaid, invoiceTotal));
-
-            salesInvoiceRepository.save(invoice);
-        });
+        // Delegated to the one owner of amountPaid / returnCredited / balance / status. This
+        // method used to carry its own copy of the recompute — receipts plus advance
+        // applications — while SalesInvoiceService.finalizeInvoiceTotals carried a second,
+        // different one. Neither knew about the other, so a term added to one was erased by the
+        // other. The ledger reads, the formula and the status rule now all live in
+        // InvoiceBalanceService; this call site only says *when* to recompute.
+        salesInvoiceRepository.findById(salesInvoiceId)
+                .ifPresent(invoiceBalanceService::recomputeInvoiceBalance);
     }
 
     /**
@@ -569,40 +550,7 @@ public class ReceiptVoucherService {
         return BigDecimal.ZERO;
     }
 
-    private boolean isEffectivelyDelivered(SalesInvoice invoice) {
-        DeliveryStatus ds = invoice.getDeliveryStatus();
-        // AUTO_DELIVERED = system-generated delivery (direct sale / walk-in)
-        // null = no delivery required (e.g. service invoice)
-        return ds == DeliveryStatus.DELIVERED
-                || ds == DeliveryStatus.AUTO_DELIVERED
-                || ds == null;
-    }
 
-    private SalesInvoiceStatus resolveInvoiceStatus(SalesInvoice invoice, BigDecimal totalPaid, BigDecimal invoiceTotal) {
-        SalesInvoiceStatus currentStatus = invoice.getStatus();
-        if (currentStatus == SalesInvoiceStatus.DRAFT || currentStatus == SalesInvoiceStatus.CANCELLED) {
-            return currentStatus;
-        }
-
-        boolean delivered = isEffectivelyDelivered(invoice);
-
-        if (totalPaid.compareTo(invoiceTotal) >= 0 && invoiceTotal.signum() > 0) {
-            // Full payment received → always PAID regardless of delivery status.
-            // Delivery-blocks-PAID is enforced only for manual status changes in
-            // SalesInvoiceService.updateStatus, not for payment sync.
-            return SalesInvoiceStatus.PAID;
-        }
-
-        if (totalPaid.signum() > 0) {
-            return SalesInvoiceStatus.PARTIALLY_PAID;
-        }
-
-        if (currentStatus == SalesInvoiceStatus.PAID || currentStatus == SalesInvoiceStatus.PARTIALLY_PAID) {
-            return delivered ? SalesInvoiceStatus.CONFIRMED : SalesInvoiceStatus.POSTED;
-        }
-
-        return currentStatus != null ? currentStatus : SalesInvoiceStatus.POSTED;
-    }
 
     public boolean isCompletedStatus(String status) {
         return status != null && "Completed".equalsIgnoreCase(status.trim());

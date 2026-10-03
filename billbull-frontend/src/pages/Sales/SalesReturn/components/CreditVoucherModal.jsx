@@ -15,7 +15,7 @@ import { C } from '../constants';
  * decorative random bars of the prototype: a scanner reading this resolves to the actual voucher.
  */
 export default function CreditVoucherModal({
-   voucher, branchName, onClose, onPrint, printing = false,
+   voucher, branchName, companyName, onClose, onPrint, printing = false,
    loading = false, error = null, onRetry,
 }) {
    const canvasRef = useRef(null);
@@ -103,8 +103,12 @@ export default function CreditVoucherModal({
                <div className="border-2 border-dashed rounded-2xl p-5 text-center"
                   style={{ borderColor: C.accent, background: C.accentSoft }}>
 
+                  {/* The issuing business, read from the company profile. This used to be the
+                      hard-coded product name, which put "BillBull Retail" on the voucher of
+                      every tenant using the system — not the business the customer bought
+                      from, and not what the printed voucher's header now says. */}
                   <p className="text-[10px] font-black uppercase tracking-widest mb-0.5"
-                     style={{ color: C.accentInk }}>BillBull Retail</p>
+                     style={{ color: C.accentInk }}>{companyName || ''}</p>
                   <p className="text-xs font-semibold mb-3" style={{ color: C.muted }}>
                      {branchName || voucher.branchName || ''}
                   </p>

@@ -152,6 +152,8 @@ export function buildXReportViewModel(xReportData, opts = {}) {
   const cardPayCount = Number(xSummary.cardInvoiceCount ?? 0);
   const refundTotal = Number(xSummary.totalRefunds ?? 0);
   const totalRefundCount = Number(xSummary.totalRefundCount ?? 0);
+  const salesReturnValue = Number(xSummary.salesReturnTotal ?? 0);
+  const netSalesInclTax = Number(xSummary.reportingNetSales ?? 0);
   const cardRefundTotal = Number(xSummary.cardRefundSales ?? 0);
   const cardRefundCount = Number(xSummary.cardRefundCount ?? 0);
   const netCardSettle = cardSalesV - cardRefundTotal;
@@ -196,7 +198,15 @@ export function buildXReportViewModel(xReportData, opts = {}) {
       { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
       { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
       { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
-      { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
+      // Sales Return value for the scope, the same figure the Returns/Refund section below
+      // reports. This tile used to show `totalRefunds` — refund Payment rows against this
+      // session's invoices — which is a different population from the Sales Returns the
+      // section lists, so the headline and the detail disagreed on the same report.
+      { label: 'Returns', value: fmt(salesReturnValue), hint: 'Approved sales returns', icon: 'RT' },
+      // Gross minus returns on the backend's documented VAT-inclusive basis. Read from the
+      // backend, never recomputed here: a second formula in the client is how the X and Z
+      // reports drifted from the Sales Report in the first place.
+      { label: 'Net Sales', value: fmt(netSalesInclTax), hint: 'Inc. VAT, after returns', icon: 'NS' },
       { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
       { label: 'Expected Cash', value: fmt(expectedCashVal), hint: 'Opening + tender + cash in - cash out', icon: 'EC' },
       { label: 'Actual Cash', value: money(actualCash, fmt), hint: 'Denomination count', icon: 'AC' },
@@ -419,7 +429,26 @@ export function buildZReportViewModel(zReportData, opts = {}) {
   const cashierRows = Array.isArray(zReportData?.cashiers) ? zReportData.cashiers : [];
   const totalPaidV = Number(zSummary.totalPaid ?? totalSalesV);
   const voidAmountV = Number(zSummary.voidAmount ?? 0);
-  const refundTotal = Number(zSummary.totalRefunds ?? 0);
+  const salesReturnValue = Number(zSummary.salesReturnTotal ?? 0);
+  // Net Sales prefers the PERSISTED Day Close columns when the caller has them
+  // (detail.persistedReporting from GET /api/pos/reports/z/{id}), falling back to the stored
+  // report JSON otherwise.
+  //
+  // For a snapshot written after V112 the two are the same number by construction -- the
+  // columns were filled from this very summary. The preference matters because the columns are
+  // the queryable, indexable record of the day: a figure the back office can reconcile against
+  // the Sales Report without parsing a document, and the one that a JSON blob drifting for any
+  // reason would be checked against rather than trusted over.
+  //
+  // For a HISTORICAL snapshot persistedReporting is absent, and nothing here reinterprets that
+  // row's stored gross_sales / net_sales as the reporting basis: those columns are the POS line
+  // gross and the pre-returns taxable base respectively, and presenting either as Net Sales
+  // would silently restate a closed day. The stored JSON is served exactly as generated.
+  const persistedReporting = opts.persistedReporting || null;
+  const netSalesInclTax = Number(
+    persistedReporting?.reportingNetSales ?? zSummary.reportingNetSales ?? 0);
+  const netSalesExTaxAfterReturns = Number(
+    persistedReporting?.reportingNetSalesExTax ?? zSummary.reportingNetSalesExTax ?? 0);
   // Backend-authoritative, summed from the frozen session snapshots. Reconstructing it here
   // coalesced every uncounted session to 0, silently turning "nobody counted this drawer" into
   // "this drawer was empty".
@@ -460,7 +489,15 @@ export function buildZReportViewModel(zReportData, opts = {}) {
       { label: 'Card Sales', value: fmt(cardSalesV), hint: 'Card payments', icon: 'CA' },
       { label: 'Credit Sales', value: fmt(creditSalesV), hint: 'Credit invoices', icon: 'CR' },
       { label: 'Online / Bank Transfer', value: fmt(bankTransferSalesV), hint: 'Online payments', icon: 'OB' },
-      { label: 'Returns', value: fmt(refundTotal), hint: 'Refunds / returns', icon: 'RT' },
+      // Sales Return value for the scope, the same figure the Returns/Refund section below
+      // reports. This tile used to show `totalRefunds` — refund Payment rows against this
+      // session's invoices — which is a different population from the Sales Returns the
+      // section lists, so the headline and the detail disagreed on the same report.
+      { label: 'Returns', value: fmt(salesReturnValue), hint: 'Approved sales returns', icon: 'RT' },
+      // Gross minus returns on the backend's documented VAT-inclusive basis. Read from the
+      // backend, never recomputed here: a second formula in the client is how the X and Z
+      // reports drifted from the Sales Report in the first place.
+      { label: 'Net Sales', value: fmt(netSalesInclTax), hint: 'Inc. VAT, after returns', icon: 'NS' },
       { label: 'Discounts', value: fmt(discountV), hint: 'Bill and line discounts', icon: 'DS' },
       { label: 'Expected Cash', value: fmt(expectedCash), hint: 'Opening + tender + cash in - cash out', icon: 'EC' },
       { label: 'Actual Cash', value: money(actualCash, fmt), hint: 'Closed session counts', icon: 'AC' },
@@ -500,9 +537,14 @@ export function buildZReportViewModel(zReportData, opts = {}) {
         rows: [
           ['Gross Sales', fmt(totalSalesV)],
           ['Total Discount', discountV > 0 ? `(${fmt(discountV)})` : fmt(0)],
-          ['Net Sales Before VAT', fmt(salesExTaxV)],
+          ['Sales (Before VAT)', fmt(salesExTaxV)],
           ['VAT Amount (5%)', fmt(totalTaxV)],
-          ['Net Sales Including VAT', fmt(totalSalesV)],
+          // Net Sales Including VAT used to repeat Gross Sales verbatim — returns were never
+          // deducted anywhere in this section, so a day with returns reported the same Net
+          // Sales as a day without any. Both netted rows are backend figures.
+          ['Sales Returns', salesReturnValue > 0 ? `(${fmt(salesReturnValue)})` : fmt(0)],
+          ['Net Sales Before VAT', fmt(netSalesExTaxAfterReturns)],
+          ['Net Sales Including VAT', fmt(netSalesInclTax)],
         ],
       },
       {

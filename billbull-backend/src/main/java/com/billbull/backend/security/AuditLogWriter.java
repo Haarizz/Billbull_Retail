@@ -58,7 +58,16 @@ class AuditLogWriter {
         log.setEndpoint(blankOr(entityType, "ENTITY") + ":" + blankOr(entityId, "-"));
         log.setHttpMethod(blankOr(action, "EVENT"));
         log.setAction("ALLOWED");
-        log.setDenialReason(detail);
+        // denialReason is a plain String, i.e. varchar(255), while details is TEXT — and this
+        // line writes the SAME value to both. A domain detail longer than 255 characters
+        // therefore failed the whole INSERT, and because this method is @Async the exception
+        // was swallowed by the uncaught-exception handler: the event was silently never audited.
+        // The Phase 2 RETURN_APPROVED detail (return number, split figures, invoice, customer,
+        // branch, authorization) is ~354 characters for ordinary customer and branch names, so
+        // every approved return lost its audit row. Truncated here rather than widened in the
+        // schema: details already holds the full, untruncated string, so this field is only a
+        // short mirror for the denial/reason column that ACCESS rows use.
+        log.setDenialReason(truncate(detail, DENIAL_REASON_MAX));
         log.setEventType("BUSINESS");
         log.setEntityType(blankOr(entityType, "ENTITY"));
         log.setEntityId(blankOr(entityId, "-"));
@@ -128,5 +137,13 @@ class AuditLogWriter {
 
     private static String blankOr(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    /** Column width of {@code audit_logs.denial_reason} — a plain String, so varchar(255). */
+    private static final int DENIAL_REASON_MAX = 255;
+
+    private static String truncate(String value, int max) {
+        if (value == null || value.length() <= max) return value;
+        return value.substring(0, max);
     }
 }

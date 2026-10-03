@@ -51,7 +51,7 @@ class ReceiptVoucherServiceTest {
     private BranchAccessService branchAccessService;
 
     @Mock
-    private com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
+    private com.billbull.backend.sales.invoice.InvoiceBalanceService invoiceBalanceService;
 
     @Mock
     private jakarta.persistence.EntityManager entityManager;
@@ -73,7 +73,7 @@ class ReceiptVoucherServiceTest {
                 branchAccessService,
                 new com.billbull.backend.common.ownership.OwnershipAccessService(
                         org.mockito.Mockito.mock(com.billbull.backend.security.RolePermissionRepository.class), false),
-                advanceApplicationRepository,
+                invoiceBalanceService,
                 entityManager,
                 effectiveCorrectionViewService,
                 "target/test-receipts");

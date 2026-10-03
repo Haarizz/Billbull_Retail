@@ -44,6 +44,23 @@ public enum SalesReturnRefundMethod {
     }
 
     /**
+     * True when settling this method hands redeemable value back to the customer — cash, a card
+     * or bank credit, or a voucher they can spend.
+     *
+     * <p>These are the methods that may only ever move the return's <b>paid portion</b>: value
+     * the customer has already handed over. A return with no paid portion has no legitimate
+     * money-moving settlement, because the customer has not yet paid for the goods they are
+     * returning; its only settlement is the receivable allocation. See
+     * {@code SalesReturnService.assertSettlementMethodMatchesSplit}.
+     *
+     * <p>CUSTOMER_CREDIT is excluded: on an unpaid or part-paid invoice it is precisely the
+     * instrument that leaves the credit on the account rather than paying anything out.
+     */
+    public boolean movesValueToCustomer() {
+        return this != CUSTOMER_CREDIT;
+    }
+
+    /**
      * Resolves both the enum name and the legacy free-text labels the old POS wizard wrote
      * ("Cash Back", "Cash Return", "Credit Voucher"). Returns null when unrecognisable.
      */

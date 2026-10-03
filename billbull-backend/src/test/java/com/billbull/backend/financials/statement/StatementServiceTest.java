@@ -48,6 +48,9 @@ class StatementServiceTest {
     @Mock private OpeningInvoiceRepository openingInvoiceRepository;
     @Mock private CustomerRepository customerRepository;
     @Mock private VendorRepository vendorRepository;
+    @Mock private com.billbull.backend.sales.returns.SalesReturnRepository salesReturnRepository;
+    @Mock private com.billbull.backend.sales.returns.credit.SalesReturnCreditApplicationRepository
+            returnCreditApplicationRepository;
 
     private StatementService service;
 
@@ -66,13 +69,26 @@ class StatementServiceTest {
         ReflectionTestUtils.setField(service, "openingInvoiceRepository", openingInvoiceRepository);
         ReflectionTestUtils.setField(service, "customerRepository", customerRepository);
         ReflectionTestUtils.setField(service, "vendorRepository", vendorRepository);
+        ReflectionTestUtils.setField(service, "salesReturnRepository", salesReturnRepository);
+        ReflectionTestUtils.setField(service, "returnCreditApplicationRepository",
+                returnCreditApplicationRepository);
 
         // No opening-balance carry-forward in any scenario below.
-        when(salesInvoiceRepository.calculateOpeningBalance(eq(CUSTOMER), any())).thenReturn(0.0);
+        // lenient: the opening-balance cases below override this with their own carry-forward.
+        org.mockito.Mockito.lenient()
+                .when(salesInvoiceRepository.calculateOpeningBalance(eq(CUSTOMER), any())).thenReturn(0.0);
         when(receiptVoucherRepository.sumCompletedAmountBeforeDate(eq(CUSTOMER), any())).thenReturn(BigDecimal.ZERO);
         when(openingInvoiceRepository.findByCustomer_Code(CUSTOMER)).thenReturn(List.of());
         when(customerRepository.findByCode(CUSTOMER)).thenReturn(java.util.Optional.empty());
         org.mockito.Mockito.lenient().when(salesInvoiceRepository.findByInvoiceNumberIn(any())).thenReturn(List.of());
+
+        // No sales returns unless a scenario stubs them.
+        org.mockito.Mockito.lenient()
+                .when(returnCreditApplicationRepository.sumAppliedBeforeDate(eq(CUSTOMER), any()))
+                .thenReturn(BigDecimal.ZERO);
+        org.mockito.Mockito.lenient()
+                .when(salesReturnRepository.findApprovedForStatement(eq(CUSTOMER), any(), any()))
+                .thenReturn(List.of());
     }
 
     private StatementEntryDTO invoiceEntry(LocalDate date, String docNo, BigDecimal amount) {
@@ -251,5 +267,144 @@ class StatementServiceTest {
     private StatementEntryDTO findByDoc(List<StatementEntryDTO> entries, String docNo) {
         return entries.stream().filter(e -> docNo.equals(e.getDocumentNo())).findFirst()
                 .orElseThrow(() -> new AssertionError("No entry found for " + docNo));
+    }
+
+    // ---- Sales returns reach the AR sub-ledger ----
+
+    /**
+     * A return against a fully paid invoice: the whole return value is the paid portion, so
+     * {@code refundAmount == totalAmount}. That is also the shape of every legacy row, which V78
+     * backfilled {@code refund_method} and {@code refund_amount = total_amount} for.
+     */
+    private com.billbull.backend.sales.returns.SalesReturn salesReturn(
+            String number, LocalDate date, String amount,
+            com.billbull.backend.sales.returns.SalesReturnRefundMethod method) {
+        return salesReturn(number, date, amount, amount, method);
+    }
+
+    /**
+     * A return with an explicit split. {@code refundAmount} carries the server-derived paid
+     * portion, stamped at approval by {@code SalesReturnService.resolveSettlementSplit}; the
+     * statement's RETURN_REFUND row is emitted on that figure and only when it is positive.
+     */
+    private com.billbull.backend.sales.returns.SalesReturn salesReturn(
+            String number, LocalDate date, String totalAmount, String paidPortion,
+            com.billbull.backend.sales.returns.SalesReturnRefundMethod method) {
+        com.billbull.backend.sales.returns.SalesReturn r =
+                new com.billbull.backend.sales.returns.SalesReturn();
+        r.setReturnNumber(number);
+        r.setReturnDate(date);
+        r.setCustomerCode(CUSTOMER);
+        r.setTotalAmount(new BigDecimal(totalAmount));
+        r.setRefundAmount(paidPortion != null ? new BigDecimal(paidPortion) : null);
+        r.setLinkedInvoice("INV-1");
+        r.setRefundMethod(method);
+        r.setStatus(com.billbull.backend.sales.returns.SalesReturnStatus.APPROVED);
+        return r;
+    }
+
+    /**
+     * The bug this file's newest cases exist for: an approved return credited AR in the GL but
+     * never appeared on the customer's statement, so the sub-ledger and account 1100 disagreed
+     * by the return total.
+     */
+    @Test
+    void customerCreditReturnAppearsAsACreditAndReducesTheBalance() {
+        when(salesInvoiceRepository.findStatementEntries(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of(invoiceEntry(LocalDate.of(2026, 1, 5), "INV-1", new BigDecimal("1000.00"))));
+        when(receiptVoucherRepository.findStatementEntriesByCustomerCode(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of());
+        when(receiptVoucherRepository.findByCustomerCodeAndPurpose(eq(CUSTOMER), any())).thenReturn(List.of());
+        when(salesReturnRepository.findApprovedForStatement(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of(salesReturn("SR-1", LocalDate.of(2026, 1, 10), "250.00",
+                        com.billbull.backend.sales.returns.SalesReturnRefundMethod.CUSTOMER_CREDIT)));
+
+        StatementResponse resp = service.getCustomerStatement(CUSTOMER, START, END);
+
+        StatementEntryDTO creditRow = resp.getEntries().stream()
+                .filter(e -> "RETURN_CREDIT".equals(e.getType()))
+                .findFirst().orElseThrow();
+        assertEquals("SR-1", creditRow.getDocumentNo());
+        assertEquals(0, new BigDecimal("250.00").compareTo(creditRow.getCredit()));
+        assertEquals(0, new BigDecimal("750.00").compareTo(resp.getClosingBalance()));
+    }
+
+    /**
+     * A refunded return is two ledger legs, not one. The credit and the settlement debit both
+     * show, and they net to zero — matching the GL, where the drawer/voucher/card entry posts
+     * the offsetting Dr AR.
+     */
+    @Test
+    void cashRefundedReturnShowsBothLegsAndLeavesTheBalanceUnchanged() {
+        when(salesInvoiceRepository.findStatementEntries(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of(invoiceEntry(LocalDate.of(2026, 1, 5), "INV-1", new BigDecimal("1000.00"))));
+        when(receiptVoucherRepository.findStatementEntriesByCustomerCode(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of());
+        when(receiptVoucherRepository.findByCustomerCodeAndPurpose(eq(CUSTOMER), any())).thenReturn(List.of());
+        when(salesReturnRepository.findApprovedForStatement(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of(salesReturn("SR-2", LocalDate.of(2026, 1, 10), "250.00",
+                        com.billbull.backend.sales.returns.SalesReturnRefundMethod.CASH_REFUND)));
+
+        StatementResponse resp = service.getCustomerStatement(CUSTOMER, START, END);
+
+        assertEquals(1, resp.getEntries().stream().filter(e -> "RETURN_CREDIT".equals(e.getType())).count());
+        StatementEntryDTO refundRow = resp.getEntries().stream()
+                .filter(e -> "RETURN_REFUND".equals(e.getType()))
+                .findFirst().orElseThrow();
+        assertEquals(0, new BigDecimal("250.00").compareTo(refundRow.getDebit()));
+        assertEquals(0, new BigDecimal("1000.00").compareTo(resp.getClosingBalance()));
+    }
+
+    /**
+     * The row that must NOT appear: a return against an invoice the customer has not finished
+     * paying for emits no RETURN_REFUND, because nothing was refunded and nothing could be.
+     *
+     * <p>Today's statement for this case shows a refund debit and closes at the pre-return
+     * balance, because the cashier chose Cash Refund and the system let them. The split model
+     * does not add a row to fix that statement — it removes the transaction that produced it, so
+     * the paid portion is zero and the predicate suppresses the leg.
+     */
+    @Test
+    void aReturnWithNoPaidPortionShowsTheCreditAloneAndNoRefundLeg() {
+        when(salesInvoiceRepository.findStatementEntries(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of(invoiceEntry(LocalDate.of(2026, 1, 5), "INV-1", new BigDecimal("1000.00"))));
+        when(receiptVoucherRepository.findStatementEntriesByCustomerCode(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of());
+        when(receiptVoucherRepository.findByCustomerCodeAndPurpose(eq(CUSTOMER), any())).thenReturn(List.of());
+        when(salesReturnRepository.findApprovedForStatement(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of(salesReturn("SR-3", LocalDate.of(2026, 1, 10), "250.00", "0.00",
+                        com.billbull.backend.sales.returns.SalesReturnRefundMethod.CUSTOMER_CREDIT)));
+
+        StatementResponse resp = service.getCustomerStatement(CUSTOMER, START, END);
+
+        assertEquals(1, resp.getEntries().stream().filter(e -> "RETURN_CREDIT".equals(e.getType())).count());
+        assertEquals(0, resp.getEntries().stream().filter(e -> "RETURN_REFUND".equals(e.getType())).count(),
+                "Nothing was paid back, so there is no settlement leg to show.");
+        // The credit reduces what the customer owes, exactly as the invoice balance now does.
+        assertEquals(0, new BigDecimal("750.00").compareTo(resp.getClosingBalance()));
+    }
+
+    /**
+     * A return booked before the period has to land in the brought-forward figure.
+     *
+     * <p>Sourced from the allocation ledger now, not from a classification over
+     * {@code refund_method}: the opening balance has to agree with what was actually credited
+     * against an invoice, which is the only thing the in-period running balance can agree with.
+     */
+    @Test
+    void returnCreditFromBeforeThePeriodLandsInTheOpeningBalance() {
+        when(salesInvoiceRepository.calculateOpeningBalance(eq(CUSTOMER), any())).thenReturn(1000.0);
+        when(returnCreditApplicationRepository.sumAppliedBeforeDate(eq(CUSTOMER), eq(START)))
+                .thenReturn(new BigDecimal("250.00"));
+        when(salesInvoiceRepository.findStatementEntries(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of());
+        when(receiptVoucherRepository.findStatementEntriesByCustomerCode(eq(CUSTOMER), eq(START), eq(END)))
+                .thenReturn(List.of());
+        when(receiptVoucherRepository.findByCustomerCodeAndPurpose(eq(CUSTOMER), any())).thenReturn(List.of());
+
+        StatementResponse resp = service.getCustomerStatement(CUSTOMER, START, END);
+
+        assertEquals(0, new BigDecimal("750.00").compareTo(resp.getOpeningBalance()));
+        assertEquals(0, new BigDecimal("750.00").compareTo(resp.getClosingBalance()));
     }
 }
