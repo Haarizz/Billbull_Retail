@@ -2,9 +2,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, Plus, X, Box, Loader2, ChevronLeft, ChevronRight, Clock, Folder, Package, Tag } from 'lucide-react';
 import { getImageUrl } from '../utils/urlUtils';
-import { getProductsList, createProduct, getProductById } from '../api/productsApi';
-import { getBrands } from '../api/brandsApi';
-import { getUnits } from '../api/unitsApi';
+import { getProductsList, getProductById } from '../api/productsApi';
+import QuickAddProductModal from './inventory/QuickAddProductModal';
 import CurrencyAmount from './CurrencyAmount';
 import toast from 'react-hot-toast';
 import { pickSalesItemPrice } from '../utils/salesPricing';
@@ -169,131 +168,6 @@ const SkeletonCard = () => (
         </div>
     </div>
 );
-
-// ── Quick Add Modal ──────────────────────────────────────────────────────────
-
-const QuickAddModal = ({ isOpen, onClose, onSuccess }) => {
-    const [formData, setFormData] = useState({
-        name: '',
-        code: `PRD${Math.floor(Math.random() * 100000)}`,
-        retailPrice: '',
-        cost: '',
-        brandId: '',
-        unitId: ''
-    });
-    const [brands, setBrands] = useState([]);
-    const [units, setUnits] = useState([]);
-    const [loading, setLoading] = useState(false);
-
-    useEffect(() => {
-        if (isOpen) {
-            Promise.all([getBrands(), getUnits()])
-                .then(([b, u]) => {
-                    // Inactive brands cannot be used for new products.
-                    const activeBrands = (Array.isArray(b) ? b : []).filter(x => x.active !== false);
-                    setBrands(activeBrands);
-                    setUnits(u);
-                    if (activeBrands.length > 0) setFormData(prev => ({ ...prev, brandId: activeBrands[0].id }));
-                    if (u.length > 0) setFormData(prev => ({ ...prev, unitId: u[0].id }));
-                })
-                .catch(console.error);
-        }
-    }, [isOpen]);
-
-    if (!isOpen) return null;
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        try {
-            const payload = {
-                product: {
-                    name: formData.name,
-                    code: formData.code,
-                    productType: 'STOCK',
-                    status: 'ACTIVE',
-                    brand: { id: parseInt(formData.brandId) }
-                },
-                pricing: {
-                    cost: parseFloat(formData.cost) || 0,
-                    retailPrice: parseFloat(formData.retailPrice) || 0
-                },
-                inventory: {
-                    defaultUnit: { id: parseInt(formData.unitId) },
-                    packings: [{ unit: parseInt(formData.unitId), qty: 1, level: 1 }]
-                },
-                // No tax inputs on this quick-create form — leave both unset. Sales
-                // flows fall back to the branch's Default VAT Rate; Purchase flows
-                // fall back to 0% (no branch-level default exists for Purchase Tax).
-                tax: { salesTax: null, purchaseTax: null }
-            };
-
-            const fData = new FormData();
-            fData.append("data", JSON.stringify(payload));
-
-            const res = await createProduct(fData);
-            onSuccess(res.product); // Returning the newly created product
-        } catch (err) {
-            console.error("Failed to create product:", err);
-            toast.error("Failed to create product. Check console.");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                        <Plus size={18} className="text-emerald-500" /> Quick Add Product
-                    </h3>
-                    <button onClick={onClose} disabled={loading} className="text-slate-400 hover:text-slate-600">
-                        <X size={18} />
-                    </button>
-                </div>
-                <form onSubmit={handleSubmit} className="p-5 space-y-4">
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1 col-span-2">
-                            <label className="text-xs font-bold text-slate-500">Product Name *</label>
-                            <input autoFocus required type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" placeholder="E.g. Wireless Mouse" />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-bold text-slate-500">Item Code *</label>
-                            <input required type="text" value={formData.code} onChange={e => setFormData({ ...formData, code: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-bold text-slate-500">Brand *</label>
-                            <select required value={formData.brandId} onChange={e => setFormData({ ...formData, brandId: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500 bg-white">
-                                {brands.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                            </select>
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-bold text-slate-500">Cost Price</label>
-                            <input type="number" step="0.01" value={formData.cost} onChange={e => setFormData({ ...formData, cost: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" placeholder="0.00" />
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-xs font-bold text-slate-500">Retail Price *</label>
-                            <input required type="number" step="0.01" value={formData.retailPrice} onChange={e => setFormData({ ...formData, retailPrice: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500" placeholder="0.00" />
-                        </div>
-                        <div className="space-y-1 col-span-2">
-                            <label className="text-xs font-bold text-slate-500">Default Unit *</label>
-                            <select required value={formData.unitId} onChange={e => setFormData({ ...formData, unitId: e.target.value })} className="w-full text-sm border-2 border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-emerald-500 bg-white">
-                                {units.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                            </select>
-                        </div>
-                    </div>
-                    <div className="pt-4 flex gap-3">
-                        <button type="button" onClick={onClose} disabled={loading} className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-600 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors">Cancel</button>
-                        <button type="submit" disabled={loading} className="flex-1 px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors flex justify-center items-center gap-2">
-                            {loading ? <Loader2 size={16} className="animate-spin" /> : <><Plus size={16} /> Save Product</>}
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    );
-};
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -784,12 +658,22 @@ const ProductSelector = ({
                 </div>
 
                 {/* ── Quick Add Modal Overlay ── */}
-                <QuickAddModal
+                <QuickAddProductModal
                     isOpen={showQuickAdd}
+                    initialName={searchQuery.trim()}
                     onClose={() => setShowQuickAdd(false)}
-                    onSuccess={(newProduct) => {
+                    onCreated={(res) => {
                         setShowQuickAdd(false);
-                        handleSelect(newProduct);
+                        if (res?.product) handleSelect(normalizeRecentProduct(res.product, res));
+                    }}
+                    onUseExisting={async (dup) => {
+                        setShowQuickAdd(false);
+                        try {
+                            const detail = await getProductById(dup.id);
+                            handleSelect(normalizeRecentProduct(dup, detail));
+                        } catch {
+                            toast.error('Could not load the existing product.');
+                        }
                     }}
                 />
 

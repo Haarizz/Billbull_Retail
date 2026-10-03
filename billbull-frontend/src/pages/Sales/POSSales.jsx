@@ -12,8 +12,6 @@ import { Separator } from '../../components/ui/separator';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import { RadioGroup, RadioGroupItem } from '../../components/ui/radio-group';
 import { Switch } from '../../components/ui/switch';
-import { createProduct, validateDuplicateProduct, createProductFromPos, validateDuplicateProductFromPos } from '../../api/productsApi';
-import { getUnits } from '../../api/unitsApi';
 import { getAllCustomers, createCustomer, validateDuplicateCustomer } from '../../api/customerledgerApi';
 import { sendSalesInvoiceEmail, getSalesInvoiceById, getAllSalesInvoices, getNextInvoiceNumber } from '../../api/salesInvoiceApi';
 import { saveSalesOrder, getNextSalesOrderNumber, getSalesOrdersPage, getSalesOrderById, updateSalesOrderStatus, deleteSalesOrder } from '../../api/salesorderApi';
@@ -557,14 +555,6 @@ export default function POSSales() {
 
   // Quick Product Creation Modal State
   const [showQuickProductModal, setShowQuickProductModal] = useState(false);
-  const [quickProductForm, setQuickProductForm] = useState({
-    name: '', code: '', barcode: '', salesPrice: '', costPrice: '', purchasePrice: '', category: '', brand: '',
-    uom: 'Pcs', tax: '5%', openingStock: '', lowStockAlert: '', status: 'Active',
-    sku: '', hsnSac: '', description: '', supplier: '', isBatch: false, isSerial: false, trackInventory: true, allowNegativeStock: false, isDiscountAllowed: true, expandMoreDetails: false
-  });
-  const [quickProductDuplicateWarning, setQuickProductDuplicateWarning] = useState(null);
-  const [quickProductLoading, setQuickProductLoading] = useState(false);
-  const [quickProductError, setQuickProductError] = useState(null);
 
   const [customerHistory, setCustomerHistory] = useState([]);
   const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false);
@@ -6967,106 +6957,22 @@ export default function POSSales() {
     }
   }, [quickCustomerForm, loadPosCustomers, setSelectedCustomer, showDeliveryModal, setDeliveryCustomerId, setDeliveryAddress, showFeedback]);
 
-  const handleSaveQuickProduct = useCallback(async (overrideDuplicate = false) => {
-    try {
-      setQuickProductLoading(true);
-      setQuickProductError(null);
-
-      if (!overrideDuplicate) {
-        const duplicates = await validateDuplicateProductFromPos({
-          name: quickProductForm.name,
-          code: quickProductForm.code,
-          sku: quickProductForm.sku,
-          barcode: quickProductForm.barcode
-        });
-        if (duplicates && duplicates.length > 0) {
-          setQuickProductDuplicateWarning(duplicates);
-          setQuickProductLoading(false);
-          return;
-        }
-      }
-
-      const units = await getUnits();
-      const defaultUnit = units.find(u => u.name?.toLowerCase() === quickProductForm.uom?.toLowerCase()) || units[0];
-      if (!defaultUnit) {
-        throw new Error('No units configured. Please create a unit under Inventory > Units first.');
-      }
-
-      const formData = new FormData();
-      const productReq = {
-        product: {
-          name: quickProductForm.name || 'Unnamed Product',
-          code: quickProductForm.code || `PRD-${Date.now().toString().slice(-6)}`,
-          sku: quickProductForm.sku || `SKU-${Date.now().toString().slice(-6)}`,
-          category: quickProductForm.category || 'General',
-          status: 'ACTIVE',
-          productType: 'STOCK',
-          isBatch: false,
-          isSerial: false,
-          isDiscountAllowed: true,
-          availableInPos: true,
-          detailedDesc: quickProductForm.description,
-          brand: { id: 1 }
-        },
-        pricing: {
-          retailPrice: parseFloat(quickProductForm.sellingPrice) || 0,
-          cost: parseFloat(quickProductForm.purchasePrice) || 0,
-          purchasePrice: parseFloat(quickProductForm.purchasePrice) || 0
-        },
-        tax: {
-          // Blank means "not configured" -> falls back to the branch's Default VAT
-          // Rate at sale time; an explicit 0 is sent through as a zero-rated item.
-          salesTax: quickProductForm.taxRate === '' || quickProductForm.taxRate === null || quickProductForm.taxRate === undefined
-            ? null
-            : Number(quickProductForm.taxRate)
-        },
-        inventory: {
-          openingStock: parseFloat(quickProductForm.initialStock) || 0,
-          minStock: parseFloat(quickProductForm.alertQuantity) || 0,
-          trackInventory: quickProductForm.trackInventory || false,
-          allowNegativeStock: true,
-          defaultUnit: { id: defaultUnit.id },
-          packings: [
-            {
-              level: 'L1',
-              unit: defaultUnit.id,
-              conversion: 1,
-              baseQty: 1,
-              isSale: true,
-              isPurchase: true,
-              isLPO: false,
-              cost: parseFloat(quickProductForm.purchasePrice) || 0,
-              price: parseFloat(quickProductForm.sellingPrice) || 0,
-              barcode: quickProductForm.barcode || ''
-            }
-          ]
-        }
-      };
-
-      formData.append('data', JSON.stringify(productReq));
-
-      const newProdRes = await createProductFromPos(formData);
-      await loadPosProducts(0, false);
-
-      if (newProdRes && newProdRes.product) {
-        const mappedProduct = mapPosProductAggregateItem(newProdRes);
-        const res = handleProductSelection(mappedProduct);
-        if (res?.deferred) {
-          showFeedback('success', `${mappedProduct.name} created — confirm the entry to add it.`);
-        } else if (res && res.ok === false) {
-          showFeedback('error', res.reason || `${mappedProduct.name} created but could not be added.`);
-        } else {
-          showFeedback('success', `${mappedProduct.name} created and added to cart!`);
-        }
-      }
-
-      setShowQuickProductModal(false);
-    } catch (err) {
-      setQuickProductError(err.response?.data?.message || err.message || 'Failed to create product');
-    } finally {
-      setQuickProductLoading(false);
+  // QuickAddProductModal owns the form, duplicate check and create call; this only
+  // refreshes the catalog and drops the new product into the cart.
+  const handleQuickProductCreated = useCallback(async (newProdRes) => {
+    setShowQuickProductModal(false);
+    await loadPosProducts(0, false);
+    if (!newProdRes?.product) return;
+    const mappedProduct = mapPosProductAggregateItem(newProdRes);
+    const res = handleProductSelection(mappedProduct);
+    if (res?.deferred) {
+      showFeedback('success', `${mappedProduct.name} created — confirm the entry to add it.`);
+    } else if (res && res.ok === false) {
+      showFeedback('error', res.reason || `${mappedProduct.name} created but could not be added.`);
+    } else {
+      showFeedback('success', `${mappedProduct.name} created and added to cart!`);
     }
-  }, [quickProductForm, loadPosProducts, handleProductSelection, showFeedback]);
+  }, [loadPosProducts, handleProductSelection, showFeedback]);
 
   const handleCheckout = useCallback(() => {
     // Verification is asked for HERE, at Checkout, rather than at settlement: the cashier is told
@@ -7095,7 +7001,7 @@ export default function POSSales() {
   const touchScreenProps = {
     handleCheckout,
     showQuickCustomerModal, setShowQuickCustomerModal, quickCustomerForm, setQuickCustomerForm, quickCustomerDuplicateWarning, setQuickCustomerDuplicateWarning, quickCustomerLoading, quickCustomerError, openQuickCustomerModal, handleSaveQuickCustomer,
-    showQuickProductModal, setShowQuickProductModal, quickProductForm, setQuickProductForm, quickProductDuplicateWarning, setQuickProductDuplicateWarning, quickProductLoading, quickProductError, handleSaveQuickProduct,
+    showQuickProductModal, setShowQuickProductModal, handleQuickProductCreated,
     setCurrentView, currentSession, sessionId, posSettings,
     currentInvoice, currentInvoiceRef, invoiceCounter,
     posProducts, filteredProducts, posProductsLoading, posProductsLoadingMore, posProductsError,
