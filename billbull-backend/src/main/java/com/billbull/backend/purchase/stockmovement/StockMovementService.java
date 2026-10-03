@@ -12,19 +12,19 @@ public class StockMovementService {
     private final StockMovementRepository repository;
     private final com.billbull.backend.inventory.product.ProductRepository productRepository;
     private final com.billbull.backend.notification.NotificationEventPublisher notifPublisher;
-    private final com.billbull.backend.inventory.balance.InventoryBalanceService inventoryBalanceService;
+    private final com.billbull.backend.inventory.balance.InventoryBalanceRefreshScheduler balanceRefreshScheduler;
     private final com.billbull.backend.inventory.warehouse.WarehouseRepository warehouseRepository;
 
     public StockMovementService(
             StockMovementRepository repository,
             com.billbull.backend.inventory.product.ProductRepository productRepository,
             com.billbull.backend.notification.NotificationEventPublisher notifPublisher,
-            com.billbull.backend.inventory.balance.InventoryBalanceService inventoryBalanceService,
+            com.billbull.backend.inventory.balance.InventoryBalanceRefreshScheduler balanceRefreshScheduler,
             com.billbull.backend.inventory.warehouse.WarehouseRepository warehouseRepository) {
         this.repository = repository;
         this.productRepository = productRepository;
         this.notifPublisher = notifPublisher;
-        this.inventoryBalanceService = inventoryBalanceService;
+        this.balanceRefreshScheduler = balanceRefreshScheduler;
         this.warehouseRepository = warehouseRepository;
     }
 
@@ -514,15 +514,23 @@ public class StockMovementService {
         refreshBalance(productId, warehouseId);
     }
 
+    /**
+     * Queues the pre-aggregated balance refresh for after this transaction commits.
+     *
+     * <p>It used to call {@code InventoryBalanceService.refresh} inline. That method is
+     * {@code REQUIRES_NEW}, so it opened a second transaction while this one was still
+     * uncommitted and re-derived the balance from a ledger that did not yet contain the row
+     * saved a line earlier — writing back the on-hand quantity from before the movement. The
+     * ledger stayed correct; {@code inventory_balances} went stale until some later movement
+     * happened to touch the same pair.
+     *
+     * <p>Deferring preserves both of the properties the REQUIRES_NEW was there for — the refresh
+     * cannot roll back a posted movement, and a failed refresh never fails the posting — while
+     * guaranteeing it reads committed data. See
+     * {@link com.billbull.backend.inventory.balance.InventoryBalanceRefreshScheduler}.
+     */
     private void refreshBalance(Long productId, Long warehouseId) {
-        try {
-            inventoryBalanceService.refresh(productId, warehouseId);
-        } catch (Exception e) {
-            // Never block stock posting due to balance refresh failure; log for investigation.
-            org.slf4j.LoggerFactory.getLogger(StockMovementService.class)
-                    .error("[InventoryBalance] Failed to refresh balance for product={} warehouse={}: {}",
-                            productId, warehouseId, e.getMessage());
-        }
+        balanceRefreshScheduler.scheduleRefresh(productId, warehouseId);
     }
 
     private String normalizeBatchNumber(String batchNumber) {
