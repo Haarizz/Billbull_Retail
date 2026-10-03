@@ -68,6 +68,7 @@ class ProductServiceBranchScopeTest {
     @Mock private InventoryBranchScopeResolver branchScopeResolver;
     @Mock private MasterDataBranchService masterBranch;
     @Mock private com.billbull.backend.inventory.warehouse.WarehouseStockService warehouseStockService;
+    @Mock private com.billbull.backend.inventory.category.ProductCategoryService categoryService;
 
     private ProductService service() {
         return new ProductService(productRepo, pricingRepo, branchPricingRepo, priceChangeRepo, taxRepo,
@@ -75,7 +76,7 @@ class ProductServiceBranchScopeTest {
                 subDepartmentRepo, unitRepo, warehouseRepo, zoneRepo, locatorRepo, binRepo,
                 imageStorage, stockMovementRepo, branchRepo, auditLogService,
                 modulePermissionService, favouriteRepo, userRepository, branchScopeResolver,
-                masterBranch, warehouseStockService);
+                masterBranch, warehouseStockService, categoryService);
     }
 
     private static ListScope scopeOf(Long branchId) {

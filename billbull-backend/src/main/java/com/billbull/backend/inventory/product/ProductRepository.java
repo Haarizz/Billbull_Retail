@@ -398,4 +398,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
                         ") ORDER BY p.name ASC")
         List<Object[]> findReportFilterSuggestions(@org.springframework.data.repository.query.Param("q") String q,
                         Pageable pageable);
+
+        // ===== Product categories (inventory.category.ProductCategory master). Product.category is a
+        // plain name column, so usage is matched case-insensitively on the trimmed name.
+        @Query("SELECT LOWER(TRIM(p.category)), COUNT(p) FROM Product p " +
+                        "WHERE p.isActive = true AND p.category IS NOT NULL GROUP BY LOWER(TRIM(p.category))")
+        List<Object[]> countActiveByCategory();
+
+        @Query("SELECT COUNT(p) FROM Product p WHERE p.isActive = true AND LOWER(TRIM(p.category)) = LOWER(TRIM(:category))")
+        long countActiveByCategory(@org.springframework.data.repository.query.Param("category") String category);
+
+        /** Renaming a category carries every product (active or not) on the old name to the new one. */
+        @org.springframework.data.jpa.repository.Modifying
+        @Query("UPDATE Product p SET p.category = :newName WHERE LOWER(TRIM(p.category)) = LOWER(TRIM(:oldName))")
+        int renameCategory(@org.springframework.data.repository.query.Param("oldName") String oldName,
+                        @org.springframework.data.repository.query.Param("newName") String newName);
 }
