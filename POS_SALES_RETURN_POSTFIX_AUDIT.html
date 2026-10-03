@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales Return Ledger Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    color-scheme: light;
+    --paper:#fbfaf7;
+    --panel:#ffffff;
+    --ink:#161b22;
+    --ink-2:#3d4754;
+    --quiet:#6b7682;
+    --rule:#e2ded4;
+    --rule-soft:#efece4;
+    --amber:#C98A14;
+    --amber-soft:#fdf6e4;
+    --amber-line:#f0dca8;
+    --mono-bg:#f4f2ec;
+    --fixed:#1c6b45;
+    --fixed-bg:#eaf4ee;
+    --open:#a73f22;
+    --open-bg:#fbeee9;
+    --partial:#8a6410;
+    --partial-bg:#fcf3df;
+    --measure:68ch;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme: dark;
+      --paper:#12151a;
+      --panel:#181c23;
+      --ink:#e7e4dc;
+      --ink-2:#bdc3cc;
+      --quiet:#8b949f;
+      --rule:#2b313a;
+      --rule-soft:#232931;
+      --amber:#E0A838;
+      --amber-soft:#241e12;
+      --amber-line:#4a3c1d;
+      --mono-bg:#1d2229;
+      --fixed:#79d3a4;
+      --fixed-bg:#11261b;
+      --open:#f0a98c;
+      --open-bg:#2a1710;
+      --partial:#e8c164;
+      --partial-bg:#2a2313;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --paper:#12151a;
+    --panel:#181c23;
+    --ink:#e7e4dc;
+    --ink-2:#bdc3cc;
+    --quiet:#8b949f;
+    --rule:#2b313a;
+    --rule-soft:#232931;
+    --amber:#E0A838;
+    --amber-soft:#241e12;
+    --amber-line:#4a3c1d;
+    --mono-bg:#1d2229;
+    --fixed:#79d3a4;
+    --fixed-bg:#11261b;
+    --open:#f0a98c;
+    --open-bg:#2a1710;
+    --partial:#e8c164;
+    --partial-bg:#2a2313;
+  }
+
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size:15.5px;
+    line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--measure); margin:0 auto; padding-inline:16px; padding-block:2.5rem 6rem;}
+  .wide{max-width:min(94rem, 100%);}
+
+  h1{
+    font-family:"Newsreader", Georgia, serif;
+    font-size:clamp(1.9rem, 4.6vw, 2.7rem);
+    font-weight:500; line-height:1.12; letter-spacing:-.015em;
+    margin:0 0 .6rem; text-wrap:balance;
+  }
+  h2{
+    font-family:"Newsreader", Georgia, serif;
+    font-size:1.5rem; font-weight:500; line-height:1.25; letter-spacing:-.01em;
+    margin:0; text-wrap:balance;
+  }
+  h3{font-size:1.02rem; font-weight:600; margin:1.9rem 0 .45rem; letter-spacing:-.005em;}
+  h4{font-size:.9rem; font-weight:600; margin:1.3rem 0 .35rem; color:var(--ink-2);}
+  p{margin:.75rem 0;}
+  ul,ol{margin:.75rem 0; padding-left:1.35rem;}
+  li{margin:.32rem 0;}
+  li>ul{margin:.2rem 0;}
+  strong{font-weight:600;}
+  a{color:var(--ink); text-decoration-color:var(--amber); text-underline-offset:3px;}
+
+  code{
+    font-family:"IBM Plex Mono", ui-monospace, Consolas, monospace;
+    font-size:.845em; background:var(--mono-bg); padding:.1em .34em; border-radius:3px;
+  }
+  pre{
+    font-family:"IBM Plex Mono", ui-monospace, Consolas, monospace;
+    background:var(--mono-bg); border:1px solid var(--rule-soft);
+    padding:.85rem 1rem; border-radius:6px; overflow-x:auto;
+    font-size:.805rem; line-height:1.55; margin:.9rem 0;
+  }
+  pre code{background:none; padding:0; font-size:inherit;}
+
+  /* ── masthead ───────────────────────────────── */
+  header.mast{border-bottom:2px solid var(--ink); padding-bottom:1.1rem; margin-bottom:1.6rem;}
+  .eyebrow{
+    font-family:"IBM Plex Mono", monospace; font-size:.7rem; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--amber); margin:0 0 .85rem;
+  }
+  .byline{color:var(--quiet); font-size:.82rem; margin:0; font-family:"IBM Plex Mono", monospace;}
+  .standfirst{
+    font-family:"Newsreader", Georgia, serif; font-size:1.17rem; line-height:1.5;
+    color:var(--ink-2); margin:1.5rem 0 0;
+  }
+  .standfirst em{color:var(--ink);}
+
+  /* ── section heads ──────────────────────────── */
+  .sec{margin-top:3.4rem;}
+  .sec-head{display:flex; align-items:baseline; gap:.75rem; border-top:1px solid var(--rule); padding-top:1.1rem; margin-bottom:.3rem;}
+  .sec-num{
+    font-family:"IBM Plex Mono", monospace; font-size:.72rem; letter-spacing:.1em;
+    color:var(--amber); flex:0 0 auto; padding-top:.42rem;
+  }
+
+  /* ── verdict chips ──────────────────────────── */
+  .chip{
+    display:inline-block; font-family:"IBM Plex Mono", monospace; font-size:.68rem;
+    font-weight:500; letter-spacing:.07em; text-transform:uppercase;
+    padding:.16rem .45rem; border-radius:3px; white-space:nowrap; vertical-align:.1em;
+  }
+  .c-fix{background:var(--fixed-bg); color:var(--fixed);}
+  .c-part{background:var(--partial-bg); color:var(--partial);}
+  .c-open{background:var(--open-bg); color:var(--open);}
+  .c-new{background:var(--amber-soft); color:var(--amber);}
+
+  /* ── tables ─────────────────────────────────── */
+  .tscroll{overflow-x:auto; margin:1.1rem 0; border:1px solid var(--rule); border-radius:6px; background:var(--panel);}
+  table{border-collapse:collapse; width:100%; font-size:.845rem; font-variant-numeric:tabular-nums;}
+  th,td{text-align:left; padding:.5rem .65rem; border-bottom:1px solid var(--rule-soft); vertical-align:top;}
+  th{
+    background:var(--mono-bg); font-weight:600; font-size:.74rem;
+    letter-spacing:.045em; text-transform:uppercase; color:var(--ink-2); white-space:nowrap;
+  }
+  tr:last-child td{border-bottom:0;}
+  td code{font-size:.8em;}
+  .num{text-align:right; font-family:"IBM Plex Mono", monospace;}
+
+  /* ── journal block ──────────────────────────── */
+  .jrnl{
+    border:1px solid var(--rule); border-left:3px solid var(--amber);
+    border-radius:0 6px 6px 0; background:var(--panel);
+    margin:1.1rem 0; overflow:hidden;
+  }
+  .jrnl-cap{
+    font-family:"IBM Plex Mono", monospace; font-size:.72rem; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--quiet);
+    padding:.5rem .8rem; border-bottom:1px solid var(--rule-soft); background:var(--mono-bg);
+  }
+  .jrnl table{font-size:.825rem;}
+  .jrnl th,.jrnl td{border-bottom:1px solid var(--rule-soft);}
+  .jrnl tbody tr:last-child td{border-bottom:0;}
+
+  /* ── callouts ───────────────────────────────── */
+  .note{
+    background:var(--amber-soft); border:1px solid var(--amber-line);
+    border-radius:6px; padding:.9rem 1.05rem; margin:1.2rem 0; font-size:.93rem;
+  }
+  .note > :first-child{margin-top:0;} .note > :last-child{margin-bottom:0;}
+  .note-t{
+    font-family:"IBM Plex Mono", monospace; font-size:.7rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--amber); display:block; margin-bottom:.4rem;
+  }
+
+  .finding{border-left:2px solid var(--rule); padding-left:1rem; margin:1.6rem 0;}
+  .finding h3{margin-top:0; display:flex; flex-wrap:wrap; gap:.55rem; align-items:baseline;}
+  .finding.live{border-left-color:var(--open);}
+  .finding.done{border-left-color:var(--fixed);}
+
+  .formula{
+    font-family:"IBM Plex Mono", monospace; font-size:.825rem; line-height:1.7;
+    background:var(--panel); border:1px solid var(--rule); border-radius:6px;
+    padding:.8rem 1rem; margin:.9rem 0; overflow-x:auto;
+  }
+
+  nav.toc{background:var(--panel); border:1px solid var(--rule); border-radius:6px; padding:1rem 1.2rem; margin:2rem 0 0;}
+  nav.toc p{
+    font-family:"IBM Plex Mono", monospace; font-size:.7rem; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--quiet); margin:0 0 .6rem;
+  }
+  nav.toc ol{columns:2; column-gap:2rem; margin:0; padding-left:1.3rem; font-size:.88rem;}
+  @media (max-width:560px){nav.toc ol{columns:1;}}
+  nav.toc a{text-decoration:none; border-bottom:1px solid transparent;}
+  nav.toc a:hover{border-bottom-color:var(--amber);}
+
+  footer.end{
+    margin-top:4rem; padding-top:1.1rem; border-top:2px solid var(--ink);
+    color:var(--quiet); font-size:.8rem; font-family:"IBM Plex Mono", monospace;
+  }
+  :focus-visible{outline:2px solid var(--amber); outline-offset:2px;}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important;}}
+  @media print{
+    body{background:#fff; color:#000; font-size:10pt;}
+    .wrap{max-width:none;}
+    table,pre,.jrnl,.tscroll{break-inside:avoid;}
+    h2{break-after:avoid;}
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">Post-fix current-state audit</p>
+    <h1>Sales Return Ledger Review</h1>
+    <p class="byline">BillBull Retail / ERP &middot; branch feature/posclient &middot; 1 October 2026 &middot; read-only</p>
+  </header>
+
+  <p class="standfirst">
+    Four of the five problems the first audit raised are now fixed in code, and the fixes
+    agree with each other. What they also do is make the one unanswered question impossible to
+    avoid any longer: <em>a return now has two different effects on the customer's balance
+    depending on which refund button the cashier presses</em> — and nothing in the system decides
+    which of those is correct when the original invoice was only partly paid.
+  </p>
+
+  <nav class="toc">
+    <p>Contents</p>
+    <ol>
+      <li><a href="#state">What changed</a></li>
+      <li><a href="#arch">Current architecture</a></li>
+      <li><a href="#truth">Source of truth</a></li>
+      <li><a href="#allocation">The allocation question</a></li>
+      <li><a href="#instruments">Credit, refund, voucher</a></li>
+      <li><a href="#statement">Statement model</a></li>
+      <li><a href="#recon">Reconciliation</a></li>
+      <li><a href="#inventory">Inventory &amp; COGS</a></li>
+      <li><a href="#pos">POS reporting</a></li>
+      <li><a href="#dates">Business day &amp; branch</a></li>
+      <li><a href="#idem">Idempotency &amp; printing</a></li>
+      <li><a href="#live">Remaining issues</a></li>
+      <li><a href="#history">Historical data</a></li>
+      <li><a href="#scenarios">Scenario matrix</a></li>
+      <li><a href="#decisions">Open decisions</a></li>
+      <li><a href="#sequence">Implementation order</a></li>
+    </ol>
+  </nav>
+
+  <!-- ══════════ 1 ══════════ -->
+  <section class="sec" id="state">
+    <div class="sec-head"><span class="sec-num">01</span><h2>What changed, and what it changed into</h2></div>
+
+    <p>
+      The four items the brief lists as fixed are in the code, and I verified each one rather than
+      taking the fix list at face value. Three are complete. One — customer outstanding — is
+      implemented correctly on the two surfaces it touches and absent from five others.
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Pre-fix finding</th><th>Verdict</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>R3 — return absent from customer statement</td>
+            <td><span class="chip c-fix">Fixed</span></td>
+            <td><code>StatementService.buildSalesReturnEntries</code> (line 221) emits <code>RETURN_CREDIT</code>, plus <code>RETURN_REFUND</code> when <code>settlesOutsideReceivable()</code>. Opening balance nets prior-period ledger credits at line 119.</td>
+          </tr>
+          <tr>
+            <td>R2a — card refund settles nothing</td>
+            <td><span class="chip c-fix">Fixed</span></td>
+            <td><code>SalesReturnService.postRefundSettlementIfRequired</code> (line 510) → <code>PostingEngineService.createJournalFromSalesReturnRefundSettlement</code> (line 1159). Dr 1100 / Cr 1013, ref <code>{returnNumber}-RFND</code>.</td>
+          </tr>
+          <tr>
+            <td>R2b — bank refund settles nothing</td>
+            <td><span class="chip c-fix">Fixed</span></td>
+            <td>Same method, <code>viaBank=true</code> → Cr 1010.</td>
+          </tr>
+          <tr>
+            <td>R1 — customer outstanding ignores returns</td>
+            <td><span class="chip c-part">Partially fixed</span></td>
+            <td>Netted in <code>CustomerService.getAllCustomers</code> (line 104) and the detail view (line 287). <strong>Not</strong> netted in credit-limit checks, AR aging, <code>reconcileAR</code>, or any AR report — <code>sumLedgerCredit*</code> has exactly three callers.</td>
+          </tr>
+          <tr>
+            <td>POS return receipt auto-print</td>
+            <td><span class="chip c-fix">Clean</span></td>
+            <td><code>SalesReturnScreen.jsx:354-366</code>. Client-side effect, guarded on <code>returnNumber</code>, fires after <code>completedReturn</code> exists. No financial call on any print path.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      None of the fixes introduced a regression. The card/bank settlement reuses the voucher
+      posting's shape, is duplicate-guarded on its own reference, and sits inside the approval
+      transaction, so it cannot post without the return. The statement rows are read-only
+      projections. The outstanding netting is a subtraction on a derived figure, not a write.
+    </p>
+
+    <div class="note">
+      <span class="note-t">The structural consequence</span>
+      <p>
+        Every refund method now clears the AR credit the return journal posts — except
+        <code>CUSTOMER_CREDIT</code>, where leaving it is the point. So AR control and the
+        customer sub-ledger now agree <em>for the first time</em>. That is the fix's real
+        achievement, and it is also what makes the allocation question in §04 urgent: the two
+        halves of the system are finally consistent with each other, and consistently answer a
+        question nobody has decided.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════ 2 ══════════ -->
+  <section class="sec" id="arch">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Current architecture, end to end</h2></div>
+
+    <p>
+      Unchanged in shape from the baseline: a return is a separate <code>sales_returns</code>
+      document, nothing happens until <code>APPROVED</code>, and every side effect runs
+      synchronously inside one transaction in <code>SalesReturnService.updateStatus</code>
+      (line 386). What changed is that the chain now has seven steps instead of six.
+    </p>
+
+    <pre><code>updateStatus(id, APPROVED, supervisorUser, supervisorPass)
+│
+├─ findByIdForUpdate(id)                PESSIMISTIC_WRITE on sales_returns
+├─ reject if already APPROVED
+├─ authorizationService.authorize(…)    → audit_logs, stamps authorized_* columns
+├─ assertRefundMethodSettleable(…)      → blocks CUSTOMER_CREDIT on a walk-in
+├─ assertReturnableQuantitiesStillAvailable(…)
+│                                       locks sales_invoices row; SKIPPED if linkedInvoice blank
+├─ save(status = APPROVED)
+│
+├─ applyBatchReturns(…)                 batch_allocations, stock_movements
+├─ applyNonBatchStockReturns(…)         stock_movements, inventory_balances
+├─ postJournalForApprovedReturn(…)      journal_entries ×1 or ×2
+├─ applySerialReturns(…)                serial_masters  SOLD → RETURNED
+├─ cashRefundService.recordCashRefund(…)        CASH only  → pos_cash_movements
+├─ issueCreditVoucherIfRequired(…)              VOUCHER only → credit_vouchers
+└─ postRefundSettlementIfRequired(…)            CARD | BANK only → journal_entries   ← new</code></pre>
+
+    <h3>Stage trace</h3>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Stage</th><th>File &middot; method</th><th>Writes</th><th>Linkage</th></tr></thead>
+        <tbody>
+          <tr><td>POS entry</td><td><code>POSSales.jsx:9777</code> renders <code>SalesReturnScreen</code> with <code>posContext</code></td><td>—</td><td><code>entryPoint=POS</code></td></tr>
+          <tr><td>State &amp; math</td><td><code>useSalesReturn.js</code> — <code>summary</code>, <code>buildPayload</code> (line 564)</td><td>—</td><td>prorated from invoice line</td></tr>
+          <tr><td>Save draft</td><td><code>SalesReturnService.saveReturn</code> (162)</td><td><code>sales_returns</code>, <code>…_items</code>, <code>…_item_batches</code></td><td><code>linked_invoice</code> (string, no FK)</td></tr>
+          <tr><td>Approve</td><td><code>updateStatus</code> (386)</td><td>status + all below</td><td>row lock</td></tr>
+          <tr><td>Stock — batch</td><td><code>applyBatchReturns</code> (869)</td><td><code>batch_allocations</code>, <code>stock_movements</code></td><td><code>source_id</code>, <code>reference_no=returnNumber</code></td></tr>
+          <tr><td>Stock — non-batch</td><td><code>applyNonBatchStockReturns</code> (622)</td><td><code>stock_movements</code>, <code>inventory_balances</code></td><td>warehouse from invoice's first DN</td></tr>
+          <tr><td>GL — return</td><td><code>createJournalFromSalesReturn</code> (1071)</td><td><code>journal_entries</code> <code>{RET}</code> + <code>{RET}-INV</code></td><td><code>reference = returnNumber</code></td></tr>
+          <tr><td>GL — refund</td><td><code>…RefundSettlement</code> (1159)</td><td><code>journal_entries</code> <code>{RET}-RFND</code></td><td><code>reference = returnNumber-RFND</code></td></tr>
+          <tr><td>Cash payout</td><td><code>SalesReturnCashRefundService.recordCashRefund</code></td><td><code>pos_cash_movements</code> DROP_OUT + its own journal</td><td><code>reference = returnNumber</code>, category <code>SALES_RETURN_REFUND</code></td></tr>
+          <tr><td>Voucher</td><td><code>CreditVoucherService.issueForSalesReturn</code></td><td><code>credit_vouchers</code>, <code>…_transactions</code> + journal</td><td><code>CV-ISSUE-{id}</code></td></tr>
+          <tr><td>Statement</td><td><code>StatementService.buildSalesReturnEntries</code> (221)</td><td>read-only</td><td><code>findApprovedForStatement(code, from, to)</code></td></tr>
+          <tr><td>Outstanding</td><td><code>CustomerService</code> (104, 287)</td><td>read-only</td><td><code>sumLedgerCredit*</code></td></tr>
+          <tr><td>X / Z / Day close</td><td><code>PosSessionService</code> — <code>aggregateReturns</code> (2668)</td><td>read-only; <code>pos_day_close</code> on close</td><td><code>findByReturnDateAndBranchWithItems(date, branch)</code></td></tr>
+          <tr><td>Receipt</td><td><code>SalesReturnScreen.jsx</code> — <code>handlePrintReceipt</code> (307)</td><td><code>pos_print_jobs</code></td><td><code>returnNumber</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The journals, as posted</h3>
+
+    <div class="jrnl">
+      <div class="jrnl-cap">Return — ref <code>{returnNumber}</code>, dated <code>return_date</code>, type CN</div>
+      <table>
+        <thead><tr><th>Account</th><th>Name</th><th class="num">Dr</th><th class="num">Cr</th></tr></thead>
+        <tbody>
+          <tr><td><code>4001</code> or <code>2051</code></td><td>Sales Revenue, or Deferred Revenue if the DN is not DELIVERED</td><td class="num">subTotal − discount</td><td class="num">—</td></tr>
+          <tr><td><code>2100</code></td><td>VAT Output (omitted when taxAmount = 0)</td><td class="num">taxAmount</td><td class="num">—</td></tr>
+          <tr><td><code>1100</code></td><td>Accounts Receivable Control</td><td class="num">—</td><td class="num">totalAmount</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="jrnl">
+      <div class="jrnl-cap">Inventory — ref <code>{returnNumber}-INV</code>, only when a line is restockable</div>
+      <table>
+        <thead><tr><th>Account</th><th>Name</th><th class="num">Dr</th><th class="num">Cr</th></tr></thead>
+        <tbody>
+          <tr><td><code>1200</code></td><td>Inventory</td><td class="num">COGS returned</td><td class="num">—</td></tr>
+          <tr><td><code>5001</code></td><td>COGS</td><td class="num">—</td><td class="num">COGS returned</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="jrnl">
+      <div class="jrnl-cap">Settlement — the leg that clears the AR credit, one per method</div>
+      <table>
+        <thead><tr><th>Method</th><th>Dr</th><th>Cr</th><th>Ref</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td>CASH_REFUND</td><td><code>1100</code> AR</td><td><code>1001</code> Cash</td><td><code>returnNumber</code></td><td>drawer DROP_OUT, category GL override</td></tr>
+          <tr><td>CARD_REFUND</td><td><code>1100</code> AR</td><td><code>1013</code> Merchant Clearing</td><td><code>…-RFND</code></td><td>PostingEngine (new)</td></tr>
+          <tr><td>BANK_TRANSFER</td><td><code>1100</code> AR</td><td><code>1010</code> Bank</td><td><code>…-RFND</code></td><td>PostingEngine (new)</td></tr>
+          <tr><td>CREDIT_VOUCHER</td><td><code>1100</code> AR</td><td><code>2061</code> Credit Vouchers Issued</td><td><code>CV-ISSUE-{id}</code></td><td>voucher issue journal</td></tr>
+          <tr><td>CUSTOMER_CREDIT</td><td>— none —</td><td>—</td><td>—</td><td>credit stays on AR by design</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      That table is the whole financial model in five rows. Every method posts the identical
+      return journal; the method changes only which account faces AR afterwards. It is a clean
+      design and worth preserving as the extension point for anything added later.
+    </p>
+  </section>
+
+  <!-- ══════════ 3 ══════════ -->
+  <section class="sec" id="truth">
+    <div class="sec-head"><span class="sec-num">03</span><h2>Source of truth, as it now stands</h2></div>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Concept</th><th>Authoritative source</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>Return document</td><td><code>sales_returns</code> header</td><td>IDENTITY id, no <code>BaseEntity</code>, no soft-delete</td></tr>
+          <tr><td>Return amount</td><td><code>sales_returns.total_amount</code></td><td>computed client-side, prorated from the invoice line; backend proration is dormant</td></tr>
+          <tr><td>Return tax</td><td><code>sales_returns.tax_amount</code></td><td>prorated <code>SalesInvoiceItem.taxAmount</code>, never recomputed from a current rate</td></tr>
+          <tr><td>Stock quantity</td><td><code>stock_movements</code> ledger</td><td>append-only; <code>inventory_balances</code> is a cache that lags (§08)</td></tr>
+          <tr><td>Inventory value</td><td><code>stock_movements.unit_cost</code> aggregate</td><td><strong>return rows carry null</strong>, so valuation and GL 1200 diverge</td></tr>
+          <tr><td>Customer outstanding</td><td>derived: <code>Σ invoice.balance + Σ opening.outstanding − Σ CUSTOMER_CREDIT returns</code></td><td>only the Customer List and detail view apply the third term</td></tr>
+          <tr><td>Customer statement</td><td><code>StatementService</code>, assembled per request</td><td>invoices + receipts + advance applications + returns</td></tr>
+          <tr><td>Refund (cash)</td><td><code>pos_cash_movements</code></td><td>drawer is accountable; session-dated</td></tr>
+          <tr><td>Refund (card / bank)</td><td><code>journal_entries</code> <code>{RET}-RFND</code></td><td>no <code>payments</code> row, no <code>card_settlements</code> row</td></tr>
+          <tr><td>Customer credit</td><td><code>sales_returns</code> rows with <code>refund_method = CUSTOMER_CREDIT</code></td><td>no balance table, no draw-down mechanism</td></tr>
+          <tr><td>Credit voucher</td><td><code>credit_vouchers</code> + <code>credit_voucher_transactions</code></td><td>real balance, real redemption, GL 2061</td></tr>
+          <tr><td>AR control</td><td>GL account <code>1100</code></td><td>javadoc at <code>createJournalFromSalesReturn</code> still names 1110/2102/1120/5101 — stale comment, the constants are right</td></tr>
+          <tr><td>POS cash</td><td><code>pos_cash_movements</code> + session expected-cash helper</td><td>X, Z and day close all read the one helper</td></tr>
+          <tr><td>Card settlement</td><td><code>card_settlements</code></td><td>refunds never reach it (§12)</td></tr>
+          <tr><td>Return reporting</td><td><code>sales_returns</code> by <code>return_date</code> + <code>branch</code></td><td><code>trading_date</code> is written and never read by any Java code</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Two rows above are the ones to read twice. <strong>Customer credit has no balance of its
+      own</strong> — it is inferred by summing return rows, and nothing in the checkout, receipt
+      or payment paths consumes it. And <strong>card refunds never reach card settlement</strong>,
+      which is the gap the brief's §05 traceability chain asks about.
+    </p>
+  </section>
+
+  <!-- ══════════ 4 ══════════ -->
+  <section class="sec" id="allocation">
+    <div class="sec-head"><span class="sec-num">04</span><h2>The allocation question</h2></div>
+
+    <p>
+      This is the brief's §10 and §11, and the answer the code gives is: <strong>it depends
+      entirely on the refund method, and the invoice is never involved.</strong>
+      <code>sales_invoices.balance</code> is read and row-locked, never written, on every path.
+    </p>
+
+    <p>Take the stated example — invoice 10,000, paid 6,000, outstanding 4,000, return 2,000:</p>
+
+    <div class="tscroll">
+      <table>
+        <thead>
+          <tr><th>Refund method</th><th class="num">invoice.balance</th><th class="num">Effective outstanding</th><th class="num">Statement closing</th><th class="num">Net Cr to AR</th><th>Model</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>CUSTOMER_CREDIT</td><td class="num">4,000</td><td class="num">2,000</td><td class="num">2,000</td><td class="num">2,000</td><td><strong>A</strong> — receivable reduced</td></tr>
+          <tr><td>CASH_REFUND</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">0</td><td><strong>B</strong> — money back, debt intact</td></tr>
+          <tr><td>CARD_REFUND</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">0</td><td><strong>B</strong></td></tr>
+          <tr><td>BANK_TRANSFER</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">0</td><td><strong>B</strong></td></tr>
+          <tr><td>CREDIT_VOUCHER</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">4,000</td><td class="num">0</td><td><strong>C</strong> — voucher 2,000 held at GL 2061</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      So all four of the brief's models are present, selected by a dropdown at the till. There is
+      no Model D: nothing splits the return across the unpaid and already-paid portions of the
+      invoice, and nothing checks the invoice's payment state before allowing a cash payout.
+      <strong>The cashier's choice of refund method <em>is</em> the accounting policy</strong>, and
+      the policy is unwritten.
+    </p>
+
+    <div class="note">
+      <span class="note-t">Where this bites</span>
+      <p>
+        A credit customer with 4,000 outstanding returns 2,000 of goods and the cashier presses
+        Cash Refund. The business hands over 2,000 in notes and still shows the customer owing
+        4,000 — on an invoice they have only paid 6,000 of. Net position: the business is out
+        2,000 of cash and 2,000 of goods against a 4,000 receivable it will still chase. Every
+        ledger is internally consistent. The outcome is commercially wrong, and no code prevents
+        it.
+      </p>
+    </div>
+
+    <h3>Return greater than outstanding (brief §11)</h3>
+    <p>
+      Invoice 10,000, paid 8,000, outstanding 2,000, return 5,000. The system does not recognise
+      the question. It posts <code>Cr AR 5,000</code> and settles 5,000 by whichever method was
+      chosen, with no awareness that only 2,000 of it is an open receivable:
+    </p>
+
+    <ul>
+      <li><strong>CUSTOMER_CREDIT</strong> — effective outstanding becomes <code>2,000 − 5,000 = −3,000</code>. The subtraction at <code>CustomerService:292</code> is <em>not</em> floored at zero, so the Customer List shows a negative balance and <code>totalPaid = totalSales − outstanding</code> overstates by 3,000. The statement closing balance goes to −3,000 too. Arithmetically consistent, but there is no "customer credit" concept to hold the 3,000 — it is just a negative receivable.</li>
+      <li><strong>CASH_REFUND</strong> — 5,000 leaves the drawer. Outstanding stays 2,000. The customer is paid for goods they never paid for.</li>
+      <li><strong>CREDIT_VOUCHER</strong> — a 5,000 bearer voucher is issued, outstanding stays 2,000, and the customer can redeem the voucher while still owing.</li>
+    </ul>
+
+    <p>
+      No guard exists at any layer. <code>assertReturnableQuantitiesStillAvailable</code>
+      validates quantity against the invoice, never value against the balance.
+    </p>
+  </section>
+
+  <!-- ══════════ 5 ══════════ -->
+  <section class="sec" id="instruments">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Three instruments, one of them hollow</h2></div>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th></th><th>Customer Credit</th><th>Refund</th><th>Credit Voucher</th></tr></thead>
+        <tbody>
+          <tr><th>Stored where</th><td>nowhere — inferred from <code>sales_returns.refund_method</code></td><td><code>pos_cash_movements</code> (cash) or a GL journal only (card/bank)</td><td><code>credit_vouchers</code> + <code>credit_voucher_transactions</code></td></tr>
+          <tr><th>Who owns the balance</th><td>no owner; a derived subtraction</td><td>nobody — it is paid out and closed</td><td>the voucher row, by <code>voucherNumber</code></td></tr>
+          <tr><th>Affects AR</th><td>yes — the Cr stays on 1100</td><td>no — Dr 1100 clears it</td><td>no — Dr 1100, Cr 2061</td></tr>
+          <tr><th>Affects outstanding</th><td>yes, on 2 of 7 surfaces</td><td>no</td><td>no</td></tr>
+          <tr><th>On the statement</th><td>credit row only</td><td>credit + offsetting debit, nets to zero</td><td>credit + offsetting debit, nets to zero</td></tr>
+          <tr><th>Redeemed how</th><td><strong>no mechanism</strong></td><td>n/a</td><td>POS tender → <code>…CreditVoucherRedemption</code>, Dr 2061 / Cr 1100</td></tr>
+          <tr><th>Reversed / cancelled</th><td><strong>no mechanism</strong></td><td>void the cash movement (cash only)</td><td>voucher status transitions</td></tr>
+          <tr><th>Refunded for cash later</th><td><strong>no mechanism</strong></td><td>n/a</td><td>not implemented</td></tr>
+          <tr><th>Reported</th><td>Customer List, Customer detail, SoA</td><td>X/Z <code>refundTotal</code> (misclassified, §09)</td><td>X/Z <code>creditNoteTotal</code>, voucher reports</td></tr>
+          <tr><th>GL account</th><td><code>1100</code> (a credit balance within AR)</td><td><code>1001</code> / <code>1013</code> / <code>1010</code></td><td><code>2061</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Credit Voucher is a real instrument: a liability account, a balance, a redemption path, a
+      printed barcode. Customer Credit is a reporting subtraction wearing an instrument's name.
+      It reduces what the customer appears to owe, and there is no way to apply it to an invoice,
+      cancel it, convert it to cash, or report on its outstanding pool. The only thing that
+      consumes it is a future invoice the customer does not pay — the credit absorbs the new debt
+      silently, with no allocation record and nothing on the invoice to show it happened.
+    </p>
+
+    <div class="note">
+      <span class="note-t">Not a defect, a missing half</span>
+      <p>
+        For a simple credit-account retailer, "the credit sits on the account and the next
+        invoice nets against it" is a legitimate model, and that is what the code does. What is
+        missing is any record of the netting. Accounting can see the pool shrink but cannot say
+        which invoice consumed which credit — which is exactly the question an AR clerk asks
+        when a customer disputes a statement.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════ 6 ══════════ -->
+  <section class="sec" id="statement">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Statement behaviour, verified per scenario</h2></div>
+
+    <p>
+      Rows sort by date, then <code>sortPriority</code> (<code>PRI_RETURN_CREDIT = 6</code>,
+      <code>PRI_REFUND = 7</code>, so the credit always precedes its settlement within a day),
+      then timestamp, then document number. Running balance is
+      <code>previous + debit − credit</code>. All return rows are dated
+      <code>return_date.atStartOfDay()</code>.
+    </p>
+
+    <h4>Fully paid invoice, cash refund</h4>
+    <div class="tscroll"><table>
+      <thead><tr><th>Date</th><th>Doc</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+      <tbody>
+        <tr><td>01 Sep</td><td>INV-1</td><td>INVOICE</td><td class="num">10,000</td><td class="num">—</td><td class="num">10,000</td></tr>
+        <tr><td>01 Sep</td><td>RV-1</td><td>RECEIPT</td><td class="num">—</td><td class="num">10,000</td><td class="num">0</td></tr>
+        <tr><td>05 Sep</td><td>SR-1</td><td>RETURN_CREDIT</td><td class="num">—</td><td class="num">2,000</td><td class="num">−2,000</td></tr>
+        <tr><td>05 Sep</td><td>SR-1</td><td>RETURN_REFUND</td><td class="num">2,000</td><td class="num">—</td><td class="num"><strong>0</strong></td></tr>
+      </tbody>
+    </table></div>
+    <p>Correct, and the intermediate −2,000 is visible rather than netted away — which is what makes the pair auditable.</p>
+
+    <h4>Unpaid credit invoice, customer credit</h4>
+    <div class="tscroll"><table>
+      <thead><tr><th>Date</th><th>Doc</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+      <tbody>
+        <tr><td>01 Sep</td><td>INV-2</td><td>INVOICE</td><td class="num">10,000</td><td class="num">—</td><td class="num">10,000</td></tr>
+        <tr><td>05 Sep</td><td>SR-2</td><td>RETURN_CREDIT</td><td class="num">—</td><td class="num">2,000</td><td class="num"><strong>8,000</strong></td></tr>
+      </tbody>
+    </table></div>
+    <p>
+      Matches the effective-outstanding formula, matches net AR in the GL, and is the
+      economically right answer. Note what it does <em>not</em> match:
+      <code>invoice.balance</code> is still 10,000, so AR aging buckets 10,000 and the credit-limit
+      check sees 10,000.
+    </p>
+
+    <h4>Partially paid, cash refund</h4>
+    <div class="tscroll"><table>
+      <thead><tr><th>Date</th><th>Doc</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+      <tbody>
+        <tr><td>01 Sep</td><td>INV-3</td><td>INVOICE</td><td class="num">10,000</td><td class="num">—</td><td class="num">10,000</td></tr>
+        <tr><td>03 Sep</td><td>RV-3</td><td>RECEIPT</td><td class="num">—</td><td class="num">6,000</td><td class="num">4,000</td></tr>
+        <tr><td>05 Sep</td><td>SR-3</td><td>RETURN_CREDIT</td><td class="num">—</td><td class="num">2,000</td><td class="num">2,000</td></tr>
+        <tr><td>05 Sep</td><td>SR-3</td><td>RETURN_REFUND</td><td class="num">2,000</td><td class="num">—</td><td class="num"><strong>4,000</strong></td></tr>
+      </tbody>
+    </table></div>
+    <p>The statement is internally sound and mirrors the GL exactly. It is also the §04 problem rendered as a document the customer receives.</p>
+
+    <h4>Return above outstanding, customer credit</h4>
+    <div class="tscroll"><table>
+      <thead><tr><th>Date</th><th>Doc</th><th>Type</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+      <tbody>
+        <tr><td>01 Sep</td><td>INV-4</td><td>INVOICE</td><td class="num">10,000</td><td class="num">—</td><td class="num">10,000</td></tr>
+        <tr><td>03 Sep</td><td>RV-4</td><td>RECEIPT</td><td class="num">—</td><td class="num">8,000</td><td class="num">2,000</td></tr>
+        <tr><td>05 Sep</td><td>SR-4</td><td>RETURN_CREDIT</td><td class="num">—</td><td class="num">5,000</td><td class="num"><strong>−3,000</strong></td></tr>
+      </tbody>
+    </table></div>
+    <p>A negative closing balance on a customer-facing statement, with no label explaining it is credit in the customer's favour. Cosmetic today; a dispute tomorrow.</p>
+
+    <h3>Opening-balance handling</h3>
+    <div class="formula">openingBalance = Σ opening_invoices.outstanding<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ Σ invoice totals before startDate<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;− Σ payments before startDate<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;− Σ <span style="color:var(--amber)">CUSTOMER_CREDIT returns before startDate</span></div>
+    <p>
+      Correct. Only ledger-resident credits are brought forward — a cash/card/bank/voucher return
+      nets to zero within its own period and must not appear in an opening figure. The query
+      (<code>sumLedgerCreditBeforeDate</code>) and the row-emitting predicate
+      (<code>SalesReturn.settlesOutsideReceivable()</code>) are separate implementations of the
+      same rule, and I checked them against each other across all four cases
+      (<code>refundMethod</code> set, null with <code>returnAction</code> null, "Refund",
+      "Credit Note") — they agree.
+    </p>
+  </section>
+
+  <!-- ══════════ 7 ══════════ -->
+  <section class="sec" id="recon">
+    <div class="sec-head"><span class="sec-num">07</span><h2>Reconciliation model</h2></div>
+
+    <p>The identities the system should satisfy, and whether it does:</p>
+
+    <div class="formula">
+<span style="color:var(--fixed)">✓</span> GL 1100 net Cr from a return  =  statement net effect of that return<br>
+<span style="color:var(--fixed)">✓</span> GL 1100 net Cr from a return  =  change in effective outstanding (Customer List / detail)<br>
+<span style="color:var(--fixed)">✓</span> GL 2061 balance               =  Σ open credit_vouchers<br>
+<span style="color:var(--fixed)">✓</span> drawer DROP_OUT total         =  Σ CASH_REFUND return amounts for the session<br>
+<br>
+<span style="color:var(--open)">✗</span> GL 1100 balance               ≠  Σ sales_invoices.balance  (reconcileAR; drifts by every CUSTOMER_CREDIT return)<br>
+<span style="color:var(--open)">✗</span> GL 1200 balance               ≠  Σ stock_movements.unit_cost × qty  (drifts by the COGS of every restocked return)<br>
+<span style="color:var(--open)">✗</span> AR aging total                ≠  effective outstanding  (aging reads invoice.balance)<br>
+<span style="color:var(--open)">✗</span> GL 1013 refund leg            ∉  card_settlements  (refunds never enter settlement reconciliation)
+    </div>
+
+    <p>
+      The first group is the fixes working. The second group is the same single root cause showing
+      up in four places: <strong>the return credit lives in the GL and in a derived subtraction,
+      and never in the stored figures that four other subsystems treat as the sub-ledger.</strong>
+    </p>
+
+    <p>
+      <code>SubLedgerReconciliationService.reconcileAR</code> compares GL 1100 against
+      <code>SalesInvoiceRepository.sumGlobalOutstandingBalance()</code>. Neither side knows about
+      returns, so a CUSTOMER_CREDIT return makes the GL side move and the sub-ledger side stay
+      put. The difference grows monotonically. Nothing is wrong with either number — they are
+      answering different questions, and the reconciliation assumes they are answering the same
+      one.
+    </p>
+
+    <h3>Refund traceability, per method</h3>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Method</th><th>Document</th><th>Settlement record</th><th>GL</th><th>Statement</th><th>Reconciles against</th></tr></thead>
+        <tbody>
+          <tr><td>CASH_REFUND</td><td><code>sales_returns</code></td><td><code>pos_cash_movements</code> DROP_OUT, ref = returnNumber</td><td>✓ two journals</td><td>✓ credit + debit</td><td>✓ drawer count, X/Z, day close</td></tr>
+          <tr><td>CARD_REFUND</td><td><code>sales_returns</code></td><td><span class="chip c-open">none</span> journal only</td><td>✓ <code>…-RFND</code></td><td>✓ credit + debit</td><td><span class="chip c-open">nothing</span> — no <code>card_settlements</code>, no <code>payments</code> row</td></tr>
+          <tr><td>BANK_TRANSFER</td><td><code>sales_returns</code></td><td><span class="chip c-open">none</span> journal only</td><td>✓ <code>…-RFND</code></td><td>✓ credit + debit</td><td>bank rec can match GL 1010 by amount/date only</td></tr>
+          <tr><td>CUSTOMER_CREDIT</td><td><code>sales_returns</code></td><td>n/a by design</td><td>✓ Cr stays</td><td>✓ credit only</td><td>partial — 2 of 7 surfaces</td></tr>
+          <tr><td>CREDIT_VOUCHER</td><td><code>sales_returns</code></td><td><code>credit_vouchers</code></td><td>✓ CV-ISSUE</td><td>✓ credit + debit</td><td>✓ GL 2061 vs open vouchers</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Card is the weakest chain. The money leaves through the card terminal, the GL knows, and the
+      settlement subsystem that exists specifically to reconcile merchant clearing against the
+      acquirer's statement never sees it. <code>1013</code> will carry a credit that
+      <code>CardSettlement</code> cannot explain, in the same account the positive card sales flow
+      through.
+    </p>
+  </section>
+
+  <!-- ══════════ 8 ══════════ -->
+  <section class="sec" id="inventory">
+    <div class="sec-head"><span class="sec-num">08</span><h2>Inventory and COGS</h2></div>
+
+    <h3>Per condition</h3>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Condition</th><th><code>itemStatus</code></th><th>Stock movement</th><th>Batch allocation</th><th>Serial</th><th>Inventory/COGS journal</th></tr></thead>
+        <tbody>
+          <tr><td>GOOD</td><td>Good</td><td>+qty, <code>SALES_RETURN</code></td><td>flipped or split to RETURNED</td><td>SOLD → RETURNED</td><td>Dr 1200 / Cr 5001</td></tr>
+          <tr><td>DAMAGED</td><td>Damaged</td><td>none</td><td>flipped RETURNED (traceability)</td><td>SOLD → RETURNED</td><td><strong>none</strong> — cost stays as a loss</td></tr>
+          <tr><td>OPENED</td><td>Damaged</td><td>none</td><td>flipped</td><td>flipped</td><td>none</td></tr>
+          <tr><td>DEFECTIVE</td><td>Damaged</td><td>none</td><td>flipped</td><td>flipped</td><td>none</td></tr>
+          <tr><td>EXPIRED</td><td>Damaged</td><td>none</td><td>flipped</td><td>flipped</td><td>none</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Only <code>GOOD</code> restocks; the other four are scrap. That is coherent and
+      <code>createJournalFromSalesReturn</code> now documents it explicitly — a scrap return posts
+      the revenue/VAT/AR entry alone and deliberately omits the inventory entry, so the cost stays
+      on the books as a loss. What no condition does is route the scrap anywhere: no quarantine
+      location, no write-off to <code>7502</code>, no supplier-claim record. The goods are
+      physically in the store and in no system.
+    </p>
+
+    <h3>COGS resolution — improved since the baseline</h3>
+    <p><code>resolveActualCogs</code> now walks three sources in priority order:</p>
+    <ol>
+      <li><code>DeliveryNoteBatchConsumption</code> rows — the exact batch/WAC cost at the original sale. Prevents WAC distortion.</li>
+      <li><code>SalesInvoiceItem.cost</code> — the cost-at-sale snapshot stamped at POS checkout. Survives a later change to the product master.</li>
+      <li><code>ProductPricing.cost</code> — current master cost, for legacy rows predating both snapshots.</li>
+    </ol>
+    <p>
+      And the guard is now a hard failure rather than a silent zero: a restockable return whose
+      cost cannot be resolved is rejected at <code>postJournalForApprovedReturn</code> with the
+      offending item codes named in the message. That is a real improvement — it converts a silent
+      GL/inventory divergence into a blocked approval the cashier can act on.
+    </p>
+
+    <h3>Two risks confirmed still present</h3>
+
+    <div class="finding live">
+      <h3>Inventory valuation diverges from GL 1200 on every restocked return <span class="chip c-open">Still broken</span></h3>
+      <p>
+        <code>StockMovementService.reverseOutboundStock</code> (line 426) never sets
+        <code>unitCost</code>, so the inbound row is null-cost and
+        <code>sumGlobalInventoryValue()</code> ignores it — while the GL debits 1200 by the
+        resolved COGS. <code>reconcileInventory</code> drifts by that amount, against a 1.00 AED
+        tolerance.
+      </p>
+      <p>
+        This remains a genuine trade-off rather than an oversight: the null is also what keeps the
+        return from moving the weighted average. But the COGS figure is now resolved reliably from
+        the DN consumption snapshot, which is exactly the number that would make stamping it safe.
+        The trade-off that justified the null has weakened.
+      </p>
+    </div>
+
+    <div class="finding live">
+      <h3><code>inventory_balances</code> cannot see its own movement <span class="chip c-open">Still broken</span></h3>
+      <p>
+        <code>InventoryBalanceService.refresh</code> is still
+        <code>@Transactional(propagation = REQUIRES_NEW)</code> (line 59) and is still called from
+        <code>refreshBalance</code> inside the approval transaction. It recomputes from a ledger
+        that does not yet contain the just-inserted movement, and the exception handler swallows
+        failures. The cached balance lags by one return until the next movement for that
+        product/warehouse refreshes it.
+      </p>
+      <p>
+        Reports reading the ledger are correct; reports reading <code>inventory_balances</code>
+        show the stale figure. This is the brief's §15 question answered: yes, still present, in
+        the same form.
+      </p>
+    </div>
+
+    <div class="finding live">
+      <h3>Non-batch stock silently skipped when no DN resolves <span class="chip c-open">Still broken</span></h3>
+      <p>
+        <code>resolveReturnWarehouseId</code> (line 672) returns null unless the linked invoice has
+        a <code>linkedDeliveryNote</code> whose DN carries a warehouse. On null,
+        <code>applyNonBatchStockReturns</code> logs and continues — while the GL still debits
+        Inventory, because the journal's restock test keys on <code>itemStatus == "Good"</code>,
+        not on whether a movement was actually posted.
+      </p>
+      <p>
+        That is the precise mechanism of the divergence: <strong>two independent predicates decide
+        "did stock come back", and they can disagree.</strong> The code's own log line admits it.
+        POS sales normally have a DN, so exposure is mostly back-office invoices.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════ 9 ══════════ -->
+  <section class="sec" id="pos">
+    <div class="sec-head"><span class="sec-num">09</span><h2>POS reporting — X, Z, day close</h2></div>
+
+    <p>
+      The brief flags this area as needing re-audit. I re-read it in full. <strong>Nothing here
+      changed, and the stale comment that justified the gap is now demonstrably stale.</strong>
+    </p>
+
+    <h3>Definitions, as computed</h3>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Figure</th><th>Formula</th><th>Tax basis</th><th>Nets returns?</th></tr></thead>
+        <tbody>
+          <tr><td><code>grossSales</code></td><td>Σ invoice line gross</td><td>per invoice VAT mode</td><td>no</td></tr>
+          <tr><td><code>totalSales</code></td><td>Σ invoice totals</td><td>inclusive</td><td>no</td></tr>
+          <tr><td><code>netSalesExTax</code></td><td><code>totalSales − totalTax</code></td><td><strong>ex-tax</strong></td><td><strong>no</strong></td></tr>
+          <tr><td><code>salesReturnTotal</code></td><td>Σ <code>sales_returns.total_amount</code></td><td><strong>VAT-inclusive</strong></td><td>n/a</td></tr>
+          <tr><td><code>refundTotal</code></td><td>Σ amount where <code>returnAction == "Refund"</code></td><td>inclusive</td><td>n/a</td></tr>
+          <tr><td><code>creditNoteTotal</code></td><td>Σ amount where <code>returnAction == "Credit Note"</code></td><td>inclusive</td><td>n/a</td></tr>
+          <tr><td><code>exchangeTotal</code></td><td>Σ amount where <code>returnAction == "Replacement"</code></td><td>—</td><td>dead: the UI never emits this value</td></tr>
+          <tr><td><code>totalRefunds</code></td><td>Σ <code>payments</code> where <code>paymentType = MADE</code></td><td>inclusive</td><td>unrelated to <code>sales_returns</code></td></tr>
+          <tr><td><code>netQuantitySold</code></td><td><code>max(0, sold − returned)</code></td><td>n/a</td><td><strong>yes</strong></td></tr>
+          <tr><td><code>pos_day_close.net_sales</code></td><td><code>netSalesExTax</code></td><td>ex-tax</td><td><strong>no</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="finding live">
+      <h3>Net Sales is not net of returns, and the two figures are on different bases <span class="chip c-open">Still broken</span></h3>
+      <p>
+        <code>PosSessionService:3259</code> — <code>netSalesExTax = totalSales − totalTax</code>.
+        Returns do not enter. Day close persists this as <code>net_sales</code> (line 2572), so
+        the Z-Report's "Net Sales" is gross sales on an ex-tax base, published alongside a
+        VAT-inclusive <code>salesReturnTotal</code>. Any consumer that subtracts one from the
+        other over-deducts by the VAT on the returns.
+      </p>
+      <p>
+        Note the asymmetry: <code>netQuantitySold</code> <em>is</em> net of returns. Quantity nets,
+        value does not.
+      </p>
+      <p>
+        Worth contrasting with the back-office reports, which get this right.
+        <code>SalesReportDataService.salesSummary</code> computes
+        <code>netSales = grossSales − returns</code> where both terms include tax, and
+        <code>dailySalesRows</code> even nets the VAT line
+        (<code>Σ invoice.taxTotal − Σ return.taxAmount</code>). So the correct treatment already
+        exists in the codebase — the POS path just does not use it.
+      </p>
+    </div>
+
+    <div class="finding live">
+      <h3>Refund buckets still key on free-text <code>returnAction</code> <span class="chip c-open">Still broken</span></h3>
+      <p>
+        <code>aggregateReturns</code> (line 2668) buckets on
+        <code>r.getReturnAction()</code> against the literals "Credit Note", "Replacement" and
+        "Refund". The UI sets <code>returnAction = refundMethod === 'CREDIT_VOUCHER' ? 'Credit
+        Note' : 'Refund'</code> (<code>useSalesReturn.js:564</code>). So:
+      </p>
+      <ul>
+        <li>Cash, card, bank <em>and</em> Customer Credit all land in <code>refundTotal</code>. A Customer Credit return — where no money moved at all — is reported as a refund paid out.</li>
+        <li>Credit Voucher is reported as a credit note.</li>
+        <li><code>exchangeTotal</code> is permanently zero.</li>
+        <li>No cash-refund figure is published, although <code>pos_cash_movements</code> now holds exactly that number.</li>
+      </ul>
+      <p>
+        <code>refund_method</code> has been on the row since V78 and is backfilled for legacy
+        rows. The comment at line 2704 still reads "SalesReturn has no payment-mode field today,
+        so a cash refund total cannot be computed" and sets
+        <code>cashRefundsSupported = false</code>. That statement is no longer true, and the flag
+        it justifies suppresses a figure the cash-refund fix made available.
+      </p>
+    </div>
+
+    <h3>X vs Z scoping</h3>
+    <p>
+      X is session-scoped: <code>buildSessionReturnsSummary</code> filters the branch+date return
+      set down to returns whose <code>linkedInvoice</code> belongs to this session's invoices. Z is
+      branch+date scoped: <code>buildReturnsSummary(branchId, date)</code> takes everything.
+      Deliberate and documented — a return is a post-sale event with no inherent session — but it
+      means the sum of a day's X-Report returns does not equal the Z-Report's returns whenever a
+      return references an invoice from an earlier session. That is correct behaviour producing a
+      figure that looks like a discrepancy, which is worth stating in the report UI.
+    </p>
+  </section>
+
+  <!-- ══════════ 10 ══════════ -->
+  <section class="sec" id="dates">
+    <div class="sec-head"><span class="sec-num">10</span><h2>Business day and branch attribution</h2></div>
+
+    <h3>Which date governs which leg</h3>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Leg</th><th>Date source</th></tr></thead>
+        <tbody>
+          <tr><td>Return document</td><td><code>return_date</code> — <code>LocalDate.now()</code> server-side, or whatever the client sent</td></tr>
+          <tr><td>Return GL journal</td><td><code>return_date</code></td></tr>
+          <tr><td>Card / bank settlement journal</td><td><code>return_date</code></td></tr>
+          <tr><td>Stock movement</td><td><code>LocalDate.now()</code> at posting — not <code>return_date</code></td></tr>
+          <tr><td>Customer statement row</td><td><code>return_date</code></td></tr>
+          <tr><td>Cash movement + its journal</td><td><strong><code>session.businessDate</code></strong></td></tr>
+          <tr><td>X / Z / day close inclusion</td><td><code>return_date</code> + branch</td></tr>
+          <tr><td><code>sales_returns.trading_date</code></td><td>written, <strong>read by no Java code</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="finding live">
+      <h3>A cash refund can split across two business days <span class="chip c-open">Still broken</span></h3>
+      <p>
+        Six of the eight legs follow <code>return_date</code>. The cash payout follows the
+        session's business date, which is the one date that is deliberately <em>not</em> the
+        calendar date — that is the whole point of a trading day that runs past midnight. A return
+        approved at 00:10 on a session still trading 30 September lands:
+      </p>
+      <pre><code>return document, GL journal, statement row  → 01 Oct
+cash DROP_OUT and its journal               → 30 Sep
+X / Z / day close inclusion                 → 01 Oct  (keyed on return_date)</code></pre>
+      <p>
+        So 30 September's Z-Report shows a drawer payout with no return behind it, and
+        1 October's shows a cash refund with no cash movement. Period close sees an unexplained
+        cash difference on both days. <code>trading_date</code> exists on the row and is the
+        obvious fix; nothing reads it.
+      </p>
+    </div>
+
+    <h3>Previous-day sale, today's return (brief §20)</h3>
+    <p>Sale 30 September, return 1 October, same branch, cash refund, session opened 1 October:</p>
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Leg</th><th>Lands on</th><th>Explainable?</th></tr></thead>
+        <tbody>
+          <tr><td>Business day</td><td>1 Oct</td><td>yes</td></tr>
+          <tr><td>POS session</td><td>today's open session, from <code>posContext</code></td><td>yes</td></tr>
+          <tr><td>X-Report</td><td><strong>not shown</strong> — the return's <code>linkedInvoice</code> is not in this session's invoices</td><td>yes, by design; surprising to a cashier</td></tr>
+          <tr><td>Z-Report</td><td>1 Oct, branch-scoped</td><td>yes</td></tr>
+          <tr><td>GL date</td><td>1 Oct</td><td>yes</td></tr>
+          <tr><td>Stock movement date</td><td>1 Oct</td><td>yes</td></tr>
+          <tr><td>Statement date</td><td>1 Oct</td><td>yes</td></tr>
+          <tr><td>Cash movement date</td><td>1 Oct session business date</td><td>yes</td></tr>
+          <tr><td>Revenue reversal</td><td>debits <code>4001</code> in October against September revenue</td><td>yes — normal cross-period credit note</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Every leg is explainable. The one thing a cashier will query is the X-Report omission: they
+      processed a refund from their drawer and their own shift report does not list the return,
+      though expected cash correctly drops. Both numbers are right; the pairing reads as a bug.
+    </p>
+
+    <h3>Branch attribution</h3>
+    <div class="finding live">
+      <h3>Cross-branch returns split the financial and inventory effect <span class="chip c-open">Still broken</span></h3>
+      <p>
+        <code>saveReturn</code> stamps <code>branchAccessService.getRequiredCurrentUserBranch()</code>
+        on create (line 180). Stock goes to the invoice's DN warehouse. For a global ADMIN those
+        can differ:
+      </p>
+      <div class="tscroll"><table>
+        <thead><tr><th>Scenario</th><th>Return branch</th><th>GL branch</th><th>Stock warehouse</th><th>Z-Report</th></tr></thead>
+        <tbody>
+          <tr><td>Sale A → return A</td><td>A</td><td>A</td><td>A's</td><td>A</td></tr>
+          <tr><td>Sale A → return B, BRANCH_ADMIN</td><td colspan="4">blocked — <code>SalesReturnEligibilityService:175</code> asserts branch access on the invoice</td></tr>
+          <tr><td>Sale A → return B, global ADMIN</td><td><strong>B</strong></td><td><strong>B</strong></td><td><strong>A's</strong></td><td><strong>B</strong></td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        Branch B's P&amp;L carries the revenue reversal for a sale branch A made, and branch A's
+        stock rises for a return branch B processed. The guard that blocks a BRANCH_ADMIN is
+        absent for a global ADMIN, which suggests cross-branch returns were never a decision —
+        just a scope that nobody closed.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════ 11 ══════════ -->
+  <section class="sec" id="idem">
+    <div class="sec-head"><span class="sec-num">11</span><h2>Idempotency and print safety</h2></div>
+
+    <p>
+      The brief asks specifically whether the new settlement posting introduced duplicate risk.
+      It did not. Five independent guards now exist, and they compose:
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Layer</th><th>Mechanism</th><th>Guarantees uniqueness by</th></tr></thead>
+        <tbody>
+          <tr><td>Approval</td><td><code>findByIdForUpdate</code> + reject if APPROVED</td><td><code>sales_returns.id</code></td></tr>
+          <tr><td>Return journal</td><td><code>findDuplicate(ref)</code></td><td><code>returnNumber</code></td></tr>
+          <tr><td>Inventory journal</td><td><code>findDuplicate(ref)</code></td><td><code>returnNumber-INV</code></td></tr>
+          <tr><td>Refund settlement <span class="chip c-new">new</span></td><td><code>findDuplicate(ref)</code></td><td><code>returnNumber-RFND</code></td></tr>
+          <tr><td>Cash payout</td><td><code>findExistingRefundMovement</code> — reference + DROP_OUT + ACTIVE</td><td><code>returnNumber</code></td></tr>
+          <tr><td>Voucher</td><td><code>findDuplicate(ref)</code></td><td><code>CV-ISSUE-{voucherId}</code></td></tr>
+          <tr><td>Stock movement</td><td><strong>none at the database level</strong></td><td><code>ux_sm_outbound_source_identity</code> is <code>WHERE quantity &lt; 0</code>, so inbound rows are not covered — protected only by the approval guard</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      So every retry path the brief lists is covered. The row lock serialises concurrent
+      confirmations; a retry arriving after commit is rejected by the APPROVED guard; and if a
+      journal-level retry ever did get through, each <code>findDuplicate</code> returns the
+      existing entry rather than posting a second. The cash guard deliberately ignores voided
+      movements, so a voided-then-reissued refund is a legitimate new payout rather than a
+      blocked duplicate — correct, and worth keeping in mind when reading drawer history.
+    </p>
+
+    <h3>Print cannot touch money</h3>
+    <p>
+      Verified for the brief's §24. <code>handlePrintReceipt</code> and the auto-print effect call
+      only <code>getPosPrinters</code> → <code>printSalesReturnReceipt</code> →
+      <code>runPrint</code>. The only backend writes on that path are the
+      <code>PosPrintJob</code> create/dispatch/report records, which are best-effort audit
+      bookkeeping. There is no call to <code>saveSalesReturn</code>,
+      <code>updateSalesReturnStatus</code>, any stock, GL, voucher or refund endpoint on any print
+      or reprint path.
+    </p>
+    <ul>
+      <li><code>autoPrintedRef</code> is keyed on <code>returnNumber</code> and set <em>before</em> printing, so a printer failure surfaces as a toast rather than a retry loop.</li>
+      <li><code>printedReturnNumber</code> is set only on a truthy <code>runPrint</code> result, so a failed print leaves the button as "Print", not "Reprint".</li>
+      <li>A <code>CREDIT_VOUCHER</code> return waits on <code>voucherLoading</code> before printing, so the paper names the real voucher.</li>
+      <li>Auto-print is gated on <code>entryPoint === POS</code>; the back-office register keeps the manual button.</li>
+    </ul>
+    <p>One approval remains one financial transaction, one stock effect, one settlement. Printing is downstream and inert.</p>
+  </section>
+
+  <!-- ══════════ 12 ══════════ -->
+  <section class="sec" id="live">
+    <div class="sec-head"><span class="sec-num">12</span><h2>Remaining issues in current code</h2></div>
+
+    <p>Every original risk, re-checked against the code rather than assumed.</p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>ID</th><th>Risk</th><th>Verdict</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr><td>R1</td><td>Receivable never reduces</td><td><span class="chip c-part">Partial</span></td><td>Netted on 2 surfaces; credit-limit, aging, <code>reconcileAR</code>, AR reports unchanged</td></tr>
+          <tr><td>R2</td><td>Card / bank refunds record nothing</td><td><span class="chip c-fix">Fixed</span></td><td><code>PostingEngineService:1159</code>. No <code>payments</code>/<code>card_settlements</code> row — see below</td></tr>
+          <tr><td>R3</td><td>Absent from statement</td><td><span class="chip c-fix">Fixed</span></td><td><code>StatementService:221</code></td></tr>
+          <tr><td>R4</td><td>Non-batch stock skipped, no DN</td><td><span class="chip c-open">Still broken</span></td><td><code>resolveReturnWarehouseId:672</code> returns null → skip; journal still debits 1200</td></tr>
+          <tr><td>R5</td><td>Inventory GL vs valuation diverge</td><td><span class="chip c-open">Still broken</span></td><td><code>reverseOutboundStock:426</code> sets no <code>unitCost</code></td></tr>
+          <tr><td>R6</td><td>Cross-branch attribution split</td><td><span class="chip c-open">Still broken</span></td><td><code>saveReturn:180</code> vs DN warehouse</td></tr>
+          <tr><td>R7</td><td>POST accepts <code>status: APPROVED</code></td><td><span class="chip c-open">Still broken</span></td><td><code>saveReturn:193</code> defaults only when null; controller does not validate</td></tr>
+          <tr><td>R8</td><td>Day-boundary split</td><td><span class="chip c-open">Still broken</span></td><td><code>return_date</code> vs <code>session.businessDate</code></td></tr>
+          <tr><td>R9</td><td>POS net sales not net of returns</td><td><span class="chip c-open">Still broken</span></td><td><code>PosSessionService:3259</code>, <code>:2572</code></td></tr>
+          <tr><td>R10</td><td>Refund buckets misclassify</td><td><span class="chip c-open">Still broken</span></td><td><code>aggregateReturns:2675</code> keys on <code>returnAction</code></td></tr>
+          <tr><td>R11</td><td>No audit record for an ordinary return</td><td><span class="chip c-open">Still broken</span></td><td><code>SalesReturnController</code> autowires <code>AuditLogService</code> (line 28), never calls it</td></tr>
+          <tr><td>R12</td><td>Balance refresh cannot see its own movement</td><td><span class="chip c-open">Still broken</span></td><td><code>InventoryBalanceService:59</code> <code>REQUIRES_NEW</code></td></tr>
+          <tr><td>R13</td><td>Proration keys on item code, first line wins</td><td><span class="chip c-open">Still broken</span></td><td><code>putIfAbsent</code> in eligibility</td></tr>
+          <tr><td>R14</td><td>Serials per item code, condition ignored</td><td><span class="chip c-open">Still broken</span></td><td><code>applySerialReturns:828</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>New since the baseline</h3>
+
+    <div class="finding live">
+      <h3>Effective outstanding is inconsistent across seven surfaces <span class="chip c-new">New</span></h3>
+      <p>
+        The fix created two definitions of a customer's balance where there was one.
+        <code>sumLedgerCredit*</code> has three callers; the surfaces that still read
+        <code>invoice.balance</code> alone are:
+      </p>
+      <div class="tscroll"><table>
+        <thead><tr><th>Surface</th><th>Nets returns?</th><th>Consequence</th></tr></thead>
+        <tbody>
+          <tr><td>Customer List</td><td>yes</td><td>—</td></tr>
+          <tr><td>Customer detail / summary</td><td>yes</td><td>—</td></tr>
+          <tr><td>Customer statement</td><td>yes</td><td>—</td></tr>
+          <tr><td><code>CustomerCreditService.assertWithinLimit</code></td><td><strong>no</strong></td><td>a credit customer whose returns cleared their balance is still refused a sale at the limit</td></tr>
+          <tr><td><code>FinancialReportService.generateARAgingReport</code></td><td><strong>no</strong></td><td>aging total exceeds the sum of the Customer List</td></tr>
+          <tr><td><code>SubLedgerReconciliationService.reconcileAR</code></td><td><strong>no</strong></td><td>reports a growing, unexplained GL-vs-sub-ledger difference</td></tr>
+          <tr><td>AR reports / dashboards on <code>invoice.balance</code></td><td><strong>no</strong></td><td>disagree with the Customer List</td></tr>
+        </tbody>
+      </table></div>
+      <p>
+        The credit-limit case has a user-visible edge: a customer at their limit who returns goods
+        for account credit sees their balance drop on screen and is still blocked at the till.
+      </p>
+    </div>
+
+    <div class="finding live">
+      <h3>Effective outstanding is not floored at zero <span class="chip c-new">New</span></h3>
+      <p>
+        <code>CustomerService:292</code> — <code>invOutstanding.add(opnOutstanding).subtract(returnCredit)</code>.
+        A return credit exceeding the open balance yields a negative outstanding, which then
+        propagates into <code>totalPaid = totalSales − outstanding</code> (line 310), overstating
+        lifetime payments by the overshoot. Whether to floor it or to surface the negative as
+        customer credit is the §15 decision, not a code choice.
+      </p>
+    </div>
+
+    <div class="finding live">
+      <h3>Card refunds never enter settlement reconciliation <span class="chip c-new">New</span></h3>
+      <p>
+        The fix posts <code>Cr 1013 Merchant Clearing</code> but creates no <code>payments</code>
+        row and no <code>CardSettlement</code> linkage. <code>1013</code> is the account the
+        <code>settlement</code> subpackage exists to reconcile against the acquirer's statement,
+        and the refund leg is invisible to it. The GL is right; the reconciliation that depends on
+        the GL cannot close.
+      </p>
+      <p>
+        This is not a regression — before the fix there was no entry at all. It is the next step of
+        the same work, and the brief's §05 traceability chain is where it surfaces.
+      </p>
+    </div>
+
+    <div class="finding live">
+      <h3>Stale comment contradicts shipped capability <span class="chip c-new">New</span></h3>
+      <p>
+        <code>PosSessionService:2704</code> still asserts that <code>SalesReturn</code> has no
+        payment-mode field and sets <code>cashRefundsSupported = false</code>. V78 added
+        <code>refund_method</code>, the cash-refund fix created the drawer movements, and the
+        comment is what currently justifies withholding a cash-refund figure the data supports.
+        Minor as code; it is the reason a correct number is not published.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════ 13 ══════════ -->
+  <section class="sec" id="history">
+    <div class="sec-head"><span class="sec-num">13</span><h2>Historical data, kept separate</h2></div>
+
+    <p>
+      None of the fixes is retroactive. Returns approved before them carry their original
+      accounting state, and the read-side fixes now interpret those old rows with the new rules —
+      which is where the subtle problems are. No data was modified and no migration is proposed
+      here.
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Historical state</th><th>What the new code shows</th><th>Remediation shape</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Old <code>CARD_REFUND</code> / <code>BANK_TRANSFER</code> return: <code>Cr 1100</code> posted, no settlement</td>
+            <td>Statement emits both the credit and the offsetting <code>RETURN_REFUND</code> debit, netting to zero — but the GL has only the credit. <strong>Statement and GL now disagree for these rows</strong>, in the opposite direction from before.</td>
+            <td>One-off reconciliation: list approved card/bank returns with no <code>{ref}-RFND</code> entry, then a dated manual JV per branch. Needs accounting sign-off on the posting date.</td>
+          </tr>
+          <tr>
+            <td>Legacy return with <code>refund_method</code> null and <code>returnAction = 'Credit Note'</code> (a voucher return under the old vocabulary)</td>
+            <td><code>sumLedgerCredit*</code> matches it via the <code>LIKE '%CREDIT%'</code> fallback and <strong>reduces the customer's outstanding</strong> — while the voucher liability also sits at 2061. The credit is counted twice.</td>
+            <td>Quantify first: count rows where <code>refund_method IS NULL</code> and <code>returnAction LIKE '%CREDIT%'</code>. V78 backfilled <code>refund_method</code> from <code>internal_notes</code>, so the residue may be small or empty. If non-empty, backfill rather than widen the query.</td>
+          </tr>
+          <tr>
+            <td>Old <code>CASH_REFUND</code> return with no <code>pos_cash_movements</code> row</td>
+            <td>Statement nets to zero; GL has the credit and no cash leg; the drawer never recorded the payout.</td>
+            <td>Same one-off JV exercise as card/bank. Historic drawer variances will not reconcile retroactively.</td>
+          </tr>
+          <tr>
+            <td>Restocked return with no stock movement (R4 path)</td>
+            <td>GL 1200 debited, on-hand never rose. Unchanged by any fix.</td>
+            <td>Physical stock-take reconciliation per branch; no safe automated repair.</td>
+          </tr>
+          <tr>
+            <td>Every restocked return ever (null <code>unit_cost</code>)</td>
+            <td><code>reconcileInventory</code> drift. Unchanged.</td>
+            <td>Only repairable alongside the R5 decision, and backfilling historical unit costs would move historical WAC. Probably leave it and document the known offset.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <span class="note-t">The one to look at first</span>
+      <p>
+        Row 1 inverted a discrepancy rather than removing it. For returns approved before the
+        settlement fix, the customer-facing statement now shows a correctly netted zero while the
+        GL still carries an unsettled credit. Anyone reconciling a customer's SoA against account
+        1100 for a pre-fix period will find a difference that the code no longer explains. Worth
+        quantifying before the next period close.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════ 14 ══════════ -->
+  <section class="sec" id="scenarios">
+    <div class="sec-head"><span class="sec-num">14</span><h2>Scenario matrix</h2></div>
+
+    <p>
+      Eight scenarios, all 10,000 invoices, 2,000 returns (except 6), VAT 5% inclusive, one
+      restockable line with COGS 1,200. "Outstanding" is the effective figure on the Customer
+      List.
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Setup</th><th>Stock</th><th>Invoice</th><th class="num">Outstanding</th>
+            <th>Statement</th><th>Settlement</th><th>GL</th><th>VAT</th><th>Session / Z</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>1</strong></td><td>paid cash 10,000<br>refund CASH</td>
+            <td>+1 unit</td><td>untouched<br>bal 0</td><td class="num">0</td>
+            <td>credit 2,000<br>debit 2,000<br>→ 0</td>
+            <td>DROP_OUT 2,000<br>session-dated</td>
+            <td>Dr 4001 1,905<br>Dr 2100 95<br>Cr 1100 2,000<br>+ Dr 1100 / Cr 1001<br>+ Dr 1200 / Cr 5001 1,200</td>
+            <td>output VAT −95</td>
+            <td>expected cash −2,000<br><code>salesReturnTotal</code> 2,000<br><code>refundTotal</code> 2,000<br><code>netSalesExTax</code> <strong>unchanged</strong></td>
+          </tr>
+          <tr>
+            <td><strong>2</strong></td><td>paid card<br>refund CARD</td>
+            <td>+1</td><td>untouched<br>bal 0</td><td class="num">0</td>
+            <td>credit + debit<br>→ 0</td>
+            <td>journal only<br><code>…-RFND</code></td>
+            <td>as 1, but Cr 1013</td>
+            <td>−95</td>
+            <td>drawer unaffected<br><code>refundTotal</code> 2,000<br><strong>not in <code>card_settlements</code></strong></td>
+          </tr>
+          <tr>
+            <td><strong>3</strong></td><td>paid bank<br>refund BANK</td>
+            <td>+1</td><td>untouched<br>bal 0</td><td class="num">0</td>
+            <td>credit + debit<br>→ 0</td>
+            <td>journal only<br><code>…-RFND</code></td>
+            <td>as 1, but Cr 1010</td>
+            <td>−95</td>
+            <td>drawer unaffected<br><code>refundTotal</code> 2,000<br>bank rec by amount/date only</td>
+          </tr>
+          <tr>
+            <td><strong>4</strong></td><td>credit sale, paid 0<br>CUSTOMER_CREDIT</td>
+            <td>+1</td><td>untouched<br><strong>bal 10,000</strong></td><td class="num"><strong>8,000</strong></td>
+            <td>credit 2,000<br>→ 8,000</td>
+            <td>none by design</td>
+            <td>Cr 1100 2,000 stays</td>
+            <td>−95</td>
+            <td><code>refundTotal</code> <strong>2,000 — wrong</strong>, no money moved<br>aging still buckets 10,000</td>
+          </tr>
+          <tr>
+            <td><strong>5</strong></td><td>paid 6,000<br>refund CASH</td>
+            <td>+1</td><td>untouched<br>bal 4,000</td><td class="num"><strong>4,000</strong></td>
+            <td>credit + debit<br>→ 4,000</td>
+            <td>DROP_OUT 2,000</td>
+            <td>as 1</td>
+            <td>−95</td>
+            <td>expected cash −2,000</td>
+          </tr>
+          <tr>
+            <td><strong>6</strong></td><td>paid 8,000, out 2,000<br>return <strong>5,000</strong>, CUSTOMER_CREDIT</td>
+            <td>+qty</td><td>untouched<br>bal 2,000</td><td class="num"><strong>−3,000</strong></td>
+            <td>credit 5,000<br>→ <strong>−3,000</strong></td>
+            <td>none</td>
+            <td>Cr 1100 5,000 stays</td>
+            <td>−238</td>
+            <td><code>refundTotal</code> 5,000 — wrong<br><code>totalPaid</code> overstated 3,000</td>
+          </tr>
+          <tr>
+            <td><strong>7</strong></td><td>refund CREDIT_VOUCHER</td>
+            <td>+1</td><td>untouched</td><td class="num">unchanged</td>
+            <td>credit + debit<br>→ 0</td>
+            <td><code>credit_vouchers</code> 2,000</td>
+            <td>as 1, plus<br>Dr 1100 / Cr 2061</td>
+            <td>−95</td>
+            <td><code>creditNoteTotal</code> 2,000<br>drawer unaffected<br>GL 2061 reconciles</td>
+          </tr>
+          <tr>
+            <td><strong>8</strong></td><td>refund CUSTOMER_CREDIT<br>(walk-in → <strong>rejected 422</strong>)</td>
+            <td>+1</td><td>untouched</td><td class="num">as 4</td>
+            <td>credit only</td>
+            <td>none</td>
+            <td>Cr 1100 stays</td>
+            <td>−95</td>
+            <td>as 4; <strong>no draw-down path exists</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Scenarios 1, 2, 3 and 7 are clean end to end — the fixes did their job. Scenario 4 is
+      correct accounting reported as a cash refund. Scenario 5 is the policy question. Scenario 6
+      is unguarded. Scenario 8 names an instrument with no mechanism behind it.
+    </p>
+  </section>
+
+  <!-- ══════════ 15 ══════════ -->
+  <section class="sec" id="decisions">
+    <div class="sec-head"><span class="sec-num">15</span><h2>Open decisions</h2></div>
+
+    <h3>The economic question, in BillBull's own terms</h3>
+    <p>
+      A return reverses a sale. The sale created two things: a receivable, and cash or a card
+      receipt that partly or wholly settled it. Reversing the sale means undoing both, in
+      proportion to what each one actually was.
+    </p>
+    <div class="formula">
+returnAmount  =  unpaidPortion  +  paidPortion
+
+unpaidPortion  =  min(returnAmount, invoice.balance)      → cancel receivable
+paidPortion    =  returnAmount − unpaidPortion            → give money or credit back
+    </div>
+    <p>
+      Against BillBull's architecture that maps cleanly onto the five-row settlement table in §02,
+      because the structure is already there:
+    </p>
+    <ul>
+      <li>The return journal already posts <code>Cr 1100</code> for the full amount. <strong>No change.</strong></li>
+      <li>The <code>unpaidPortion</code> needs a receivable reduction the system can see: an allocation against <code>sales_invoices.balance</code>, or a durable customer-credit record. Today the Cr on 1100 is the only trace, and five surfaces cannot see it.</li>
+      <li>The <code>paidPortion</code> needs the settlement leg already implemented — cash, card, bank or voucher. <strong>No change.</strong></li>
+    </ul>
+    <p>
+      The architecture is right. What is missing is that nothing computes the split, and nothing
+      records the receivable half anywhere other than the GL. That is one decision and one
+      mechanism, not a redesign.
+    </p>
+
+    <h3>Decisions code cannot make</h3>
+    <ol>
+      <li>
+        <strong>Does a return against an unpaid balance reduce the receivable, and how is that
+        recorded?</strong> Three options, with different aging behaviour: allocate against
+        <code>invoice.balance</code> (aging corrects itself, but mutates a closed document); a
+        standalone customer-credit record with its own allocation rows (aging needs a new input,
+        and allocation becomes auditable); keep the derived subtraction and extend it to the five
+        missing surfaces (cheapest, still has no allocation trail). <em>This is the decision
+        everything else waits on.</em>
+      </li>
+      <li>
+        <strong>Should the system compute the unpaid/paid split, or keep the method as the
+        policy?</strong> If it computes it, a return against a partly paid invoice would offer
+        the cashier only the eligible settlement amount, and the 2,000-cash-on-a-4,000-debt case
+        becomes impossible. If the method stays the policy, that case needs an explicit warning
+        or an authorization gate instead.
+      </li>
+      <li>
+        <strong>May a return exceed the open balance, and what holds the excess?</strong> Today
+        it may, and the excess becomes a negative receivable. Floor at zero, block, or introduce
+        a real credit balance.
+      </li>
+      <li>
+        <strong>Is Customer Credit a real instrument?</strong> If yes, it needs a balance, a
+        redemption path, an allocation record, cancellation, and a report. If no, remove it from
+        the vocabulary and let Credit Voucher cover the case — the voucher already does
+        everything Customer Credit claims to.
+      </li>
+      <li>
+        <strong>What should a card refund produce besides a journal?</strong> A refund
+        <code>payments</code> row, a <code>CardSettlement</code> linkage, both, or an explicit
+        decision that merchant clearing refunds are reconciled manually.
+      </li>
+      <li>
+        <strong>Which date owns a return?</strong> <code>return_date</code>,
+        <code>trading_date</code>, or the session's business date. One answer, applied to the
+        document, its journals, its stock movement and its drawer payout.
+      </li>
+      <li>
+        <strong>Should POS Net Sales be net of returns, and on which base?</strong> The
+        back-office reports already net on a VAT-inclusive base; matching them is the obvious
+        answer and needs confirming, since <code>pos_day_close.net_sales</code> is persisted
+        history.
+      </li>
+      <li><strong>Are cross-branch returns permitted?</strong> If yes, which branch owns the reversal — the selling branch or the receiving one?</li>
+      <li><strong>Where do scrapped returns go?</strong> A quarantine location, a write-off to <code>7502</code>, a supplier claim, or nowhere by policy.</li>
+      <li><strong>Should the inbound movement carry a unit cost?</strong> Stamping the resolved COGS reconciles inventory with the GL and reintroduces WAC movement on returns. The improved COGS resolution makes this more attractive than it was.</li>
+      <li><strong>Should unlinked returns be possible?</strong> They are today, and they skip the quantity guard entirely.</li>
+      <li><strong>Should Replacement / exchange exist?</strong> X and Z have buckets for it and nothing ever fills them.</li>
+    </ol>
+  </section>
+
+  <!-- ══════════ 16 ══════════ -->
+  <section class="sec" id="sequence">
+    <div class="sec-head"><span class="sec-num">16</span><h2>Implementation order</h2></div>
+
+    <p>
+      Sequenced so that nothing has to be rewritten by a later step, and so the decisions that
+      need sign-off do not block the work that does not.
+    </p>
+
+    <h4>Now — no decision needed, no behaviour change</h4>
+    <ol>
+      <li>Reject <code>status: APPROVED</code> on <code>POST /api/sales/returns</code>. Two lines, closes R7 and removes a phantom-return vector.</li>
+      <li>Audit every approval, not just supervisor-gated ones. <code>PosAuditService.logReturnInitiated</code> and <code>RETURN_APPROVED</code> already exist with no callers.</li>
+      <li>Fix the stale comment and javadoc at <code>PosSessionService:2704</code> and <code>createJournalFromSalesReturn</code>. Both currently mis-state the system to the next reader.</li>
+      <li>Quantify the historical residues in §13 as read-only queries. Needed to scope anything else, and it changes nothing.</li>
+    </ol>
+
+    <h4>Next — mechanical, independently valuable</h4>
+    <ol start="5">
+      <li>Bucket X/Z returns on <code>refund_method</code> instead of <code>returnAction</code>, and publish the real cash-refund figure. Closes R10 and stops reporting Customer Credit as a refund paid out.</li>
+      <li>Make the stock-posted test and the journal's restock test one predicate, so GL 1200 cannot be debited for goods that never moved. Closes the R4 mechanism without deciding the warehouse-resolution question.</li>
+      <li>Move <code>InventoryBalanceService.refresh</code> out of <code>REQUIRES_NEW</code>, or defer it to after-commit. Closes R12.</li>
+      <li>Floor effective outstanding at zero, or surface the negative deliberately — whichever decision 3 gives.</li>
+    </ol>
+
+    <h4>After decision 1 — the receivable mechanism</h4>
+    <ol start="9">
+      <li>Implement the chosen mechanism for the unpaid portion.</li>
+      <li>Extend it to all seven surfaces in one shared helper: credit limit, AR aging, <code>reconcileAR</code>, AR reports, alongside the three already done. One definition of outstanding, used everywhere.</li>
+      <li>Then, and only then, the historical reconciliation JVs — the target state has to exist before old rows can be brought to it.</li>
+    </ol>
+
+    <h4>After the remaining decisions</h4>
+    <ol start="12">
+      <li>Unpaid/paid split computation and the return-above-outstanding guard (decisions 2, 3).</li>
+      <li>Customer Credit as a real instrument, or its removal (decision 4).</li>
+      <li>Card refund settlement linkage (decision 5).</li>
+      <li>Single business date across all legs, using <code>trading_date</code> (decision 6).</li>
+      <li>POS Net Sales net of returns (decision 7) — note this changes a persisted figure, so it needs a stated effective date.</li>
+      <li>Cross-branch policy, scrap routing, unit cost on inbound movements, exchange document (decisions 8–12).</li>
+    </ol>
+
+    <div class="note">
+      <span class="note-t">One thing to protect</span>
+      <p>
+        The five-row settlement table in §02 is the best thing about this module: every refund
+        method posts the identical return journal and differs only in which account faces AR.
+        Every item above fits inside that shape. Anything that proposes a different return journal
+        per refund method is going the wrong way.
+      </p>
+    </div>
+  </section>
+
+  <footer class="end">
+    <p>
+      Read-only audit. No code, schema, migration or data was changed; no tests were run and no
+      database was queried. Every conclusion is read from source on branch
+      <code>feature/posclient</code> at 1 October 2026, with file and line references given so
+      each can be re-checked. Claims about pre-fix behaviour come from the earlier
+      <code>POS_SALES_RETURN_AUDIT.html</code> and were re-verified where the current code still
+      shows them.
+    </p>
+  </footer>
+</div>
+</body>
+</html>

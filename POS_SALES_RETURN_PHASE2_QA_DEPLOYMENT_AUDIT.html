@@ -1,0 +1,2495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sales Return Phase 2 QA Audit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    color-scheme: light;
+    --paper:#fbfaf7;
+    --panel:#ffffff;
+    --ink:#161b22;
+    --ink-2:#3d4754;
+    --quiet:#6b7682;
+    --rule:#e2ded4;
+    --rule-soft:#efece4;
+    --amber:#C98A14;
+    --amber-soft:#fdf6e4;
+    --amber-line:#f0dca8;
+    --mono-bg:#f4f2ec;
+    --fixed:#1c6b45;
+    --fixed-bg:#eaf4ee;
+    --open:#a73f22;
+    --open-bg:#fbeee9;
+    --partial:#8a6410;
+    --partial-bg:#fcf3df;
+    --measure:68ch;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme: dark;
+      --paper:#12151a;
+      --panel:#181c23;
+      --ink:#e7e4dc;
+      --ink-2:#bdc3cc;
+      --quiet:#8b949f;
+      --rule:#2b313a;
+      --rule-soft:#232931;
+      --amber:#E0A838;
+      --amber-soft:#241e12;
+      --amber-line:#4a3c1d;
+      --mono-bg:#1d2229;
+      --fixed:#79d3a4;
+      --fixed-bg:#11261b;
+      --open:#f0a98c;
+      --open-bg:#2a1710;
+      --partial:#e8c164;
+      --partial-bg:#2a2313;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --paper:#12151a;
+    --panel:#181c23;
+    --ink:#e7e4dc;
+    --ink-2:#bdc3cc;
+    --quiet:#8b949f;
+    --rule:#2b313a;
+    --rule-soft:#232931;
+    --amber:#E0A838;
+    --amber-soft:#241e12;
+    --amber-line:#4a3c1d;
+    --mono-bg:#1d2229;
+    --fixed:#79d3a4;
+    --fixed-bg:#11261b;
+    --open:#f0a98c;
+    --open-bg:#2a1710;
+    --partial:#e8c164;
+    --partial-bg:#2a2313;
+  }
+
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:"IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size:15.5px;
+    line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:var(--measure); margin:0 auto; padding-inline:16px; padding-block:2.5rem 6rem;}
+  .wide{max-width:min(94rem, 100%);}
+
+  h1{
+    font-family:"Newsreader", Georgia, serif;
+    font-size:clamp(1.9rem, 4.6vw, 2.7rem);
+    font-weight:500; line-height:1.12; letter-spacing:-.015em;
+    margin:0 0 .6rem; text-wrap:balance;
+  }
+  h2{
+    font-family:"Newsreader", Georgia, serif;
+    font-size:1.5rem; font-weight:500; line-height:1.25; letter-spacing:-.01em;
+    margin:0; text-wrap:balance;
+  }
+  h3{font-size:1.02rem; font-weight:600; margin:1.9rem 0 .45rem; letter-spacing:-.005em;}
+  h4{font-size:.9rem; font-weight:600; margin:1.3rem 0 .35rem; color:var(--ink-2);}
+  p{margin:.75rem 0;}
+  ul,ol{margin:.75rem 0; padding-left:1.35rem;}
+  li{margin:.32rem 0;}
+  li>ul{margin:.2rem 0;}
+  strong{font-weight:600;}
+  a{color:var(--ink); text-decoration-color:var(--amber); text-underline-offset:3px;}
+
+  code{
+    font-family:"IBM Plex Mono", ui-monospace, Consolas, monospace;
+    font-size:.845em; background:var(--mono-bg); padding:.1em .34em; border-radius:3px;
+  }
+  pre{
+    font-family:"IBM Plex Mono", ui-monospace, Consolas, monospace;
+    background:var(--mono-bg); border:1px solid var(--rule-soft);
+    padding:.85rem 1rem; border-radius:6px; overflow-x:auto;
+    font-size:.805rem; line-height:1.55; margin:.9rem 0;
+  }
+  pre code{background:none; padding:0; font-size:inherit;}
+
+  /* ── masthead ───────────────────────────────── */
+  header.mast{border-bottom:2px solid var(--ink); padding-bottom:1.1rem; margin-bottom:1.6rem;}
+  .eyebrow{
+    font-family:"IBM Plex Mono", monospace; font-size:.7rem; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--amber); margin:0 0 .85rem;
+  }
+  .byline{color:var(--quiet); font-size:.82rem; margin:0; font-family:"IBM Plex Mono", monospace;}
+  .standfirst{
+    font-family:"Newsreader", Georgia, serif; font-size:1.17rem; line-height:1.5;
+    color:var(--ink-2); margin:1.5rem 0 0;
+  }
+  .standfirst em{color:var(--ink);}
+
+  /* ── section heads ──────────────────────────── */
+  .sec{margin-top:3.4rem;}
+  .sec-head{display:flex; align-items:baseline; gap:.75rem; border-top:1px solid var(--rule); padding-top:1.1rem; margin-bottom:.3rem;}
+  .sec-num{
+    font-family:"IBM Plex Mono", monospace; font-size:.72rem; letter-spacing:.1em;
+    color:var(--amber); flex:0 0 auto; padding-top:.42rem;
+  }
+
+  /* ── verdict chips ──────────────────────────── */
+  .chip{
+    display:inline-block; font-family:"IBM Plex Mono", monospace; font-size:.68rem;
+    font-weight:500; letter-spacing:.07em; text-transform:uppercase;
+    padding:.16rem .45rem; border-radius:3px; white-space:nowrap; vertical-align:.1em;
+  }
+  .c-fix{background:var(--fixed-bg); color:var(--fixed);}
+  .c-part{background:var(--partial-bg); color:var(--partial);}
+  .c-open{background:var(--open-bg); color:var(--open);}
+  .c-new{background:var(--amber-soft); color:var(--amber);}
+
+  /* ── tables ─────────────────────────────────── */
+  .tscroll{overflow-x:auto; margin:1.1rem 0; border:1px solid var(--rule); border-radius:6px; background:var(--panel);}
+  table{border-collapse:collapse; width:100%; font-size:.845rem; font-variant-numeric:tabular-nums;}
+  th,td{text-align:left; padding:.5rem .65rem; border-bottom:1px solid var(--rule-soft); vertical-align:top;}
+  th{
+    background:var(--mono-bg); font-weight:600; font-size:.74rem;
+    letter-spacing:.045em; text-transform:uppercase; color:var(--ink-2); white-space:nowrap;
+  }
+  tr:last-child td{border-bottom:0;}
+  td code{font-size:.8em;}
+  .num{text-align:right; font-family:"IBM Plex Mono", monospace;}
+
+  /* ── journal block ──────────────────────────── */
+  .jrnl{
+    border:1px solid var(--rule); border-left:3px solid var(--amber);
+    border-radius:0 6px 6px 0; background:var(--panel);
+    margin:1.1rem 0; overflow:hidden;
+  }
+  .jrnl-cap{
+    font-family:"IBM Plex Mono", monospace; font-size:.72rem; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--quiet);
+    padding:.5rem .8rem; border-bottom:1px solid var(--rule-soft); background:var(--mono-bg);
+  }
+  .jrnl table{font-size:.825rem;}
+  .jrnl th,.jrnl td{border-bottom:1px solid var(--rule-soft);}
+  .jrnl tbody tr:last-child td{border-bottom:0;}
+
+  /* ── callouts ───────────────────────────────── */
+  .note{
+    background:var(--amber-soft); border:1px solid var(--amber-line);
+    border-radius:6px; padding:.9rem 1.05rem; margin:1.2rem 0; font-size:.93rem;
+  }
+  .note > :first-child{margin-top:0;} .note > :last-child{margin-bottom:0;}
+  .note-t{
+    font-family:"IBM Plex Mono", monospace; font-size:.7rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--amber); display:block; margin-bottom:.4rem;
+  }
+
+  .finding{border-left:2px solid var(--rule); padding-left:1rem; margin:1.6rem 0;}
+  .finding h3{margin-top:0; display:flex; flex-wrap:wrap; gap:.55rem; align-items:baseline;}
+  .finding.live{border-left-color:var(--open);}
+  .finding.done{border-left-color:var(--fixed);}
+
+  .formula{
+    font-family:"IBM Plex Mono", monospace; font-size:.825rem; line-height:1.7;
+    background:var(--panel); border:1px solid var(--rule); border-radius:6px;
+    padding:.8rem 1rem; margin:.9rem 0; overflow-x:auto;
+  }
+
+  nav.toc{background:var(--panel); border:1px solid var(--rule); border-radius:6px; padding:1rem 1.2rem; margin:2rem 0 0;}
+  nav.toc p{
+    font-family:"IBM Plex Mono", monospace; font-size:.7rem; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--quiet); margin:0 0 .6rem;
+  }
+  nav.toc ol{columns:2; column-gap:2rem; margin:0; padding-left:1.3rem; font-size:.88rem;}
+  @media (max-width:560px){nav.toc ol{columns:1;}}
+  nav.toc a{text-decoration:none; border-bottom:1px solid transparent;}
+  nav.toc a:hover{border-bottom-color:var(--amber);}
+
+  footer.end{
+    margin-top:4rem; padding-top:1.1rem; border-top:2px solid var(--ink);
+    color:var(--quiet); font-size:.8rem; font-family:"IBM Plex Mono", monospace;
+  }
+  :focus-visible{outline:2px solid var(--amber); outline-offset:2px;}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important;}}
+  @media print{
+    body{background:#fff; color:#000; font-size:10pt;}
+    .wrap{max-width:none;}
+    table,pre,.jrnl,.tscroll{break-inside:avoid;}
+    h2{break-after:avoid;}
+  }
+
+  /* ── decision blocks (this document) ───────── */
+  .c-dec{background:#e9eef7; color:#2c4a7c;}
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .c-dec{background:#141c2a; color:#9db6dc;}}
+  :root[data-theme="dark"] .c-dec{background:#141c2a; color:#9db6dc;}
+  .rec{
+    background:var(--panel); border:1px solid var(--rule); border-left:3px solid var(--fixed);
+    border-radius:0 6px 6px 0; padding:.9rem 1.05rem; margin:1.2rem 0; font-size:.95rem;
+  }
+  .rec > :first-child{margin-top:0;} .rec > :last-child{margin-bottom:0;}
+  .rec-t{
+    font-family:"IBM Plex Mono", monospace; font-size:.7rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--fixed); display:block; margin-bottom:.4rem;
+  }
+  .q{border-left:2px solid var(--amber); padding-left:1rem; margin:1.6rem 0;}
+  .q h4{margin-top:0; color:var(--ink); font-size:.95rem;}
+  .yes{color:var(--fixed); font-weight:600;}
+  .no{color:var(--open); font-weight:600;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <p class="eyebrow">Phase 2 QA, V111 validation &amp; pre-deployment audit</p>
+    <h1>Sales Return Phase 2: Is the Economic Model Deployable?</h1>
+    <p class="byline">BillBull Retail / ERP &middot; branch feature/posclient &middot; 2 October 2026 &middot; validation only &mdash; no code, no migration and no historical record changed</p>
+  </header>
+
+  <p class="standfirst">
+    Phase 2's economics are internally consistent and the migration is safe. The invoice balance has
+    exactly one owner, the return split reconciles in every case, and the three unapproved finance
+    decisions are all still closed. What stops this being a clean sign-off is <em>data, not code</em>:
+    a quantified set of historical rows whose customer balances move under the corrected model, and
+    which only Finance can rule on.
+  </p>
+
+  <nav class="toc">
+    <p>Contents</p>
+    <ol>
+      <li><a href="#s1">Executive summary</a></li>
+      <li><a href="#s2">Decision gate status</a></li>
+      <li><a href="#s3">V111 migration validation</a></li>
+      <li><a href="#s4">Invoice balance validation</a></li>
+      <li><a href="#s5">Effective outstanding validation</a></li>
+      <li><a href="#s6">Return split validation</a></li>
+      <li><a href="#s7">Concurrency validation</a></li>
+      <li><a href="#s8">refundAmount security validation</a></li>
+      <li><a href="#s9">Settlement validation</a></li>
+      <li><a href="#s10">GL validation</a></li>
+      <li><a href="#s11">Return credit allocation validation</a></li>
+      <li><a href="#s12">Customer credit boundary</a></li>
+      <li><a href="#s13">Historical compatibility audit</a></li>
+      <li><a href="#s14">Statement validation</a></li>
+      <li><a href="#s15">Customer outstanding reconciliation</a></li>
+      <li><a href="#s16">Regression tests</a></li>
+      <li><a href="#s17">Phase 0/1 regression check</a></li>
+      <li><a href="#s18">Production readiness</a></li>
+      <li><a href="#s19">Blockers / warnings</a></li>
+      <li><a href="#s20">Recommended next action</a></li>
+    </ol>
+  </nav>
+
+  <section class="sec" id="s1">
+    <div class="sec-head"><span class="sec-num">01</span><h2>Executive summary</h2></div>
+
+    <p>
+      Phase 2 was audited against code, against migration <code>V111</code> executed on a restored
+      tenant database, and against the live data of the <code>testdb</code> tenant (210 invoices,
+      20 approved returns, 2,368 customers). The verdict divides cleanly between the implementation
+      and the data it will land on.
+    </p>
+
+    <h3>What holds</h3>
+    <ul>
+      <li>
+        <strong>One owner for the invoice balance.</strong> <code>sales_invoices.balance</code> is
+        written from exactly one place in the codebase &mdash; <code>InvoiceBalanceService</code>.
+        No native SQL, no JPQL <code>UPDATE</code> and no other service writes it. There is no second
+        economic definition.
+      </li>
+      <li>
+        <strong>The split reconciles.</strong> <code>returnValue == unpaidPortion + paidPortion</code>
+        holds by construction, is asserted at runtime, and all four specified cases are covered by
+        named tests.
+      </li>
+      <li>
+        <strong>The migration is safe.</strong> <code>V111</code> applied in 73&nbsp;ms on a restored
+        copy of a real tenant, in correct order after <code>V110</code>, with zero row-count or AR
+        drift and every historical row's new columns left <code>NULL</code>.
+      </li>
+      <li>
+        <strong>AR reconciles exactly.</strong> An independent recomputation of outstanding from the
+        receipt, advance and return-credit ledgers matched the stored balance on
+        <strong>197 of 197</strong> live invoices. Difference: <strong>0.00</strong>.
+      </li>
+      <li>
+        <strong>All three unapproved decisions remain closed.</strong> Account <code>2062</code> does
+        not exist anywhere in the codebase, there is no <code>heldCustomerCredit</code> term in the
+        credit-limit calculation, and over-refund is structurally unreachable rather than merely
+        unauthorised.
+      </li>
+      <li>
+        <strong>The client cannot influence the accounting.</strong> The frontend no longer sends
+        <code>refundAmount</code> at all, and the server overwrites it unconditionally on approval.
+      </li>
+    </ul>
+
+    <h3>What does not hold</h3>
+    <p>
+      Two findings are genuine, and neither is a code defect. Both are historical data that the
+      corrected model reads differently than the old one did.
+    </p>
+    <ul>
+      <li>
+        <strong>8,400.00 of currently invisible AR will become visible</strong> for one customer.
+        Three invoices are stamped <code>PAID</code> while carrying a full unpaid balance and zero
+        completed receipts. Every AR surface excludes <code>PAID</code>, so today they are reported
+        nowhere; the first canonical recompute touching them reclassifies them and the money appears.
+        This is the §14 effect the brief anticipated &mdash; arriving through stale status rather than
+        through legacy <code>CUSTOMER_CREDIT</code>.
+      </li>
+      <li>
+        <strong>2,875.00 was settled as store credit against receivables the customer still owed.</strong>
+        Three approved <code>CREDIT_VOUCHER</code> returns pre-date the split and handed back
+        redeemable value for goods not fully paid for. Under Phase 2 that portion would have reduced
+        AR instead.
+      </li>
+    </ul>
+
+    <div class="note">
+      <span class="note-t">The one piece of good news in the history</span>
+      <p>
+        The brief's most feared population &mdash; legacy <code>CUSTOMER_CREDIT</code> returns, whose
+        removal from the derived subtraction would make reported outstanding <em>rise</em> &mdash; is
+        <strong>empty on this tenant</strong>. The analysis script returns
+        <code>total_ledger_credit_returns = 0</code> and
+        <code>total_outstanding_restatement = 0</code>. The restatement risk from that specific
+        mechanism is zero here, and must be re-measured per tenant before each rollout.
+      </p>
+    </div>
+
+    <h3>Scope of the evidence, stated plainly</h3>
+    <p>
+      The economics (§6&ndash;§12, §14) are validated by <strong>148 focused tests and code
+      inspection</strong>, not by return approvals executed through the running application. Driving
+      an authenticated POS return approval end-to-end was outside what this environment allowed, and
+      §3 forbids writing transactions against the tenant. The migration, schema, AR reconciliation and
+      historical quantification <em>are</em> backed by execution against a real tenant database. Where
+      a claim rests on tests rather than on live transactions, the section below says so.
+    </p>
+  </section>
+
+  <section class="sec" id="s2">
+    <div class="sec-head"><span class="sec-num">02</span><h2>Decision gate status</h2></div>
+
+    <p>
+      All three unapproved decisions were checked by searching the entire backend for any trace of
+      them, not merely by reading the Sales Return package.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Decision</th><th>Required state</th><th>Evidence</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>1</strong> &mdash; <code>REFUND_EXCEEDS_PAID_PORTION</code></td>
+          <td><code>refundAmount = paidPortion</code>, no client path to exceed it</td>
+          <td>
+            <code>resolveSettlementSplit</code> executes
+            <code>salesReturn.setRefundAmount(split.paidPortion())</code> unconditionally before any
+            settlement runs. No authorization code, flag, override or enum for over-refund exists; a
+            repo-wide search for <code>REFUND_EXCEEDS_PAID_PORTION</code> returns nothing.
+          </td>
+          <td><span class="chip c-fix">Closed</span></td>
+        </tr>
+        <tr>
+          <td><strong>3</strong> &mdash; held credit affects credit limit</td>
+          <td><code>creditLimit &minus; effectiveOutstanding</code>, no <code>+ heldCustomerCredit</code></td>
+          <td>
+            <code>CustomerCreditService.assertWithinLimit</code> compares
+            <code>currentAR + additionalAR</code> against the limit, where <code>currentAR</code> is
+            <code>findOutstandingBalanceByCustomerCode</code>. No held-credit term is added. A
+            repo-wide search for <code>heldCustomerCredit</code> returns nothing.
+          </td>
+          <td><span class="chip c-fix">Closed</span></td>
+        </tr>
+        <tr>
+          <td><strong>7</strong> &mdash; GL 2062 / held Customer Credit</td>
+          <td>Refuse at the boundary; fabricate no liability account, never silently credit AR</td>
+          <td>
+            The only two occurrences of <code>2062</code> in the entire backend are the comment lines
+            in <code>SalesReturnService</code> explaining why it is <em>not</em> created. No seeder,
+            migration or chart-of-accounts entry defines it.
+            <code>assertSettlementMethodMatchesSplit</code> throws
+            <code>422 UNPROCESSABLE_ENTITY</code> when
+            <code>method == CUSTOMER_CREDIT &amp;&amp; split.hasPaidPortion()</code>.
+          </td>
+          <td><span class="chip c-fix">Closed</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      The refusal is deterministic and actionable. It names the return, the exact paid portion, the
+      reason the operation cannot proceed, and the available alternatives:
+    </p>
+    <pre><code>HTTP 422 UNPROCESSABLE_ENTITY
+
+Cannot settle SR-... as Customer Credit: &lt;paidPortion&gt; of this return has
+already been paid by the customer and would have to be held as customer
+credit, which needs the Customer Credit Notes Unapplied liability account
+to be set up first. Refund the paid portion by cash, card, bank transfer
+or credit voucher.</code></pre>
+    <p>
+      Covered by <code>customerCreditIsBlockedOnAPaidPortionUntilTheLiabilityAccountExists</code>.
+      No account <code>2062</code> was created during this audit.
+    </p>
+  </section>
+
+  <section class="sec" id="s3">
+    <div class="sec-head"><span class="sec-num">03</span><h2>V111 migration validation</h2></div>
+
+    <h3>What V111 creates</h3>
+    <p>
+      One table, one column on <code>sales_invoices</code>, one column plus index on
+      <code>sales_return_items</code>. Every statement is guarded with
+      <code>IF NOT EXISTS</code> or a <code>to_regclass</code> / <code>pg_constraint</code> check, so
+      the script is re-runnable &mdash; which matters because Flyway runs ahead of Hibernate on every
+      boot while <code>ddl-auto</code> is still <code>update</code> on unbaselined tenants.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Object</th><th>Definition</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>sales_return_credit_applications</code></td><td>9 columns, <code>BIGSERIAL</code> PK</td><td>The allocation ledger</td></tr>
+        <tr><td><code>ck_srca_status</code></td><td><code>CHECK (status IN ('APPLIED','REVERSED','REFUNDED'))</code></td><td>Status vocabulary</td></tr>
+        <tr><td><code>fk_srca_sales_return</code></td><td><code>FK &rarr; sales_returns(id)</code>, non-cascading</td><td>Document identity</td></tr>
+        <tr><td><code>ux_srca_return_invoice_applied</code></td><td>UNIQUE <code>(return_number, invoice_number) WHERE status = 'APPLIED'</code></td><td>Idempotency backstop</td></tr>
+        <tr><td><code>idx_srca_invoice</code> / <code>_return</code> / <code>_customer</code></td><td>btree; customer index is <code>(customer_code, status)</code></td><td>The three read paths</td></tr>
+        <tr><td><code>sales_invoices.return_credited</code></td><td><code>NUMERIC(15,2)</code>, nullable</td><td>Display term of the recompute</td></tr>
+        <tr><td><code>sales_return_items.invoice_item_id</code></td><td><code>BIGINT</code>, nullable + index</td><td>Line identity for proration</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      Both new columns are nullable, so no historical row is rewritten and no default back-fill runs.
+      The unique index is <em>partial</em>, which is the correct choice: it enforces one
+      <code>APPLIED</code> allocation per (return, invoice) pair while still permitting a later
+      <code>REVERSED</code> or <code>REFUNDED</code> row for the same pair. The FK is deliberately
+      non-cascading.
+    </p>
+
+    <h3>Ordering relative to V108&ndash;V110</h3>
+    <p>
+      <code>V110</code> was the highest applied version; <code>V111</code> takes the next free number.
+      Nothing was renumbered into the retired <code>V2</code>/<code>V4</code>/<code>V5</code>/<code>V98</code>
+      gaps, which with <code>spring.flyway.out-of-order</code> unset would fail the migration on every
+      tenant already past that version. Verified in the live history:
+    </p>
+    <pre><code>version | description                      | success | execution_time
+--------+----------------------------------+---------+---------------
+ 111    | sales return credit applications | t       |  73 ms
+ 110    | whatsapp integration             | t       |  25 ms
+ 109    | product categories               | t       | 154 ms
+ 108    | footer discount line allocation  | t       |      </code></pre>
+
+    <h3>Execution against a tenant database</h3>
+    <div class="note">
+      <span class="note-t">Deviation from the brief, and why</span>
+      <p>
+        No <code>billbull_qa</code> database exists on this host &mdash; the <code>qa</code> profile
+        points at one, but the server has only <code>testdb</code>, <code>clientdb</code> and
+        <code>clientdb_repair_test</code>. <code>testdb</code> is the only database carrying a
+        current schema <em>and</em> realistic transaction data, so it served as the QA tenant.
+      </p>
+      <p>
+        <code>V111</code> had <em>already</em> been applied there (today, 12:52). To validate the
+        migration rather than merely observe its result, the tenant was
+        <code>pg_dump</code>/<code>pg_restore</code>'d into a throwaway database
+        <code>billbull_qa_v111_audit</code>, rolled back to a genuine pre-V111 state (table dropped,
+        both columns dropped, the <code>V111</code> history row deleted), and the application was then
+        booted against it so real Flyway performed the migration. <code>testdb</code> itself received
+        <strong>only SELECTs</strong>; its row counts, AR total and migration count were re-verified
+        unchanged afterwards. Nothing was run against production.
+      </p>
+    </div>
+
+    <p>Captured before and after on the clone:</p>
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Measure</th><th>Before</th><th>After</th><th>Verdict</th></tr></thead>
+      <tbody>
+        <tr><td>Top Flyway version</td><td class="num">110</td><td class="num">111</td><td><span class="chip c-fix">In order</span></td></tr>
+        <tr><td>Migrations applied</td><td class="num">106</td><td class="num">107</td><td><span class="chip c-fix">+1</span></td></tr>
+        <tr><td><code>sales_return_credit_applications</code></td><td>absent</td><td>present</td><td><span class="chip c-fix">Created</span></td></tr>
+        <tr><td>Invoices / returns / return items</td><td class="num">210 / 20 / 22</td><td class="num">210 / 20 / 22</td><td><span class="chip c-fix">No change</span></td></tr>
+        <tr><td>Total AR (<code>SUM(balance)</code>)</td><td class="num">65,733.27</td><td class="num">65,733.27</td><td><span class="chip c-fix">No drift</span></td></tr>
+        <tr><td>Rows with <code>return_credited</code> set</td><td>n/a</td><td class="num">0</td><td><span class="chip c-fix">No back-fill</span></td></tr>
+        <tr><td>Rows with <code>invoice_item_id</code> set</td><td>n/a</td><td class="num">0</td><td><span class="chip c-fix">No back-fill</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      The resulting schema carries every intended object: the partial unique index, the check
+      constraint, the FK and all three read indexes. The application was booted with
+      <code>spring.jpa.hibernate.ddl-auto=none</code> and bound its port successfully, which means the
+      JPA entity mappings were satisfied by <strong>V111's schema alone</strong>, with no auto-DDL
+      assistance. That is the strongest available evidence that the schema matches application
+      expectations.
+    </p>
+    <p>
+      A note on the health check: the application started and served HTTP, but
+      <code>/actuator/health</code> returned <code>401</code> rather than <code>200</code> &mdash; the
+      actuator is not exposed through <code>SecurityConfig</code>'s permit list. Startup is confirmed
+      by successful port binding (Tomcat binds only after the <code>EntityManagerFactory</code> is
+      built) and by the security filter chain responding. A literal "health endpoint returns 200" was
+      not demonstrated.
+    </p>
+
+    <div class="finding">
+      <h3>Schema drift between tenants <span class="chip c-new">Informational</span></h3>
+      <p>
+        On the clean path <code>V111</code> creates <code>return_number</code>,
+        <code>invoice_number</code> and <code>customer_code</code> as
+        <code>VARCHAR(100)</code>. On <code>testdb</code> the same columns are
+        <code>VARCHAR(255)</code>, because Hibernate's <code>ddl-auto=update</code> created the table
+        from the entity before <code>V111</code> was written, so the migration's
+        <code>CREATE TABLE IF NOT EXISTS</code> no-opped and only its constraint and index blocks took
+        effect.
+      </p>
+      <p>
+        Harmless in practice &mdash; the wider column accepts everything the narrower one does, return
+        and invoice numbers run to roughly 12 characters, and both tenants carry identical
+        constraints. It is recorded because it is real drift: the same migration yields two different
+        column widths depending on whether the application ever booted against that database with the
+        entity present and the script absent. On production tenants Flyway runs first, so
+        <code>VARCHAR(100)</code> is what they will get. No action required; do not "fix" it by
+        altering <code>V111</code>.
+      </p>
+    </div>
+  </section>
+
+  <section class="sec" id="s4">
+    <div class="sec-head"><span class="sec-num">04</span><h2>Invoice balance validation</h2></div>
+
+    <p>
+      The question is whether a second economic definition of the invoice balance survives anywhere.
+      It does not. <code>sales_invoices.balance</code> is reachable for writing through exactly one
+      symbol, <code>InvoiceBalanceService</code>, and the audit searched three ways: for
+      <code>.setBalance(</code> on the invoice entity, for JPQL/native <code>UPDATE</code> statements
+      touching the column, and for every caller of the service.
+    </p>
+
+    <div class="formula">balance = max(0, invoiceTotal − totalPaid − credited)        InvoiceBalanceService.project(…)</div>
+
+    <h3>Every occurrence, classified</h3>
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Location</th><th>What it does</th><th>Classification</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>InvoiceBalanceService.applyMoney</code></td>
+          <td>The only <code>invoice.setBalance(...)</code> in the codebase, via <code>project(…)</code></td>
+          <td><span class="chip c-fix">Valid canonical write</span></td>
+        </tr>
+        <tr>
+          <td><code>SalesInvoiceService.finalizeInvoiceTotals</code></td>
+          <td>Calls the static <code>applyMoney</code> pre-persist with the invoice's own figures, collaborator-free</td>
+          <td><span class="chip c-fix">Valid canonical write</span></td>
+        </tr>
+        <tr>
+          <td><code>ReceiptVoucherService.syncLinkedInvoice</code></td>
+          <td>Calls <code>recomputeInvoiceBalance</code></td>
+          <td><span class="chip c-fix">Valid canonical write</span></td>
+        </tr>
+        <tr>
+          <td><code>SalesReturnService.applyReturnCreditToInvoice</code></td>
+          <td>Writes an allocation row, then calls <code>recomputeInvoiceBalance</code>. Never writes the column.</td>
+          <td><span class="chip c-fix">Valid canonical write</span></td>
+        </tr>
+        <tr>
+          <td><code>PaymentService.recomputeInvoiceBalances</code></td>
+          <td>
+            <em>Reads</em> <code>invoice.balance</code> as a terminal value and writes
+            <code>payment.invoiceBalance</code> &mdash; a per-payment running-balance column on the
+            <code>Payment</code> row, for the payment list UI. Writes nothing on the invoice.
+          </td>
+          <td><span class="chip c-part">Projection maintenance</span></td>
+        </tr>
+        <tr>
+          <td><code>db/scripts/truncate_transactions_keep_masters.sql</code></td>
+          <td><code>UPDATE customer SET balance = 0</code> / <code>vendor</code> &mdash; different tables, a manual reset script, not part of any boot path</td>
+          <td><span class="chip c-new">Out of scope</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      No <strong>dangerous duplicate owner</strong> and no <strong>legacy write</strong> remains. The
+      three callers the brief names all route through the same formula and the same ledger read.
+    </p>
+
+    <div class="finding">
+      <h3>The payment-list running balance now tells a slightly wrong history <span class="chip c-part">Warning</span></h3>
+      <p>
+        <code>PaymentService.recomputeInvoiceBalances</code> reconstructs "balance after this payment"
+        by taking the current invoice balance as terminal and walking backwards, adding back
+        <em>payment amounts only</em>. Now that the canonical balance also nets return credits, the
+        reconstructed figure for payments that pre-date a return credit will be understated by that
+        credit.
+      </p>
+      <p>
+        Display-only: it affects the <code>invoiceBalance</code> column shown on payment rows, not AR,
+        not the GL, not the credit limit, and not any reported outstanding. It is also pre-existing
+        logic, unchanged by Phase 2 &mdash; Phase 2 merely introduces a term it does not know about.
+        It is listed as a warning rather than noise because a finance user reading a payment history
+        on a returned invoice will see numbers that do not tie to the statement. No allocation rows
+        exist on any tenant yet, so nothing is currently mis-displayed.
+      </p>
+    </div>
+  </section>
+
+  <section class="sec" id="s5">
+    <div class="sec-head"><span class="sec-num">05</span><h2>Effective outstanding validation</h2></div>
+
+    <p>The canonical calculation, as implemented in <code>InvoiceBalanceService.effectiveOutstanding</code>:</p>
+    <div class="formula">effectiveOutstanding = max(0, invoiceTotal
+                       − completedReceipts      ReceiptVoucher, status "Completed", by salesInvoiceId
+                       − appliedAdvances        AdvanceApplication, status APPLIED, by invoiceNumber
+                       − appliedReturnCredits)  SalesReturnCreditApplication, status APPLIED, by invoiceNumber</div>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Requirement</th><th>Finding</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Completed receipts counted correctly</td>
+          <td>
+            <code>sumCompletedReceipts</code> filters on
+            <code>"Completed".equalsIgnoreCase(status.trim())</code> &mdash; the same single predicate
+            <code>ReceiptVoucherService</code> uses. Any other status contributes nothing.
+          </td>
+          <td><span class="chip c-fix">Pass</span></td>
+        </tr>
+        <tr>
+          <td>Unapplied advances not counted</td>
+          <td>
+            <code>sumAppliedByInvoiceNumber</code> is restricted to status <code>APPLIED</code>. An
+            advance that exists but has not been applied to this invoice contributes nothing.
+          </td>
+          <td><span class="chip c-fix">Pass</span></td>
+        </tr>
+        <tr>
+          <td>Only <code>APPLIED</code> return credits reduce outstanding</td>
+          <td>Same pattern; the repository sum is filtered to <code>APPLIED</code>.</td>
+          <td><span class="chip c-fix">Pass</span></td>
+        </tr>
+        <tr>
+          <td>Reversed applications do not reduce outstanding</td>
+          <td>
+            <code>REVERSED</code> and <code>REFUNDED</code> are excluded by the same filter. Rows are
+            immutable by contract &mdash; a reversal is a new row, never an update &mdash; and the
+            partial unique index is scoped to <code>APPLIED</code> precisely so a reversal can coexist.
+          </td>
+          <td><span class="chip c-fix">Pass</span></td>
+        </tr>
+        <tr>
+          <td>No negative outstanding</td>
+          <td>
+            Floored twice, independently: <code>project(…)</code> applies
+            <code>.max(BigDecimal.ZERO)</code>, and the allocation itself is capped at the invoice's
+            own outstanding by the <code>min()</code> in the split. Live check:
+            <strong>0 invoices</strong> with <code>balance &lt; 0</code> across 210 rows.
+          </td>
+          <td><span class="chip c-fix">Pass</span></td>
+        </tr>
+        <tr>
+          <td>Customer-level surfaces agree with invoice level</td>
+          <td>Measured, see §15. 197 of 197 invoices agree; difference 0.00.</td>
+          <td><span class="chip c-fix">Pass</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Which surfaces read which definition</h3>
+    <p>
+      Every AR surface aggregates the same <code>sales_invoices.balance</code> column that
+      <code>InvoiceBalanceService</code> owns, so they agree by construction rather than by
+      coincidence. Measured live on <code>testdb</code>:
+    </p>
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Surface</th><th>Query basis</th><th>Measured</th></tr></thead>
+      <tbody>
+        <tr><td>Credit limit (<code>CustomerCreditService</code>)</td><td><code>SUM(balance)</code>, status NOT IN (CANCELLED, PAID)</td><td class="num">57,333.27</td></tr>
+        <tr><td>AR aging buckets</td><td><code>SUM(balance)</code>, status NOT IN (CANCELLED, PAID), <code>balance &gt; 0</code></td><td class="num">57,333.27</td></tr>
+        <tr><td>AR reconciliation (global sub-ledger)</td><td><code>SUM(balance)</code>, status NOT IN (CANCELLED, PAID)</td><td class="num">57,333.27</td></tr>
+        <tr><td>Return eligibility / split</td><td><code>effectiveOutstanding()</code>, recomputed from ledgers</td><td>per invoice; ties to the column</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      Customer list, customer detail, customer ledger and the financial reports read through these
+      same aggregates. The return eligibility response and the return split both call
+      <code>effectiveOutstanding</code>, which recomputes from the ledgers rather than trusting the
+      column &mdash; deliberately, so a caller holding a row-locked invoice gets the true figure even
+      if the column is momentarily stale. Because it is the same formula the column projects, the two
+      cannot disagree.
+    </p>
+
+    <div class="finding">
+      <h3>DRAFT invoices are counted by the aggregates but carry no receivable per-invoice <span class="chip c-part">Warning</span></h3>
+      <p>
+        <code>effectiveOutstanding()</code> returns <code>ZERO</code> for a <code>DRAFT</code> invoice
+        &mdash; correctly, since a draft carries no receivable. But the three aggregate queries above
+        exclude only <code>CANCELLED</code> and <code>PAID</code>, so drafts are included. On
+        <code>testdb</code> that is <strong>13 invoices carrying 22,702.52</strong> inside the reported
+        AR figure and inside the credit-limit check.
+      </p>
+      <p>
+        Pre-existing and not a Phase 2 regression: the aggregates are unchanged, and the DRAFT rule in
+        <code>effectiveOutstanding</code> is new but is consumed only by the return split and the
+        eligibility response. Its practical reach is therefore narrow &mdash; a return against a draft
+        invoice would treat the whole return value as a paid portion. It is recorded because it is a
+        genuine divergence between the per-invoice canonical definition and the aggregate surfaces,
+        and because 22,702.52 of draft balance inflating a credit-limit check is a decision someone
+        should make knowingly. Out of Phase 2's scope to change.
+      </p>
+    </div>
+  </section>
+
+  <section class="sec" id="s6">
+    <div class="sec-head"><span class="sec-num">06</span><h2>Return split validation</h2></div>
+
+    <p>
+      <code>SalesReturnSettlementSplit.of(returnValue, invoiceOutstanding)</code> computes
+      <code>unpaid = value.min(outstanding)</code> and <code>paid = value.subtract(unpaid)</code>, both
+      at <code>HALF_UP</code> 2-decimal money scale and both floored at zero. The paid portion is
+      defined as the residue, which is why the central invariant cannot be broken by arithmetic.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Case</th><th>Invoice</th><th>Paid</th><th>Return</th><th>Outstanding</th><th>Unpaid portion</th><th>Paid portion</th><th>Invariant</th></tr></thead>
+      <tbody>
+        <tr><td>A &mdash; fully unpaid</td><td class="num">10,000</td><td class="num">0</td><td class="num">2,000</td><td class="num">10,000</td><td class="num">2,000</td><td class="num">0</td><td><span class="chip c-fix">Holds</span></td></tr>
+        <tr><td>B &mdash; partially paid</td><td class="num">10,000</td><td class="num">6,000</td><td class="num">2,000</td><td class="num">4,000</td><td class="num">2,000</td><td class="num">0</td><td><span class="chip c-fix">Holds</span></td></tr>
+        <tr><td>C &mdash; return exceeds outstanding</td><td class="num">10,000</td><td class="num">8,000</td><td class="num">5,000</td><td class="num">2,000</td><td class="num">2,000</td><td class="num">3,000</td><td><span class="chip c-fix">Holds</span></td></tr>
+        <tr><td>D &mdash; fully paid</td><td class="num">10,000</td><td class="num">10,000</td><td class="num">2,500</td><td class="num">0</td><td class="num">0</td><td class="num">2,500</td><td><span class="chip c-fix">Holds</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      All four match the brief's expected values exactly, and each is a named test in
+      <code>SalesReturnSettlementSplitTest</code> (13 tests, all green):
+      <code>caseA_fullyUnpaidInvoice_wholeReturnCreditsTheReceivable</code>,
+      <code>caseB_partlyPaidAndReturnBelowOutstanding_stillNoMoneyLeaves</code>,
+      <code>caseC_returnExceedsOutstanding_splitsAtTheOutstanding</code>,
+      <code>caseD_fullyPaidInvoice_wholeReturnIsRefundable</code>.
+    </p>
+    <p>
+      <code>returnValue == unpaidPortion + paidPortion</code> is additionally asserted at runtime:
+      <code>resolveSettlementSplit</code> throws <code>IllegalStateException</code> if
+      <code>isConsistent()</code> ever fails, so a silent break becomes a loud one rather than an
+      unexplained AR drift weeks later. Supporting property tests cover
+      <code>returnValueAlwaysEqualsUnpaidPlusPaid</code>,
+      <code>neitherPortionIsEverNegative</code>,
+      <code>theUnpaidPortionCannotExceedTheInvoiceOutstanding</code>,
+      <code>anInvoiceOutstandingCannotBeDrivenNegativeByAReturn</code> and
+      <code>successiveReturnsCannotCollectivelyExceedTheOutstanding</code>.
+    </p>
+    <p>
+      A return whose invoice cannot be resolved falls back to <code>fullyPaid(returnValue)</code>
+      &mdash; outstanding treated as zero, whole return a paid portion. That is the conservative
+      reading: it never credits AR for a receivable nobody can point to. Live check:
+      <strong>0 unlinked approved returns</strong> on this tenant, so the fallback is currently
+      unexercised by real data.
+    </p>
+    <p class="byline">
+      Evidence basis: unit tests and code inspection. These four cases were not executed as live
+      return approvals against the QA tenant &mdash; see §1.
+    </p>
+  </section>
+
+  <section class="sec" id="s7">
+    <div class="sec-head"><span class="sec-num">07</span><h2>Concurrency validation</h2></div>
+
+    <p>
+      The requirement is that two simultaneous returns against one invoice cannot both consume the
+      same AR balance, and that this is achieved with database row locks rather than
+      application-memory locking. Both are satisfied.
+    </p>
+
+    <h3>The lock strategy, as implemented</h3>
+    <p>
+      Two genuine <code>PESSIMISTIC_WRITE</code> locks, verified on the repository methods:
+    </p>
+    <pre><code>@Lock(LockModeType.PESSIMISTIC_WRITE)
+@Query("SELECT r FROM SalesReturn r WHERE r.id = :id")
+Optional&lt;SalesReturn&gt; findByIdForUpdate(Long id);           // SalesReturnRepository
+
+@Lock(LockModeType.PESSIMISTIC_WRITE)
+@Query("SELECT s FROM SalesInvoice s WHERE s.invoiceNumber = :invoiceNumber")
+Optional&lt;SalesInvoice&gt; findByInvoiceNumberForUpdate(String); // SalesInvoiceRepository</code></pre>
+    <p>
+      No <code>synchronized</code> block, no <code>ReentrantLock</code> and no in-memory guard
+      participates. The ordering inside <code>updateStatus</code> is what makes this work:
+    </p>
+    <ol>
+      <li>The <strong>return row</strong> is locked <em>before</em> status is read. A double-clicked or
+        retried approval blocks here, then sees <code>APPROVED</code> and is rejected &mdash; so stock,
+        journals and the cash payout each happen exactly once.</li>
+      <li>Authorization is resolved from persisted state.</li>
+      <li><code>assertReturnableQuantitiesStillAvailable</code> takes the <strong>invoice row
+        lock</strong> and returns the locked instance.</li>
+      <li><code>resolveSettlementSplit</code> computes the split from <em>that same locked
+        instance</em>, inside the same lock. A split read from a second, unlocked query could be
+        stale, and two concurrent returns would then both claim the same outstanding.</li>
+      <li>Only then does anything move: stock, GL, allocation, and last of all the drawer cash-out.</li>
+    </ol>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Required property</th><th>Mechanism</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>First approval consumes the available outstanding</td><td>Split from the locked invoice; allocation capped at <code>min(returnValue, outstanding)</code></td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>Second approval sees the updated outstanding</td><td>Blocks on the invoice lock; <code>effectiveOutstanding</code> re-reads the ledgers, now including the first allocation. Test: <code>aSecondReturnSeesAnOutstandingAlreadyNetOfTheFirstAllocation</code></td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>No negative invoice balance</td><td><code>min()</code> cap plus <code>max(0, …)</code> floor. Live: 0 negative balances</td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>No duplicate allocation rows</td><td>Row lock, plus an existence pre-check, plus <code>ux_srca_return_invoice_applied</code>. Test: <code>aRepeatedApprovalDoesNotAllocateTwice</code></td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>No duplicate settlement</td><td><code>APPROVED</code> returns are rejected at the top of <code>updateStatus</code> under the lock</td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>No duplicate stock movement</td><td>Same guard; batch lines additionally lock each batch row</td><td><span class="chip c-fix">Pass</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      <code>SalesReturnConcurrencyTest</code> (11 tests) covers the quantity-consumption side:
+      <code>approvalIsRejectedWhenAnotherReturnAlreadyConsumedTheQuantity</code>,
+      <code>approvalIsRejectedWhenOnlyPartOfTheRequestedQuantityRemains</code>,
+      <code>draftReturnsDoNotConsumeReturnableQuantity</code>,
+      <code>theReturnBeingApprovedDoesNotCountAgainstItself</code>.
+      <code>SalesReturnApprovalSplitTest</code> covers the balance-consumption side, including
+      <code>theOutstandingIsReadFromTheLockedInvoiceInstanceNotFromAFreshQuery</code>.
+    </p>
+
+    <div class="note">
+      <span class="note-t">An honest limit on this evidence</span>
+      <p>
+        These are Mockito tests. They prove the service reads the split from the locked instance and
+        that the second approval's arithmetic is correct, but they do not exercise two real threads
+        contending on a real Postgres row lock. A true two-transaction test would need a DB-backed
+        test class &mdash; and note that this project has no failsafe plugin, so such a class must be
+        named <code>*Test</code>, never <code>*IT</code>, or it silently never runs. The lock
+        <em>annotations</em> and the call ordering are verified by inspection and are correct;
+        the <em>runtime behaviour under genuine contention</em> is argued, not demonstrated. Listed
+        as a warning in §19.
+      </p>
+    </div>
+  </section>
+
+  <section class="sec" id="s8">
+    <div class="sec-head"><span class="sec-num">08</span><h2>refundAmount security validation</h2></div>
+
+    <p>
+      The server is unconditionally authoritative. <code>resolveSettlementSplit</code> runs before any
+      settlement step and performs:
+    </p>
+    <pre><code>BigDecimal clientSupplied = salesReturn.getRefundAmount();
+salesReturn.setRefundAmount(split.paidPortion());   // overwrite, not default
+salesReturnRepository.save(salesReturn);
+
+if (clientSupplied != null &amp;&amp; clientSupplied.compareTo(split.paidPortion()) != 0) {
+    log.info("… client-supplied refundAmount {} overridden with the server-derived
+              paid portion {} …", clientSupplied, split.paidPortion());
+}</code></pre>
+    <p>
+      This is an overwrite, not a <code>??</code>-style default: whatever the client sent is discarded
+      and the discrepancy is logged for audit. Because it happens before
+      <code>cashRefundService.recordCashRefund</code>,
+      <code>issueCreditVoucherIfRequired</code> and <code>postRefundSettlementIfRequired</code>, no
+      browser can decide how much money leaves the drawer.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Client payload</th><th>Server result</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>refundAmount: 999999, totalAmount: 2500</code></td><td><code>refundAmount</code> := <code>paidPortion</code> derived from the locked invoice; 999999 discarded and logged</td><td><span class="chip c-fix">Ignored</span></td></tr>
+        <tr><td><code>refundAmount: null</code></td><td>Filled from the split, not from <code>totalAmount</code>. Test: <code>aMissingRefundAmountIsFilledFromTheSplitRatherThanFromTheTotal</code></td><td><span class="chip c-fix">Ignored</span></td></tr>
+        <tr><td><code>refundAmount: 0</code></td><td>Overwritten with the split's paid portion</td><td><span class="chip c-fix">Ignored</span></td></tr>
+        <tr><td><code>refundAmount &lt; paidPortion</code></td><td>Overwritten upward to <code>paidPortion</code></td><td><span class="chip c-fix">Ignored</span></td></tr>
+        <tr><td><code>refundAmount &gt; paidPortion</code></td><td>Overwritten downward to <code>paidPortion</code>. Test: <code>aMaliciouslyInflatedRefundAmountCannotEnlargeThePaidPortion</code></td><td><span class="chip c-fix">Ignored</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      One nuance worth recording: the creation path still contains
+      <code>if (refundAmount == null &amp;&amp; refundMethod != null) setRefundAmount(totalAmount)</code>.
+      That is a pre-approval convenience on a <code>DRAFT</code> row and has no accounting effect,
+      because approval overwrites the field before any money moves. It is not a gap.
+    </p>
+
+    <h3>The frontend no longer sends the field at all</h3>
+    <p>
+      Defence in depth: the submit payload in
+      <code>useSalesReturn.js</code> omits <code>refundAmount</code> entirely, with the reason stated
+      in the code. The screen still computes the split client-side, but only for display, and only
+      from the server's own <code>eligibility.invoiceOutstanding</code>:
+    </p>
+    <pre><code>const invoiceOutstanding = Math.max(0, num(eligibility?.invoiceOutstanding));
+const unpaidPortion      = Math.min(returnValue, invoiceOutstanding);
+// paidPortion = returnValue - unpaidPortion   → shown in ReturnSummary, never submitted</code></pre>
+  </section>
+
+  <section class="sec" id="s9">
+    <div class="sec-head"><span class="sec-num">09</span><h2>Settlement validation</h2></div>
+
+    <p>
+      The governing rule is that the refund method chooses <em>where the paid portion goes</em> and has
+      no say over the unpaid portion. Every settlement leg draws on
+      <code>split.paidPortion()</code> and returns early when it is zero.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Method</th><th>Amount moved</th><th>Paid portion = 0</th><th>Paid portion &gt; 0</th></tr></thead>
+      <tbody>
+        <tr><td><code>CASH_REFUND</code></td><td><code>getRefundAmount()</code>, overwritten to <code>paidPortion</code> at approval</td><td>Refused <span class="chip c-open">422</span></td><td>Drawer <code>DROP_OUT</code> for the paid portion</td></tr>
+        <tr><td><code>CARD_REFUND</code></td><td><code>split.paidPortion()</code></td><td>Refused <span class="chip c-open">422</span></td><td>Settlement journal for the paid portion</td></tr>
+        <tr><td><code>BANK_TRANSFER</code></td><td><code>split.paidPortion()</code></td><td>Refused <span class="chip c-open">422</span></td><td>Settlement journal for the paid portion</td></tr>
+        <tr><td><code>CREDIT_VOUCHER</code></td><td><code>split.paidPortion()</code></td><td>Refused <span class="chip c-open">422</span></td><td>Voucher issued for the paid portion</td></tr>
+        <tr><td><code>CUSTOMER_CREDIT</code></td><td>Nothing &mdash; the AR allocation <em>is</em> the settlement</td><td>Allowed; the whole return credits AR</td><td>Refused <span class="chip c-open">422</span> &mdash; Decision 7 not approved</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      <code>assertSettlementMethodMatchesSplit</code> enforces both halves. When
+      <code>!split.hasPaidPortion() &amp;&amp; method.movesValueToCustomer()</code> it refuses with
+      <code>422</code> and an explanation naming the invoice and its outstanding, directing the cashier
+      to Customer Credit. Under the old model a cashier could press Cash Refund on a part-paid
+      invoice, hand over the cash, and leave the customer still owing the full balance; that outcome
+      is now unreachable rather than merely discouraged.
+    </p>
+    <p>
+      For a return where <code>paidPortion = 0</code>, <strong>no external money refund occurs</strong>
+      &mdash; and this is guaranteed twice: the method is refused outright, and every settlement leg
+      independently returns early on a zero or negative amount. The old fallback to
+      <code>totalAmount</code> is gone. A return with no refund method at all is not gated by the
+      split (<code>aReturnWithNoRefundMethodIsNotGatedByTheSplit</code>).
+    </p>
+    <p>
+      Covered by <code>SalesReturnRefundSettlementTest</code> (6),
+      <code>SalesReturnCashRefundServiceTest</code> (9) and the settlement tests in
+      <code>SalesReturnApprovalSplitTest</code>, including
+      <code>everyMoneyMovingMethodIsRefusedWhenNothingHasBeenPaidFor</code>,
+      <code>customerCreditIsTheOneMethodAvailableOnAnUnpaidInvoice</code> and
+      <code>aMoneyMovingMethodIsAllowedWhenThereIsAPaidPortionToMove</code>.
+    </p>
+  </section>
+
+  <section class="sec" id="s10">
+    <div class="sec-head"><span class="sec-num">10</span><h2>GL validation</h2></div>
+
+    <p>
+      The return journal was deliberately left unchanged, and no additional return journal was
+      created. The invariant is produced by the interaction of the two existing journals rather than
+      by per-method branching.
+    </p>
+
+    <div class="jrnl">
+      <div class="jrnl-cap">Return journal &mdash; posted for every method, every time</div>
+      <table>
+        <thead><tr><th>Account</th><th>Dr</th><th>Cr</th></tr></thead>
+        <tbody>
+          <tr><td>Sales Revenue (net of discount) + VAT</td><td class="num">returnValue</td><td class="num"></td></tr>
+          <tr><td>Accounts Receivable (1100)</td><td class="num"></td><td class="num">returnValue</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="jrnl">
+      <div class="jrnl-cap">Settlement journal &mdash; only when paidPortion &gt; 0</div>
+      <table>
+        <thead><tr><th>Account</th><th>Dr</th><th>Cr</th></tr></thead>
+        <tbody>
+          <tr><td>Accounts Receivable (1100)</td><td class="num">paidPortion</td><td class="num"></td></tr>
+          <tr><td>Cash / Bank / Credit Vouchers Issued (2061)</td><td class="num"></td><td class="num">paidPortion</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Verified in <code>PostingEngineService.createJournalFromSalesReturn</code>:</p>
+    <div class="formula">Return journal Cr AR   = salesReturn.getTotalAmount()   = returnValue
+Settlement Dr AR       = split.paidPortion()           = paidPortion
+─────────────────────────────────────────────────────────────────
+Net AR reduction       = returnValue − paidPortion     = unpaidPortion   ✓</div>
+
+    <p>
+      The net credit to GL 1100 is therefore exactly the unpaid portion &mdash; which is exactly the
+      amount the allocation row reduces the invoice balance by. GL AR and the AR sub-ledger agree by
+      construction, with no new journal shape, no new account and no per-method branching. The
+      allocation itself posts <strong>no GL entry of its own</strong>; doing so would double-count the
+      receivable reduction, since the residue between the two journals already <em>is</em> that
+      reduction.
+    </p>
+    <p>
+      Note that <code>CREDIT_VOUCHER</code> debits AR and credits liability account
+      <code>2061 Credit Vouchers Issued</code>, which already exists. No new GL account was introduced
+      by Phase 2, and none was created during this audit.
+    </p>
+    <p>
+      Covered by <code>SalesReturnApprovalPostingTest</code> (10 tests), including the
+      <code>theNetCreditToArAlwaysEqualsTheAllocation</code> property in the split suite.
+    </p>
+  </section>
+
+  <section class="sec" id="s11">
+    <div class="sec-head"><span class="sec-num">11</span><h2>Return credit allocation validation</h2></div>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Requirement</th><th>Implementation</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>One allocation for the unpaid portion</td><td><code>applyReturnCreditToInvoice</code> writes exactly one <code>APPLIED</code> row of <code>split.unpaidPortion()</code>, then calls <code>recomputeInvoiceBalance</code></td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td><code>APPLIED</code> status behaves correctly</td><td>Only <code>APPLIED</code> rows are summed into <code>credited</code>; <code>REVERSED</code>/<code>REFUNDED</code> contribute nothing</td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>Duplicate approval cannot duplicate allocations</td><td>Three layers: the approval row lock; an <code>existsByReturnNumberAndInvoiceNumberAndStatus</code> pre-check that turns a retry into a no-op; and <code>ux_srca_return_invoice_applied</code> as the backstop that holds even if the lock were bypassed</td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>Belongs to the correct return</td><td><code>sales_return_id</code> + <code>return_number</code>, both from the approved row, with an FK to <code>sales_returns</code></td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>Belongs to the correct invoice</td><td><code>lockedInvoice.getInvoiceNumber()</code> &mdash; taken from the locked instance, not from client input</td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>Belongs to the correct customer</td><td><code>lockedInvoice.getCustomerCode()</code>, falling back to the return's own only if the invoice has none. The allocation belongs to the account whose receivable it cancels. Test: <code>theAllocationIsCreditedToTheInvoicesCustomerNotTheReturnsOwn</code></td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>Amount cannot exceed the unpaid portion</td><td>The amount <em>is</em> <code>split.unpaidPortion()</code>, itself <code>min(returnValue, outstanding)</code> from the locked invoice</td><td><span class="chip c-fix">Pass</span></td></tr>
+        <tr><td>Authoritative business date</td><td><code>salesReturn.getReturnDate()</code>, resolved server-side (POS business date, else the <code>BusinessDayClock</code> in the tenant's configured timezone), so the document, journals, stock movement, drawer movement and allocation all land on one day</td><td><span class="chip c-fix">Pass</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>The zero-unpaid-portion case</h3>
+    <p>
+      The brief's preference is explicit: no meaningless zero-value economic ledger entry. The
+      implementation agrees. <code>applyReturnCreditToInvoice</code> opens with:
+    </p>
+    <pre><code>if (!split.hasUnpaidPortion()) {
+    log.debug("… has no unpaid portion — no allocation row written.");
+    return;
+}</code></pre>
+    <p>
+      So a fully paid invoice's return (<code>paidPortion &gt; 0</code>,
+      <code>unpaidPortion = 0</code>) writes <strong>no row at all</strong>. Covered by
+      <code>aFullyPaidReturnWritesNoAllocationRowAtAll</code>. A second guard skips the allocation if
+      no locked invoice resolved, which <code>resolveSettlementSplit</code> cannot produce an unpaid
+      portion without.
+    </p>
+    <p>
+      Live state: <strong>0 allocation rows</strong> on <code>testdb</code>, as expected &mdash;
+      <code>V111</code> landed today and no return has been approved under the new model. The
+      allocation path therefore has no production data behind it yet; its evidence is the 148 tests.
+    </p>
+  </section>
+
+  <section class="sec" id="s12">
+    <div class="sec-head"><span class="sec-num">12</span><h2>Customer credit boundary</h2></div>
+
+    <p>Held Customer Credit is not implemented. The boundary that exists instead is:</p>
+    <div class="formula">unpaid portion                    → AR allocation row (sales_return_credit_applications)
+paid portion + CUSTOMER_CREDIT     → 422, refused: Decision 7 not approved</div>
+
+    <p>
+      The refusal is deterministic (a pure function of the method and the split, with no timing,
+      configuration or role dependency) and auditable: it is a
+      <code>ResponseStatusException(UNPROCESSABLE_ENTITY, …)</code> carrying the return number and the
+      exact paid portion, raised before any side effect, inside the transaction that would otherwise
+      have written them. A refused return leaves nothing behind.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Must not exist</th><th>Searched for</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Account <code>2062</code></td><td>Repo-wide <code>2062</code>; seeders; chart of accounts; all migrations</td><td>Only two explanatory comments. <span class="chip c-fix">Absent</span></td></tr>
+        <tr><td>Fake liability</td><td>No account created, no journal line emitted for the blocked case</td><td><span class="chip c-fix">Absent</span></td></tr>
+        <tr><td>Silent AR credit</td><td>The blocked case throws before <code>postJournalForApprovedReturn</code> is reached</td><td><span class="chip c-fix">Absent</span></td></tr>
+        <tr><td>Hidden customer-credit balance</td><td>No <code>heldCustomerCredit</code> field, column, DTO or query anywhere</td><td><span class="chip c-fix">Absent</span></td></tr>
+        <tr><td><code>CREDIT_HELD</code> / <code>CREDIT_APPLICATION</code> statement types</td><td>Repo-wide search</td><td><span class="chip c-fix">Absent</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      <code>CUSTOMER_CREDIT</code> remains fully available for the ordinary case &mdash; an unpaid or
+      part-paid invoice, where the entire return is an AR allocation and no liability account is
+      needed. The gate closes only on the paid portion.
+    </p>
+  </section>
+  <section class="sec" id="s13">
+    <div class="sec-head"><span class="sec-num">13</span><h2>Historical compatibility audit</h2></div>
+
+    <p>
+      <code>db/analysis/sales_return_phase2_incompatible_history.sql</code> was executed against
+      <code>testdb</code>. Every statement in it is a <code>SELECT</code>; the script completed with no
+      errors and modified nothing. Nothing was repaired.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Population</th><th>Count</th><th>Value</th><th>Reading</th></tr></thead>
+      <tbody>
+        <tr><td>Returns the split model would have settled differently</td><td class="num">3</td><td class="num">2,875.00</td><td>AR that would have been credited instead of value handed back</td></tr>
+        <tr><td>Legacy <code>CUSTOMER_CREDIT</code> returns</td><td class="num">0</td><td class="num">0.00</td><td><strong>The §14 restatement population is empty on this tenant</strong></td></tr>
+        <tr><td>Customers whose reported outstanding changes under the new model</td><td class="num">0</td><td class="num">0.00</td><td>No customer-level restatement from the removed derived subtraction</td></tr>
+        <tr><td>Unlinked approved returns</td><td class="num">0</td><td class="num">0.00</td><td>Every approved return resolves to an invoice; the fallback is unexercised</td></tr>
+        <tr><td>Returns shaped <code>refund_amount = total</code> (legacy / fully paid)</td><td class="num">18</td><td class="num">28,177.50</td><td>Implied receivable credited: 0.00 &mdash; consistent with the old model</td></tr>
+        <tr><td>Serials returned in scrap condition</td><td class="num">0</td><td class="num">&mdash;</td><td>Clean</td></tr>
+        <tr><td>Existing allocation rows</td><td class="num">0</td><td class="num">0.00</td><td>No Phase 2 return has been approved yet</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>The three incompatible returns, itemised</h3>
+    <p>
+      All three settled as <code>CREDIT_VOUCHER</code> &mdash; redeemable store credit handed to the
+      customer &mdash; against invoices that still carried a balance. Under Phase 2 the
+      <code>would_be_unpaid_portion</code> column would have reduced AR instead of being issued as a
+      voucher.
+    </p>
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Return</th><th>Date</th><th>Method</th><th>Invoice</th><th>Return value</th><th>Settled</th><th>Invoice balance now</th><th>Would-be unpaid</th><th>Would-be paid</th></tr></thead>
+      <tbody>
+        <tr><td><code>SR-2026-0015</code></td><td>2026-08-14</td><td>CREDIT_VOUCHER</td><td><code>INV-2026-0171</code></td><td class="num">2,800.00</td><td class="num">2,800.00</td><td class="num">2,800.00</td><td class="num">2,800.00</td><td class="num">0.00</td></tr>
+        <tr><td><code>SR-2026-0020</code></td><td>2026-09-03</td><td>CREDIT_VOUCHER</td><td><code>INV-2026-0207</code></td><td class="num">100.00</td><td class="num">100.00</td><td class="num">50.00</td><td class="num">50.00</td><td class="num">50.00</td></tr>
+        <tr><td><code>SR-2026-0014</code></td><td>2026-08-14</td><td>CREDIT_VOUCHER</td><td><code>INV-2026-0166</code></td><td class="num">100.00</td><td class="num">100.00</td><td class="num">25.00</td><td class="num">25.00</td><td class="num">75.00</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>
+      <code>SR-2026-0015</code> is the clearest case: a 2,800.00 voucher was issued against an invoice
+      whose entire 2,800.00 is still outstanding. The customer holds redeemable credit <em>and</em>
+      still owes the full invoice. Phase 2 would have made that return a pure AR allocation with no
+      voucher at all.
+    </p>
+    <p>
+      Note the approximation the script itself documents: it compares against the invoice's
+      <em>current</em> balance, because the balance as at the return date is not retained anywhere.
+      The figures scope the remediation conversation; they are not a closing entry.
+    </p>
+
+    <h3>The finding the script does not cover</h3>
+    <div class="finding live">
+      <h3>8,400.00 of AR is invisible today and becomes visible under the corrected model <span class="chip c-open">Warning</span></h3>
+      <p>
+        An independent query found three invoices stamped <code>PAID</code> while carrying their full
+        balance and <strong>zero completed receipts</strong> &mdash; <code>amount_paid</code> is
+        <code>NULL</code> on all three. They were marked paid by status override, not by payment.
+      </p>
+      <div class="tscroll">
+      <table>
+        <thead><tr><th>Invoice</th><th>Customer</th><th>Status</th><th>Total</th><th>amount_paid</th><th>Completed receipts</th><th>Balance</th></tr></thead>
+        <tbody>
+          <tr><td><code>INV-2026-0134</code></td><td>ABDELAZIZ AIT BRAHIM CONTRACTING AND GENERAL MAINTENANCE LLC</td><td>PAID</td><td class="num">2,800.00</td><td class="num">NULL</td><td class="num">0</td><td class="num">2,800.00</td></tr>
+          <tr><td><code>INV-2026-0135</code></td><td>(same)</td><td>PAID</td><td class="num">2,800.00</td><td class="num">NULL</td><td class="num">0</td><td class="num">2,800.00</td></tr>
+          <tr><td><code>INV-2026-0136</code></td><td>(same)</td><td>PAID</td><td class="num">2,800.00</td><td class="num">NULL</td><td class="num">0</td><td class="num">2,800.00</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>
+        Every AR surface &mdash; credit limit, aging, reconciliation &mdash; excludes status
+        <code>PAID</code>, so these 8,400.00 are reported nowhere today. But
+        <code>InvoiceBalanceService.resolveInvoiceStatus</code> is now the canonical status owner, and
+        for a row with <code>totalPaid = 0</code>, <code>credited = 0</code> and a current status of
+        <code>PAID</code>, it returns <code>delivered ? CONFIRMED : POSTED</code>. The first canonical
+        recompute that touches one of these invoices &mdash; any receipt, or any return against it
+        &mdash; reclassifies it, and 2,800.00 appears in that customer's reported outstanding.
+      </p>
+      <p>
+        This is precisely the §14 effect the brief anticipated, reaching the data through a different
+        door than expected: stale status rather than legacy <code>CUSTOMER_CREDIT</code>. The
+        mechanism matters because it means a tenant can pass the <code>CUSTOMER_CREDIT</code> check
+        with a count of zero and still carry restatement exposure.
+      </p>
+      <p>
+        <strong>Not repaired, per §14 and §22.</strong> No compensating credit was added and no status
+        was changed. The correct next step is a finance decision on three invoices for one customer,
+        not a developer's <code>UPDATE</code>. Note also that the same customer pattern and the same
+        2,800.00 amount appear in <code>SR-2026-0015</code> above, which suggests these rows share an
+        origin worth investigating alongside each other.
+      </p>
+    </div>
+
+    <div class="note">
+      <span class="note-t">Per-tenant obligation</span>
+      <p>
+        All of §13 is measured on one tenant. Every figure here &mdash; especially the zero
+        <code>CUSTOMER_CREDIT</code> count and the 8,400.00 stale-status exposure &mdash; must be
+        re-measured on each target tenant before that tenant is migrated. Both queries used are in
+        the repository or reproduced in this document; neither writes anything.
+      </p>
+    </div>
+  </section>
+
+  <section class="sec" id="s14">
+    <div class="sec-head"><span class="sec-num">14</span><h2>Statement validation</h2></div>
+
+    <p>
+      <code>StatementService</code> emits the five entry types the brief lists and no others. The two
+      return types behave as specified.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Type</th><th>Dr / Cr</th><th>Amount</th><th>Emitted when</th></tr></thead>
+      <tbody>
+        <tr><td><code>INVOICE</code></td><td>Dr</td><td>invoice total</td><td>Always</td></tr>
+        <tr><td><code>RECEIPT</code></td><td>Cr</td><td>receipt amount</td><td>Completed receipts</td></tr>
+        <tr><td><code>ADVANCE_APPLICATION</code></td><td>Cr</td><td><code>appliedAmount</code></td><td><code>APPLIED</code> advance applications</td></tr>
+        <tr><td><code>RETURN_CREDIT</code></td><td>Cr</td><td><code>r.getTotalAmount()</code> &mdash; the full return value</td><td>Every approved return with a positive total</td></tr>
+        <tr><td><code>RETURN_REFUND</code></td><td>Dr</td><td><code>r.getRefundAmount()</code> &mdash; the server-derived paid portion</td><td>Only when <code>&gt; 0</code> <em>and</em> <code>settlesOutsideReceivable()</code></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      <code>RETURN_CREDIT</code> carries the full return value because it mirrors the return journal's
+      <code>Cr AR</code> leg, and <code>RETURN_REFUND</code> debits back only the paid portion, so the
+      statement's net movement for a return is the unpaid portion &mdash; the same residue as the GL
+      and the same amount as the allocation row. The statement, GL 1100 and the AR sub-ledger therefore
+      tell one story.
+    </p>
+    <p>
+      The key Phase 2 correction: <code>RETURN_REFUND</code> is gated on
+      <code>paidPortion &gt; 0</code>, so a part-paid invoice whose return was entirely a receivable
+      credit <strong>no longer shows a refund debit that never happened</strong>.
+      <code>settlesOutsideReceivable()</code> is still consulted so legacy <code>CUSTOMER_CREDIT</code>
+      rows &mdash; which <code>V78</code> back-filled with <code>refundAmount = total_amount</code>
+      &mdash; keep behaving as they do today; for rows written under the Phase 2 model the two
+      predicates agree by construction.
+    </p>
+    <p>
+      <code>CREDIT_HELD</code> and <code>CREDIT_APPLICATION</code> do not exist in the codebase, as
+      required &mdash; they depend on Decision 7.
+    </p>
+    <p class="byline">
+      Evidence basis: code inspection. Before/after statements around controlled test transactions
+      were not produced, because no return could be approved through the running application in this
+      environment and no allocation rows exist on any tenant to render.
+    </p>
+  </section>
+
+  <section class="sec" id="s15">
+    <div class="sec-head"><span class="sec-num">15</span><h2>Customer outstanding reconciliation</h2></div>
+
+    <p>
+      Outstanding was recomputed independently in SQL, directly from the three ledgers, and compared
+      against the stored canonical column for every live invoice on <code>testdb</code>:
+    </p>
+    <div class="formula">independent = GREATEST(0, invoice_total
+                       − completed receipts   (sales_receipt_vouchers, status 'completed')
+                       − applied advances     (advance_applications, status APPLIED)
+                       − applied credits)     (sales_return_credit_applications, status APPLIED)</div>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Measure</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>Invoices checked (excluding CANCELLED and DRAFT)</td><td class="num">197</td></tr>
+        <tr><td>Agreeing to the cent</td><td class="num">197</td></tr>
+        <tr><td>Disagreeing</td><td class="num">0</td></tr>
+        <tr><td>Stored AR total</td><td class="num">43,030.75</td></tr>
+        <tr><td>Independently computed AR total</td><td class="num">43,030.75</td></tr>
+        <tr><td><strong>Difference</strong></td><td class="num"><strong>0.00</strong></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Surface reconciliation</h3>
+    <p>
+      Because every customer-facing surface aggregates the one canonical column, the per-surface
+      differences are zero by construction rather than by luck. Measured on the whole tenant:
+    </p>
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Surface</th><th>Outstanding</th><th>Difference vs invoice level</th></tr></thead>
+      <tbody>
+        <tr><td>Invoice-level (<code>SUM(balance)</code>, status NOT IN CANCELLED/PAID)</td><td class="num">57,333.27</td><td class="num">&mdash;</td></tr>
+        <tr><td>Customer list / credit limit (<code>findOutstandingBalanceByCustomerCode</code>)</td><td class="num">57,333.27</td><td class="num">0.00</td></tr>
+        <tr><td>AR aging buckets (<code>findAgingBucketsRaw</code>)</td><td class="num">57,333.27</td><td class="num">0.00</td></tr>
+        <tr><td>AR reconciliation (<code>sumGlobalOutstandingBalance</code>)</td><td class="num">57,333.27</td><td class="num">0.00</td></tr>
+        <tr><td>Statement (<code>StatementService</code>)</td><td>Derived from the same invoice, receipt, advance and return-credit rows</td><td class="num">0.00</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      Two caveats already recorded above apply to these totals and are not defects of Phase 2:
+      the <strong>22,702.52 of DRAFT balance</strong> included in all three aggregates (§5), and the
+      <strong>8,400.00 of stale-<code>PAID</code> balance</strong> excluded from all three (§13). Both
+      are properties of the aggregates' status predicates and of the data, not of the balance formula
+      &mdash; which, as measured above, reconciles exactly.
+    </p>
+  </section>
+
+  <section class="sec" id="s16">
+    <div class="sec-head"><span class="sec-num">16</span><h2>Regression tests</h2></div>
+
+    <p>No test was modified, weakened or skipped during this audit.</p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Suite</th><th>Result</th><th>Baseline</th><th>New failures</th></tr></thead>
+      <tbody>
+        <tr><td>Backend full (<code>mvn -o test</code>)</td><td>2,105 run &mdash; 2,097 pass, 2 failures, 6 errors</td><td>8 known, all <code>WarehouseServiceTest</code></td><td class="num">0</td></tr>
+        <tr><td>Backend focused Sales Return + <code>InvoiceBalanceServiceTest</code></td><td><strong>148 run, 0 failures, 0 errors</strong> &mdash; BUILD SUCCESS</td><td>green</td><td class="num">0</td></tr>
+        <tr><td>Frontend tests (<code>vitest run</code>)</td><td>5,643 run &mdash; 5,629 pass, 14 failures across 6 files</td><td>14 known POS/Sales characterization</td><td class="num">0</td></tr>
+        <tr><td>Frontend build (<code>vite build</code>)</td><td>Built in 40.63 s, exit 0</td><td>pass</td><td class="num">0</td></tr>
+        <tr><td>Frontend lint (<code>eslint .</code>)</td><td>4,449 problems &mdash; 84 errors, 4,365 warnings, exit 1</td><td>pre-existing repo-wide</td><td class="num">0</td></tr>
+        <tr><td>Backend build</td><td>Compiles; test phase gated only by the WarehouseServiceTest baseline</td><td>pass</td><td class="num">0</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Classification of the surviving failures</h3>
+    <p>
+      <strong>All 8 backend failures are the known <code>WarehouseServiceTest</code> baseline</strong>,
+      and they are confined to that one class &mdash; it is the only file in
+      <code>target/surefire-reports</code> with a non-zero failure or error count
+      (<code>tests="8" errors="6" failures="2"</code>). They are Mockito
+      <code>PotentialStubbingProblem</code> errors, not accounting failures, and they trace to committed
+      commit <code>031ac383</code> ("stop BRANCH_ADMIN seeing every branch's warehouses"). Phase 2's
+      working tree touches no warehouse file, so these cannot be attributed to it.
+    </p>
+    <p>
+      <strong>All 14 frontend failures are the known POS/Sales characterization baseline</strong>, in
+      six files: <code>useProductEntry</code> (6), <code>useDelivery</code> (3),
+      <code>PromotionsDialog</code> (2), <code>SerialBatch</code> (1), <code>PriceCheck</code> (1),
+      <code>POSSalesArchitecture</code> (1). <strong>None is a Sales Return test.</strong>
+    </p>
+    <p>
+      The lint exit code is a pre-existing repo-wide condition, not a Phase 2 signal. Exactly one of
+      the 84 errors falls in a Sales Return file &mdash;
+      <code>AuthorizationModal.jsx:30</code>, "Calling setState synchronously within an effect can
+      trigger cascading renders". That file is <strong>not modified in the working tree</strong>; it
+      came from committed Phase 1 work (<code>de9f7408</code>), so it is pre-existing and outside this
+      phase's scope. The remaining 83 errors are elsewhere entirely (38 in
+      <code>zebraZpl.test.js</code> alone).
+    </p>
+    <div class="note">
+      <span class="note-t">On the backend baseline note in CLAUDE.md</span>
+      <p>
+        The seven <code>@SpringBootTest</code> classes documented as failing context load without a
+        datasource <strong>passed</strong> in this run, because a reachable Postgres was present. They
+        are not part of the failure count above.
+      </p>
+    </div>
+  </section>
+
+  <section class="sec" id="s17">
+    <div class="sec-head"><span class="sec-num">17</span><h2>Phase 0/1 regression check</h2></div>
+
+    <p>
+      Each Phase 0/1 behaviour has a focused suite, and all of them are inside the 148 green tests.
+      None regressed.
+    </p>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Phase 0/1 behaviour</th><th>Covering suite</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>APPROVED</code> creation guard</td><td><code>SalesReturnCreationGuardTest</code> (15)</td><td><span class="chip c-fix">Green</span></td></tr>
+        <tr><td>Approval audit</td><td><code>SalesReturnAuthorizationTest</code> (10); <code>auditApproval</code> now reached for every approval, not only supervisor-gated ones</td><td><span class="chip c-fix">Green</span></td></tr>
+        <tr><td>X/Z <code>refund_method</code> classification</td><td><code>SalesReturnCashRefundServiceTest</code> (9); <code>bothLegacyCashLabelsCollapseOntoOneCashRefundConcept</code></td><td><span class="chip c-fix">Green</span></td></tr>
+        <tr><td>Restock predicate</td><td><code>SalesReturnRestockPlannerTest</code> (18); <code>SalesReturnSerialConditionTest</code> (9)</td><td><span class="chip c-fix">Green</span></td></tr>
+        <tr><td>Unit cost</td><td><code>SalesReturnRestockPlannerTest</code>; <code>assertRestockCostsResolved</code> gate</td><td><span class="chip c-fix">Green</span></td></tr>
+        <tr><td>After-commit inventory refresh</td><td><code>SalesReturnApprovalPostingTest</code> (10)</td><td><span class="chip c-fix">Green</span></td></tr>
+        <tr><td>Server-authoritative business date</td><td>POS business date, else <code>BusinessDayClock</code> in the tenant timezone; an unresolvable zone fails startup rather than defaulting</td><td><span class="chip c-fix">Green</span></td></tr>
+        <tr><td>Cross-branch guard</td><td><code>SalesReturnBranchAttributionTest</code> (9); <code>assertReturnBranchMatchesInvoice</code></td><td><span class="chip c-fix">Green</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      The approval ordering that Phase 1 established is intact and Phase 2 inserted into it rather than
+      around it: lock, authorize, validate quantities under the lock, resolve the split from the locked
+      invoice, then stock, GL, allocation, and value-to-customer last. An unauthorized or stale request
+      still fails with nothing written.
+    </p>
+  </section>
+
+  <section class="sec" id="s18">
+    <div class="sec-head"><span class="sec-num">18</span><h2>Production readiness</h2></div>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>Area</th><th>Check</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="5"><strong>Database</strong></td><td>V111 inspected before execution</td><td><span class="chip c-fix">Pass</span> &mdash; additive, idempotent, correctly numbered</td></tr>
+        <tr><td>V111 applied on a tenant database</td><td><span class="chip c-fix">Pass</span> &mdash; 73 ms, clean path, correct order</td></tr>
+        <tr><td>Schema matches application expectations</td><td><span class="chip c-fix">Pass</span> &mdash; app booted with <code>ddl-auto=none</code></td></tr>
+        <tr><td>Indexes present</td><td><span class="chip c-fix">Pass</span> &mdash; 3 read indexes + partial unique index</td></tr>
+        <tr><td>Constraints present</td><td><span class="chip c-fix">Pass</span> &mdash; check constraint + FK</td></tr>
+        <tr><td rowspan="4"><strong>Backend</strong></td><td>Application starts</td><td><span class="chip c-fix">Pass</span> &mdash; port bound against the migrated database</td></tr>
+        <tr><td>Repositories initialize</td><td><span class="chip c-fix">Pass</span> &mdash; implied by successful JPA bootstrap with no auto-DDL</td></tr>
+        <tr><td>Transaction boundaries valid</td><td><span class="chip c-fix">Pass</span> &mdash; one <code>@Transactional</code> approval; stock, GL, allocation and settlement share it and roll back together</td></tr>
+        <tr><td>Locks valid</td><td><span class="chip c-part">Partial</span> &mdash; annotations and ordering correct; not demonstrated under real contention (§7)</td></tr>
+        <tr><td rowspan="3"><strong>Frontend</strong></td><td>Build succeeds</td><td><span class="chip c-fix">Pass</span> &mdash; 40.63 s, exit 0</td></tr>
+        <tr><td>Payload no longer controls refund amount</td><td><span class="chip c-fix">Pass</span> &mdash; <code>refundAmount</code> absent from the submit body</td></tr>
+        <tr><td>Eligibility response consumed correctly</td><td><span class="chip c-fix">Pass</span> &mdash; split mirrored from <code>eligibility.invoiceOutstanding</code> for display only</td></tr>
+        <tr><td rowspan="5"><strong>Accounting</strong></td><td>AR invariant holds</td><td><span class="chip c-fix">Pass</span> &mdash; net AR reduction = unpaid portion</td></tr>
+        <tr><td>Invoice balance invariant holds</td><td><span class="chip c-fix">Pass</span> &mdash; 197/197 reconcile, difference 0.00</td></tr>
+        <tr><td>Return split invariant holds</td><td><span class="chip c-fix">Pass</span> &mdash; all four cases, asserted at runtime</td></tr>
+        <tr><td>No new GL accounts introduced</td><td><span class="chip c-fix">Pass</span> &mdash; <code>2062</code> absent; <code>2061</code> pre-existed</td></tr>
+        <tr><td>No historical records modified</td><td><span class="chip c-fix">Pass</span> &mdash; <code>testdb</code> verified unchanged: 210 / 20 / 65,733.27 / 0 allocations / 107 migrations</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      One residual item is <em>not</em> a readiness check but a rollout prerequisite: §13's historical
+      findings are measured on one tenant only and must be re-measured per tenant.
+    </p>
+  </section>
+
+  <section class="sec" id="s19">
+    <div class="sec-head"><span class="sec-num">19</span><h2>Blockers / warnings</h2></div>
+
+    <div class="tscroll">
+    <table>
+      <thead><tr><th>#</th><th>Item</th><th>Finding</th><th>Class</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td><td>Finance Decision 1 &mdash; over-refund</td>
+          <td>Not implemented, not enabled, structurally unreachable. No code change pending.</td>
+          <td><span class="chip c-new">Informational</span></td>
+        </tr>
+        <tr>
+          <td>2</td><td>Finance Decision 3 &mdash; held credit in credit limit</td>
+          <td>Not implemented. Credit limit remains <code>limit − outstanding</code>.</td>
+          <td><span class="chip c-new">Informational</span></td>
+        </tr>
+        <tr>
+          <td>3</td><td>Finance Decision 7 &mdash; GL 2062 / held Customer Credit</td>
+          <td>
+            Not implemented. <strong>But the gate has a functional cost:</strong> a fully-paid
+            invoice's return cannot be settled as Customer Credit at all. Until Finance rules, that
+            case must be refunded by cash, card, bank transfer or voucher. This is a deliberate,
+            documented refusal, not a defect &mdash; and it is a business limitation Finance should
+            sign off on knowingly.
+          </td>
+          <td><span class="chip c-part">Warning</span></td>
+        </tr>
+        <tr>
+          <td>4</td><td>Legacy <code>CUSTOMER_CREDIT</code> history</td>
+          <td>
+            <strong>Zero rows on this tenant</strong> &mdash; the feared restatement population is
+            empty. Must be re-measured per tenant.
+          </td>
+          <td><span class="chip c-new">Informational</span></td>
+        </tr>
+        <tr>
+          <td>5</td><td>QA migration validation</td>
+          <td>
+            V111 validated and applied successfully. Two deviations recorded: no
+            <code>billbull_qa</code> database exists so <code>testdb</code> served as the QA tenant via
+            a restored clone, and <code>/actuator/health</code> returns 401 rather than 200 so startup
+            was confirmed by port binding instead.
+          </td>
+          <td><span class="chip c-new">Informational</span></td>
+        </tr>
+        <tr>
+          <td>6</td><td>Remaining invoice-balance inconsistencies</td>
+          <td>
+            None in the formula &mdash; single owner, 197/197 reconcile. Two surface-level items:
+            DRAFT balance (22,702.52) inside the AR aggregates while being zero per-invoice, and the
+            payment-list running balance that walks back payments only. Both pre-existing,
+            display/scope-level, no accounting impact.
+          </td>
+          <td><span class="chip c-part">Warning</span></td>
+        </tr>
+        <tr>
+          <td>7</td><td>Remaining settlement mismatches</td>
+          <td>
+            None in the implementation &mdash; every leg moves <code>paidPortion</code> and nothing
+            else. Historically, 3 returns totalling 2,875.00 of would-be AR credit were settled as
+            store credit instead.
+          </td>
+          <td><span class="chip c-part">Warning</span></td>
+        </tr>
+        <tr>
+          <td>8</td><td>Business-date / drawer-date discrepancy</td>
+          <td>
+            None found. The allocation stamps <code>salesReturn.getReturnDate()</code>, the same
+            server-resolved business date the document, journals, stock movement and drawer movement
+            use. The tenant's timezone is set explicitly per profile and an unresolvable zone fails
+            startup rather than silently defaulting.
+          </td>
+          <td><span class="chip c-new">Informational</span></td>
+        </tr>
+        <tr>
+          <td>9</td><td>Duplicate / idempotency issues</td>
+          <td>
+            None found. Three independent layers on the allocation (row lock, existence pre-check,
+            partial unique index); approval itself is idempotent because the lock precedes the status
+            read. Caveat: not demonstrated under genuine multi-threaded DB contention.
+          </td>
+          <td><span class="chip c-part">Warning</span></td>
+        </tr>
+        <tr>
+          <td>10</td>
+          <td><strong>Stale-<code>PAID</code> invoices restate customer outstanding</strong></td>
+          <td>
+            <strong>8,400.00 across 3 invoices for one customer</strong> is reported nowhere today and
+            becomes visible on the first canonical recompute. Finance must rule on these rows before
+            the model goes live for that tenant; a developer must not resolve it. This is the only
+            item that requires a decision rather than an acknowledgement.
+          </td>
+          <td><span class="chip c-open">Blocker</span></td>
+        </tr>
+        <tr>
+          <td>11</td><td>Concurrency proof depth</td>
+          <td>
+            Locks verified by inspection; contention behaviour not executed. A DB-backed test would
+            close this &mdash; and must be named <code>*Test</code>, not <code>*IT</code>, or this
+            build never runs it.
+          </td>
+          <td><span class="chip c-part">Warning</span></td>
+        </tr>
+        <tr>
+          <td>12</td><td>Economics not exercised end-to-end</td>
+          <td>
+            §6&ndash;§12 and §14 rest on 148 tests and code inspection, not on return approvals
+            executed through the application against QA data. No allocation row exists on any tenant.
+          </td>
+          <td><span class="chip c-part">Warning</span></td>
+        </tr>
+        <tr>
+          <td>13</td><td>Tenant schema drift (<code>VARCHAR</code> width)</td>
+          <td>100 on the clean path, 255 where Hibernate pre-created the table. No functional effect.</td>
+          <td><span class="chip c-new">Informational</span></td>
+        </tr>
+        <tr>
+          <td>14</td><td>Pre-existing test and lint baselines</td>
+          <td>
+            8 backend (<code>WarehouseServiceTest</code>) and 14 frontend (POS/Sales characterization)
+            failures persist; 84 lint errors repo-wide. None attributable to Phase 2; none in Sales
+            Return except one pre-existing React hygiene error from Phase 1.
+          </td>
+          <td><span class="chip c-new">Informational</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>
+      One genuine accounting blocker remains: <strong>item 10</strong>. It is not a defect in Phase 2
+      &mdash; the implementation is behaving correctly by refusing to pretend these invoices are paid
+      &mdash; but it changes a real customer's reported balance, and §14 is explicit that quantifying
+      and presenting that difference, not compensating for it, is the task. The decision belongs to
+      Finance.
+    </p>
+  </section>
+
+  <section class="sec" id="s20">
+    <div class="sec-head"><span class="sec-num">20</span><h2>Recommended next action</h2></div>
+
+    <div class="rec">
+      <span class="rec-t">Final determination</span>
+      <p style="font-family:'IBM Plex Mono',monospace; font-size:1.05rem; font-weight:600; letter-spacing:.02em;">
+        NOT READY &mdash; FINANCE DATA REMEDIATION DECISION REQUIRED
+      </p>
+      <p class="byline" style="margin:.4rem 0 .8rem;">
+        Superseded 2 October 2026 by &sect;21. The determination below was
+        <em>NOT READY &mdash; BLOCKERS REMAIN</em>; both evidence gaps it named are now closed and the
+        blocker is narrowed to the finance decision on three invoices. &sect;21 also records one newly
+        discovered Phase 2 defect, now fixed, so this section's statement that no code was changed no
+        longer holds.
+      </p>
+      <p>
+        The implementation is internally consistent and the migration is deployable. The blocker is an
+        unresolved accounting question about historical data, which §14 reserves for Finance.
+      </p>
+    </div>
+
+    <p>The evidence supporting that conclusion, in one place:</p>
+    <ul>
+      <li><strong>Migration:</strong> V111 applied in 73 ms on a restored tenant, correctly ordered
+        after V110, with 210/20/22 row counts and a 65,733.27 AR total unchanged across the migration,
+        and the application booting against it with <code>ddl-auto=none</code>.</li>
+      <li><strong>Reconciliation:</strong> 197 of 197 invoices agree between the stored canonical
+        balance and an independent ledger recomputation. Difference 0.00. Zero negative balances.
+        Three AR surfaces tie at 57,333.27.</li>
+      <li><strong>Tests:</strong> 148 focused Sales Return and invoice-balance tests green; 2,097 of
+        2,105 backend and 5,629 of 5,643 frontend tests pass, with every failure traced to a
+        pre-existing baseline outside Phase 2's scope.</li>
+      <li><strong>Historical data:</strong> 3 returns worth 2,875.00 that the split would have settled
+        differently, 0 legacy <code>CUSTOMER_CREDIT</code> returns, and 8,400.00 of stale-<code>PAID</code>
+        balance that the corrected model will surface.</li>
+      <li><strong>Decision gates:</strong> no account 2062, no <code>heldCustomerCredit</code> term, no
+        over-refund path anywhere in the backend.</li>
+    </ul>
+
+    <h3>To reach sign-off</h3>
+    <ol>
+      <li>
+        <strong>Finance rules on the three stale-<code>PAID</code> invoices</strong>
+        (<code>INV-2026-0134</code>/<code>0135</code>/<code>0136</code>, 8,400.00, one customer). Were
+        they settled outside the system, written off, or wrongly marked? The answer determines whether
+        the balance should surface, be written off through a posted JV, or be corrected at source. No
+        remediation should be authored before that answer exists.
+      </li>
+      <li>
+        <strong>Finance acknowledges the 2,875.00 of legacy voucher settlements</strong> (§13). These
+        are closed transactions; the question is only whether any corrective entry is wanted.
+      </li>
+      <li>
+        <strong>Finance accepts or lifts the Decision 7 limitation</strong> &mdash; that a fully-paid
+        invoice's return cannot currently be settled as Customer Credit. Approving account 2062 lifts
+        it; declining makes the 422 permanent policy and the refusal message should then be reworded to
+        stop implying the account is merely pending setup.
+      </li>
+      <li>
+        <strong>Re-run §13's two queries on every target tenant.</strong> The zero
+        <code>CUSTOMER_CREDIT</code> count is a property of this tenant, not of the system, and the
+        stale-<code>PAID</code> query is not yet part of the committed analysis script &mdash; adding it
+        there would be a worthwhile, self-contained follow-up.
+      </li>
+      <li>
+        <strong>Optional, to close warning 11:</strong> add a DB-backed two-transaction concurrency
+        test for the invoice row lock, named <code>*Test</code>.
+      </li>
+    </ol>
+
+    <div class="note">
+      <span class="note-t">What was deliberately not done</span>
+      <p>
+        No code was changed: no objectively discovered Phase 2 defect required correction. No GL
+        account was created, no held customer credit implemented, no credit-limit term added, no
+        over-refund path opened, no historical transaction modified, no corrective journal fabricated,
+        no approval lock bypassed, no test weakened, no Flyway migration edited or renumbered, and
+        Phase 3 was not started. The throwaway database <code>billbull_qa_v111_audit</code> remains on
+        the host as migration evidence and can be dropped at will; <code>testdb</code> received only
+        <code>SELECT</code> statements and was verified unchanged afterwards.
+      </p>
+    </div>
+  </section>
+
+
+  <section class="sec" id="s21">
+    <div class="sec-head"><div class="sec-num">21</div><h2>Phase 2 Blocker Resolution &mdash; Final Validation</h2></div>
+
+    <p class="byline" style="margin-top:.5rem;">2 October 2026 &middot; branch <code>feature/posclient</code> &middot; evidence tenant <code>billbull_qa_v111_audit</code></p>
+
+    <p>
+      This section closes the two evidence gaps §19 left open: the 8,400.00 stale-<code>PAID</code>
+      population was never quantified by a committed query, and concurrency was argued rather than
+      demonstrated. Both are now closed with stored evidence. In the course of closing the second,
+      a <strong>real Phase 2 defect</strong> was found and fixed &mdash; the previous audit's
+      finding of &ldquo;no Phase 2 code defect&rdquo; no longer holds, and §21.5 records it.
+    </p>
+
+    <div class="note">
+      <span class="note-t">The headline result</span>
+      <p>
+        The stale-<code>PAID</code> exposure is <strong>a status and reporting defect, not a balance
+        defect</strong>. The canonical recomputation reproduces all three invoices' stored balance
+        of 2,800.00 exactly &mdash; <code>balance_delta = 0.00</code> &mdash; and changes only the
+        status, from <code>PAID</code> to <code>CONFIRMED</code>. Across the whole tenant the
+        invoice reconciliation is <strong>210 of 210 matching, difference 0.00, zero negative
+        balances</strong>. The Phase 2 balance algorithm is not implicated anywhere.
+      </p>
+    </div>
+
+    <h3>21.1 &nbsp; Stale <code>PAID</code> invoice quantification</h3>
+
+    <p>
+      The missing query is now committed, as a separate file rather than appended to the
+      return-driven analysis, because the two populations have different causes and must never be
+      summed into one number:
+    </p>
+
+    <div class="formula">db/analysis/sales_return_phase2_stale_invoice_status.sql</div>
+
+    <p>
+      One thing to be explicit about, because §19 phrased it as &ldquo;not yet part of the
+      committed analysis script&rdquo;: the query is now written and run, but
+      <strong><code>db/analysis/</code> is not tracked in git at all</strong> &mdash; neither this
+      file nor the pre-existing <code>sales_return_phase0_quantification.sql</code> and
+      <code>sales_return_phase2_incompatible_history.sql</code>. All three exist on disk and are
+      untracked (not ignored). Committing the directory is a one-line follow-up and is worth doing
+      before the per-tenant measurement is handed to anyone else.
+    </p>
+
+    <p>
+      It is <code>SELECT</code>-only by inspection and by execution: the file contains zero
+      occurrences of <code>UPDATE</code>, <code>DELETE</code>, <code>INSERT</code>,
+      <code>ALTER</code>, <code>DROP</code>, <code>TRUNCATE</code> or <code>MERGE</code> anywhere,
+      including inside comments, and it was run under
+      <code>SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY</code> with
+      <code>ON_ERROR_STOP=1</code>, exiting 0. A cross-reference was added to the head of
+      <code>sales_return_phase2_incompatible_history.sql</code> so neither file can be read as the
+      whole picture.
+    </p>
+
+    <h4>The one design point that matters: an advance is not a receipt</h4>
+
+    <p>
+      A query that counts only completed receipt vouchers reports <em>false positives</em>. The
+      canonical recomputation derives
+      <code>totalPaid = receipts + applied advances</code>, so an invoice legitimately settled by a
+      customer advance has zero receipts and is correctly <code>PAID</code>. The committed query
+      nets out advances and return credits, and reports the false positives separately so the
+      difference is auditable.
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr>
+          <th>Population</th><th class="num">Count</th><th class="num">Value</th><th>Reading</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Stale <code>PAID</code></strong> &mdash; zero completed receipts, zero advances, zero return credits, balance &gt; 0</td>
+            <td class="num">3</td><td class="num">8,400.00</td>
+            <td>The real exposure. One customer, all three dated 2026-07-30.</td>
+          </tr>
+          <tr>
+            <td><code>PAID</code>, zero receipts, settled by an <em>applied advance</em></td>
+            <td class="num">3</td><td class="num">572.00</td>
+            <td><code>INV-2026-0003/0004/0005</code> &mdash; correctly <code>PAID</code>. A receipts-only query would have flagged these.</td>
+          </tr>
+          <tr>
+            <td><code>PARTIALLY_PAID</code>, zero receipts, part-settled by an advance</td>
+            <td class="num">1</td><td class="num">1,800.00 open</td>
+            <td><code>INV-2026-0102</code> &mdash; correct; 1,000.00 of advance against a 2,800.00 invoice.</td>
+          </tr>
+          <tr>
+            <td>Invoices the recomputation would restate <em>in any way</em> (whole tenant)</td>
+            <td class="num">3</td><td class="num">0.00 balance delta</td>
+            <td>Status restated only. No invoice's balance changes.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Per-tenant obligation is unchanged: all of the above is one tenant's measurement, and the
+      query must be re-run on each target tenant before it migrates.
+    </p>
+
+    <h3>21.2 &nbsp; Affected invoice evidence</h3>
+
+    <p>Read-only inspection of the three invoices. Every column below is a stored value.</p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr>
+          <th>Invoice</th><th class="num">Total</th><th class="num">amount_paid</th><th class="num">Balance</th>
+          <th class="num">Completed receipts</th><th class="num">Advances</th><th class="num">Return credits</th>
+          <th>Status</th><th>Delivery</th><th>Created</th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>INV-2026-0134</code></td><td class="num">2,800.00</td><td class="num">NULL</td><td class="num">2,800.00</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td><code>PAID</code></td><td><code>DELIVERED</code></td><td>16:13:07.07</td></tr>
+          <tr><td><code>INV-2026-0135</code></td><td class="num">2,800.00</td><td class="num">NULL</td><td class="num">2,800.00</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td><code>PAID</code></td><td><code>DELIVERED</code></td><td>16:13:27.10</td></tr>
+          <tr><td><code>INV-2026-0136</code></td><td class="num">2,800.00</td><td class="num">NULL</td><td class="num">2,800.00</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td><code>PAID</code></td><td><code>DELIVERED</code></td><td>16:14:55.18</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      All three: customer <code>ABDELAZIZ AIT BRAHIM&nbsp; CONTRACTING AND GENERAL MAINTENANCE
+      LLC</code>, invoice date 2026-07-30, <code>sales_type = POS_SALE</code>,
+      <code>is_fast_sale = true</code>, <code>payment_mode = Cash</code>, branch
+      <code>BR-01</code>, <code>pos_session_id = 39</code>, terminal <code>T002-95F6</code>,
+      <code>created_by_user_id = 5</code> (<code>cashier1@test.com</code>),
+      <code>return_credited = NULL</code>, and zero receipt vouchers of <em>any</em> status.
+      <code>pos_checkout_key</code> is empty on all three.
+    </p>
+
+    <div class="note">
+      <span class="note-t">Last modification timestamp &mdash; not retained</span>
+      <p>
+        <code>sales_invoices</code> carries <code>created_at</code> but no <code>updated_at</code>,
+        <code>created_by</code> or <code>updated_by</code> column, so there is no stored
+        last-modification timestamp for these rows. <code>created_at</code> is the only time
+        evidence the table itself holds; the timeline below is reconstructed from the audit and
+        journal tables instead.
+      </p>
+    </div>
+
+    <h4>Why these invoices are <code>PAID</code> &mdash; established from stored records</h4>
+
+    <p>
+      The question §4 asks is answerable. Four independent stored sources agree, and a fifth
+      corroborates the amount.
+    </p>
+
+    <div class="jrnl">
+      <div class="jrnl-cap">Session 39, 2026-07-30 &mdash; what is stored</div>
+      <table>
+        <thead><tr><th>Time</th><th>Source</th><th>What it records</th></tr></thead>
+        <tbody>
+          <tr><td>16:12:03</td><td><code>pos_audit_log</code></td><td><code>SESSION_OPENED</code> on terminal T002-95F6</td></tr>
+          <tr><td>16:13:07.77</td><td><code>journal_entries</code></td><td><code>SI-HO-2026-000099</code> ref <code>FS-INV-2026-0134</code> &mdash; the Fast Sale journal, posted</td></tr>
+          <tr><td>16:13:08.23</td><td><code>audit_logs</code></td><td><code>POST /api/pos/checkout</code> &rarr; <strong>HTTP 400</strong>, 1427&nbsp;ms, action <code>FAILED</code></td></tr>
+          <tr><td>16:13:08.24</td><td><code>audit_logs</code> (client log)</td><td><code>responseMessage: "Receipt amount exceeds the sales invoice balance."</code></td></tr>
+          <tr><td>16:13:27.62 / 27.99</td><td>both</td><td>same pair for <code>INV-2026-0135</code> &mdash; journal posted, checkout 400, 1139&nbsp;ms</td></tr>
+          <tr><td>16:14:55.80 / 56.30</td><td>both</td><td>same pair for <code>INV-2026-0136</code> &mdash; journal posted, checkout 400, 1310&nbsp;ms</td></tr>
+          <tr><td>16:21:17.22</td><td><code>journal_entries</code></td><td><code>FS-INV-2026-0137</code> &mdash; and then <code>RV-BR-01-2026-000119</code> one second later</td></tr>
+          <tr><td>16:21:18.70</td><td><code>pos_audit_log</code></td><td><code>CHECKOUT_COMPLETED: INV-2026-0137</code> &mdash; the first success of the session</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The Fast Sale journal <strong>exists and is balanced</strong> for all three, and it debits the
+      AR control account:
+    </p>
+
+    <div class="formula">FS-INV-2026-0134 .. 0136, each:
+  Dr 1100  Accounts Receivable   2,800.00
+  Cr 4001  Sales Revenue         2,800.00
+  Dr 5001  COGS                  1,750.00
+  Cr 1200  Inventory             1,750.00</div>
+
+    <p>
+      <code>PostingEngineService.ACC_ACCOUNTS_RECEIVABLE = "1100"</code>. In a healthy POS cash
+      checkout a second journal follows about one second later &mdash; the receipt voucher, which
+      credits 1100 and debits cash. <strong>No such journal exists for any of the three.</strong>
+      Every one of the nine later checkouts in session 39 has one.
+    </p>
+
+    <p>What is absent for all three, and present for <code>INV-2026-0137</code>:</p>
+
+    <ul>
+      <li>no <code>sales_payments</code> row;</li>
+      <li>no <code>sales_receipt_vouchers</code> row, in any status;</li>
+      <li>no receipt-voucher journal;</li>
+      <li>no <code>pos_audit_log</code> <code>CHECKOUT_COMPLETED</code> entry;</li>
+      <li>no <code>pos_print_jobs</code> receipt.</li>
+    </ul>
+
+    <h4>The code path, and the corroborating session counter</h4>
+
+    <p>
+      <code>PosCheckoutController</code> commits a checkout in three separately-committed steps.
+      Step&nbsp;2 (<code>updateStatus</code>, which sets <code>PAID</code> <em>and</em> posts the
+      Fast Sale journal) is wrapped in <code>try/catch</code> with a <code>deleteQuietly</code>
+      rollback. Step&nbsp;3 (<code>recordPayment</code>, which creates the Payment row, the receipt
+      voucher and the receipt journal) <strong>is not</strong>. A step-3 failure therefore leaves
+      the invoice stamped <code>PAID</code> with the sale posted to the GL and nothing collected
+      &mdash; which is exactly the shape of these three rows. The 400 came from
+      <code>ReceiptVoucherService</code>'s overpay guard, reached inside step&nbsp;3.
+    </p>
+
+    <p>
+      <code>pos_sessions</code> id&nbsp;39 corroborates the amount independently.
+      <code>recordInvoiceOnSession</code> runs <em>after</em> step&nbsp;3 in the same request, so a
+      failed checkout never reaches it:
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Session 39</th><th class="num">Recorded</th><th class="num">Actual</th><th class="num">Unrecorded</th></tr></thead>
+        <tbody>
+          <tr><td>Invoice count</td><td class="num">9</td><td class="num">12</td><td class="num">3</td></tr>
+          <tr><td>Cash sales / invoiced value</td><td class="num">25,200.00</td><td class="num">33,600.00</td><td class="num"><strong>8,400.00</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The 8,400.00 was never counted into the session's expected cash either, so there is no stored
+      evidence that cash was taken for these three sales.
+    </p>
+
+    <div class="note">
+      <span class="note-t">The one thing not established</span>
+      <p>
+        The <em>failure path</em> is established. The <em>input</em> that tripped the overpay guard
+        is not: no request payload is retained anywhere &mdash; no checkout key, no print-job
+        payload, no stored tender breakdown. The guard compares the submitted receipt amount
+        against <code>invoiceTotal &minus; otherCompletedReceipts = 2,800.00 &minus; 0</code>, so
+        the submitted amount must have exceeded 2,800.00, but the submitted value itself is
+        <strong>not recoverable from stored evidence</strong>. Three identical failures 20 and 88
+        seconds apart, followed by uninterrupted success from 16:21 onward, indicate a transient
+        client-side condition rather than a persistent one &mdash; but that characterisation is
+        inference, not a stored record, and is offered as such.
+      </p>
+    </div>
+
+    <h3>21.3 &nbsp; Simulated recompute &mdash; read only, not executed on the tenant</h3>
+
+    <p>
+      The simulation replicates <code>InvoiceBalanceService.recomputeInvoiceBalance</code> and
+      <code>resolveInvoiceStatus</code> in SQL, mapped one-for-one from the Java: <code>CANCELLED</code>
+      skipped entirely; <code>DRAFT</code> money recomputed but status left <code>DRAFT</code>;
+      <code>delivered = delivery_status IN ('DELIVERED','AUTO_DELIVERED') OR IS NULL</code>; a
+      completed receipt is status <code>Completed</code>, trimmed and case-insensitive. No
+      recomputation was run against any tenant.
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr>
+          <th>Invoice</th><th class="num">Total</th><th>Stored status</th><th class="num">Stored balance</th>
+          <th class="num">Receipts</th><th class="num">Advances</th><th class="num">Return credits</th>
+          <th class="num">Simulated balance</th><th>Simulated status</th><th class="num">Delta</th>
+        </tr></thead>
+        <tbody>
+          <tr><td><code>INV-2026-0134</code></td><td class="num">2,800.00</td><td><code>PAID</code></td><td class="num">2,800.00</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">2,800.00</td><td><code>CONFIRMED</code></td><td class="num">0.00</td></tr>
+          <tr><td><code>INV-2026-0135</code></td><td class="num">2,800.00</td><td><code>PAID</code></td><td class="num">2,800.00</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">2,800.00</td><td><code>CONFIRMED</code></td><td class="num">0.00</td></tr>
+          <tr><td><code>INV-2026-0136</code></td><td class="num">2,800.00</td><td><code>PAID</code></td><td class="num">2,800.00</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">2,800.00</td><td><code>CONFIRMED</code></td><td class="num">0.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <code>CONFIRMED</code> rather than <code>POSTED</code> because all three are
+      <code>DELIVERED</code>. The restatement is therefore <strong>status only</strong>: the stored
+      balance column already reads 2,800.00 and is already correct.
+    </p>
+
+    <h4>Invoice reconciliation, whole tenant (§7)</h4>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Measure</th><th class="num">Value</th></tr></thead>
+        <tbody>
+          <tr><td>Invoice count (non-<code>CANCELLED</code>)</td><td class="num">210</td></tr>
+          <tr><td>Matching (stored balance = independently recomputed)</td><td class="num">210</td></tr>
+          <tr><td>Different</td><td class="num">0</td></tr>
+          <tr><td>Total stored balance</td><td class="num">65,733.27</td></tr>
+          <tr><td>Total independently calculated balance</td><td class="num">65,733.27</td></tr>
+          <tr><td>Difference</td><td class="num"><strong>0.00</strong></td></tr>
+          <tr><td>Negative stored balances</td><td class="num">0</td></tr>
+          <tr><td>Negative simulated balances</td><td class="num">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Reported separately, and <strong>not mixed into the figure above</strong>: the three stale
+      <code>PAID</code> invoices are a status and reporting issue. They contribute 0.00 to the
+      reconciliation difference and 8,400.00 to the reporting gap.
+    </p>
+
+    <h4>AR surface comparison for the affected customer (§8)</h4>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Surface</th><th>Predicate</th><th class="num">Today</th><th class="num">Simulated</th></tr></thead>
+        <tbody>
+          <tr><td>Customer List / summary card / credit-limit check / AR aging / <code>reconcileAR</code></td><td><code>SUM(balance)</code> where <code>status NOT IN (CANCELLED, PAID)</code></td><td class="num">51,745.27</td><td class="num">60,145.27</td></tr>
+          <tr><td><code>StatementService</code> closing balance</td><td>Dr <code>invoiceTotal</code> where <code>status &lt;&gt; CANCELLED</code>, less receipts / advances / return credits</td><td class="num">60,074.77</td><td class="num">60,074.77</td></tr>
+          <tr><td>Delta</td><td>&mdash;</td><td class="num">&minus;8,329.50</td><td class="num">+70.50</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      This is the sharpest finding in the section. <strong>The five AR surfaces and the statement
+      already disagree today, by 8,329.50</strong>, because the statement includes every
+      non-cancelled invoice's full value while the other five exclude <code>PAID</code>. After the
+      recomputation they agree to within <strong>70.50</strong>, and that residue is fully
+      explained: <code>INV-2026-0008</code> is overpaid (total 171.00 against 241.50 of receipts
+      and advances), and the per-invoice balance floors at zero by design rather than netting an
+      overpayment across other invoices. So the recomputation moves every surface
+      <em>into</em> agreement.
+    </p>
+
+    <h4>GL AR control vs the AR sub-ledger</h4>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Measure</th><th class="num">Value</th></tr></thead>
+        <tbody>
+          <tr><td>GL 1100 net (<code>SUM(debit) &minus; SUM(credit)</code>, 468 lines)</td><td class="num">209,651.07</td></tr>
+          <tr><td>AR sub-ledger (<code>sumGlobalOutstandingBalance</code>, excludes <code>CANCELLED</code> and <code>PAID</code>)</td><td class="num">57,333.27</td></tr>
+          <tr><td>of which the stale <code>PAID</code> rows account for</td><td class="num">8,400.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The direction matters for the finance decision. The Fast Sale journal already debited 1100
+      for all three and no receipt journal ever credited it, so the <strong>GL side already carries
+      the 8,400.00</strong> while the sub-ledger side carries none of it. Recomputing these invoices
+      moves the sub-ledger <em>toward</em> the GL and <strong>reduces</strong>
+      <code>reconcileAR</code>'s difference by 8,400.00. The restatement is a correction, not a new
+      gap. The remaining 1100-vs-sub-ledger difference is a pre-existing, much larger condition on
+      this tenant that is out of scope here and is not attributable to Phase 2.
+    </p>
+
+    <h3>21.4 &nbsp; Finance remediation boundary</h3>
+
+    <div class="rec">
+      <span class="rec-t">What this phase did to the three invoices</span>
+      <p style="font-family:'IBM Plex Mono',monospace; font-size:.85rem; line-height:1.9;">
+        No historical invoice status was changed.<br>
+        No balance was rewritten.<br>
+        No journal was posted.<br>
+        No receipt was fabricated.<br>
+        No corrective transaction was created.
+      </p>
+    </div>
+
+    <p style="font-family:'IBM Plex Mono',monospace; font-size:.95rem; font-weight:600;">
+      Historical data requires finance-approved remediation.
+    </p>
+
+    <p>
+      <strong>No remediation method is chosen here.</strong> The mechanisms below already exist in
+      the project and are listed only so the decision has a menu; none has been executed, prepared
+      or recommended over another, and selecting one is a finance decision that turns on a question
+      the data cannot answer &mdash; whether the 8,400.00 was collected at the counter on
+      2026-07-30 and never recorded, or was never collected at all.
+    </p>
+
+    <ul>
+      <li>
+        <strong>If the cash was collected:</strong> a receipt voucher against each invoice is the
+        existing instrument. It would clear GL 1100, leave the invoice legitimately
+        <code>PAID</code>, and make the recomputation a no-op. It also means the session's declared
+        cash was understated by 8,400.00 on a day already closed.
+      </li>
+      <li>
+        <strong>If the cash was never collected:</strong> the receivable is real and currently
+        unreported. Letting the recomputation surface it &mdash; by doing nothing &mdash; is then
+        the correct outcome, and any subsequent write-off is a manual journal voucher through the
+        existing maker-checker flow (above the 10,000.00 AED threshold it requires a second
+        approver, and 8,400.00 does not).
+      </li>
+      <li>
+        <strong>If the sales did not happen:</strong> invoice cancellation already has a reversal
+        path (<code>reverseJournalFromInvoiceCancellation</code>), which for a fast-sale-posted
+        invoice reverses revenue, VAT and the settlement leg.
+      </li>
+    </ul>
+
+    <p>
+      Whichever is chosen, the posting date of any corrective entry is not a developer's choice.
+    </p>
+
+    <h3>21.5 &nbsp; PostgreSQL concurrency evidence &mdash; and a new Phase 2 defect</h3>
+
+    <p>
+      §19's warning 11 (&ldquo;concurrency is argued, not demonstrated&rdquo;) is closed by a new
+      real-database test:
+    </p>
+
+    <div class="formula">src/test/java/com/billbull/backend/sales/returns/SalesReturnApprovalConcurrencyTest.java</div>
+
+    <p>
+      Named <code>*Test</code>, not <code>*IT</code>: there is no failsafe plugin in this build, so
+      an <code>*IT</code> class is never executed by any phase. It is a <code>@SpringBootTest</code>
+      against real PostgreSQL, driving the real
+      <code>SalesReturnService.updateStatus</code> through the real
+      <code>PESSIMISTIC_WRITE</code> lock. No repository is mocked, no H2 is substituted, no
+      in-memory synchronisation stands in for the lock, and nothing asserts call order or generated
+      SQL.
+    </p>
+
+    <h4>The fixture and the discriminator</h4>
+
+    <div class="formula">invoice total        = 10,000.00
+completed receipts   =  6,000.00
+effective outstanding=  4,000.00
+return A             =  3,000.00
+return B             =  2,000.00   -> 5,000.00 of return value against 4,000.00 of receivable</div>
+
+    <p>
+      Both threads rendezvous on a <code>CyclicBarrier(2)</code> immediately before the call, and
+      the test records each thread's start and end instants and <strong>asserts the two windows
+      overlapped</strong> &mdash; so a run in which the threads happened not to contend cannot pass
+      as evidence. Quantities are deliberately not the constraint (10 units sold, 3 and 2
+      requested), so the only thing the two returns contend over is the outstanding balance. Both
+      lines are <code>DAMAGED</code> (scrap), so nothing restocks and no unit cost or product master
+      is involved.
+    </p>
+
+    <p>
+      The allocation total is the discriminator: unlocked, both threads read
+      <code>effectiveOutstanding = 4000</code> and allocate their full value, totalling 5,000.00
+      against a 4,000.00 receivable. Locked, the loser re-reads the outstanding after the winner
+      commits and its <code>min(returnValue, outstanding)</code> cap trims it to the residue.
+    </p>
+
+    <div class="jrnl">
+      <div class="jrnl-cap">Observed, from the service's own split log</div>
+      <table>
+        <thead><tr><th>Thread</th><th class="num">Return value</th><th class="num">invoiceOutstanding read</th><th class="num">unpaidPortion</th><th class="num">paidPortion</th></tr></thead>
+        <tbody>
+          <tr><td>B (won the race)</td><td class="num">2,000.00</td><td class="num">4,000.00</td><td class="num">2,000.00</td><td class="num">0.00</td></tr>
+          <tr><td>A (blocked, then re-read)</td><td class="num">3,000.00</td><td class="num">2,000.00</td><td class="num">2,000.00</td><td class="num">1,000.00</td></tr>
+          <tr><td><strong>Total allocated</strong></td><td class="num">5,000.00</td><td>&mdash;</td><td class="num"><strong>4,000.00</strong></td><td class="num">1,000.00</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <span class="note-t">Negative control &mdash; what makes this evidence rather than a restatement</span>
+      <p>
+        <code>findByInvoiceNumberForUpdate</code> was temporarily replaced with the non-locking
+        <code>findByInvoiceNumber</code> and the same test re-run against the same database. It
+        <strong>failed</strong>:
+      </p>
+      <p class="formula" style="margin:.6rem 0 0;">sum of unpaid-portion allocations must equal the original effective
+outstanding exactly &mdash; got 5000.00 (A=3000.00, B=2000.00)</p>
+      <p>
+        The change was reverted and the suite re-run green; the working tree holds the locking call.
+        A concurrency test that cannot fail proves nothing, so this control is the load-bearing
+        piece of the evidence.
+      </p>
+    </div>
+
+    <h4>Acceptance criteria (§11)</h4>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Criterion</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td><code>invoice balance &gt;= 0</code></td><td><span class="yes">0.00</span>, asserted non-negative and asserted exact</td></tr>
+          <tr><td><code>sum(unpaidPortion) &lt;= original effective outstanding</code></td><td><span class="yes">4,000.00 = 4,000.00</span>, equality under either ordering</td></tr>
+          <tr><td><code>paid + credited</code> reconciles to the invoice total</td><td><span class="yes">10,000.00</span></td></tr>
+          <tr><td>No double AR allocation</td><td><span class="yes">exactly one <code>APPLIED</code> row per return</span></td></tr>
+          <tr><td>No duplicate return-credit allocation</td><td><span class="yes">partial unique index <code>ux_srca_return_invoice_applied</code> holds</span></td></tr>
+          <tr><td>No duplicate GL posting</td><td><span class="yes">exactly one journal per return</span></td></tr>
+          <tr><td>No duplicate stock movement</td><td><span class="yes">zero &mdash; scrap returns restock nothing</span></td></tr>
+          <tr><td>No duplicate settlement</td><td><span class="yes">zero drawer movements</span></td></tr>
+          <tr><td>Server-authoritative <code>refundAmount</code></td><td><span class="yes">both equal the server-derived paid portion</span>, despite the client sending the full value</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      One figure is recorded rather than hidden: both return journals credit AR for their full value
+      by design, so 5,000.00 is credited to 1100 across the two while only 4,000.00 is allocated.
+      The 1,000.00 difference is the loser's unsettled paid portion, a property of approving a
+      return with no refund method &mdash; not of the lock. The refund method is <code>null</code>
+      on both returns because the brief's own scenario forces it: the winner's paid portion is zero,
+      which legitimately refuses every value-moving method, and the loser's 1,000.00 paid portion is
+      refused for <code>CUSTOMER_CREDIT</code> by the Decision 7 gate. A null method is the only one
+      legal under both orderings.
+    </p>
+
+    <h4>Second test: the Decision 7 gate under contention</h4>
+
+    <p>
+      With both returns set to <code>CUSTOMER_CREDIT</code>, the winner (paid portion 0.00) commits
+      and the loser (paid portion 1,000.00) is refused <code>422</code> by the held-credit gate.
+      Asserted end state: one <code>APPROVED</code> return, one allocation row, one journal, balance
+      1,000.00, never negative, allocations never exceeding the original outstanding. The gate
+      refuses rather than over-allocating.
+    </p>
+
+    <div class="finding">
+      <h3>New Phase 2 defect, found by this test and fixed <span class="chip c-fix">fixed</span></h3>
+      <p>
+        <strong>Every approved Sales Return silently lost its <code>RETURN_APPROVED</code> audit
+        row.</strong> §15 lists &ldquo;approval audit&rdquo; as an acceptance criterion, and it did
+        not work for realistic data.
+      </p>
+      <p>
+        <code>AuditLogWriter.saveDomainEvent</code> writes the same detail string to <em>two</em>
+        columns: <code>details</code>, which is <code>TEXT</code>, and <code>denialReason</code>,
+        which is a plain <code>String</code> and therefore <code>varchar(255)</code>. The Phase 2
+        approval detail &mdash; return number, split figures, invoice, customer, business date,
+        branch, authorization &mdash; is <strong>354 characters</strong> for ordinary customer and
+        branch names, and 222 even in the most minimal possible case. The <code>INSERT</code>
+        therefore failed with <code>value too long for type character varying(255)</code>, and
+        because the writer is <code>@Async</code> the exception went to
+        <code>SimpleAsyncUncaughtExceptionHandler</code> &mdash; so the approval succeeded and the
+        audit row simply never existed.
+      </p>
+      <p>
+        <strong>Provenance.</strong> <code>auditApproval</code> does not exist at <code>HEAD</code>,
+        so the long string is new code. <code>AuditLogWriter</code> is unmodified in the working
+        tree (committed in <code>99b81c66</code>), so the narrow column mirror is pre-existing. The
+        defect is the interaction, and it is new. Corroboration: the QA clone holds zero
+        <code>RETURN_APPROVED</code> rows (only one <code>RETURN_AUTHORIZATION_DENIED</code>), and
+        the longest <code>denial_reason</code> across roughly 75,000 audit rows is 183 characters
+        &mdash; so no pre-existing caller had ever reached the limit.
+      </p>
+      <p>
+        <strong>Fix.</strong> Truncate the 255-character mirror; <code>details</code> keeps the
+        full, untruncated string. No schema change, no migration, no other behaviour touched, and
+        no widening of a column on tenants that would then need a migration. The concurrency test
+        now asserts both that each committed approval leaves exactly one
+        <code>RETURN_APPROVED</code> row and that <code>LENGTH(details) &gt; 255</code>, so the
+        regression cannot return unnoticed.
+      </p>
+    </div>
+
+    <h4>Test data isolation (§13)</h4>
+
+    <p>
+      The test runs against <code>billbull_concurrency_test</code>, a throwaway
+      <code>TEMPLATE</code> clone carrying a real tenant's schema and seeded chart of accounts. A
+      test-method <code>@Transactional</code> rollback would not help &mdash; the service commits
+      its own transaction &mdash; so <code>@AfterEach</code> deletes every row keyed on a per-run
+      nanosecond id and <code>assertNoResidue</code> <strong>fails the test</strong> if anything
+      survives. Verified after a clean run: zero rows across invoices, returns, allocations,
+      journal entries, journal lines, ledger entries, receipts, customers, audit rows and branches.
+    </p>
+
+    <p>
+      Two incidental findings from building the isolation, recorded because they will bite the next
+      person: Flyway cannot build this schema from an empty database (V1 is a baseline and Hibernate
+      owns the DDL, so an empty database fails at V15 &mdash; hence the <code>TEMPLATE</code>
+      clone), and an outlet-backfill runner creates an <code>outlets</code> row for any branch it
+      finds on a later boot, which makes a leftover test branch undeletable. Cleanup removes the
+      dependant first. A race in the test itself &mdash; the <code>@Async</code> audit write landing
+      after cleanup had deleted it &mdash; appeared only under full-suite load and is waited out
+      rather than tolerated.
+    </p>
+
+    <h3>21.6 &nbsp; Phase 0 / Phase 1 regression</h3>
+
+    <p>
+      <strong>175 tests across 18 classes, 0 failures, 0 errors.</strong> Each §15 item mapped to
+      the class that covers it:
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>§15 item</th><th>Covering class</th><th class="num">Tests</th></tr></thead>
+        <tbody>
+          <tr><td><code>APPROVED</code> creation guard</td><td><code>SalesReturnCreationGuardTest</code></td><td class="num">15</td></tr>
+          <tr><td>Approval audit</td><td><code>SalesReturnAuthorizationTest</code> + <code>SalesReturnApprovalConcurrencyTest</code> (new assertion, see §21.5)</td><td class="num">10 + 2</td></tr>
+          <tr><td>X/Z <code>refund_method</code> classification</td><td><code>PosDayCloseIntegrationTest</code></td><td class="num">2</td></tr>
+          <tr><td>Restock predicate</td><td><code>SalesReturnRestockPlannerTest</code></td><td class="num">18</td></tr>
+          <tr><td><code>unitCost</code></td><td><code>SalesReturnRestockPlannerTest</code>, <code>SalesReturnApprovalPostingTest</code></td><td class="num">18 + 10</td></tr>
+          <tr><td>After-commit inventory refresh</td><td><code>SalesReturnApprovalPostingTest</code></td><td class="num">10</td></tr>
+          <tr><td>Server-authoritative business date</td><td><code>SalesReturnApprovalPostingTest</code>, <code>SalesReturnCashRefundServiceTest</code></td><td class="num">10 + 9</td></tr>
+          <tr><td>Cross-branch guard</td><td><code>SalesReturnBranchAttributionTest</code></td><td class="num">9</td></tr>
+          <tr><td>Split / outstanding / allocation (Phase 2)</td><td><code>SalesReturnSettlementSplitTest</code>, <code>SalesReturnApprovalSplitTest</code>, <code>InvoiceBalanceServiceTest</code></td><td class="num">13 + 16 + 12</td></tr>
+          <tr><td>AR surfaces</td><td><code>CustomerServiceTest</code>, <code>StatementServiceTest</code></td><td class="num">14 + 9</td></tr>
+          <tr><td>Concurrency (mock-level) + line identity + footer discount + serial condition + refund settlement</td><td><code>SalesReturnConcurrencyTest</code>, <code>SalesReturnLineIdentityTest</code>, <code>SalesReturnFooterDiscountTest</code>, <code>SalesReturnSerialConditionTest</code>, <code>SalesReturnRefundSettlementTest</code></td><td class="num">11 + 7 + 3 + 9 + 6</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>No regression. The only change to existing behaviour in this phase is the audit-row fix in §21.5, which restores a missing row rather than altering one.</p>
+
+    <h3>21.7 &nbsp; Decision gate verification</h3>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Gate</th><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Decision 1</strong><br>over-refund path</td>
+            <td><code>REFUND_EXCEEDS_PAID_PORTION</code> as an authorization path</td>
+            <td><span class="yes">Absent</span> from backend <em>and</em> frontend source &mdash; zero occurrences anywhere.</td>
+          </tr>
+          <tr>
+            <td></td>
+            <td>Server derives <code>refundAmount = paidPortion</code>; client cannot enlarge it</td>
+            <td><span class="yes">Holds.</span> Only two <code>setRefundAmount</code> call sites: a DRAFT-creation default, and <code>split.paidPortion()</code> at approval, which overwrites it. No <code>refundAmount ?? totalAmount</code> fallback remains. Asserted live in §21.5 &mdash; both returns sent the full value and both were overwritten.</td>
+          </tr>
+          <tr>
+            <td><strong>Decision 3</strong><br>credit availability</td>
+            <td><code>available credit = limit &minus; effectiveOutstanding</code>, no held-credit addition</td>
+            <td><span class="yes">Holds.</span> <code>CustomerCreditService.assertWithinLimit</code> compares <code>currentAR + additionalAR</code> against the limit, where <code>currentAR = SUM(balance) WHERE status NOT IN (CANCELLED, PAID)</code>. No held-credit term. <code>PosLookupService</code> returns <code>advanceBalance</code> as a separate response field and does not add it to availability.</td>
+          </tr>
+          <tr>
+            <td><strong>Decision 7</strong><br>account 2062</td>
+            <td><code>2062</code> as a real account or posting path</td>
+            <td><span class="yes">Still not real.</span> Appears only in javadoc, comments and the analysis script &mdash; never as a constant or a posting path. The <code>ACC_</code> constants stop at 2060 / 2061. No <code>accounts</code> row with code 2062 exists in <code>testdb</code>, <code>clientdb</code> or <code>billbull_qa_v111_audit</code>.</td>
+          </tr>
+          <tr>
+            <td></td>
+            <td><code>heldCustomerCredit</code> implementation</td>
+            <td><span class="yes">None exists.</span> Zero matches for <code>heldCustomerCredit</code> / <code>held_customer_credit</code> / <code>heldCredit</code> in backend or frontend source. The only hit for &ldquo;held credit&rdquo; is prose in the analysis script.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>No decision-gated feature was silently enabled. The §21.5 test exercises the Decision 7 refusal rather than working around it.</p>
+
+    <h3>21.8 &nbsp; Full test results</h3>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Run</th><th class="num">Tests</th><th class="num">Passed</th><th class="num">Failed</th><th>Outcome</th></tr></thead>
+        <tbody>
+          <tr><td>Backend focused &mdash; Phase 0/1/2 regression (18 classes)</td><td class="num">175</td><td class="num">175</td><td class="num">0</td><td><span class="yes">green</span></td></tr>
+          <tr><td>Backend focused &mdash; new PostgreSQL concurrency test</td><td class="num">2</td><td class="num">2</td><td class="num">0</td><td><span class="yes">green</span></td></tr>
+          <tr><td>Backend full (222 classes, real datasource)</td><td class="num">2,107</td><td class="num">2,099</td><td class="num">8</td><td>8 = <code>WarehouseServiceTest</code> only</td></tr>
+          <tr><td>Frontend full (108 files)</td><td class="num">5,643</td><td class="num">5,619</td><td class="num">24</td><td>see below</td></tr>
+          <tr><td>Backend build (<code>mvn package</code>)</td><td colspan="3" class="num">&mdash;</td><td><span class="yes">BUILD SUCCESS</span></td></tr>
+          <tr><td>Frontend build (<code>npm run build</code>)</td><td colspan="3" class="num">&mdash;</td><td><span class="yes">built in 1m 10s</span></td></tr>
+          <tr><td>Frontend lint (<code>npm run lint</code>)</td><td colspan="3" class="num">84 errors / 4,365 warnings</td><td>pre-existing baseline</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h4>Backend: the 8 failures are the named baseline</h4>
+
+    <p>
+      All 8 are in <code>WarehouseServiceTest</code> (2 failures + 6 errors), every one a Mockito
+      <code>PotentialStubbingProblem</code> from strict stubbing against
+      <code>WarehouseService.resolveBranchForWrite</code>. That is the class §16 names as a known
+      baseline failure, and it is the subject of the most recent commit on this branch
+      (<code>031ac383</code>, branch-scoped warehouse visibility). Nothing in it touches sales
+      returns, invoice balance or allocations. Not attributable to Phase 2.
+    </p>
+
+    <p>
+      One thing changed between the two full-suite runs and is worth stating plainly: in the
+      <em>first</em> run the new concurrency test failed inside the suite (while passing in
+      isolation) on <code>audit rows survived cleanup</code>. That was a race in the test's own
+      cleanup against the <code>@Async</code> audit writer, not a product defect. It was fixed by
+      waiting for the write to land, and the second full-suite run is clean.
+    </p>
+
+    <h4>Frontend: 24 suite failures, 14 genuine, all baseline</h4>
+
+    <p>
+      Each of the 9 failing files was re-run in isolation. <strong>10 of the 24 failures do not
+      reproduce</strong> &mdash; they are suite-order pollution:
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>File</th><th class="num">In isolation</th><th>Reading</th></tr></thead>
+        <tbody>
+          <tr><td><code>salesReturnVoucherFlow.test.jsx</code></td><td class="num">15 / 15 pass</td><td><span class="yes">pollution</span> &mdash; and this is the only failing file inside Phase 2's blast radius</td></tr>
+          <tr><td><code>GlobalSearchModal.test.jsx</code></td><td class="num">61 / 61 pass</td><td><span class="yes">pollution</span></td></tr>
+          <tr><td><code>ServiceRepair.characterization.test.jsx</code></td><td class="num">86 / 86 pass</td><td><span class="yes">pollution</span></td></tr>
+          <tr><td><code>useProductEntry.characterization.test.js</code></td><td class="num">6 fail / 80 pass</td><td>genuine &mdash; POS product-entry baseline</td></tr>
+          <tr><td><code>useDelivery.characterization.test.js</code></td><td class="num">3 fail / 32 pass</td><td>genuine &mdash; POS delivery baseline</td></tr>
+          <tr><td><code>PromotionsDialog.characterization.test.jsx</code></td><td class="num">2 fail / 71 pass</td><td>genuine &mdash; POS baseline</td></tr>
+          <tr><td><code>POSSalesArchitecture.characterization.test.jsx</code></td><td class="num">1 fail / 154 pass</td><td>genuine &mdash; structural (<code>useState</code> counts, import lists)</td></tr>
+          <tr><td><code>PriceCheck.characterization.test.jsx</code></td><td class="num">1 fail / 136 pass</td><td>genuine &mdash; POS baseline</td></tr>
+          <tr><td><code>SerialBatch.characterization.test.jsx</code></td><td class="num">1 fail / 123 pass</td><td>genuine &mdash; POS baseline</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The 14 genuine failures are all <code>*.characterization.test.*</code> files under POS / Sales
+      &mdash; exactly the category §16 names as baseline. Their assertions are about POSSales
+      component architecture (<code>declares 231 top-level useState pairs</code>, <code>child
+      imports exactly React, the five icons and the region's module dependencies</code>) and
+      product-entry / delivery dialog mechanics. None concerns return economics, allocations or
+      invoice balance, and they track the two most recent POS commits on this branch
+      (<code>1472cba9</code>, <code>fb59e8a8</code>). Phase 2's own frontend tests
+      (<code>salesReturnVoucherFlow</code>, <code>salesReturnPrint*</code>) all pass. Not
+      attributable to Phase 2.
+    </p>
+
+    <p>
+      Lint is unchanged by this phase: no frontend file was modified. The 84 errors and 4,365
+      warnings are the pre-existing baseline.
+    </p>
+
+    <h3>21.9 &nbsp; Database safety verification</h3>
+
+    <p>
+      A before-and-after snapshot was taken of every table that could hold a financial write
+      &mdash; row count plus summed money or quantity for <code>sales_invoices</code>,
+      <code>sales_returns</code>, <code>sales_receipt_vouchers</code>,
+      <code>advance_applications</code>, <code>journal_entries</code>, <code>journal_lines</code>,
+      <code>ledger_entries</code>, <code>stock_movements</code> and
+      <code>sales_return_credit_applications</code>.
+    </p>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Database</th><th>Role in this phase</th><th>Before vs after</th></tr></thead>
+        <tbody>
+          <tr><td><code>billbull_qa_v111_audit</code></td><td>evidence tenant &mdash; every query in §21.1&ndash;21.3 ran here</td><td><span class="yes">byte-identical</span></td></tr>
+          <tr><td><code>testdb</code></td><td>read-only comparison</td><td><span class="yes">byte-identical</span></td></tr>
+          <tr><td><code>clientdb</code></td><td>read-only comparison (pre-V111; has no allocation table)</td><td><span class="yes">byte-identical</span></td></tr>
+          <tr><td><code>billbull_concurrency_test</code></td><td>throwaway <code>TEMPLATE</code> clone &mdash; the only database written to</td><td>zero residue after a clean run</td></tr>
+          <tr><td><code>billbull_ddlnone_check</code></td><td>throwaway clone for the §21.10 boot check</td><td>dropped after use</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      So, for the three business databases: no historical rows modified, no financial transactions
+      inserted, no journal rows inserted, no receipts inserted, no status updates executed. The
+      analysis queries were additionally executed inside a read-only session, which would have
+      refused any write at the server regardless of what the file contained. The V111 QA clone
+      remains on the host as migration evidence and can be dropped at will.
+    </p>
+
+    <h3>21.10 &nbsp; V111 validation and updated deployment status</h3>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>V111 applied successfully</td><td><span class="yes">yes</span> &mdash; <code>installed_rank 108</code>, version <code>111</code>, <code>success = t</code>, 2026-10-02 12:44:43</td></tr>
+          <tr><td>Ordered after V110</td><td><span class="yes">yes</span> &mdash; V110 is rank 107, V109 rank 106. No out-of-order entry.</td></tr>
+          <tr><td>Failed migrations</td><td><span class="yes">0</span></td></tr>
+          <tr><td>Schema matches entities</td><td><span class="yes">yes</span> &mdash; 9 columns; 5 indexes including the partial unique <code>ux_srca_return_invoice_applied</code>; <code>ck_srca_status</code> check; <code>fk_srca_sales_return</code> FK; <code>sales_invoices.return_credited numeric</code>; <code>sales_return_items.invoice_item_id bigint</code> with its index</td></tr>
+          <tr><td>Application starts with <code>ddl-auto=none</code></td><td><span class="yes">yes</span> &mdash; the packaged jar started in 39.454 s against a V111 clone; Flyway reported <code>Current version of schema "public": 111 &mdash; up to date</code>; zero <code>SchemaManagementException</code></td></tr>
+          <tr><td>V111 edited</td><td><span class="yes">no</span></td></tr>
+          <tr><td>V112 created</td><td><span class="yes">no</span> &mdash; no <code>V112+</code> file exists</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="font-family:'IBM Plex Mono',monospace; font-size:.95rem; font-weight:600;">
+      Database changes = none.
+    </p>
+
+    <p>
+      No migration defect was discovered, so no schema change was made. The §21.5 fix was
+      deliberately implemented as a truncation in application code rather than as a column widening,
+      precisely so that it needs no migration on any tenant.
+    </p>
+
+    <h4>Changes made in this phase</h4>
+
+    <div class="tscroll">
+      <table>
+        <thead><tr><th>File</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td><code>db/analysis/sales_return_phase2_stale_invoice_status.sql</code></td><td><span class="chip c-new">new</span> the missing quantification query, the full recompute simulation, the reconciliation, the AR-surface comparison, the GL comparison and the origin-evidence queries &mdash; all <code>SELECT</code>. Untracked, like the rest of <code>db/analysis/</code> (see §21.1).</td></tr>
+          <tr><td><code>db/analysis/sales_return_phase2_incompatible_history.sql</code></td><td>header cross-reference only, so the two populations are not summed</td></tr>
+          <tr><td><code>sales/returns/SalesReturnApprovalConcurrencyTest.java</code></td><td><span class="chip c-new">new</span> the real-PostgreSQL concurrency proof, with a negative control and self-verifying cleanup</td></tr>
+          <tr><td><code>security/AuditLogWriter.java</code></td><td><span class="chip c-fix">fix</span> truncate the 255-char <code>denial_reason</code> mirror so a domain event longer than 255 characters is no longer silently dropped (§21.5)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="rec" style="border-left-color:var(--open);">
+      <span class="rec-t" style="color:var(--open);">Final determination &mdash; §21</span>
+      <p style="font-family:'IBM Plex Mono',monospace; font-size:1.05rem; font-weight:600; letter-spacing:.02em;">
+        NOT READY &mdash; FINANCE DATA REMEDIATION DECISION REQUIRED
+      </p>
+      <p>
+        Both evidence gaps are closed, and the evidence is <em>better</em> than the previous audit
+        assumed: the recomputation changes no invoice's balance, the tenant reconciles to 0.00, the
+        restatement moves every AR surface into agreement, and it <em>reduces</em>
+        <code>reconcileAR</code>'s GL-vs-sub-ledger difference by 8,400.00. Concurrency is now
+        demonstrated on real PostgreSQL with a negative control. All three decision gates hold. No
+        new failure was introduced, and the one newly discovered Phase 2 defect was fixed and is
+        now covered by a test.
+      </p>
+      <p>
+        <strong>The status remains NOT READY for one reason only:</strong> the three invoices have
+        received no authorized treatment. Nothing was changed about them, deliberately. Whether the
+        8,400.00 was collected and unrecorded, or never collected, is not answerable from stored
+        data, and it determines which of the three existing remediation mechanisms is correct. That
+        is a finance decision on three invoices for one customer, and this phase's purpose was to
+        put the evidence in front of it &mdash; not to clear the status.
+      </p>
+      <p>
+        One further item, separable and non-blocking for the sales-return deployment: the aborted
+        checkout that produced these rows is a live code path.
+        <code>PosCheckoutController</code> rolls back steps 1 and 2 on failure but not step 3, so a
+        failing <code>recordPayment</code> will create another such invoice. That is a POS checkout
+        defect, outside Phase 2's scope and outside this brief, and it is recorded here because the
+        same three rows are its only known instance.
+      </p>
+    </div>
+  </section>
+
+  <footer class="end">
+    BillBull Retail / ERP &middot; Sales Return Phase 2 QA, V111 validation &amp; pre-deployment audit
+    &middot; 2 October 2026 &middot; branch feature/posclient &middot; incl. &sect;21 blocker-resolution validation &middot; no production data changed
+  </footer>
+</div>
+</body>
+</html>
