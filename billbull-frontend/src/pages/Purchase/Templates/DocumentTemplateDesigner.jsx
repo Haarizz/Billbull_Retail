@@ -165,6 +165,7 @@ function defaultSettings(docType) {
     colQty: true,
     colUnitPrice: !isGRN && !isDN,
     colTaxableAmount: isInv || isCN || docType === "quotation",
+    colFooterDiscount: false,
     colDiscount: !isGRN && !isDN,
     colVAT: isInv || isCN,
     colVATAmount: isInv || isCN,
@@ -340,6 +341,7 @@ function ClassicPreview({ s, currencyConfig }) {
             {s.colUOM && <th style={{ ...thS }}>UOM</th>}
             {s.colQty && <th style={{ ...thS }}>Qty</th>}
             {s.colUnitPrice && <th style={{ ...thS }}>Unit Price</th>}
+            {s.colFooterDiscount && <th style={{ ...thS }}>Footer Disc.</th>}
             {s.colTaxableAmount && <th style={{ ...thS }}>Taxable Amount</th>}
             {s.colDiscount && <th style={{ ...thS }}>Disc %</th>}
             {s.colVAT && <th style={{ ...thS }}>VAT %</th>}
@@ -396,6 +398,7 @@ function ClassicPreview({ s, currencyConfig }) {
                 {s.colUOM && <td style={tdS(false, true)}>{item.uom}</td>}
                 {s.colQty && <td style={tdS(false, true)}>{item.qty.toFixed(2)}</td>}
                 {s.colUnitPrice && <td style={tdS(true)}>{item.price.toLocaleString("en-AE", { minimumFractionDigits: 2 })}</td>}
+                {s.colFooterDiscount && <td style={tdS(true)}>-{(subtotal > 0 ? mockFooterDiscount * taxable / subtotal : 0).toLocaleString("en-AE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>}
                 {s.colTaxableAmount && <td style={tdS(true)}>{taxable.toLocaleString("en-AE", { minimumFractionDigits: 2 })}</td>}
                 {s.colDiscount && <td style={tdS(false, true)}>
                     {item.disc > 0 ? <div>
@@ -864,6 +867,7 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
               <Row label="UOM"><Toggle value={s.colUOM} onChange={(v) => upd("colUOM", v)} /></Row>
               <Row label="Quantity"><Toggle value={s.colQty} onChange={(v) => upd("colQty", v)} /></Row>
               <Row label="Unit Price"><Toggle value={s.colUnitPrice} onChange={(v) => upd("colUnitPrice", v)} /></Row>
+              <Row label="Footer Disc. (per line)"><Toggle value={Boolean(s.colFooterDiscount)} onChange={(v) => upd("colFooterDiscount", v)} /></Row>
               <Row label="Taxable Amount"><Toggle value={s.colTaxableAmount} onChange={(v) => upd("colTaxableAmount", v)} /></Row>
               <Row label="Discount %"><Toggle value={s.colDiscount} onChange={(v) => upd("colDiscount", v)} /></Row>
               <Row label="VAT %"><Toggle value={s.colVAT} onChange={(v) => upd("colVAT", v)} /></Row>

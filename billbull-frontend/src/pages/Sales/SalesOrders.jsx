@@ -64,7 +64,7 @@ import { useBranch } from '../../context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendSalesOrderEmail } from '../../api/salesorderApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -656,9 +656,23 @@ const SalesOrders = () => {
     return () => document.removeEventListener('mousedown', handleOutside);
   }, [overflowMenu]);
 
+  // Every pre-fill / reload path takes the footer discount through ONE resolver so its
+  // type and value are never lost or reinterpreted (QTN/PI -> SO, reopen).
+  const applySourceFooterDiscount = (src) => {
+    const { type, value } = resolveSourceFooterDiscount(src);
+    setBillDiscountType(type);
+    setBillDiscount(value);
+  };
+
   // --- CALCULATIONS ---
   const calculateTotals = () => {
-    const itemSummary = summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode);
+    const itemSummary = isLocked
+      ? summarizeStoredSalesItems(items, {
+        billDiscountType,
+        billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
+        billDiscountAmount: billDiscountType === 'amount' ? billDiscount : 0,
+      }, {}, vatMode)
+      : summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode);
     const grossTotal = itemSummary.grossTotal;
     const totalDiscount = itemSummary.itemDiscountTotal;
     const subTotal = itemSummary.subTotal;
@@ -673,13 +687,16 @@ const SalesOrders = () => {
       return acc + (qty * unitCost);
     }, 0);
 
-    const profit = subTotal - totalCost;
-    const marginPercent = subTotal > 0 ? (profit / subTotal) * 100 : 0;
+    // Margin on revenue AFTER the footer discount.
+    const profit = itemSummary.taxableTotal - totalCost;
+    const marginPercent = itemSummary.taxableTotal > 0 ? (profit / itemSummary.taxableTotal) * 100 : 0;
 
-    return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent };
+    return { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent, itemSummary };
   };
 
-  const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent } = calculateTotals();
+  const { grossTotal, totalDiscount, subTotal, billDiscountAmount, totalTax, orderTotal, balanceDue, totalCost, profit, marginPercent, itemSummary } = calculateTotals();
+  const orderLineFor = summaryLineLookup(items, itemSummary);
+  const showFooterBreakdown = itemSummary.footerDiscountTotal > 0 && !itemSummary.headerOnlyFooter;
 
   // --- ACTIONS ---
 
@@ -770,6 +787,10 @@ const SalesOrders = () => {
       tax: Number(item.tax ?? item.taxRate ?? item.taxPercent) || 0,
       taxAmt: Number(item.taxAmt ?? item.taxAmount) || 0,
       total: Number(item.total ?? item.lineTotal) || 0,
+      // Saved order lines keep the server's stored (post-footer) money for display.
+      serverLine: (item.soItemId && item.lineTotal != null && item.taxAmount != null)
+        ? { lineTotal: item.lineTotal, taxAmount: item.taxAmount, footerDiscount: item.footerDiscount ?? null, taxableAmount: item.taxableAmount ?? null }
+        : undefined,
       binId: item.binId ?? null,
       binCode: item.binCode || '',
       // QA-001: carry productType through so SERVICE lines stay gated post-conversion
@@ -1134,8 +1155,7 @@ const SalesOrders = () => {
         price: Number(i.price),
         disc: Number(i.disc),
         tax: Number(i.tax),
-        taxAmt: Number(i.taxAmt || 0),
-        total: Number(i.total),
+        ...printLineMoney(orderLineFor(i), i),
         image: i.image ? getImageUrl(i.image) : '',
         batchNumber: i.batchNumber || '',
         batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [],
@@ -1143,6 +1163,7 @@ const SalesOrders = () => {
       })),
       totals: {
         subTotal: grossTotal,
+        taxableAmount: itemSummary.taxableTotal,
         tax: totalTax,
         grandTotal: orderTotal,
         currency: company?.currencySymbol || company?.currency || 'AED',
@@ -1287,11 +1308,9 @@ const SalesOrders = () => {
       status: targetStatus,
 
       // Map Items
+      // Preview of the server's allocation — SalesOrderService recomputes it authoritatively.
       items: allocateFooterDiscount(items, makeFooterDiscount(billDiscountType, billDiscount), vatMode).map(i => {
-        const footerDisc = Number(i.allocatedFooterDiscount) || 0;
-        const itemNet = Math.max(0, Number(i.total || 0) - (Number(i.taxAmt || 0)) - footerDisc);
-        const taxPercent = Number(i.tax) || 0;
-        const itemTax = (itemNet) * (taxPercent / 100);
+        const alloc = i.footerAllocation;
         return {
           id: (orderId && i.soItemId) ? i.soItemId : null,
           itemCode: i.code,
@@ -1304,10 +1323,11 @@ const SalesOrders = () => {
           price: Number(i.price),
           cost: Number(i.cost),
           discount: Number(i.disc),
-          footerDiscount: footerDisc,
+          footerDiscount: alloc.share,
           taxRate: Number(i.tax),
-          taxAmount: itemTax,
-          lineTotal: itemNet + itemTax,
+          taxAmount: alloc.tax,
+          taxableAmount: alloc.taxable,
+          lineTotal: alloc.total,
           foc: Number(i.foc) || 0,
           focUnit: i.focUnit || i.unit || 'PCS',
           binId: i.binId || null
@@ -1463,10 +1483,7 @@ const SalesOrders = () => {
     setLinkedQtn(qtn.qtnNo);
     setLinkedPi('');
     setLinkedSourceSearch(qtn.qtnNo || '');
-    setBillDiscountType(qtn.billDiscountType === 'amount' ? 'amount' : 'percent');
-    setBillDiscount(qtn.billDiscountType === 'amount'
-      ? Number(qtn.billDiscountFixed || qtn.billDiscountAmount) || 0
-      : Number(qtn.billDiscount) || 0);
+    applySourceFooterDiscount(qtn);
 
     if (qtn.customer || qtn.customerId || qtn.customerCode) {
       // Centralised resolution: id → code → name → fuzzy. Falls back to a thin
@@ -1503,7 +1520,7 @@ const SalesOrders = () => {
     setLinkedPi(proforma.piNumber || '');
     setLinkedQtn('');
     setLinkedSourceSearch(proforma.piNumber || '');
-    setBillDiscount(Number(proforma.billDiscount) || 0);
+    applySourceFooterDiscount(proforma);
 
     const { customer: cust, shippingAddress: resolvedShipping } = hydrateCustomerFromSource(
       {
@@ -1558,10 +1575,7 @@ const SalesOrders = () => {
     }
 
     setAdvanceAmount(order.advanceAmount || 0);
-    setBillDiscountType(order.billDiscountType === 'amount' ? 'amount' : 'percent');
-    setBillDiscount(order.billDiscountType === 'amount'
-        ? Number(order.billDiscountFixed || order.billDiscountAmount) || 0
-        : Number(order.billDiscount) || 0);
+    applySourceFooterDiscount(order);
     setPaymentMethod(order.paymentMethod || 'Cash');
     setPaymentRef(order.paymentReference || '');
     setDeliveryType(order.deliveryType || 'Delivery');
@@ -2550,6 +2564,8 @@ const SalesOrders = () => {
                               showSettings={Boolean(item.code || item.desc || item.remarks)}
                               showTaxDiscount={true}
                               onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
+                              footerAllocation={orderLineFor(item)}
+                              showFooterBreakdown={showFooterBreakdown}
                               page="sales_orders"
                             />
                             )}
@@ -2637,7 +2653,9 @@ const SalesOrders = () => {
                           {/* Line Total */}
                           <td className="p-2 text-center align-middle w-24">
                             <div className="font-bold text-slate-800 text-sm">
-                              {((item.total) || 0).toFixed(2)}
+                              {(showFooterBreakdown && orderLineFor(item)
+                                ? Number(orderLineFor(item).total)
+                                : Number(item.total || 0)).toFixed(2)}
                             </div>
                           </td>
 
@@ -2793,7 +2811,7 @@ const SalesOrders = () => {
                 </div>
                 <div className="flex justify-between text-slate-600 items-center">
                   <span className="flex items-center gap-1.5">
-                    Footer Discount
+                    <span title={FOOTER_DISCOUNT_HELP} className="cursor-help border-b border-dotted border-slate-400">Footer Discount</span>
                     <button
                       type="button"
                       disabled={isLocked}
@@ -2813,6 +2831,15 @@ const SalesOrders = () => {
                     />
                   </span>
                   <span className="font-medium text-red-500">- <CurrencyAmount value={billDiscountAmount} currency={orderCurrency} /></span>
+                </div>
+                {showFooterBreakdown && (
+                  <p className="text-[10px] leading-snug text-slate-400 -mt-1" data-testid="footer-discount-help">
+                    {FOOTER_DISCOUNT_HELP}
+                  </p>
+                )}
+                <div className="flex justify-between text-slate-600">
+                  <span>Taxable Amount</span>
+                  <CurrencyAmount value={itemSummary.taxableTotal} currency={orderCurrency} />
                 </div>
                 <div className="flex justify-between text-slate-600">
                   <span>Tax</span>

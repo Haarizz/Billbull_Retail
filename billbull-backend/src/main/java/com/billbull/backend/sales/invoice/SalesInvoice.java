@@ -113,6 +113,14 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
     @Column(name = "bill_discount_type", length = 20)
     private String billDiscountType;
 
+    /**
+     * Request-only: the fixed footer amount the user typed when {@code billDiscountType} is
+     * "amount". Not persisted — the server allocates it and stores the result (capped at the
+     * eligible base) in {@code billDiscountAmount}.
+     */
+    @Transient
+    private BigDecimal billDiscountFixed;
+
     /** Flat delivery/shipping charge added to the invoice total (no VAT applied). */
     @Column(precision = 15, scale = 2)
     private BigDecimal deliveryCharge;
@@ -541,6 +549,14 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     public void setBillDiscountType(String billDiscountType) {
         this.billDiscountType = billDiscountType;
+    }
+
+    public BigDecimal getBillDiscountFixed() {
+        return billDiscountFixed;
+    }
+
+    public void setBillDiscountFixed(BigDecimal billDiscountFixed) {
+        this.billDiscountFixed = billDiscountFixed;
     }
 
     public BigDecimal getDeliveryCharge() {

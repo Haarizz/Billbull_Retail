@@ -545,6 +545,9 @@ const applyDesignerColumnVisibility = (columns = {}, settings = {}) => ({
     qty: visibleWhen(settings, ['colQty', 'showQty'], columns.qty !== false),
     unitPrice: visibleWhen(settings, ['colUnitPrice', 'showUnitPrice'], columns.unitPrice !== false),
     taxableAmount: visibleWhen(settings, ['colTaxableAmount', 'showTaxableAmount'], Boolean(columns.taxableAmount)),
+    // Opt-in: each line's share of the document footer discount. Off by default so existing
+    // customer templates keep their layout.
+    footerDiscount: visibleWhen(settings, ['colFooterDiscount', 'showFooterDiscount'], Boolean(columns.footerDiscount)),
     discount: visibleWhen(settings, ['colDiscount', 'showDiscount'], Boolean(columns.discount)),
     discountPercent: visibleWhen(settings, ['colDiscount', 'showDiscountPercent'], Boolean(columns.discountPercent)),
     taxPercent: visibleWhen(settings, ['colVAT', 'showVATPercent'], Boolean(columns.taxPercent)),
@@ -726,6 +729,8 @@ const normaliseItem = (item = {}, vatMode = VAT_MODES.EXCLUSIVE) => {
         taxPercent,
         discountPercent,
         discountAmount,
+        // This line's share of the document footer discount (sales documents; 0 otherwise).
+        footerDiscount: asNumber(item.footerDiscount ?? 0),
         salesPerson: item.salesPerson || item.salesperson || item.salesPersonName || '',
         location: item.location || item.branch || item.branchName || item.locationName || '',
         batchSelections: Array.isArray(item.batchSelections) ? item.batchSelections : [],
@@ -783,6 +788,7 @@ const createColumnModel = (rawColumns = {}) => {
         { key: 'expiry', label: 'Expiry', compactLabel: 'Expiry', align: 'center', weight: 0.82, enabled: Boolean(c.expiry) },
         { key: 'qty', label: 'Qty', compactLabel: 'Qty', align: 'right', weight: 0.5, enabled: c.qty !== false },
         { key: 'unitPrice', label: 'Unit Price', compactLabel: 'Unit Price', align: 'right', weight: 0.86, enabled: c.unitPrice !== false },
+        { key: 'footerDiscount', label: 'Footer Disc.', compactLabel: 'Footer Disc.', align: 'right', weight: 0.86, enabled: Boolean(c.footerDiscount) },
         { key: 'taxableAmount', label: 'Taxable Amount', compactLabel: 'Taxable Amount', align: 'right', weight: 1.05, enabled: Boolean(c.taxableAmount) },
         { key: 'discountPercent', label: 'Discount %', compactLabel: 'Discount %', align: 'center', weight: 0.78, enabled: Boolean(c.discountPercent) },
         { key: 'taxPercent', label: 'VAT %', compactLabel: 'VAT %', align: 'center', weight: 0.55, enabled: Boolean(c.taxPercent) },
@@ -998,6 +1004,8 @@ const renderTableCell = (column, item, index, displayOptions = {}, columnOptions
             return `<td class="table-cell cell-center">${escapeHtml(item.unit || '-')}</td>`;
         case 'unitPrice':
             return `<td class="table-cell cell-right">${fmtSigned(item.price)}</td>`;
+        case 'footerDiscount':
+            return `<td class="table-cell cell-right">${item.footerDiscount > 0 ? `-${fmtSigned(item.footerDiscount)}` : '-'}</td>`;
         case 'taxableAmount':
             return `
                 <td class="table-cell cell-right">

@@ -2049,9 +2049,23 @@ public class SalesReportDataService {
         };
     }
 
-    private double invoiceDiscount(SalesInvoice invoice) {
-        double lineDiscount = items(invoice).stream().mapToDouble(item -> n(item.getDiscount())).sum();
-        return n(invoice.getBillDiscount()) + lineDiscount;
+    /**
+     * Discount given on an invoice, in money: Σ item-discount amounts (live lines) plus the
+     * footer discount amount. {@code discount} and {@code billDiscount} are PERCENTAGE rates and
+     * must never be summed as money; amount-type footer discounts only exist in
+     * {@code billDiscountAmount}. Package-private for tests.
+     */
+    double invoiceDiscount(SalesInvoice invoice) {
+        double itemDiscount = items(invoice).stream()
+                .filter(this::isLiveItem)
+                .mapToDouble(item -> com.billbull.backend.sales.common.FooterDiscountAllocator.lineBase(
+                        java.math.BigDecimal.valueOf(ni(item.getQuantity())),
+                        item.getPrice(),
+                        java.math.BigDecimal.valueOf(ni(item.getFoc())),
+                        java.math.BigDecimal.valueOf(item.getDiscount() != null ? item.getDiscount() : 0d))
+                        .itemDiscount().doubleValue())
+                .sum();
+        return itemDiscount + n(invoice.getBillDiscountAmount());
     }
 
     private double invoiceTotal(SalesInvoice invoice) {

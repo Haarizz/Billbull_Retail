@@ -31,12 +31,15 @@ public class QuotationItem {
     private BigDecimal quantity;
     private BigDecimal price;
     private BigDecimal discount;
-    @Column(name = "footer_discount")
+    @Column(name = "footer_discount", precision = 15, scale = 2)
     private BigDecimal footerDiscount;
     private BigDecimal taxRate;
     private BigDecimal taxAmount;
     private BigDecimal lineTotal;
     private BigDecimal foc;
+    /** Unit the FOC quantity is expressed in; null means the selling unit. */
+    @Column(name = "foc_unit", length = 50)
+    private String focUnit;
 
     private String image;
 
@@ -189,6 +192,14 @@ public class QuotationItem {
 
     public void setFooterDiscount(BigDecimal footerDiscount) {
         this.footerDiscount = footerDiscount;
+    }
+
+    public String getFocUnit() {
+        return focUnit;
+    }
+
+    public void setFocUnit(String focUnit) {
+        this.focUnit = focUnit;
     }
 
     public BigDecimal getTaxRate() {

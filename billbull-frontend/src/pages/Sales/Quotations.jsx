@@ -102,7 +102,7 @@ import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
 import { getImageUrl } from '../../utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems, makeFooterDiscount, allocateFooterDiscount } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
 import {
     resolveCurrencyDisplayConfig,
     resolveCurrencyDisplayCode,
@@ -397,6 +397,8 @@ const Quotations = () => {
     const [activeTab, setActiveTab] = useState('list');
     // Transaction Preview (read-only) — selected quotation id for the preview tab.
     const [previewQuotationId, setPreviewQuotationId] = useState(null);
+    // Latest print/email handlers, read by the preview actions after state hydration.
+    const previewActionsRef = useRef({ print: () => {}, email: () => {} });
     const [editorMode, setEditorMode] = useState('edit');
     const [status, setStatus] = useState('Draft');
     const [searchTerm, setSearchTerm] = useState('');
@@ -407,6 +409,13 @@ const Quotations = () => {
     const [showToast, setShowToast] = useState(false);
     const [toastMessage, setToastMessage] = useState('');
     const [toastType, setToastType] = useState('success');
+    // Every toast auto-dismisses; re-arms whenever a new message is shown so a
+    // stale timer can't close a newer toast early. Notices stay up a bit longer.
+    useEffect(() => {
+        if (!showToast) return undefined;
+        const timer = setTimeout(() => setShowToast(false), toastType === 'info' ? 6000 : 4000);
+        return () => clearTimeout(timer);
+    }, [showToast, toastMessage, toastType]);
     const [printOptions, setPrintOptions] = useState({ printWithImages: false });
     const [salesSettings, setSalesSettings] = useState(null);
     const quotationAutoNumbering = isAutoNumberingEnabled(salesSettings, 'QUOTATION');
@@ -769,7 +778,7 @@ const Quotations = () => {
             sourceInquiryNumber: data.sourceInquiryNumber || '',
             total: data.totalAmount,
             billDiscount: data.billDiscount || 0,
-            billDiscountType: data.billDiscountType || 'percent',
+            billDiscountType: resolveSourceFooterDiscount(data).type,
             billDiscountAmount: data.billDiscountAmount || 0,
             vatMode: data.vatMode || 'EXCLUSIVE',
             status: data.status === 'PENDING_APPROVAL' ? 'Pending Approval' :
@@ -823,6 +832,11 @@ const Quotations = () => {
                 taxAmt: i.taxAmount,
                 total: i.lineTotal,
                 taxableAmount: Math.max(0, (i.grossAmount || i.gross || 0) * (1 - ((i.discount || i.disc || 0) / 100))),
+                // Server's stored (post-footer) line money — saved quotations display/print
+                // exactly this, never a re-applied footer discount.
+                serverLine: (i.lineTotal != null && i.taxAmount != null)
+                    ? { lineTotal: i.lineTotal, taxAmount: i.taxAmount, footerDiscount: i.footerDiscount ?? null }
+                    : undefined,
                 remarks: i.remarks,
                 isProductSelected: !!i.itemCode,
                 // QA-001: preserve the product-master hints the backend enriches
@@ -1357,7 +1371,6 @@ const Quotations = () => {
         setToastMessage(`${product.name} added to quotation`);
         setToastType('success');
         setShowToast(true);
-        setTimeout(() => setShowToast(false), 2000);
 
         // ✅ Close modal and focus Qty
         setIsProductSelectionOpen(false);
@@ -1518,10 +1531,20 @@ const Quotations = () => {
     };
 
     // ✅ UPDATED CALCULATIONS
+    // View mode shows the stored server values; editing shows the live allocation
+    // (identical to what the server will save).
     const quotationSummary = useMemo(
-        () => summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode),
-        [items, billDiscount, billDiscountType, vatMode]
+        () => (isViewMode
+            ? summarizeStoredSalesItems(items, {
+                billDiscountType,
+                billDiscount: billDiscountType === 'percent' ? billDiscount : 0,
+                billDiscountAmount: billDiscountType === 'amount' ? billDiscount : 0,
+            }, {}, vatMode)
+            : summarizeSalesItems(items, makeFooterDiscount(billDiscountType, billDiscount), {}, vatMode)),
+        [items, billDiscount, billDiscountType, vatMode, isViewMode]
     );
+    const quotationLineFor = useMemo(() => summaryLineLookup(items, quotationSummary), [items, quotationSummary]);
+    const showFooterBreakdown = quotationSummary.footerDiscountTotal > 0 && !quotationSummary.headerOnlyFooter;
     const grossTotal = quotationSummary.grossTotal;
     const totalItemDiscount = quotationSummary.itemDiscountTotal;
     const subTotal = quotationSummary.subTotal;
@@ -1568,12 +1591,9 @@ const Quotations = () => {
             status: targetStatus === 'Pending Approval' ? 'PENDING_APPROVAL' :
                 targetStatus === 'Approved' ? 'APPROVED' :
                     targetStatus === 'Rejected' ? 'REJECTED' : 'DRAFT',
+            // Preview of the server's allocation — QuotationService recomputes it authoritatively.
             items: allocateFooterDiscount(activeItems, makeFooterDiscount(billDiscountType, billDiscount), vatMode).map(i => {
-                const footerDisc = Number(i.allocatedFooterDiscount) || 0;
-                const itemNetBeforeFooter = Number(i.total || 0) - Number(i.taxAmt || 0);
-                const itemNet = Math.max(0, itemNetBeforeFooter - footerDisc);
-                const taxPercent = Number(i.tax) || 0;
-                const itemTax = itemNet * (taxPercent / 100);
+                const alloc = i.footerAllocation;
                 return {
                     // Only forward persisted DB ids. New rows get client-side keys
                     // like Date.now() / Date.now()+Math.random(), which are >= 1e12 or
@@ -1588,12 +1608,12 @@ const Quotations = () => {
                     quantity: i.qty,
                     price: i.price,
                     discount: i.disc,
-                    footerDiscount: footerDisc,
+                    footerDiscount: alloc.share,
                     taxRate: i.tax,
                     foc: i.foc,
                     focUnit: i.focUnit || 'PCS',
-                    taxAmount: itemTax,
-                    lineTotal: itemNet + itemTax,
+                    taxAmount: alloc.tax,
+                    lineTotal: alloc.total,
                     remarks: i.remarks,
                     sku: i.sku || '',
                     brandName: i.brand || i.brandName || '',
@@ -1631,11 +1651,11 @@ const Quotations = () => {
             setStatus('Draft');
 
             await refreshData();
+            setActiveTab('list');
 
             setToastMessage('Draft saved successfully!');
             setToastType('success');
             setShowToast(true);
-            setTimeout(() => setShowToast(false), 3000);
 
         } catch (error) {
             console.error("Save failed", error);
@@ -1726,7 +1746,6 @@ const Quotations = () => {
             setToastMessage('Quotation confirmed and pending approval!');
             setToastType('success');
             setShowToast(true);
-            setTimeout(() => setShowToast(false), 3000);
 
         } catch (error) {
             console.error("Confirm failed", error);
@@ -1766,6 +1785,7 @@ const Quotations = () => {
             await refreshData();
             setStatus("Approved");
             setEditorMode('view');
+            setActiveTab('list');
 
             setToastMessage("Quotation Approved!");
             setToastType("success");
@@ -1787,6 +1807,7 @@ const Quotations = () => {
 
             setStatus("Rejected");
             await refreshData();
+            setActiveTab('list');
             setToastMessage("Quotation Rejected.");
             setToastType("info");
             setShowToast(true);
@@ -1830,7 +1851,6 @@ const Quotations = () => {
             setToastMessage(`Revision created! You can now edit.`);
             setToastType('success');
             setShowToast(true);
-            setTimeout(() => setShowToast(false), 3000);
 
         } catch (error) {
             console.error("Revision failed", error);
@@ -1910,7 +1930,6 @@ const Quotations = () => {
             setToastMessage(`Email sent successfully to ${emailTo}`);
             setToastType('success');
             setShowToast(true);
-            setTimeout(() => setShowToast(false), 4000);
         } catch (err) {
             setToastMessage(err.message || 'Failed to send email.');
             setToastType('error');
@@ -2038,7 +2057,7 @@ const Quotations = () => {
     };
 
 
-    const handleEditQuotation = (qtn, mode = 'edit') => {
+    const handleEditQuotation = (qtn, mode = 'edit', { switchTab = true } = {}) => {
         const allowEdit = mode === 'edit' && canEditQuotation(qtn.status);
         setEditingId(qtn.id);
         setEditingQtnNo(qtn.qtnNo || '');
@@ -2089,10 +2108,11 @@ const Quotations = () => {
         setInternalNotes(qtn.internalNotes || '');
         setShippingAddress(qtn.shippingAddress || '');
         setAttachments(qtn.attachments || []);
-        setBillDiscountType(qtn.billDiscountType === 'amount' ? 'amount' : 'percent');
-        setBillDiscount(qtn.billDiscountType === 'amount'
-            ? Number(qtn.billDiscountFixed || qtn.billDiscountAmount) || 0
-            : Number(qtn.billDiscount) || 0);
+        {
+            const { type, value } = resolveSourceFooterDiscount(qtn);
+            setBillDiscountType(type);
+            setBillDiscount(value);
+        }
         setVatMode(qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
         setSourceInquiry(qtn.sourceInquiryId ? {
             id: qtn.sourceInquiryId,
@@ -2104,7 +2124,7 @@ const Quotations = () => {
         setIsCurrencyOpen(false);
         setIsPaymentTermOpen(false);
         setIsDeliveryTypeOpen(false);
-        setActiveTab('create');
+        if (switchTab) setActiveTab('create');
 
         if (mode === 'edit' && !allowEdit) {
             setToastMessage('Approved quotations are view-only. Use Revise to make changes.');
@@ -2126,21 +2146,24 @@ const Quotations = () => {
     // Preview actions read editor state (print/email build from buildQuotationDocPayload
     // + editingId), so first hydrate the editor from the raw entity, then act.
     // The preview passes the raw getQuotationById entity → map to editor shape.
-    const loadRawQuotationIntoEditor = (rawQtn, mode = 'edit') => {
+    const loadRawQuotationIntoEditor = (rawQtn, mode = 'edit', options) => {
         const mapped = mapBackendToFrontend(rawQtn);
-        handleEditQuotation(mapped, mode);
+        handleEditQuotation(mapped, mode, options);
         return mapped;
     };
     const handlePreviewEdit = (rawQtn) => {
         loadRawQuotationIntoEditor(rawQtn, 'edit');
     };
+    // Print/email hydrate editor state in the background and stay on the preview tab.
+    // The deferred call goes through previewActionsRef so it runs against the
+    // re-rendered handlers (with the hydrated state), not this render's stale closure.
     const handlePreviewPrint = (rawQtn) => {
-        loadRawQuotationIntoEditor(rawQtn, 'view');
-        setTimeout(() => handlePrintClick(), 120);
+        loadRawQuotationIntoEditor(rawQtn, 'view', { switchTab: false });
+        setTimeout(() => previewActionsRef.current.print(), 120);
     };
     const handlePreviewEmail = (rawQtn) => {
-        loadRawQuotationIntoEditor(rawQtn, 'view');
-        setTimeout(() => handleOpenEmailModal(), 120);
+        loadRawQuotationIntoEditor(rawQtn, 'view', { switchTab: false });
+        setTimeout(() => previewActionsRef.current.email(), 120);
     };
 
     const handleSwitchToEditMode = () => {
@@ -2354,9 +2377,9 @@ const Quotations = () => {
         try {
             const templates = await getTemplatesByCategory('Quotation');
             const defaultTemplate = templates.find(t => t.isDefault);
-            const _qtnDiscType1 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
-            const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType1, _qtnDiscType1 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
-            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount, {}, qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
+            // Saved quotation: print its stored line money (never re-discounted).
+            const resolvedSummary = summarizeStoredSalesItems(qtn.items || [], qtn, {}, qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
+            const lineFor = summaryLineLookup(qtn.items || [], resolvedSummary);
             const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
             const _cleanCustomerName = (qtn) => fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
             const printData = {
@@ -2391,12 +2414,12 @@ const Quotations = () => {
                     price: Number(i.price),
                     disc: Number(i.disc),
                     tax: Number(i.tax),
-                    taxAmt: Number(i.taxAmt || 0),
-                    total: Number(i.total),
+                    ...printLineMoney(lineFor(i), i),
                     image: i.image ? getImageUrl(i.image) : ''
                 })),
                 totals: {
                     subTotal: resolvedSummary.grossTotal,
+                    taxableAmount: resolvedSummary.taxableTotal,
                     tax: resolvedSummary.tax,
                     grandTotal: resolvedSummary.grandTotal,
                     currency: getDisplayCurrencyProps(qtn.currency).currency,
@@ -2434,21 +2457,36 @@ const Quotations = () => {
         e.stopPropagation();
         closeActionMenu();
         try {
-            const templates = await getTemplatesByCategory('Quotation');
-            const defaultTemplate = templates.find(t => t.isDefault);
-            if (!defaultTemplate) return;
-            const _qtnDiscType2 = qtn.billDiscountType === 'percent' ? 'percent' : 'amount';
-            const resolvedBillDiscount = makeFooterDiscount(_qtnDiscType2, _qtnDiscType2 === 'amount' ? Number(qtn.billDiscountAmount || 0) : Number(qtn.billDiscount || 0));
-            const resolvedSummary = summarizeSalesItems(qtn.items || [], resolvedBillDiscount, {}, qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
-            const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
-            const _cleanName = fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
-            const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE', customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), taxAmt: Number(i.taxAmt || 0), total: Number(i.total), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
-            // Use the PRINT HTML (real @page / page-break CSS) and let the
-            // backend render it with headless Chromium — same engine as the
-            // print preview, so the PDF paginates and aligns identically.
-            const html = await generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
+            const html = await buildListingPdfHtml(qtn);
+            if (!html) return;
             await downloadPdfViaServer(html, qtn.qtnNo || 'Quotation');
         } catch { /* silent */ }
+    };
+
+    // Print HTML for a listing row using the default Quotation template — the exact
+    // document Download PDF produces.
+    // Returns null when no default template exists.
+    const buildListingPdfHtml = async (qtn) => {
+        const templates = await getTemplatesByCategory('Quotation');
+        const defaultTemplate = templates.find(t => t.isDefault);
+        if (!defaultTemplate) return null;
+        const resolvedSummary = summarizeStoredSalesItems(qtn.items || [], qtn, {}, qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE');
+        const lineFor = summaryLineLookup(qtn.items || [], resolvedSummary);
+        const fullCustomer = customersList.find(c => c.code === qtn.customerCode);
+        const _cleanName = fullCustomer?.name || (qtn.customerCode && qtn.customer?.endsWith(` - ${qtn.customerCode}`) ? qtn.customer.slice(0, -(` - ${qtn.customerCode}`).length) : qtn.customer);
+        const printData = { title: 'QUOTATION', docNo: qtn.qtnNo, date: qtn.date, vatMode: qtn.vatMode === 'INCLUSIVE' ? 'INCLUSIVE' : 'EXCLUSIVE', customer: { name: _cleanName, code: qtn.customerCode || '', address: fullCustomer?.address || fullCustomer?.defaultShippingAddress || '', shippingAddress: qtn.shippingAddress || '', phone: qtn.customerMobile || qtn.customerPhone || fullCustomer?.mobile || fullCustomer?.phone || '', email: qtn.customerEmail || fullCustomer?.email || '', trn: fullCustomer?.trn || '' }, items: (qtn.items || []).filter(i => i.code || i.desc).map(i => ({ code: i.code, name: i.name || i.productName || '', desc: i.desc || '', remarks: i.remarks || '', sku: i.sku || i.productSku || '', brand: i.brand || i.brandName || '', shortDesc: i.shortDesc || '', detailedDesc: i.detailedDesc || '', localName: i.localName || i.productLocalName || '', barcode: i.barcode || '', batchNumber: i.batchNumber || '', batchSelections: Array.isArray(i.batchSelections) ? i.batchSelections : [], unit: i.unit, qty: Number(i.qty), price: Number(i.price), disc: Number(i.disc), tax: Number(i.tax), ...printLineMoney(lineFor(i), i), image: i.image ? getImageUrl(i.image) : '' })), totals: { subTotal: resolvedSummary.grossTotal, taxableAmount: resolvedSummary.taxableTotal, tax: resolvedSummary.tax, grandTotal: resolvedSummary.grandTotal, currency: getDisplayCurrencyProps(qtn.currency).currency, billDiscount: resolvedSummary.footerDiscType === 'percent' ? resolvedSummary.footerDiscValue : 0, billDiscountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), discountAmount: (resolvedSummary.itemDiscountTotal || 0) + (resolvedSummary.billDiscountAmount || 0), itemDiscountAmount: resolvedSummary.itemDiscountTotal || 0, footerDiscountAmount: resolvedSummary.billDiscountAmount || 0 }, meta: { validTill: qtn.validTill, paymentTerm: qtn.paymentTerms || qtn.paymentTerm, status: qtn.status, notes: qtn.notesToCustomer, reference: qtn.branchCode || '', location: qtn.branchLocation || qtn.branchName || '', locationStore: qtn.branchName || qtn.branchCode || '', warehouse: qtn.branchLocation || '', deliveryTerms: qtn.deliveryType || '', salesPerson: '' } };
+        // Use the PRINT HTML (real @page / page-break CSS) and let the
+        // backend render it with headless Chromium — same engine as the
+        // print preview, so the PDF paginates and aligns identically.
+        return generatePrintHtmlAsync(defaultTemplate, printData, { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: qtn.branchId ?? activeBranch?.id }), billBullLogo });
+    };
+
+    // Email reads editor state (editingId / customer), so hydrate the editor first — same as handlePreviewEmail.
+    const handleListingEmail = (qtn, e) => {
+        e.stopPropagation();
+        closeActionMenu();
+        handleEditQuotation(qtn, 'view');
+        setTimeout(() => handleOpenEmailModal(), 120);
     };
 
 
@@ -2653,12 +2691,12 @@ const Quotations = () => {
             price: Number(i.price),
             disc: Number(i.disc),
             tax: Number(i.tax),
-            taxAmt: Number(i.taxAmt || 0),
-            total: Number(i.total),
+            ...printLineMoney(quotationLineFor(i), i),
             image: i.image || i.imageUrl ? getImageUrl(i.image || i.imageUrl) : ''
         })),
         totals: {
             subTotal: grossTotal,
+            taxableAmount: quotationSummary.taxableTotal,
             tax: totalTax,
             grandTotal,
             currency: displayCurrencyProps.currency,
@@ -2701,6 +2739,8 @@ const Quotations = () => {
             setIsPrinting(false);
         }
     };
+
+    previewActionsRef.current = { print: handlePrintClick, email: handleOpenEmailModal };
 
     const handlePrintQuotation = (template) => {
         setIsPrintModalOpen(false);
@@ -2767,8 +2807,8 @@ const Quotations = () => {
                 <td style="padding:10px 12px; border-bottom:1px solid ${t.tableBorder}; text-align:center; font-size:13px; color:#1e293b; font-weight:600;">${item.qty}</td>
                 <td style="padding:10px 12px; border-bottom:1px solid ${t.tableBorder}; text-align:right; font-size:13px; color:#1e293b;">${Number(item.price || 0).toFixed(2)}</td>
                 <td style="padding:10px 12px; border-bottom:1px solid ${t.tableBorder}; text-align:center; font-size:13px; color:#dc2626;">${item.disc || 0}%</td>
-                <td style="padding:10px 12px; border-bottom:1px solid ${t.tableBorder}; text-align:right; font-size:13px; color:#475569;">${Number(item.taxAmt || 0).toFixed(2)}</td>
-                <td style="padding:10px 12px; border-bottom:1px solid ${t.tableBorder}; text-align:right; font-size:14px; color:#1e293b; font-weight:700;">${Number(item.total || 0).toFixed(2)}</td>
+                <td style="padding:10px 12px; border-bottom:1px solid ${t.tableBorder}; text-align:right; font-size:13px; color:#475569;">${Number(printLineMoney(quotationLineFor(item), item).taxAmt || 0).toFixed(2)}</td>
+                <td style="padding:10px 12px; border-bottom:1px solid ${t.tableBorder}; text-align:right; font-size:14px; color:#1e293b; font-weight:700;">${Number(printLineMoney(quotationLineFor(item), item).total || 0).toFixed(2)}</td>
             </tr>
         `).join('');
 
@@ -3016,8 +3056,8 @@ const Quotations = () => {
                                 </button>
                             )}
 
-                            {/* Primary workflow actions — same handlers as the fixed bottom bar,
-                                surfaced here on the title row per the redesign. */}
+                            {/* Primary workflow actions — the single action bar for the editor
+                                (the duplicate fixed bottom bar was removed). */}
                             {activeTab === 'create' && (
                                 <>
                             {status === 'Pending Approval' && (
@@ -3289,7 +3329,7 @@ const Quotations = () => {
                                             </div>
                                         </th>
                                         <th className="px-4 py-3 text-right">Status</th>
-                                        <th className="px-4 py-3 text-center w-12">Actions</th>
+                                        <th className="px-4 py-3 text-center w-48">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100/30">
@@ -3333,23 +3373,51 @@ const Quotations = () => {
                                                 <td className="px-4 py-3 text-right">
                                                     {renderStatusBadge(qtn.status)}
                                                 </td>
-                                                <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                                                    <div className="relative inline-block">
+                                                <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                                    <div className="relative flex items-center justify-center gap-0.5">
+                                                        <button
+                                                            onClick={(e) => handleListingDownload(qtn, e)}
+                                                            title="Download PDF"
+                                                            aria-label="Download PDF"
+                                                            className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                                                        >
+                                                            <Download size={15} />
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => handleListingPrint(qtn, e)}
+                                                            title="Print"
+                                                            aria-label="Print"
+                                                            className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                                                        >
+                                                            <Printer size={15} />
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => handleListingEmail(qtn, e)}
+                                                            title="Email"
+                                                            aria-label="Email"
+                                                            className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
+                                                        >
+                                                            <Mail size={15} />
+                                                        </button>
+                                                        <span className="mx-1 h-4 w-px bg-slate-200" aria-hidden="true" />
                                                         <button
                                                             onClick={(e) => handleActionMenuToggle(qtn.id, e)}
-                                                            className="p-1.5 rounded hover:bg-slate-200 text-slate-500 transition-colors"
+                                                            title="More actions"
+                                                            aria-label="More actions"
+                                                            className={`p-1.5 rounded-md transition-colors ${activeActionMenu === qtn.id ? 'bg-slate-200 text-slate-800' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}
                                                         >
                                                             <MoreVertical size={15} />
                                                         </button>
                                                         {activeActionMenu === qtn.id && actionMenuPosition && (
                                                             <div
-                                                                className="fixed z-[80] w-52 bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-xs"
+                                                                className="fixed z-[80] w-52 bg-white border border-slate-200 rounded-lg shadow-xl py-1 text-xs text-left"
                                                                 style={{
                                                                     left: `${actionMenuPosition.left}px`,
                                                                     top: `${actionMenuPosition.top}px`,
                                                                     transform: actionMenuPosition.openUpward ? 'translateY(-100%)' : 'none'
                                                                 }}
                                                             >
+                                                                <div className="px-4 pt-1.5 pb-2 mb-1 border-b border-slate-100 text-[13px] font-semibold text-slate-800">Actions</div>
                                                                 {/* View / Edit — always */}
                                                                 <button onClick={(e) => { e.stopPropagation(); closeActionMenu(); handleViewQuotation(qtn); }} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
                                                                     <Eye size={13} /> View
@@ -3361,6 +3429,7 @@ const Quotations = () => {
                                                                 )}
 
                                                                 {/* --- Workflow actions --- */}
+                                                                {qtn.status !== 'Invoiced' && <div className="border-t border-slate-100 my-1" />}
                                                                 {(qtn.status === 'Draft' || qtn.status === 'Approved' || qtn.status === 'Rejected' || qtn.status === 'Expired') && (
                                                                     <button onClick={(e) => handleListingRevise(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
                                                                         <RotateCcw size={13} /> Revise
@@ -3411,14 +3480,6 @@ const Quotations = () => {
                                                                         </button>
                                                                     </>
                                                                 )}
-
-                                                                <div className="border-t border-slate-100 my-1" />
-                                                                <button onClick={(e) => handleListingPrint(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
-                                                                    <Printer size={13} /> Print
-                                                                </button>
-                                                                <button onClick={(e) => handleListingDownload(qtn, e)} className="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 text-slate-700">
-                                                                    <Download size={13} /> Download PDF
-                                                                </button>
                                                             </div>
                                                         )}
                                                     </div>
@@ -3532,7 +3593,7 @@ const Quotations = () => {
 
                 {/* ======================= VIEW: CREATE / EDIT ======================= */}
                 {activeTab === 'create' && (
-                    <div className="space-y-6 flex-1 flex flex-col pb-24">
+                    <div className={`space-y-6 flex-1 flex flex-col ${!isViewMode ? 'pb-24 md:pb-0' : ''}`}>
                         {isViewMode && (
                             <div className="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                 <div>
@@ -3845,6 +3906,8 @@ const Quotations = () => {
                                                                     onOpenSettings={(item) => setSelectedAddonItem({ ...item })}
                                                                     isReadOnly={isViewMode}
                                                                     showSettings={Boolean(item.code || item.desc || item.remarks)}
+                                                                    footerAllocation={quotationLineFor(item)}
+                                                                    showFooterBreakdown={showFooterBreakdown}
                                                                 />
                                                                 )}
                                                             </td>
@@ -3911,7 +3974,9 @@ const Quotations = () => {
                                                             {/* Amount */}
                                                             <td className="p-2 text-center align-middle">
                                                                 <div className="font-bold text-slate-800 text-sm">
-                                                                    {item.total.toFixed(2)}
+                                                                    {(showFooterBreakdown && quotationLineFor(item)
+                                                                        ? Number(quotationLineFor(item).total)
+                                                                        : Number(item.total || 0)).toFixed(2)}
                                                                 </div>
                                                             </td>
 
@@ -4113,7 +4178,7 @@ const Quotations = () => {
                                         </div>
                                         <div className="flex justify-between text-slate-600 items-center">
                                             <span className="flex items-center gap-1.5">
-                                                Footer Discount
+                                                <span title={FOOTER_DISCOUNT_HELP} className="cursor-help border-b border-dotted border-slate-400">Footer Discount</span>
                                                 <button
                                                     type="button"
                                                     disabled={isViewMode}
@@ -4133,6 +4198,15 @@ const Quotations = () => {
                                                 />
                                             </span>
                                             <span className="font-medium">- <CurrencyAmount value={billDiscountAmount} {...displayCurrencyProps} /></span>
+                                        </div>
+                                        {showFooterBreakdown && (
+                                            <p className="text-[10px] leading-snug text-slate-400 -mt-1" data-testid="footer-discount-help">
+                                                {FOOTER_DISCOUNT_HELP}
+                                            </p>
+                                        )}
+                                        <div className="flex justify-between text-slate-600">
+                                            <span>Taxable Amount</span>
+                                            <CurrencyAmount value={quotationSummary.taxableTotal} {...displayCurrencyProps} className="font-medium" />
                                         </div>
                                         <div className="flex justify-between text-slate-600">
                                             <span>Tax Total</span>
@@ -4269,114 +4343,6 @@ const Quotations = () => {
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-
-                        <div className="hidden md:flex fixed bottom-0 md:left-64 left-0 right-0 bg-white border-t border-slate-200 px-6 py-3 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] justify-between items-center z-[60]">
-                            <div className="flex items-center gap-3">
-                                <div className="px-2 py-1 bg-slate-100 border border-slate-200/50 rounded-md text-[11px] font-bold text-slate-600 shadow-sm flex items-center gap-2">
-                                    Status: {renderStatusBadge()}
-                                </div>
-                                <span className="text-[11px] font-medium text-slate-500 hidden lg:inline">Quotation No: <span className="text-slate-700 font-bold">{getQuotationNo()}</span></span>
-                                {isViewMode && (
-                                    <span className="px-2 py-1 bg-blue-50 border border-blue-200 rounded-md text-[11px] font-bold text-blue-700">
-                                        View Only
-                                    </span>
-                                )}
-                            </div>
-
-                            <div className="flex gap-2">
-                                {status === 'Pending Approval' && (
-                                    <>
-                                        <button onClick={handleApprove} className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 text-white rounded text-xs font-bold hover:bg-emerald-600 transition-colors shadow-sm">
-                                            <Check size={14} /> Approve
-                                        </button>
-                                        <button onClick={handleReject} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 text-white rounded text-xs font-bold hover:bg-red-600 transition-colors shadow-sm">
-                                            <X size={14} /> Reject
-                                        </button>
-                                    </>
-                                )}
-
-                                {status === 'Converted to SO' && (
-                                    <button
-                                        onClick={handleRevertToApproved}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-orange-300 text-orange-600 rounded text-xs font-bold hover:bg-orange-50 transition-colors shadow-sm"
-                                    >
-                                        <RotateCcw size={14} /> Revert to Approved
-                                    </button>
-                                )}
-
-                                {status === 'Approved' && (
-                                    <>
-                                        <button
-                                            onClick={handleConvertToOrder}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
-                                        >
-                                            <Box size={14} /> Convert to Order
-                                        </button>
-                                        <button
-                                            onClick={handleProceedToInvoice}
-                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-400 text-slate-900 rounded text-xs font-bold hover:bg-yellow-500 transition-colors shadow-sm"
-                                        >
-                                            Proceed to Invoice <ChevronRight size={14} />
-                                        </button>
-                                    </>
-                                )}
-
-                                <button
-                                    onClick={() => setIsRevisionsOpen(true)}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors"
-                                >
-                                    <History size={14} /> Revisions
-                                </button>
-
-                                <button
-                                    onClick={handlePrintClick}
-                                    disabled={isPrinting}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors disabled:opacity-50"
-                                >
-                                    <Printer size={14} /> {isPrinting ? 'Printing...' : 'Print'}
-                                </button>
-
-                                {isViewMode && canEditCurrentQuotation && (
-                                    <button
-                                        onClick={handleSwitchToEditMode}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm"
-                                    >
-                                        <Edit size={14} /> Edit Quotation
-                                    </button>
-                                )}
-
-                                {editingId && (
-                                    <button
-                                        onClick={handleOpenEmailModal}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded text-xs font-bold hover:bg-amber-50 transition-colors"
-                                    >
-                                        <Mail size={14} /> Send Email
-                                    </button>
-                                )}
-
-                                <button
-                                    onClick={() => setIsReviseModalOpen(true)}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors"
-                                >
-                                    <Edit size={14} /> Revise Quotation
-                                </button>
-
-                                {!isViewMode && (
-                                    <button
-                                        onClick={handleSaveDraft}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 text-slate-700 rounded text-xs font-bold hover:bg-slate-50 transition-colors shadow-sm"
-                                    >
-                                        <Save size={14} /> Save Draft
-                                    </button>
-                                )}
-
-                                {!isViewMode && status === 'Draft' && (
-                                    <button onClick={handleConfirm} className="flex items-center gap-1.5 px-5 py-1.5 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded text-xs font-bold hover:from-emerald-700 hover:to-emerald-600 transition-all shadow-md transform hover:-translate-y-0.5">
-                                        Confirm <ChevronRight size={14} />
-                                    </button>
-                                )}
                             </div>
                         </div>
                     </div>

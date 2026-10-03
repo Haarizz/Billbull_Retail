@@ -41,7 +41,16 @@ public class SalesInvoiceItem {
     private BigDecimal grossAmount;
     @Column(precision = 15, scale = 2)
     private BigDecimal netAmount;
+    /**
+     * Ex-VAT taxable value AFTER this line's footer-discount share (server-calculated by
+     * FooterDiscountAllocator). Null on documents saved before V108.
+     */
+    @Column(name = "taxable_amount", precision = 15, scale = 2)
+    private BigDecimal taxableAmount;
     private Integer foc;
+    /** Unit the FOC quantity is expressed in; null means the selling unit. */
+    @Column(name = "foc_unit", length = 50)
+    private String focUnit;
     private String image;
     private Long warehouseId;
     private Long binId;
@@ -225,6 +234,22 @@ public class SalesInvoiceItem {
 
     public void setFooterDiscount(BigDecimal footerDiscount) {
         this.footerDiscount = footerDiscount;
+    }
+
+    public BigDecimal getTaxableAmount() {
+        return taxableAmount;
+    }
+
+    public void setTaxableAmount(BigDecimal taxableAmount) {
+        this.taxableAmount = taxableAmount;
+    }
+
+    public String getFocUnit() {
+        return focUnit;
+    }
+
+    public void setFocUnit(String focUnit) {
+        this.focUnit = focUnit;
     }
 
     public Double getTaxRate() {

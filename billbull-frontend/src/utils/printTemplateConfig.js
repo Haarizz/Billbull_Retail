@@ -53,6 +53,8 @@ export const DEFAULT_TEMPLATE_COLUMNS = Object.freeze({
     qty: true,
     unitPrice: true,
     taxableAmount: false,
+    // Opt-in per-line share of the document footer discount (sales documents).
+    footerDiscount: false,
     discount: false,
     discountPercent: false,
     tax: true,
@@ -124,6 +126,7 @@ export const sanitizeTemplateColumns = (
         qty: readColumnNotFalse(columns, ['qty', 'quantity'], defaults.qty),
         unitPrice: readColumnNotFalse(columns, ['unitPrice', 'price', 'sellingPrice'], defaults.unitPrice),
         taxableAmount: readColumnFlag(columns, ['taxableAmount'], defaults.taxableAmount ?? false),
+        footerDiscount: readColumnFlag(columns, ['footerDiscount', 'footer_discount'], defaults.footerDiscount ?? false),
         discount: readColumnFlag(columns, ['discount'], defaults.discount),
         discountPercent: readColumnFlag(columns, ['discountPercent', 'discPercent'], defaults.discountPercent ?? false),
         tax: readColumnNotFalse(columns, ['tax', 'vat'], defaults.tax),

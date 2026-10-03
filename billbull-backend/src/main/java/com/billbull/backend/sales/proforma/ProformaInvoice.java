@@ -58,7 +58,14 @@ public class ProformaInvoice  implements com.billbull.backend.common.ownership.O
 
     // ---- Totals ----
     private BigDecimal subTotal;
+    /** Footer discount PERCENTAGE rate (0 when the discount is a fixed amount). */
     private BigDecimal billDiscount;
+    /** Allocated footer discount in money — always equals Σ item footerDiscount. */
+    @Column(name = "bill_discount_amount", precision = 15, scale = 2)
+    private BigDecimal billDiscountAmount;
+    /** "percent" or "amount"; null on Proformas saved before V108 (percent). */
+    @Column(name = "bill_discount_type", length = 20)
+    private String billDiscountType;
     private BigDecimal taxTotal;
     private BigDecimal grandTotal;
 
@@ -157,6 +164,22 @@ public class ProformaInvoice  implements com.billbull.backend.common.ownership.O
 
 	public void setBillDiscount(BigDecimal billDiscount) {
 		this.billDiscount = billDiscount;
+	}
+
+	public BigDecimal getBillDiscountAmount() {
+		return billDiscountAmount;
+	}
+
+	public void setBillDiscountAmount(BigDecimal billDiscountAmount) {
+		this.billDiscountAmount = billDiscountAmount;
+	}
+
+	public String getBillDiscountType() {
+		return billDiscountType;
+	}
+
+	public void setBillDiscountType(String billDiscountType) {
+		this.billDiscountType = billDiscountType;
 	}
 
 	public BigDecimal getTaxTotal() {
