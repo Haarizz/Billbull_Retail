@@ -1258,6 +1258,158 @@ public class PostingEngineService {
         }
 
         // =========================================================
+        // SALES RETURN REVERSAL (unwinding an approved return)
+        // =========================================================
+
+        /**
+         * Contra of the main Sales Return journal — the revenue and VAT reversal is itself
+         * reversed, putting the sale back on the books.
+         *
+         * <pre>
+         * Dr Accounts Receivable    (1100)  [totalAmount]
+         *   Cr Sales / Deferred Revenue     [netRevenue]
+         *   Cr VAT Output           (2100)  [taxAmount]   (if &gt; 0)
+         * </pre>
+         *
+         * <p>Every line is the mirror of {@link #createJournalFromSalesReturn}, derived from the
+         * same figures on the same entity, so the pair nets to zero by construction rather than
+         * by a reviewer checking two independently-computed numbers. The discount residual is
+         * derived identically ({@code subTotal + taxAmount - totalAmount}) for the same reason.
+         *
+         * <p><b>Dated on the reversal, not on the original.</b> Back-dating onto the original
+         * return date would silently restate a period that may already have been reported on, and
+         * would be refused outright by the period-lock trigger once that month closes. A reversal
+         * is an event in its own right and belongs on the day it happened; the narration carries
+         * the original date so the pair is still legible.
+         *
+         * @param salesReturn   the approved return being unwound
+         * @param reversalDate  the date the reversal is posted on, normally today
+         * @param revenueWasRecognized must match what the original posting used, so the credit
+         *                             lands back on the same account the debit came from
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnReversal(
+                        SalesReturn salesReturn,
+                        LocalDate reversalDate,
+                        boolean revenueWasRecognized) {
+
+                String ref = salesReturn.getReturnNumber() + "-REV";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                LocalDate date = reversalDate != null ? reversalDate : LocalDate.now();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Reversal of Sales Return " + salesReturn.getReturnNumber()
+                                                + " (originally posted " + salesReturn.getReturnDate() + ")",
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                BigDecimal subTotal    = nz(salesReturn.getSubTotal());
+                BigDecimal taxAmount   = nz(salesReturn.getTaxAmount());
+                BigDecimal totalAmount = nz(salesReturn.getTotalAmount());
+                BigDecimal discountAmount = subTotal.add(taxAmount).subtract(totalAmount).max(BigDecimal.ZERO);
+                BigDecimal netRevenue  = subTotal.subtract(discountAmount);
+
+                String revenueAccount     = revenueWasRecognized ? ACC_SALES_REVENUE : ACC_DEFERRED_REVENUE;
+                String revenueAccountName = revenueWasRecognized ? "Sales Revenue"    : "Deferred Revenue";
+
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Reverse return credit note", totalAmount, BigDecimal.ZERO);
+                addLine(entry, revenueAccountName, revenueAccount,
+                                "Reinstate revenue", BigDecimal.ZERO, netRevenue);
+                if (taxAmount.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "Reinstate VAT", BigDecimal.ZERO, taxAmount);
+                }
+
+                return post(entry);
+        }
+
+        /**
+         * Contra of the {@code -INV} inventory leg, for a reversal of a return that did restock.
+         *
+         * <pre>
+         * Dr COGS       (5001)  [amount]
+         * Cr Inventory  (1200)  [amount]
+         * </pre>
+         *
+         * <p>Same shape as {@link #createJournalFromSalesReturnInventoryReversal} and the same
+         * economics — the goods leave stock again and the cost goes back to COGS — but under a
+         * distinct {@code -REV-INV} reference so the two can never collide. They mean different
+         * things: {@code -INVREV} corrects a return whose goods never came back at all, while
+         * this undoes a return whose goods genuinely did and are now going out again.
+         *
+         * @param amount the 1200 debit of the original {@code -INV} entry
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnReversalInventory(
+                        SalesReturn salesReturn,
+                        BigDecimal amount,
+                        LocalDate reversalDate) {
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String ref = salesReturn.getReturnNumber() + "-REV-INV";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                LocalDate date = reversalDate != null ? reversalDate : LocalDate.now();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Reversal of stock return " + salesReturn.getReturnNumber(),
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                addLine(entry, "COGS", ACC_COGS,
+                                "Restore COGS on reversal of " + salesReturn.getReturnNumber(),
+                                amount, BigDecimal.ZERO);
+                addLine(entry, "Inventory", ACC_INVENTORY,
+                                "Remove returned stock on reversal of " + salesReturn.getReturnNumber(),
+                                BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        /**
+         * Contra of the {@code -RFND} settlement, for a reversal of a card or bank refund.
+         *
+         * <pre>
+         * Dr Merchant Clearing (1013) or Bank (1010)  [amount]
+         *   Cr Accounts Receivable            (1100)  [amount]
+         * </pre>
+         *
+         * <p>The money comes back from the card processor or the bank. Note this says nothing
+         * about whether it has physically arrived — like the original settlement, it records the
+         * business's position, and the bank reconciliation is where the two meet.
+         *
+         * @param viaBank must match the original settlement, so the reversal faces the same
+         *                account the refund was paid from
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnReversalSettlement(
+                        SalesReturn salesReturn,
+                        BigDecimal amount,
+                        boolean viaBank,
+                        LocalDate reversalDate) {
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String ref = salesReturn.getReturnNumber() + "-REV-RFND";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String settlementAccount = viaBank ? ACC_BANK : ACC_MERCHANT_CLEARING;
+                String settlementName    = viaBank ? "Bank Account" : "Merchant Clearing";
+
+                LocalDate date = reversalDate != null ? reversalDate : LocalDate.now();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Reversal of Sales Return refund " + salesReturn.getReturnNumber(),
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                addLine(entry, settlementName, settlementAccount,
+                                "Refund recovered for " + salesReturn.getReturnNumber(),
+                                amount, BigDecimal.ZERO);
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Reverse settlement of " + salesReturn.getReturnNumber(),
+                                BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        // =========================================================
         // CREDIT VOUCHER (store credit issued by a Sales Return)
         // =========================================================
 

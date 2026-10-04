@@ -44,6 +44,14 @@ public class SalesReturnCashCategorySeeder implements ApplicationRunner {
      *  the row across tenants without depending on its (editable) display name. */
     public static final String CATEGORY_CODE = "SALES_RETURN_REFUND";
 
+    /**
+     * The drop-in side, used when a cash-refunded return is reversed and the money goes back into
+     * the drawer. A separate category rather than widening the one above to {@code BOTH}: the two
+     * are opposite events and reports that group by category should be able to tell them apart,
+     * and widening would mutate a row administrators are allowed to edit.
+     */
+    public static final String REVERSAL_CATEGORY_CODE = "SALES_RETURN_REFUND_REVERSAL";
+
     private final PosCashMovementCategoryRepository categoryRepository;
     private final AccountRepository accountRepository;
 
@@ -66,39 +74,56 @@ public class SalesReturnCashCategorySeeder implements ApplicationRunner {
             return;
         }
 
+        upsert(CATEGORY_CODE, "Sales Return Refund",
+                "Cash paid out of the POS drawer to refund a Sales Return. "
+                        + "Created automatically when a return is confirmed with Cash Refund.",
+                // Cash only ever leaves the drawer for a refund, so this must never be selectable
+                // on a drop-in — addCashMovement validates direction compatibility for us.
+                PosCashMovementCategoryMovementType.DROP_OUT, 100, receivable);
+
+        upsert(REVERSAL_CATEGORY_CODE, "Sales Return Refund Reversal",
+                "Cash returned to the POS drawer when a cash-refunded Sales Return is reversed. "
+                        + "Created automatically by SalesReturnCashReversalService.",
+                PosCashMovementCategoryMovementType.DROP_IN, 101, receivable);
+    }
+
+    /**
+     * Creates the category if it is missing, otherwise repairs only its GL mapping. Name,
+     * description, movement type and activation state are administrator-owned once the row
+     * exists and are never reset by a restart.
+     */
+    private void upsert(String code, String name, String description,
+                        PosCashMovementCategoryMovementType movementType,
+                        int displayOrder, Account receivable) {
+
         PosCashMovementCategory category = categoryRepository.findAll().stream()
-                .filter(c -> CATEGORY_CODE.equalsIgnoreCase(c.getCode()))
+                .filter(c -> code.equalsIgnoreCase(c.getCode()))
                 .findFirst()
                 .orElse(null);
 
         if (category == null) {
             category = new PosCashMovementCategory();
-            category.setCode(CATEGORY_CODE);
-            category.setName("Sales Return Refund");
-            category.setDescription("Cash paid out of the POS drawer to refund a Sales Return. "
-                    + "Created automatically when a return is confirmed with Cash Refund.");
-            // Cash only ever leaves the drawer for a refund, so this must never be selectable
-            // on a drop-in — addCashMovement validates direction compatibility for us.
-            category.setMovementType(PosCashMovementCategoryMovementType.DROP_OUT);
+            category.setCode(code);
+            category.setName(name);
+            category.setDescription(description);
+            category.setMovementType(movementType);
             category.setGlAccountId(receivable.getId());
-            category.setDisplayOrder(100);
+            category.setDisplayOrder(displayOrder);
             // The return number and reason are already captured on the return itself, so
             // forcing a free-text note here would only add a redundant field to the flow.
             category.setNotesRequired(false);
             category.setApprovalRequired(false);
             categoryRepository.save(category);
             log.info("[SalesReturn] Seeded cash-movement category '{}' -> GL account {} ({}).",
-                    CATEGORY_CODE, receivable.getCode(), receivable.getName());
+                    code, receivable.getCode(), receivable.getName());
             return;
         }
 
-        // Repair only the GL mapping. Name/description/active state are administrator-owned
-        // once the row exists and are never reset by a restart.
         if (category.getGlAccountId() == null || category.getGlAccountId().isBlank()) {
             category.setGlAccountId(receivable.getId());
             categoryRepository.save(category);
             log.info("[SalesReturn] Repaired missing GL mapping on cash-movement category '{}' -> {}.",
-                    CATEGORY_CODE, receivable.getCode());
+                    code, receivable.getCode());
         }
     }
 }

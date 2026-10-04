@@ -33,6 +33,9 @@ public class SalesReturnController {
     @Autowired
     private SalesReturnEligibilityService eligibilityService;
 
+    @Autowired
+    private SalesReturnReversalService reversalService;
+
     @GetMapping
     public List<SalesReturn> getAllReturns() {
         modulePermissionService.requireCanView(MODULE);
@@ -113,6 +116,35 @@ public class SalesReturnController {
 
     /** Optional body for {@link #updateStatus}: supervisor credentials for a gated approval. */
     public static class StatusChangeRequest {
+        public String supervisorUsername;
+        public String supervisorPassword;
+    }
+
+    /**
+     * Reverses an approved return: contra journals, stock back out, allocation reversed, and any
+     * voucher or drawer cash given back. The original return is left intact and moves to
+     * REVERSED — a reversal is new entries, never an edit of the old ones.
+     *
+     * <p>Deliberately not folded into {@link #updateStatus}. That endpoint changes a field; this
+     * one unwinds posted money, needs a mandatory reason, and always needs supervisor sign-off.
+     * Routing both through one "set the status" call would make the dangerous one look routine.
+     *
+     * <p>Credentials and reason travel in the body, never as query parameters, so they are not
+     * written to access logs or a proxy's URL trace.
+     */
+    @PostMapping("/{id}/reverse")
+    public SalesReturn reverseReturn(@PathVariable Long id,
+                                     @RequestBody ReversalRequest request) {
+        modulePermissionService.requireCanEdit(MODULE);
+        return reversalService.reverse(id,
+                request != null ? request.reason : null,
+                request != null ? request.supervisorUsername : null,
+                request != null ? request.supervisorPassword : null);
+    }
+
+    /** Body for {@link #reverseReturn}. All three fields are required by the service. */
+    public static class ReversalRequest {
+        public String reason;
         public String supervisorUsername;
         public String supervisorPassword;
     }

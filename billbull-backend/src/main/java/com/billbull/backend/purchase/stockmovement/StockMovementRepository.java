@@ -219,6 +219,13 @@ public interface StockMovementRepository
         // ✅ Bin stock - get all stock movements for a specific bin
         List<StockMovement> findByBinId(Long binId);
 
+        /**
+         * Every movement a given document wrote, for one source type. Used by the Sales Return
+         * reversal to find the inbound legs it has to mirror back out, and to check whether it has
+         * already done so — the ledger is append-only, so idempotency is a read, not an upsert.
+         */
+        List<StockMovement> findBySourceTypeAndReferenceNo(StockSourceType sourceType, String referenceNo);
+
         // ✅ Bin stock summary - get stock by bin grouped by product
         @Query("""
                             SELECT sm.productId, COALESCE(SUM(sm.quantity), 0)
