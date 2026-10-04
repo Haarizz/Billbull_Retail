@@ -1202,6 +1202,61 @@ public class PostingEngineService {
                 return post(entry);
         }
 
+        /**
+         * Reverses the inventory leg of a historical Sales Return whose goods never came back.
+         *
+         * <pre>
+         * Dr COGS       (5001)  [amount]
+         * Cr Inventory  (1200)  [amount]
+         * </pre>
+         *
+         * <p>Exactly undoes a {@code {returnNumber}-INV} entry. Before the restock plan became the
+         * single verdict for the inventory leg, a return could debit 1200 and reverse COGS while
+         * no stock movement was ever written — a return raised to correct a payment method or a
+         * duplicated sale restocks nothing, because no goods moved. Those rows leave inventory
+         * overstated and COGS understated in the GL, with the stock ledger untouched.
+         *
+         * <p>This is a reversal, not a write-off: {@code 7502 Inventory Write-off} would record a
+         * real loss of real goods, which is not what happened. The cost belongs back in COGS,
+         * where the original sale had put it.
+         *
+         * <p>Posted under reference {@code {returnNumber}-INVREV}, so it is idempotent and the
+         * pairing with the entry it reverses stays legible in the GL. Only ever called for a
+         * return whose {@code -INV} entry exists and whose goods are confirmed not to have been
+         * returned — see {@code config/SalesReturnGlBackfillRunner}.
+         *
+         * @param salesReturn the approved sales return whose inventory leg is being reversed
+         * @param amount      the 1200 debit of the original {@code -INV} entry
+         * @param postingDate the date to post on; null falls back to the return date, which a
+         *                    closed period will refuse at the DB trigger
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnInventoryReversal(
+                        SalesReturn salesReturn,
+                        BigDecimal amount,
+                        LocalDate postingDate) {
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String ref = salesReturn.getReturnNumber() + "-INVREV";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                LocalDate date = postingDate != null ? postingDate : salesReturn.getReturnDate();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Reverse inventory leg of " + salesReturn.getReturnNumber()
+                                                + " - no goods returned",
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                addLine(entry, "COGS", ACC_COGS,
+                                "Restore COGS - no goods returned on " + salesReturn.getReturnNumber(),
+                                amount, BigDecimal.ZERO);
+                addLine(entry, "Inventory", ACC_INVENTORY,
+                                "Reverse inventory increase for " + salesReturn.getReturnNumber(),
+                                BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
         // =========================================================
         // CREDIT VOUCHER (store credit issued by a Sales Return)
         // =========================================================
