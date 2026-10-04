@@ -33,6 +33,7 @@ public class JournalEntryService {
     private final AccountingPeriodService periodService;
     private final BranchAccessService branchAccessService;
     private final com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService;
+    private final GlAccountBalanceService glAccountBalanceService;
 
     // Protected Control Accounts (cannot be used in manual JVs)
     private static final Set<String> PROTECTED_ACCOUNT_ROLES = Set.of(
@@ -45,7 +46,8 @@ public class JournalEntryService {
             FinancialAuditService auditService,
             AccountingPeriodService periodService,
             BranchAccessService branchAccessService,
-            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService) {
+            com.billbull.backend.common.ownership.OwnershipAccessService ownershipAccessService,
+            GlAccountBalanceService glAccountBalanceService) {
         this.journalEntryRepository = journalEntryRepository;
         this.journalVoucherRepository = journalVoucherRepository;
         this.ledgerService = ledgerService;
@@ -54,6 +56,7 @@ public class JournalEntryService {
         this.periodService = periodService;
         this.branchAccessService = branchAccessService;
         this.ownershipAccessService = ownershipAccessService;
+        this.glAccountBalanceService = glAccountBalanceService;
     }
 
     public List<JournalEntry> getAllEntries() {
@@ -226,6 +229,17 @@ public class JournalEntryService {
         entry.setPostedAt(LocalDateTime.now());
 
         JournalEntry saved = journalEntryRepository.save(entry);
+
+        // 🔵 PRE-AGGREGATED BALANCES: keep gl_account_balances in step with what was just posted.
+        //
+        // This used to live in PostingEngineService.persist, which every automatic posting goes
+        // through — and which a MANUAL journal voucher does not. So manual JVs wrote journal_lines,
+        // ledger_entries and the running balance on accounts, and silently left the pre-aggregated
+        // table behind; GlBalanceRebuildJob then reported drift nightly against an endpoint that
+        // did not exist. Doing it here, at the one point an entry becomes Posted, means no posting
+        // path can skip it. The guard above rejects an already-Posted entry, which is what stops
+        // the same entry being counted twice.
+        glAccountBalanceService.applyEntry(saved);
         String auditEntityType = saved instanceof JournalVoucher ? "JOURNAL_VOUCHER" : "JOURNAL_ENTRY";
         auditService.logEvent(auditEntityType, saved.getEntryNumber(), "POSTED",
                 postedBy != null ? postedBy : "System", "Posted. Synced to Ledger.");

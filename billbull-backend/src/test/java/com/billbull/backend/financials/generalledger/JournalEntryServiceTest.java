@@ -51,6 +51,14 @@ class JournalEntryServiceTest {
     @Mock
     private LedgerEntryRepository ledgerEntryRepository; // Assuming it exists if needed, or LedgerService does it
 
+    /**
+     * postEntry is the one place an entry becomes Posted, so it is also where the pre-aggregated
+     * gl_account_balances upsert now happens — moved out of PostingEngineService.persist, which
+     * manual journal vouchers never passed through.
+     */
+    @Mock
+    private GlAccountBalanceService glAccountBalanceService;
+
     @InjectMocks
     private JournalEntryService journalEntryService;
 

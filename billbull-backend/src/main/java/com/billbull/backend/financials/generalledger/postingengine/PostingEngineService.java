@@ -114,7 +114,6 @@ public class PostingEngineService {
         private final VoucherSequenceService  voucherSequenceService;
         private final com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
         private final com.billbull.backend.purchase.grn.GrnRepository grnRepository;
-        private final com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
         private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
         private final com.billbull.backend.financials.currency.CurrencyService currencyService;
         private final com.billbull.backend.settings.outlet.OutletRepository outletRepository;
@@ -128,7 +127,6 @@ public class PostingEngineService {
                         VoucherSequenceService  voucherSequenceService,
                         com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService,
                         com.billbull.backend.purchase.grn.GrnRepository grnRepository,
-                        com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository,
                         com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
                         com.billbull.backend.financials.currency.CurrencyService currencyService,
                         com.billbull.backend.settings.outlet.OutletRepository outletRepository) {
@@ -140,7 +138,6 @@ public class PostingEngineService {
                 this.voucherSequenceService  = voucherSequenceService;
                 this.customerCreditService   = customerCreditService;
                 this.grnRepository           = grnRepository;
-                this.glBalanceRepository     = glBalanceRepository;
                 this.salesSettingsService    = salesSettingsService;
                 this.currencyService         = currencyService;
                 this.outletRepository        = outletRepository;
@@ -2523,10 +2520,11 @@ public class PostingEngineService {
 
         private JournalEntry persist(JournalEntry entry) {
                 JournalEntry saved = journalEntryRepository.save(entry);
+                // postEntry now owns the pre-aggregated GL balance upsert (PDF §20 / Phase 8.1).
+                // It used to be done here instead, which kept every automatic posting correct and
+                // silently skipped every MANUAL journal voucher — those post through postEntry and
+                // never came back through this method. See GlAccountBalanceService.
                 journalEntryService.postEntry(saved.getId(), "System");
-                // Atomically upsert the pre-aggregated GL balance rows (PDF §20 / Phase 8.1).
-                // Keeps gl_account_balances in sync with every posting without a full ledger scan.
-                upsertGlBalances(saved);
                 return saved;
         }
 
@@ -2534,73 +2532,11 @@ public class PostingEngineService {
          * Upserts one {@link GlAccountBalance} row per (accountCode, periodId, branchId) triple
          * for each line in the just-posted entry. Runs inside the same transaction as persist().
          */
-        private void upsertGlBalances(JournalEntry entry) {
-                Long branchId   = entry.getBranch() != null ? entry.getBranch().getId() : null;
-                Long periodId   = accountingPeriodService.findCoveringPeriod(entry.getDate()) != null
-                                ? accountingPeriodService.findCoveringPeriod(entry.getDate()).getId() : null;
-
-                for (JournalLine line : entry.getLines()) {
-                        String code = line.getAccountCode();
-                        if (code == null || code.isBlank()) continue;
-
-                        BigDecimal dr = nvl(line.getDebit());
-                        BigDecimal cr = nvl(line.getCredit());
-
-                        applyGlBalanceDelta(code, periodId, branchId, dr, cr);
-                }
-        }
-
-        /**
-         * Atomically applies a (debit, credit) delta to the GlAccountBalance row for a
-         * (accountCode, periodId, branchId) triple, creating it if absent.
-         *
-         * Concurrency (ARCHFIX P0 §1.3): the row is read through a PESSIMISTIC_WRITE lock so
-         * two concurrent postings to the same triple are serialized and no increment is lost.
-         * The first-ever insert for a triple is guarded with a flush + retry: if a concurrent
-         * thread wins the insert, we fall back to the now-existing locked row and re-apply.
-         */
-        private void applyGlBalanceDelta(String code, Long periodId, Long branchId,
-                        BigDecimal dr, BigDecimal cr) {
-                java.util.Optional<com.billbull.backend.financials.generalledger.GlAccountBalance> existing =
-                                glBalanceRepository.findForUpdate(code, periodId, branchId);
-
-                if (existing.isPresent()) {
-                        com.billbull.backend.financials.generalledger.GlAccountBalance bal = existing.get();
-                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
-                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
-                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
-                        glBalanceRepository.save(bal);
-                        return;
-                }
-
-                com.billbull.backend.financials.generalledger.GlAccountBalance b
-                                = new com.billbull.backend.financials.generalledger.GlAccountBalance();
-                b.setAccountCode(code);
-                b.setFiscalPeriodId(periodId);
-                b.setBranchId(branchId);
-                b.setDebitTotal(dr);
-                b.setCreditTotal(cr);
-                b.setClosingBalance(dr.subtract(cr));
-                try {
-                        glBalanceRepository.saveAndFlush(b);
-                } catch (org.springframework.dao.DataIntegrityViolationException raceLost) {
-                        // A concurrent posting inserted the row first. Re-read under lock and re-apply.
-                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
-                                        glBalanceRepository.findForUpdate(code, periodId, branchId)
-                                                .orElseThrow(() -> raceLost);
-                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
-                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
-                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
-                        glBalanceRepository.save(bal);
-                }
-        }
-
         private void notifyPosted(JournalEntry entry) {
                 log.info("[PostingEngine] Posted {} (ref='{}', {} lines).",
                                 entry.getEntryNumber(), entry.getReference(), entry.getLines().size());
         }
 
-        /** Null-safe BigDecimal — returns ZERO when source is null. */
         private static BigDecimal nvl(BigDecimal value) {
                 return value != null ? value : BigDecimal.ZERO;
         }

@@ -60,7 +60,6 @@ class PosSessionCashAccountingTest {
     @Mock private VoucherSequenceService voucherSequenceService;
     @Mock private com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
-    @Mock private GlAccountBalanceRepository glBalanceRepository;
     @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
     @Mock private com.billbull.backend.financials.currency.CurrencyService currencyService;
     @Mock private com.billbull.backend.settings.outlet.OutletRepository outletRepository;
@@ -77,7 +76,7 @@ class PosSessionCashAccountingTest {
         service = new PostingEngineService(
                 journalEntryRepository, journalEntryService, accountRepository,
                 accountingPeriodService, dimensionMatrixService, voucherSequenceService,
-                customerCreditService, grnRepository, glBalanceRepository, salesSettingsService,
+                customerCreditService, grnRepository, salesSettingsService,
                 currencyService, outletRepository);
 
         Account active = new Account();
@@ -92,8 +91,6 @@ class PosSessionCashAccountingTest {
             e.setId(1L);
             return e;
         });
-        when(glBalanceRepository.findByAccountCodeAndFiscalPeriodIdAndBranchId(anyString(), any(), any()))
-                .thenReturn(Optional.empty());
     }
 
     // ── TEST A — BALANCED ────────────────────────────────────────────────────────────────
