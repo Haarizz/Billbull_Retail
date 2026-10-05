@@ -9,6 +9,7 @@ import { useBranch } from '../../../context/BranchContext';
 import billBullLogo from '../../../assets/billBullLogo.png';
 import {
    RotateCcw,
+   Undo2,
    Search,
    Plus,
    ChevronDown,
@@ -39,6 +40,7 @@ import {
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import DateFilter from '../../../components/common/DateFilter';
+import ReversalModal from './components/ReversalModal';
 import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
 import { generateDocFilename } from '../../../utils/filenameUtils';
 import { usePrintDocument } from '../../../hooks/usePrintDocument';
@@ -57,6 +59,7 @@ import {
    getSalesReturnStats,
    deleteSalesReturn,
    updateSalesReturnStatus,
+   reverseSalesReturn,
    getReturnableBatches
 } from '../../../api/salesReturnApi';
 import { getAllSalesInvoices } from '../../../api/salesInvoiceApi';
@@ -139,6 +142,12 @@ const SalesReturn = () => {
    // Drawer State
    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
    const [selectedReturn, setSelectedReturn] = useState(null);
+
+   // Reversal of an approved return. Held here rather than in the row so the dialog survives a
+   // list refresh, and so the detail drawer and the row action drive the same one.
+   const [reversalTarget, setReversalTarget] = useState(null);
+   const [reversing, setReversing] = useState(false);
+   const [reversalError, setReversalError] = useState('');
 
    // The unposted return currently open for editing, or null for a brand-new one.
    const [editingDraft, setEditingDraft] = useState(null);
@@ -731,6 +740,40 @@ const SalesReturn = () => {
    };
 
    // ==========================================
+   // REVERSAL
+   // ==========================================
+   /**
+    * Unwinds an approved return. The backend does the work and enforces every rule — status,
+    * mandatory reason, supervisor credentials, and the refusals for a batch-tracked return or a
+    * voucher the customer has already spent. Its message is surfaced verbatim rather than
+    * reworded here, because those refusals explain a business situation the operator has to act
+    * on, not a validation slip.
+    */
+   const handleReverse = async ({ reason, supervisorUsername, supervisorPassword }) => {
+      if (!reversalTarget?.id) return;
+      setReversing(true);
+      setReversalError('');
+      try {
+         const updated = await reverseSalesReturn(reversalTarget.id, {
+            reason, supervisorUsername, supervisorPassword,
+         });
+         setReversalTarget(null);
+         // The drawer may be showing the very return that was just reversed.
+         setSelectedReturn((current) =>
+            current && current.id === updated.id ? { ...current, ...updated } : current);
+         await fetchReturns();
+      } catch (err) {
+         setReversalError(
+            err?.response?.data?.message
+            || err?.response?.data?.error
+            || err?.message
+            || 'Could not reverse this return.');
+      } finally {
+         setReversing(false);
+      }
+   };
+
+   // ==========================================
    // RENDER HELPERS
    // ==========================================
    const renderStatusBadge = (status) => {
@@ -738,6 +781,9 @@ const SalesReturn = () => {
          'APPROVED': 'bg-emerald-50 text-emerald-700 border-emerald-200',
          'DRAFT': 'bg-slate-50 text-slate-700 border-slate-200',
          'CANCELLED': 'bg-red-50 text-red-700 border-red-200',
+         // Distinct from CANCELLED on purpose: that one never posted anything, this one posted
+         // and was unwound. Amber rather than red so the two are not read as the same outcome.
+         'REVERSED': 'bg-amber-50 text-amber-800 border-amber-200',
       };
       return (
          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${styles[status] || styles['DRAFT']}`}>
@@ -965,6 +1011,18 @@ const SalesReturn = () => {
                                           </button>
                                           <button onClick={() => handlePrint(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Print"><Printer size={14} /></button>
                                           <button onClick={() => handleDownload(ret)} className="p-1 hover:bg-slate-200 rounded text-slate-500" title="Download PDF"><Download size={14} /></button>
+                                          {/* Reversal is the only way to undo an approved
+                                              return, so it is offered exactly where the edit
+                                              affordance is refused. */}
+                                          {String(ret.status || '').toUpperCase() === 'APPROVED' && (
+                                             <button
+                                                onClick={() => { setReversalError(''); setReversalTarget(ret); }}
+                                                title="Reverse this return"
+                                                className="p-1 hover:bg-amber-50 rounded text-slate-500 hover:text-amber-700"
+                                             >
+                                                <Undo2 size={14} />
+                                             </button>
+                                          )}
                                           <button onClick={() => { if (window.confirm('Delete this record?')) deleteSalesReturn(ret.id).then(fetchReturns); }} className="p-1 hover:bg-red-50 rounded text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
                                        </div>
                                     </td>
@@ -1142,6 +1200,15 @@ const SalesReturn = () => {
                      >
                         <Edit size={14} /> Edit Return
                      </button>
+                     {String(selectedReturn.status || '').toUpperCase() === 'APPROVED' && (
+                        <button
+                           onClick={() => { setReversalError(''); setReversalTarget(selectedReturn); }}
+                           className="px-4 py-2 bg-white border border-amber-200 rounded-md text-xs font-bold text-amber-700 hover:bg-amber-50 flex items-center gap-2 transition-colors"
+                           title="Reverse this return"
+                        >
+                           <Undo2 size={14} /> Reverse
+                        </button>
+                     )}
                      <button onClick={() => handlePrint(selectedReturn)} className="px-4 py-2 bg-white border border-slate-200 rounded-md text-xs font-bold text-slate-600 hover:bg-slate-100 flex items-center gap-2 transition-colors">
                         <Printer size={14} /> Print Credit Note
                      </button>
@@ -1149,6 +1216,16 @@ const SalesReturn = () => {
                </div>
             )}
          </div>
+
+         {/* Rendered only while open, so closing unmounts it and the next reversal starts with
+             empty credentials — see the note in ReversalModal. */}
+         {reversalTarget && <ReversalModal
+            salesReturn={reversalTarget}
+            submitting={reversing}
+            error={reversalError}
+            onCancel={() => { if (!reversing) { setReversalTarget(null); setReversalError(''); } }}
+            onReverse={handleReverse}
+         />}
 
          {/* BATCH SELECTION MODAL */}
          {batchModalIdx !== null && (
