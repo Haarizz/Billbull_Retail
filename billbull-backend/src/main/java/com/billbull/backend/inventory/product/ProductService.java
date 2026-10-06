@@ -1084,23 +1084,59 @@ public class ProductService {
     /**
      * The first few catalogue rows, for the global search modal's empty-query preview.
      *
-     * <p>Not a search: there is no term to match, so this is the same branch-scoped,
-     * name-ordered list the product page opens on, cut to {@code size}. Blank {@code q}
-     * on {@code /search} still returns nothing — a caller has to ask for the preview
-     * explicitly, so no existing caller's empty query turns into a table read.
+     * <p>Not a search: there is no term to match. The rows are the catalogue's <em>most
+     * active</em> ones — ranked by how many stock movements each has inside
+     * {@link com.billbull.backend.util.PreviewActivity#WINDOW_DAYS}, which is every sale,
+     * receipt, transfer and stock-take adjustment the product has seen. Alphabetical
+     * order tops the list up when activity does not fill it, so a quiet catalogue still
+     * shows something rather than nothing.
      *
-     * <p>{@code size} is clamped by {@link com.billbull.backend.util.SearchLimit}, so the
-     * query is bounded in the database whatever the client asks for.
+     * <p>Ranking runs unscoped over the movement ledger and is then re-read through the
+     * branch-scoped product query, so a ranked product the caller may not see is dropped
+     * rather than revealed. Blank {@code q} on {@code /search} still returns nothing — a
+     * caller has to ask for the preview explicitly, so no existing caller's empty query
+     * turns into a table read.
+     *
+     * <p>{@code size} is clamped by {@link com.billbull.backend.util.SearchLimit}, so
+     * every query here is bounded in the database whatever the client asks for.
      */
     @Transactional(readOnly = true)
     public List<ProductAggregateResponse> previewProducts(int size) {
-        org.springframework.data.domain.Pageable limit = org.springframework.data.domain.PageRequest.of(
-                0, com.billbull.backend.util.SearchLimit.clamp(size), listSort("name"));
+        int limit = com.billbull.backend.util.SearchLimit.clamp(size);
         java.util.Collection<Long> scope = catalogScope();
-        org.springframework.data.domain.Page<Product> page = scope != null
-                ? productRepo.findAllActiveForListInBranchScope(scope, limit)
-                : productRepo.findAllActiveForList(limit);
-        return page.getContent().stream().map(this::buildResponse).collect(Collectors.toList());
+
+        List<Long> ranked = stockMovementRepo.findMostActiveProductIds(
+                com.billbull.backend.util.PreviewActivity.since(),
+                com.billbull.backend.util.PreviewActivity.ranking(limit));
+
+        java.util.LinkedHashMap<Long, Product> picked = new java.util.LinkedHashMap<>();
+        if (!ranked.isEmpty()) {
+            List<Product> visible = scope != null
+                    ? productRepo.findActiveForListByIdsInBranchScope(ranked, scope)
+                    : productRepo.findActiveForListByIds(ranked);
+            java.util.Map<Long, Product> byId = visible.stream()
+                    .collect(Collectors.toMap(Product::getId, p -> p, (a, b) -> a));
+            // The IN query returns whatever order the database likes, so the rank is
+            // re-imposed here from the ordered id list rather than trusted from the rows.
+            for (Long id : ranked) {
+                Product p = byId.get(id);
+                if (p != null && picked.size() < limit) picked.put(id, p);
+            }
+        }
+
+        if (picked.size() < limit) {
+            org.springframework.data.domain.Pageable topUp = org.springframework.data.domain.PageRequest.of(
+                    0, limit, listSort("name"));
+            org.springframework.data.domain.Page<Product> page = scope != null
+                    ? productRepo.findAllActiveForListInBranchScope(scope, topUp)
+                    : productRepo.findAllActiveForList(topUp);
+            for (Product p : page.getContent()) {
+                if (picked.size() >= limit) break;
+                picked.putIfAbsent(p.getId(), p);
+            }
+        }
+
+        return picked.values().stream().map(this::buildResponse).collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)

@@ -728,4 +728,21 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                "s.lastReprintedBy = :reprintedBy, s.lastReprintedAt = :reprintedAt WHERE s.id = :id")
         void recordReprint(@Param("id") Long id, @Param("reprintedBy") String reprintedBy,
                             @Param("reprintedAt") java.time.Instant reprintedAt);
+
+    /**
+     * Customer codes, most invoiced first — the ranking behind the global search modal's
+     * empty-query preview.
+     *
+     * <p>Counts invoices inside the activity window and breaks ties on the most recent of
+     * them. Runs over the existing {@code idx_sales_invoice_customer} index and returns
+     * codes only; the caller re-reads the customers through its own branch-scoped query,
+     * so this decides order and nothing about visibility.
+     */
+    @Query("SELECT i.customerCode FROM SalesInvoice i "
+            + "WHERE i.customerCode IS NOT NULL AND i.customerCode <> '' AND i.createdAt >= :since "
+            + "GROUP BY i.customerCode "
+            + "ORDER BY COUNT(i.id) DESC, MAX(i.createdAt) DESC")
+    java.util.List<String> findMostActiveCustomerCodes(@Param("since") java.time.LocalDateTime since,
+            Pageable pageable);
+
 }

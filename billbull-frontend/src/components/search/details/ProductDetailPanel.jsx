@@ -65,14 +65,24 @@ const ProductDetailPanel = ({ detail, currency = "AED" }) => {
           title={name}
           subtitle={[code, sku && sku !== code ? sku : null].filter(Boolean).join(" • ")}
           badge={status || undefined}
+          // Only the figures the server actually returned become chips — a missing price
+          // is left out rather than shown as a dash in a pill.
+          chips={[
+            unitPrice != null ? `Unit price: ${money(unitPrice, currency)}` : null,
+            reorderLevel != null ? `Reorder point: ${num(reorderLevel)}` : null,
+          ]}
         />
 
         <DetailSection title="Stock summary">
-          <div className="grid grid-cols-3 gap-2">
+          {/* Four across for the quantities, then the wider money/threshold pair, so a
+              long "AED 1,234,567.00" is not squeezed into a quarter column. */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <SummaryStat label="On hand" value={num(onHand)} testId="product-on-hand" />
             <SummaryStat label="Reserved" value={num(reserved)} testId="product-reserved" />
             <SummaryStat label="Available" value={num(available)} testId="product-available" />
             <SummaryStat label="Incoming PO" value={num(incoming)} testId="product-incoming" />
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
             <SummaryStat
               label="Unit price"
               value={money(unitPrice, currency)}
@@ -97,7 +107,7 @@ const ProductDetailPanel = ({ detail, currency = "AED" }) => {
           ) : (
             <table className="w-full text-[11px]" data-testid="product-location-table">
               <thead>
-                <tr className="text-left text-slate-400">
+                <tr className="border-b border-slate-100 text-left text-[9px] uppercase tracking-[0.08em] text-slate-400">
                   <th className="py-1 pr-2 font-medium">Location</th>
                   <th className="py-1 px-1 text-right font-medium">On hand</th>
                   <th className="py-1 px-1 text-right font-medium">Reserved</th>
@@ -108,7 +118,7 @@ const ProductDetailPanel = ({ detail, currency = "AED" }) => {
                 {locations.map((loc, index) => (
                   <tr
                     key={`${loc.locationId ?? "loc"}-${index}`}
-                    className="border-t border-slate-100 text-slate-700"
+                    className="border-t border-slate-50 text-slate-700"
                   >
                     <td className="max-w-[140px] truncate py-1.5 pr-2">{loc.name || DASH}</td>
                     <td className="py-1.5 px-1 text-right tabular-nums">{num(loc.onHand)}</td>

@@ -8,7 +8,6 @@ import {
   DialogDescription,
   DialogTitle,
 } from "../ui/dialog";
-import { Badge } from "../ui/badge";
 import { ScrollArea } from "../ui/scroll-area";
 import { Separator } from "../ui/separator";
 import { Skeleton } from "../ui/skeleton";
@@ -39,24 +38,43 @@ import {
   DetailError,
   DetailForbidden,
   DetailSkeleton,
+  StatusChip,
 } from "./details/DetailPanelShell";
 
 const PLACEHOLDER =
   "Search by name, code, SKU, barcode, mobile, account number, branch...";
 
-// Matches the type badges the dashboard dropdown already uses, so a product
-// looks the same wherever it is searched from.
+// The square type tile at the head of every result row. Neutral by design: in the
+// result list the colour belongs to the status chip, so the tile stays a quiet
+// identifier rather than competing with it.
 const TYPE_BADGE = {
-  product: { short: "P", label: "Product", className: "bg-[#FFF4BF] text-[#786009]" },
-  customer: { short: "C", label: "Customer", className: "bg-blue-50 text-blue-700" },
-  invoice: { short: "INV", label: "Invoice", className: "bg-emerald-50 text-emerald-700" },
-  lpo: { short: "LPO", label: "LPO", className: "bg-purple-50 text-purple-700" },
-  grn: { short: "GRN", label: "GRN", className: "bg-orange-50 text-orange-700" },
-  quotation: { short: "QTN", label: "Quotation", className: "bg-teal-50 text-teal-700" },
-  vendor: { short: "V", label: "Vendor", className: "bg-indigo-50 text-indigo-700" },
-  ledger: { short: "L", label: "Ledger account", className: "bg-violet-50 text-violet-700" },
-  employee: { short: "E", label: "Employee", className: "bg-rose-50 text-rose-700" },
+  product: { short: "P", label: "Product" },
+  customer: { short: "C", label: "Customer" },
+  invoice: { short: "INV", label: "Invoice" },
+  lpo: { short: "LPO", label: "LPO" },
+  grn: { short: "GRN", label: "GRN" },
+  quotation: { short: "QTN", label: "Quotation" },
+  vendor: { short: "V", label: "Vendor" },
+  ledger: { short: "L", label: "Ledger account" },
+  employee: { short: "E", label: "Employee" },
 };
+
+/**
+ * Which tab a result type counts towards. Documents (invoice/LPO/GRN/quotation) have no
+ * tab of their own — they only ever appear under "All" — so they are absent here and
+ * contribute to nothing but the "All" total.
+ */
+const TYPE_CATEGORY = {
+  product: SEARCH_CATEGORY.PRODUCTS,
+  customer: SEARCH_CATEGORY.CUSTOMERS,
+  vendor: SEARCH_CATEGORY.VENDORS,
+  ledger: SEARCH_CATEGORY.LEDGER,
+  employee: SEARCH_CATEGORY.EMPLOYEES,
+};
+
+/** The key a count tally belongs to, so a stale tally is never shown against a new query. */
+const COUNTS_PREVIEW_KEY = Symbol.for("billbull.global-search.preview");
+const countsKeyFor = (term) => (term.trim() === "" ? COUNTS_PREVIEW_KEY : term.trim());
 
 /**
  * The detail panel for each type that has one. Types absent from this map keep the
@@ -138,6 +156,14 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  /**
+   * Per-tab result counts, tallied from an "All" run and tagged with the term that
+   * produced them. Only an "All" run sees every category at once, so a tab's count can
+   * only come from there; `key` is what stops a tally from an earlier term being shown
+   * against the current one. Switching tabs does not change the term, which is why the
+   * counts survive it.
+   */
+  const [counts, setCounts] = useState({ key: null, byCategory: {} });
 
   const inputRef = useRef(null);
   const searchRequestRef = useRef(null);
@@ -173,6 +199,19 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
     setSelectedIndex(0);
     setLoading(false);
     setError(null);
+    setCounts({ key: null, byCategory: {} });
+  }, []);
+
+  /** Tallies a completed "All" result set into per-tab counts. A narrower run sees only
+   *  its own category, so it is never allowed to overwrite the tally. */
+  const tallyCounts = useCallback((activeCategory, term, rows) => {
+    if (activeCategory !== SEARCH_CATEGORY.ALL) return;
+    const byCategory = { [SEARCH_CATEGORY.ALL]: rows.length };
+    rows.forEach((r) => {
+      const c = TYPE_CATEGORY[r.type];
+      if (c) byCategory[c] = (byCategory[c] ?? 0) + 1;
+    });
+    setCounts({ key: countsKeyFor(term), byCategory });
   }, []);
 
   // --- Search ---------------------------------------------------------------
@@ -213,8 +252,10 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
           },
         });
         if (controller.signal.aborted) return;
-        setResults(res.success ? res.data || [] : []);
+        const rows = res.success ? res.data || [] : [];
+        setResults(rows);
         setSelectedIndex(0);
+        tallyCounts(activeCategory, term, rows);
       } catch {
         if (controller.signal.aborted) return;
         // A search failure must never escape to the app-level ErrorBoundary.
@@ -227,7 +268,7 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
         }
       }
     },
-    [canView]
+    [canView, tallyCounts]
   );
 
   /**
@@ -269,8 +310,10 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
           },
         });
         if (controller.signal.aborted) return;
-        setResults(res.success ? res.data || [] : []);
+        const rows = res.success ? res.data || [] : [];
+        setResults(rows);
         setSelectedIndex(0);
+        tallyCounts(activeCategory, "", rows);
       } catch {
         if (controller.signal.aborted) return;
         // A preview is a convenience: it fails quietly back to the typing prompt rather
@@ -283,7 +326,7 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
         }
       }
     },
-    [canView]
+    [canView, tallyCounts]
   );
 
   useEffect(() => {
@@ -416,12 +459,30 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
   const showTypingPrompt =
     !loading && !error && categorySupported && isPreview && results.length === 0;
 
+  /**
+   * The count beside a tab, or undefined when it is not known for the current term.
+   *
+   * <p>The active tab always knows its own count — it is the list on screen. Every other
+   * tab's count can only come from an "All" run, so it shows while the tally still
+   * belongs to this term and disappears rather than going stale when it does not. No
+   * extra request is issued to fill one in.
+   */
+  const countsCurrent = counts.key === countsKeyFor(query);
+  const tabCount = (id) => {
+    if (loading && results.length === 0) return undefined;
+    if (id === category) return results.length;
+    return countsCurrent ? counts.byCategory[id] : undefined;
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         // Header, tabs and footer stay put; only the two body columns scroll. max-h keeps
         // the whole thing inside the viewport on a short screen.
-        className="top-[10%] flex max-h-[80vh] w-full max-w-3xl translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+        className="top-[10%] flex max-h-[80vh] w-full max-w-[820px] translate-y-0 flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[820px]"
+        // Esc is the documented way out and the footer says so; a corner X on top of the
+        // search field is the one piece of chrome the design does without.
+        showCloseButton={false}
         onKeyDown={handleKeyDown}
         aria-label="Global search"
       >
@@ -431,7 +492,7 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
         </DialogDescription>
 
         {/* Search input */}
-        <div className="flex shrink-0 items-center gap-3 px-4 py-3">
+        <div className="flex shrink-0 items-center gap-3 px-5 py-4">
           <SearchIcon className="size-4 shrink-0 text-slate-400" aria-hidden="true" />
           <input
             ref={inputRef}
@@ -442,44 +503,62 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
             aria-label="Search BillBull"
             className="flex-1 bg-transparent text-sm text-slate-800 outline-none placeholder:text-slate-400"
           />
-          {/* mr-6 clears the dialog's own absolutely-positioned close button, which
-              otherwise sits on top of this hint. */}
-          <kbd className="mr-6 rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+          <kbd className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-medium text-slate-500">
             Esc
           </kbd>
         </div>
 
         <Separator />
 
-        {/* Category bar */}
-        <div role="tablist" aria-label="Search categories" className="flex shrink-0 items-center gap-1 px-3 py-2">
-          {categories.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              role="tab"
-              aria-selected={category === c.id}
-              onClick={() => {
-                changeCategory(c.id);
-              }}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors",
-                category === c.id
-                  ? "bg-[#FFF8E7] text-[#786009]"
-                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-700"
-              )}
-            >
-              {c.label}
-            </button>
-          ))}
+        {/* Category bar. The underline sits on the strip's own bottom border rather
+            than on a pill, which is what keeps the row reading as one surface. */}
+        <div
+          role="tablist"
+          aria-label="Search categories"
+          className="flex shrink-0 items-center gap-1 border-b border-slate-100 px-4"
+        >
+          {categories.map((c) => {
+            const active = category === c.id;
+            const count = tabCount(c.id);
+            return (
+              <button
+                key={c.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  changeCategory(c.id);
+                }}
+                className={cn(
+                  "-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors",
+                  active
+                    ? "border-[#F5C742] text-[#786009]"
+                    : "border-transparent text-slate-500 hover:text-slate-700"
+                )}
+              >
+                {c.label}
+                {count != null && (
+                  // aria-hidden keeps each tab's accessible name the plain category
+                  // label; the count is a visual cue, not part of what the tab is.
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                      active ? "bg-[#FFF4BF] text-[#8A6D09]" : "bg-slate-100 text-slate-500"
+                    )}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
-
-        <Separator />
 
         {/* Body */}
         {/* The only part that scrolls. It keeps its designed height and shrinks (rather
             than pushing the footer off) when the viewport cannot fit it. */}
-        <div className="grid h-[420px] min-h-0 grid-cols-1 overflow-hidden sm:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
+        <div className="grid h-[460px] min-h-0 grid-cols-1 overflow-hidden sm:grid-cols-[minmax(0,268px)_minmax(0,1fr)]">
           {/* Left — results */}
           <div className="min-w-0 overflow-hidden border-slate-100 sm:border-r">
             <ScrollArea className="h-full" fitWidth>
@@ -520,58 +599,56 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
                 )}
 
                 {results.map((item, index) => {
-                  const badge = TYPE_BADGE[item.type] ?? {
-                    short: "?",
-                    label: item.type,
-                    className: "bg-slate-100 text-slate-600",
-                  };
+                  const badge = TYPE_BADGE[item.type] ?? { short: "?", label: item.type };
+                  const active = index === selectedIndex;
                   return (
                     <button
                       key={`${item.type}-${item.id}`}
                       type="button"
                       role="option"
-                      aria-selected={index === selectedIndex}
+                      aria-selected={active}
                       // Select only. A row is not a link: opening the entity's page is
                       // an explicit action inside the detail panel, never a side effect
                       // of looking at a result.
                       onClick={() => selectResult(index)}
                       className={cn(
-                        "flex w-full items-start gap-3 rounded-md px-3 py-2.5 text-left transition-colors",
-                        index === selectedIndex ? "bg-[#FFF8E7]" : "hover:bg-slate-50"
+                        // The marker is a left border rather than a pseudo-element so it
+                        // occupies real width on every row — an active row must not be a
+                        // pixel wider than the ones around it.
+                        "flex w-full items-start gap-2.5 rounded-md border-l-[3px] px-2.5 py-2.5 text-left transition-colors",
+                        active
+                          ? "border-[#F5C742] bg-[#FFF8E7]"
+                          : "border-transparent hover:bg-slate-50"
                       )}
                     >
                       <span
-                        className={cn(
-                          "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold",
-                          badge.className
-                        )}
+                        className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[10px] font-semibold text-slate-500"
                         aria-label={badge.label}
                       >
                         {badge.short}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-medium text-slate-800">
-                          {item.title}
+                        <span className="flex items-start gap-2">
+                          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-slate-900">
+                            {item.title}
+                          </span>
+                          {item.meta?.rightTag && (
+                            <span className="shrink-0 text-[11px] font-medium text-slate-600">
+                              {item.meta.rightTag}
+                            </span>
+                          )}
                         </span>
                         {item.subtitle && (
-                          <span className="block truncate text-[11px] text-slate-500">
+                          <span className="mt-0.5 block truncate text-[11px] leading-snug text-slate-500">
                             {item.subtitle}
                           </span>
                         )}
                         {item.meta?.badge && (
-                          <Badge
-                            variant="secondary"
-                            className="mt-1 bg-slate-100 text-[10px] font-normal text-slate-600"
-                          >
-                            {item.meta.badge}
-                          </Badge>
+                          <span className="mt-1.5 block">
+                            <StatusChip>{item.meta.badge}</StatusChip>
+                          </span>
                         )}
                       </span>
-                      {item.meta?.rightTag && (
-                        <span className="shrink-0 text-[11px] font-medium text-slate-600">
-                          {item.meta.rightTag}
-                        </span>
-                      )}
                     </button>
                   );
                 })}

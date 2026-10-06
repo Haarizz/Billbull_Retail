@@ -56,6 +56,26 @@ public interface VendorRepository extends JpaRepository<Vendor, Long> {
             Pageable pageable);
 
     /**
+     * The vendors behind a set of ids, for the global search modal's activity-ranked
+     * preview.
+     *
+     * <p>The ranking that produced the ids runs unscoped over the LPO table, so this is
+     * where the same branch predicate and active flag the search uses are reapplied: a
+     * ranked vendor the caller may not see simply does not come back. No ordering is
+     * promised — the caller holds the rank and re-imposes it.
+     */
+    @Query("SELECT new com.billbull.backend.purchase.vendor.VendorSearchResponse("
+            + "v.id, v.code, v.name, v.email, v.contact, v.mobile, v.status, b.name) "
+            + "FROM Vendor v LEFT JOIN v.branch b "
+            + "WHERE v.isActive = true AND v.id IN :ids "
+            + "AND (:allBranches = TRUE OR b.id IS NULL OR b.id IN :branchIds "
+            + "  OR EXISTS (SELECT 1 FROM VendorBranchAllocation a "
+            + "             WHERE a.vendor = v AND a.branch.id IN :branchIds))")
+    List<VendorSearchResponse> findByIdsInScope(@Param("ids") java.util.Collection<Long> ids,
+            @Param("allBranches") boolean allBranches,
+            @Param("branchIds") java.util.Collection<Long> branchIds);
+
+    /**
      * The first few vendors, for the global search modal's empty-query preview.
      *
      * <p>Same projection, same branch predicate and same ordering as

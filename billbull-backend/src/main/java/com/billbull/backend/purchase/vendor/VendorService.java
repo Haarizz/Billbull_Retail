@@ -89,13 +89,49 @@ public class VendorService {
 
     /**
      * The first few vendors, for the global search modal's empty-query preview.
-     * Branch-scoped exactly as {@link #search} is, and bounded in the database.
+     *
+     * <p>The rows are the vendors <em>most ordered from</em> in the last
+     * {@link com.billbull.backend.util.PreviewActivity#WINDOW_DAYS} days, not the first
+     * few alphabetically. Name order tops the list up when activity does not fill it, so
+     * a quiet period still shows something rather than nothing.
+     *
+     * <p>Branch-scoped exactly as {@link #search} is — the ranking itself runs unscoped
+     * over the LPO table and is re-read through the scoped query, so a ranked vendor the
+     * caller may not see is dropped rather than revealed — and bounded in the database
+     * throughout.
      */
     public List<VendorSearchResponse> preview(int size) {
+        int limit = com.billbull.backend.util.SearchLimit.clamp(size);
         com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
                 branchAccessService.currentSearchScope();
-        return repo.previewVendors(scope.allBranches(), scope.branchIds(),
-                com.billbull.backend.util.SearchLimit.page(size));
+
+        List<Long> ranked = lpoRepo.findMostActiveVendorIds(
+                com.billbull.backend.util.PreviewActivity.since(),
+                com.billbull.backend.util.PreviewActivity.ranking(limit));
+
+        java.util.LinkedHashMap<Long, VendorSearchResponse> picked = new java.util.LinkedHashMap<>();
+        if (!ranked.isEmpty()) {
+            java.util.Map<Long, VendorSearchResponse> byId = repo
+                    .findByIdsInScope(ranked, scope.allBranches(), scope.branchIds())
+                    .stream()
+                    .collect(java.util.stream.Collectors.toMap(VendorSearchResponse::getId, v -> v, (a, b) -> a));
+            // The IN query returns whatever order the database likes, so the rank is
+            // re-imposed here from the ordered id list rather than trusted from the rows.
+            for (Long id : ranked) {
+                VendorSearchResponse v = byId.get(id);
+                if (v != null && picked.size() < limit) picked.put(id, v);
+            }
+        }
+
+        if (picked.size() < limit) {
+            for (VendorSearchResponse v : repo.previewVendors(scope.allBranches(), scope.branchIds(),
+                    com.billbull.backend.util.SearchLimit.page(limit))) {
+                if (picked.size() >= limit) break;
+                picked.putIfAbsent(v.getId(), v);
+            }
+        }
+
+        return new java.util.ArrayList<>(picked.values());
     }
 
     // -------------------------

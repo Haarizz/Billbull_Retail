@@ -26,6 +26,14 @@ public class EmployeeServiceImpl implements EmployeeService {
     private final BranchRepository branchRepository;
     private final com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
 
+    /**
+     * POS sessions are the only company-wide activity an employee record can be ranked
+     * by. Optional on purpose: HR is usable on a tenant that has never run a till, and
+     * the preview falls back to its name ordering rather than failing to start.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.billbull.backend.pos.session.PosSessionRepository posSessionRepository;
+
     public EmployeeServiceImpl(
             EmployeeRepository repository,
             UserRepository userRepository,
@@ -94,14 +102,53 @@ public class EmployeeServiceImpl implements EmployeeService {
 
     /**
      * The first few employees, for the global search modal's empty-query preview.
-     * Branch-scoped exactly as {@link #search} is, and bounded in the database.
+     *
+     * <p>The rows are the <em>most POS-active</em> staff of the last
+     * {@link com.billbull.backend.util.PreviewActivity#WINDOW_DAYS} days, ranked by how
+     * many sessions each opened. That is the only company-wide activity an employee
+     * record carries, and it only covers staff who work a till — so name order tops the
+     * list up, which is what keeps finance, HR and admin staff in the preview on a tenant
+     * with no POS at all. Still identity-only: no payroll, attendance or leave.
+     *
+     * <p>Branch-scoped exactly as {@link #search} is — the ranking runs unscoped over the
+     * session table and is re-read through the scoped query, so a ranked employee the
+     * caller may not see is dropped rather than revealed — and bounded in the database
+     * throughout.
      */
     @Override
     public List<EmployeeSearchResponse> preview(int size) {
+        int limit = com.billbull.backend.util.SearchLimit.clamp(size);
         com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
                 branchAccessService.currentSearchScope();
-        return repository.previewEmployees(scope.allBranches(), scope.branchIds(),
-                com.billbull.backend.util.SearchLimit.page(size));
+
+        java.util.LinkedHashMap<Long, EmployeeSearchResponse> picked = new java.util.LinkedHashMap<>();
+        if (posSessionRepository != null) {
+            List<Long> ranked = posSessionRepository.findMostActiveEmployeeIds(
+                    com.billbull.backend.util.PreviewActivity.since(),
+                    com.billbull.backend.util.PreviewActivity.ranking(limit));
+            if (!ranked.isEmpty()) {
+                java.util.Map<Long, EmployeeSearchResponse> byId = repository
+                        .findByIdsInScope(ranked, scope.allBranches(), scope.branchIds())
+                        .stream()
+                        .collect(java.util.stream.Collectors.toMap(EmployeeSearchResponse::getId, e -> e, (a, b) -> a));
+                // The IN query returns whatever order the database likes, so the rank is
+                // re-imposed here from the ordered id list rather than trusted from the rows.
+                for (Long id : ranked) {
+                    EmployeeSearchResponse e = byId.get(id);
+                    if (e != null && picked.size() < limit) picked.put(id, e);
+                }
+            }
+        }
+
+        if (picked.size() < limit) {
+            for (EmployeeSearchResponse e : repository.previewEmployees(scope.allBranches(), scope.branchIds(),
+                    com.billbull.backend.util.SearchLimit.page(limit))) {
+                if (picked.size() >= limit) break;
+                picked.putIfAbsent(e.getId(), e);
+            }
+        }
+
+        return new java.util.ArrayList<>(picked.values());
     }
 
     /**

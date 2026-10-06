@@ -65,6 +65,7 @@ const LedgerDetailPanel = ({ detail, currency = "AED" }) => {
           title={accountName}
           subtitle={[accountCode && `Acc ${accountCode}`, accountGroup].filter(Boolean).join(" • ")}
           badge={accountType || undefined}
+          chips={[accountGroup || null]}
         />
 
         <DetailSection title="Balances">
@@ -131,7 +132,7 @@ const LedgerDetailPanel = ({ detail, currency = "AED" }) => {
           ) : (
             <table className="w-full text-[11px]" data-testid="ledger-transaction-table">
               <thead>
-                <tr className="text-left text-slate-400">
+                <tr className="border-b border-slate-100 text-left text-[9px] uppercase tracking-[0.08em] text-slate-400">
                   <th className="py-1 pr-2 font-medium">Date</th>
                   <th className="py-1 pr-2 font-medium">Voucher</th>
                   <th className="py-1 px-1 text-right font-medium">Debit</th>
@@ -142,7 +143,7 @@ const LedgerDetailPanel = ({ detail, currency = "AED" }) => {
                 {transactions.map((txn, index) => (
                   <tr
                     key={txn.id ?? `${txn.voucherNo}-${index}`}
-                    className="border-t border-slate-100 text-slate-700"
+                    className="border-t border-slate-50 text-slate-700"
                   >
                     <td className="whitespace-nowrap py-1.5 pr-2">{txn.transactionDate || DASH}</td>
                     <td className="max-w-[100px] truncate py-1.5 pr-2" title={txn.description || ""}>

@@ -79,4 +79,25 @@ public interface JournalLineRepository extends JpaRepository<JournalLine, Long> 
         GROUP BY account_code, fiscal_period_id, branch_id
         """, nativeQuery = true)
     List<Object[]> sumPostedByAccountPeriodBranchForAccount(@Param("accountCode") String accountCode);
+
+    /**
+     * Account codes, most posted-to first — the ranking behind the global search modal's
+     * empty-query preview.
+     *
+     * <p>Counts journal lines inside the activity window and breaks ties on the most
+     * recent of them. A line carries no timestamp of its own, so it dates from its entry
+     * — {@code JournalEntry.createdAt}, the moment the entry was recorded, rather than
+     * {@code date}, which is the accounting date a back-dated entry can set freely.
+     *
+     * <p>Runs over the existing {@code idx_journal_line_account_code} index and returns
+     * codes only; the caller re-reads the accounts through its own query, so this decides
+     * order and nothing about visibility.
+     */
+    @Query("SELECT jl.accountCode FROM JournalLine jl JOIN jl.journalEntry je "
+            + "WHERE jl.accountCode IS NOT NULL AND jl.accountCode <> '' AND je.createdAt >= :since "
+            + "GROUP BY jl.accountCode "
+            + "ORDER BY COUNT(jl.id) DESC, MAX(je.createdAt) DESC")
+    java.util.List<String> findMostActiveAccountCodes(@Param("since") java.time.LocalDateTime since,
+            org.springframework.data.domain.Pageable pageable);
+
 }

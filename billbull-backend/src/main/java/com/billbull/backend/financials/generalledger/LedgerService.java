@@ -46,6 +46,8 @@ public class LedgerService {
     @Autowired
     private GlAccountBalanceRepository glAccountBalanceRepo;
     @Autowired
+    private JournalLineRepository journalLineRepo;
+    @Autowired
     private BranchAccessService branchAccessService;
     @Autowired
     private BranchRepository branchRepository;
@@ -161,10 +163,47 @@ public class LedgerService {
 
     /**
      * The first few accounts, for the global search modal's empty-query preview.
-     * Bounded in the database; ordering matches the search.
+     *
+     * <p>The rows are the <em>most posted-to</em> accounts of the last
+     * {@link com.billbull.backend.util.PreviewActivity#WINDOW_DAYS} days — ranked by
+     * journal-line count — rather than the lowest account codes, which are almost always
+     * the control headers nobody looks up. Code order tops the list up when activity does
+     * not fill it, so a fresh chart of accounts still shows something rather than nothing.
+     *
+     * <p>Not branch-scoped, for the same reason the search is not. Bounded in the
+     * database throughout.
      */
     public List<com.billbull.backend.financials.chartofaccounts.AccountSearchResponse> previewAccounts(int size) {
-        return accountRepo.previewAccounts(com.billbull.backend.util.SearchLimit.page(size));
+        int limit = com.billbull.backend.util.SearchLimit.clamp(size);
+
+        List<String> ranked = journalLineRepo.findMostActiveAccountCodes(
+                com.billbull.backend.util.PreviewActivity.since(),
+                com.billbull.backend.util.PreviewActivity.ranking(limit));
+
+        java.util.LinkedHashMap<String, com.billbull.backend.financials.chartofaccounts.AccountSearchResponse> picked =
+                new java.util.LinkedHashMap<>();
+        if (!ranked.isEmpty()) {
+            java.util.Map<String, com.billbull.backend.financials.chartofaccounts.AccountSearchResponse> byCode =
+                    accountRepo.findByCodes(ranked).stream()
+                            .collect(java.util.stream.Collectors.toMap(
+                                    com.billbull.backend.financials.chartofaccounts.AccountSearchResponse::getCode,
+                                    a -> a, (a, b) -> a));
+            // The IN query returns whatever order the database likes, so the rank is
+            // re-imposed here from the ordered code list rather than trusted from the rows.
+            for (String code : ranked) {
+                var a = byCode.get(code);
+                if (a != null && picked.size() < limit) picked.put(code, a);
+            }
+        }
+
+        if (picked.size() < limit) {
+            for (var a : accountRepo.previewAccounts(com.billbull.backend.util.SearchLimit.page(limit))) {
+                if (picked.size() >= limit) break;
+                picked.putIfAbsent(a.getCode(), a);
+            }
+        }
+
+        return new java.util.ArrayList<>(picked.values());
     }
 
     public List<Account> getBankAccounts() {

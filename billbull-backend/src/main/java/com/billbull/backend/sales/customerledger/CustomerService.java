@@ -163,14 +163,50 @@ public class CustomerService {
 
     /**
      * The first few customers, for the global search modal's empty-query preview.
-     * Branch-scoped exactly as {@link #search} is, and bounded in the database.
+     *
+     * <p>The rows are the <em>most invoiced</em> customers of the last
+     * {@link com.billbull.backend.util.PreviewActivity#WINDOW_DAYS} days, not the first
+     * few alphabetically. Name order tops the list up when activity does not fill it, so
+     * a quiet period still shows something rather than nothing.
+     *
+     * <p>Branch-scoped exactly as {@link #search} is — the ranking itself runs unscoped
+     * over the invoice table and is re-read through the scoped query, so a ranked
+     * customer the caller may not see is dropped rather than revealed — and bounded in
+     * the database throughout.
      */
     @Transactional(readOnly = true)
     public List<Customer> preview(int size) {
+        int limit = com.billbull.backend.util.SearchLimit.clamp(size);
         com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
                 branchAccessService.currentSearchScope();
-        List<Customer> list = repository.previewCustomers(scope.allBranches(), scope.branchIds(),
-                com.billbull.backend.util.SearchLimit.page(size));
+
+        List<String> ranked = salesInvoiceRepo.findMostActiveCustomerCodes(
+                com.billbull.backend.util.PreviewActivity.since(),
+                com.billbull.backend.util.PreviewActivity.ranking(limit));
+
+        java.util.LinkedHashMap<Long, Customer> picked = new java.util.LinkedHashMap<>();
+        if (!ranked.isEmpty()) {
+            java.util.Map<String, Customer> byCode = repository
+                    .findByCodesInScope(ranked, scope.allBranches(), scope.branchIds())
+                    .stream()
+                    .collect(java.util.stream.Collectors.toMap(Customer::getCode, c -> c, (a, b) -> a));
+            // The IN query returns whatever order the database likes, so the rank is
+            // re-imposed here from the ordered code list rather than trusted from the rows.
+            for (String code : ranked) {
+                Customer c = byCode.get(code);
+                if (c != null && picked.size() < limit) picked.put(c.getId(), c);
+            }
+        }
+
+        if (picked.size() < limit) {
+            for (Customer c : repository.previewCustomers(scope.allBranches(), scope.branchIds(),
+                    com.billbull.backend.util.SearchLimit.page(limit))) {
+                if (picked.size() >= limit) break;
+                picked.putIfAbsent(c.getId(), c);
+            }
+        }
+
+        List<Customer> list = new java.util.ArrayList<>(picked.values());
         list.forEach(c -> c.getSavedAddresses().size());
         return list;
     }
