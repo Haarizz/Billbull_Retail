@@ -482,12 +482,23 @@ describe('failure routing', () => {
     expect(events).not.toContain('route.supervisorPin');
   });
 
-  it('distinguishes a network failure and says the sale was NOT recorded', async () => {
+  // Changed deliberately (P0/C7). The old copy said "The sale was NOT recorded", which is false
+  // when the request reached the server and only the answer was lost — the sale may have
+  // committed. The checkoutKey is what makes the advised unchanged retry safe.
+  const UNCONFIRMED = 'The server did not confirm this sale, so it may or may not have been recorded. Press Settle again without changing the sale — the retry is matched to this attempt, so a sale that already went through is not recorded twice. Your payment entries have been kept.';
+
+  it('distinguishes a network failure and never claims the sale was not recorded', async () => {
     posCheckout.mockRejectedValue(new Error('socket hang up'));
     const ctx = setup();
     await settle(ctx);
-    expect(ctx.view.result.current.checkoutError)
-      .toBe('Could not reach the server. The sale was NOT recorded — check the connection and settle again. Your payment entries have been kept.');
+    expect(ctx.view.result.current.checkoutError).toBe(UNCONFIRMED);
+  });
+
+  it.each([408, 502, 503, 504])('treats a %i timeout/gateway answer as unconfirmed too', async (status) => {
+    posCheckout.mockRejectedValue({ response: { status, data: { message: 'Gateway Timeout' } } });
+    const ctx = setup();
+    await settle(ctx);
+    expect(ctx.view.result.current.checkoutError).toBe(UNCONFIRMED);
   });
 
   it('always releases checkoutLoading, on every failure path', async () => {
@@ -549,5 +560,112 @@ describe('payload hand-off', () => {
     expect(payload.customerCode).toBe('CUST-1');
     expect(payload.paymentAllocations).toHaveLength(1);
     expect(payload.taxInclusive).toBe(false);
+  });
+});
+
+// ── P0/C7: settlement re-entrancy and the checkoutKey ──────────────────────────────────────
+
+/** A posCheckout that stays pending until the test resolves it. */
+const deferredCheckout = () => {
+  let resolve;
+  posCheckout.mockImplementation(() => new Promise((r) => { resolve = r; }));
+  return { resolve: (v = SAVED) => resolve(v) };
+};
+
+describe('P0 — settle re-entrancy lock', () => {
+  it('two invocations in the same tick post exactly one checkout', async () => {
+    const ctx = setup();
+    await act(async () => {
+      const { processPayment } = ctx.view.result.current;
+      await Promise.all([processPayment(), processPayment()]);
+    });
+    expect(posCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it('a repeated Settle while the post is in flight is ignored', async () => {
+    const pending = deferredCheckout();
+    const ctx = setup();
+    let first;
+    await act(async () => { first = ctx.view.result.current.processPayment(); });
+    // Click, Enter, key repeat — from the same render and from a fresh one.
+    await act(async () => {
+      await ctx.view.result.current.processPayment();
+      await ctx.view.result.current.processPayment();
+    });
+    await act(async () => { pending.resolve(); await first; });
+    expect(posCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds the lock across the readiness re-check, which runs before checkoutLoading is set', async () => {
+    let release;
+    const refreshReadiness = vi.fn(() => new Promise((r) => { release = r; }));
+    const ctx = setup({ salesperson: { targetRequired: true, targetReady: false, refreshReadiness } });
+    let first;
+    await act(async () => { first = ctx.view.result.current.processPayment(); });
+    await act(async () => { await ctx.view.result.current.processPayment(); });
+    await act(async () => { release({ ready: true }); await first; });
+    expect(refreshReadiness).toHaveBeenCalledTimes(1);
+    expect(posCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the lock after a failure so a legitimate retry still posts', async () => {
+    posCheckout.mockRejectedValueOnce({ response: { status: 500, data: { message: 'x' } } });
+    const ctx = setup();
+    await settle(ctx);
+    await settle(ctx);
+    expect(posCheckout).toHaveBeenCalledTimes(2);
+    expect(ctx.view.result.current.lastPaidInvoice?.id).toBe('SI-POS-000124');
+  });
+});
+
+describe('P0 — checkoutKey idempotency', () => {
+  const keyOf = (call) => posCheckout.mock.calls[call][0].checkoutKey;
+
+  it('sends a checkoutKey on the checkout request', async () => {
+    const ctx = setup();
+    await settle(ctx);
+    expect(typeof keyOf(0)).toBe('string');
+    expect(keyOf(0).length).toBeGreaterThan(0);
+    expect(keyOf(0).length).toBeLessThanOrEqual(100); // sales_invoices.pos_checkout_key length
+  });
+
+  it('a retry after an unconfirmed failure reuses the SAME key, so the server can answer with the sale it already recorded', async () => {
+    posCheckout.mockRejectedValueOnce(new Error('socket hang up'));
+    const ctx = setup();
+    await settle(ctx);
+    await settle(ctx);
+    expect(posCheckout).toHaveBeenCalledTimes(2);
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('a supervisor-authorised retry keeps the key — the credentials are not part of the sale', async () => {
+    posCheckout.mockRejectedValueOnce({ response: { status: 403, data: { message: 'pos_price_override' } } });
+    const ctx = setup();
+    await settle(ctx);
+    await settle(ctx, { pin: '1234' });
+    expect(keyOf(1)).toBe(keyOf(0));
+  });
+
+  it('the next sale after a confirmed one gets a fresh key, even with an identical basket', async () => {
+    const ctx = setup();
+    await settle(ctx);
+    await settle(ctx);
+    expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it('a sale changed after a failure gets a fresh key, so it is never answered with an earlier invoice', async () => {
+    posCheckout.mockRejectedValueOnce(new Error('socket hang up'));
+    const ctx = setup();
+    await settle(ctx);
+    ctx.args.cart = {
+      ...ctx.args.cart,
+      currentInvoice: { ...ctx.args.cart.currentInvoice, items: [
+        ...ctx.args.cart.currentInvoice.items,
+        { code: 'SKU-2', name: 'Gadget', quantity: 1, price: 10, taxRate: 5 },
+      ] },
+    };
+    ctx.view.rerender();
+    await settle(ctx);
+    expect(keyOf(1)).not.toBe(keyOf(0));
   });
 });

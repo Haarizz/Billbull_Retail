@@ -10,6 +10,12 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath
 import { ScanLine } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
 import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
+import { createBurstTracker, isPosScreenBlocked } from './device/scanner/scanGuard';
+
+// Keydown events the window-level wedge listener has already turned into a scan. It runs in
+// the capture phase, before the barcode box's own onKeyDown, which checks this so a single
+// event can never be scanned twice.
+const handledScanEvents = new WeakSet();
 
 /**
  * The Salesperson row that sits directly under the Customer bar in every POS sale layout.
@@ -179,6 +185,8 @@ const POSTouchScreen = React.memo((props) => {
 
   const scannerBufferRef = useRef('');
   const scannerTimerRef = useRef(null);
+  // Keystroke timing on the barcode box, so a scan can be told apart from a typed price.
+  const [barcodeBurst] = useState(() => createBurstTracker());
   const scannerReady = Boolean(scannerConfig?.enabled) && scannerConfig?.status === 'ACTIVE' && scannerConfig?.inputMode === 'KEYBOARD_WEDGE';
 
   useEffect(() => {
@@ -226,7 +234,19 @@ const POSTouchScreen = React.memo((props) => {
 
     const onKeyDown = (event) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (posActionMode === 'qty' || posActionMode === 'discount') return;
+      // Qty, discount AND price mode repurpose the keypad for a number. Price was missing here,
+      // so a price followed by Enter was applied as a price and then scanned as a barcode too.
+      if (posActionMode !== 'none') {
+        resetScannerBuffer();
+        return;
+      }
+      // Checkout, payment, return, delivery and every other POS overlay. Without this, payment
+      // digits and the C/D/O/R/B hotkeys accumulated here and the next Enter "scanned" them into
+      // the sale behind the overlay.
+      if (isPosScreenBlocked()) {
+        resetScannerBuffer();
+        return;
+      }
       // An employee barcode scanned into the salesperson modal must never reach product lookup.
       // Focus normally keeps it out (the check below skips text inputs), but focus can be lost —
       // a click on the dialog chrome, a re-render — and a scan landing in the cart as a phantom
@@ -237,15 +257,21 @@ const POSTouchScreen = React.memo((props) => {
         return;
       }
 
+      // The barcode box handles its own Enter (onKeyDown on the input), so it is the one scan
+      // path while it has focus. Capturing here too made every scan into the focused box call
+      // handleBarcodeScan twice — once from this listener and once from the input.
       const activeTarget = event.target;
-      const barcodeTarget = barcodeInputRef?.current || null;
-      const allowWedgeCapture = activeTarget === barcodeTarget || !isTextEntryTarget(activeTarget);
-      if (!allowWedgeCapture) return;
+      if (activeTarget === (barcodeInputRef?.current || null)) {
+        resetScannerBuffer();
+        return;
+      }
+      if (isTextEntryTarget(activeTarget)) return;
 
       if (event.key === 'Enter') {
         const scannedValue = scannerBufferRef.current.trim();
         if (!scannedValue) return;
         event.preventDefault();
+        handledScanEvents.add(event);
         resetScannerBuffer();
         setBarcodeInput(scannedValue);
         handleBarcodeScan(scannedValue);
@@ -667,11 +693,23 @@ const POSTouchScreen = React.memo((props) => {
                     value={barcodeInput}
                     onChange={e => setBarcodeInput(e.target.value)}
                     onKeyDown={e => {
+                      // Already scanned by the window-level wedge listener — one event, one scan.
+                      if (handledScanEvents.has(e.nativeEvent)) return;
+                      if (e.key.length === 1) barcodeBurst.key();
                       if (e.key === 'Escape') {
                         setBarcodeSuggestions([]);
                         return;
                       }
                       if (e.key === 'Enter') {
+                        const scanEnter = barcodeBurst.isScanEnter();
+                        barcodeBurst.reset();
+                        if (posActionMode === 'price' && selectedFocusItemId && scanEnter) {
+                          // A barcode scanned while the box is a price field would become the
+                          // price (a 13-digit EAN as a unit price). Refuse it; stay in price mode.
+                          setBarcodeInput('');
+                          showFeedback('error', 'Scan ignored while changing the price. Key the price, then press Enter.');
+                          return;
+                        }
                         if (posActionMode === 'qty' && selectedFocusItemId) {
                           const qty = parseInt(barcodeInput, 10);
                           if (qty > 0) updateQuantity(selectedFocusItemId, qty);

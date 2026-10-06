@@ -39,7 +39,7 @@
 //
 // Inputs are grouped by domain and destructured back to their original local names, so
 // the body below is byte-identical to the component version.
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { convertLayaway, posCheckout, posCreditBalance } from '../../../../../api/posApi';
 import { buildPosPrintData, USE_NEW_POS_PRINT_TEMPLATE } from '../../posPrintUtils';
@@ -48,6 +48,13 @@ import { buildPaymentBlock, paymentAuditSnapshot, reconcilePaymentBlock } from '
 import { isTaxInvoiceDocument } from '../../../../../utils/documentTaxType';
 import { printHtml } from '../../../../../utils/printGenerator';
 import { isSheetPaper } from '../../device/printing/posSheetTemplates';
+
+/** A fresh checkoutKey. The backend only needs it unique per sale attempt. */
+const newCheckoutKey = () => (
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `pos-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+);
 
 /**
  * @param {object} args grouped domain inputs - see each group's members below.
@@ -114,8 +121,45 @@ export function useCheckout({
     setSelectedCreditCustomer, setLastScannedItem,
   } = posReset;
 
+  /**
+   * Settle re-entrancy lock. checkoutLoading is React state, so two invocations in the same
+   * tick (double click, Enter + click, a key repeat) both read it as false, and a second call
+   * arriving during the readiness re-check below runs before it is ever set. The ref flips
+   * synchronously, before the first await, so exactly one settlement can be in flight.
+   */
+  const settleLockRef = useRef(false);
   const processPayment = async (overrideCreds = null) => {
     if (currentInvoice.items.length === 0 || checkoutLoading) return;
+    if (settleLockRef.current) return;
+    settleLockRef.current = true;
+    try {
+      await settleSale(overrideCreds);
+    } finally {
+      settleLockRef.current = false;
+    }
+  };
+
+  /**
+   * One idempotency key per sale attempt, sent as checkoutKey. The backend returns the invoice
+   * already recorded under a key instead of posting a second one, so a retry after a dropped
+   * connection or gateway timeout — where the sale may well have committed — cannot invoice
+   * the customer twice. The key is tied to what is being settled: an identical retry (same
+   * cart, customer, tenders) reuses it, a changed sale gets a fresh one so it is never answered
+   * with the earlier invoice. Cleared once a sale is confirmed.
+   */
+  const checkoutAttemptRef = useRef(null); // { key, fingerprint }
+  const checkoutKeyFor = (payload) => {
+    // Supervisor credentials are how a refused attempt is retried, not part of the sale.
+    // eslint-disable-next-line no-unused-vars
+    const { supervisorOverridePin, supervisorOverrideEmail, supervisorOverridePassword, ...sale } = payload;
+    const fingerprint = JSON.stringify(sale);
+    if (checkoutAttemptRef.current?.fingerprint !== fingerprint) {
+      checkoutAttemptRef.current = { key: newCheckoutKey(), fingerprint };
+    }
+    return checkoutAttemptRef.current.key;
+  };
+
+  const settleSale = async (overrideCreds) => {
     // Refuse to post a payment the server would not record. Reaching here means the button
     // was driven by something other than a click (a stale render, a keyboard shortcut), so
     // fail loudly rather than posting a sale whose tender would be silently dropped.
@@ -252,6 +296,7 @@ export function useCheckout({
         supervisorOverrideEmail: overrideCreds?.email || undefined,
         supervisorOverridePassword: overrideCreds?.password || undefined,
       };
+      payload.checkoutKey = checkoutKeyFor(payload);
 
       // ── PAYMENT CONFIRMED HERE ────────────────────────────────────────────
       // posCheckout resolving is the backend's authoritative confirmation that
@@ -263,6 +308,8 @@ export function useCheckout({
       // trip (the bulk of the old 3–5 s). No false success: this only runs after
       // the await above resolves; a rejection skips straight to catch().
       const savedInvoice = await posCheckout(payload);
+      // Confirmed: the next sale must not be answered with this invoice.
+      checkoutAttemptRef.current = null;
 
       // Credit account posting for THIS invoice — same formula for every payment
       // mode: Invoice Credit is the invoice's due amount (net of any layaway deposit
@@ -431,10 +478,14 @@ export function useCheckout({
       // so the cashier can read the error / retry against the still-frozen preview.
       // The allocations are deliberately left intact on every failure path — the cashier
       // retries the same payment rather than re-entering every tender from scratch.
-      const isNetworkFailure = !err?.response;
+      // No response, or a gateway/request timeout, does NOT mean the sale failed: the request
+      // may have reached the server and committed before the answer was lost. Never tell the
+      // cashier it was not recorded. The checkoutKey makes an unchanged retry safe — the server
+      // hands back the invoice it already recorded instead of posting a second one.
+      const isUnconfirmed = !err?.response || [408, 502, 503, 504].includes(err?.response?.status);
       const msg = err?.response?.data?.message || err?.response?.data || err?.message || 'Checkout failed. Please try again.';
-      const msgStr = isNetworkFailure
-        ? 'Could not reach the server. The sale was NOT recorded — check the connection and settle again. Your payment entries have been kept.'
+      const msgStr = isUnconfirmed
+        ? 'The server did not confirm this sale, so it may or may not have been recorded. Press Settle again without changing the sale — the retry is matched to this attempt, so a sale that already went through is not recorded twice. Your payment entries have been kept.'
         : (typeof msg === 'string' ? msg : 'Checkout failed. Please try again.');
       // Backend §2.4 gate (PosCheckoutController) rejected a below-minimum line because the
       // cashier lacks the pos_price_override permission — route into the same supervisor-

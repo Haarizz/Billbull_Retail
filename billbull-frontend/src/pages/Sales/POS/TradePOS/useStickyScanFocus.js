@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 
+import { isPosScreenBlocked } from '../device/scanner/scanGuard';
+
 /**
  * useStickyScanFocus
  *
@@ -35,14 +37,9 @@ const isTextEntryTarget = (el) => {
   return el.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 };
 
-const isScreenBlocked = () => {
-  if (typeof document === 'undefined') return true;
-  // Any open POS dialog/overlay. Every one of them is rendered as a `fixed inset-0` layer.
-  if (document.querySelector('.fixed.inset-0')) return true;
-  // Modals that must never see a scan (salesperson badge entry, quick-create forms).
-  if (document.querySelector('[data-pos-scan-suppress="true"]')) return true;
-  return false;
-};
+// Any open POS dialog/overlay, or a modal that must never see a scan. Shared with the
+// Classic/Cart Focus wedge listener so both templates agree on what "blocked" means.
+const isScreenBlocked = isPosScreenBlocked;
 
 export function useStickyScanFocus(barcodeInputRef, { enabled = true, triggers = [] } = {}) {
   const retryTimerRef = useRef(null);

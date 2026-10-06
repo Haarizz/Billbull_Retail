@@ -558,8 +558,8 @@ describe('shape counters (update deliberately)', () => {
     expect(topLevel(/^ {2}const \[/)).toHaveLength(231);
   });
 
-  it('declares 16 top-level refs', () => {
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(16);
+  it('declares 17 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry)', () => {
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(17);
   });
 
   it('declares 34 top-level effects (+1: the Sales Invoice template family load)', () => {

@@ -2227,6 +2227,9 @@ export default function POSSales() {
   // supervisor-approval queue is owned by useSupervisorApproval — entry only enqueues an
   // ADD_ITEM request through requestApproval, and the dispatcher below sends it back
   // through the addToInvoice returned here.
+  // True while an overlay owns the screen; assigned below useDelivery, where every flag it
+  // reads is in scope. Entry refuses all values then, so a scan never lands behind it.
+  const productEntryBlockedRef = useRef(false);
   const {
     addToInvoice,
     handleUnifiedEntry, handleBarcodeScan, handleProductSelection, handleEditItem,
@@ -2238,6 +2241,7 @@ export default function POSSales() {
     setCurrentInvoice, currentInvoiceRef, recalculateInvoice,
     requestApproval,
     productCacheRef, setBarcodeInput, setSearchQuery, setSelectedCustomer,
+    entryBlockedRef: productEntryBlockedRef,
     applyScannedVoucher, showFeedback,
   });
 
@@ -2706,6 +2710,11 @@ export default function POSSales() {
   // excludeCash drops Cash in Hand / Petty Cash: money arriving by bank transfer must not
   // land on a cash account, or the session's drawer count expects notes that were never taken.
   const needsBankAccounts = showPaymentDialog || showSaveLayaway || showDeliverySettleModal;
+  // Checkout/payment, return, both delivery dialogs and the layaway deposit each sit over the
+  // live sale. A scanner burst or keyed digits behind any of them must not reach the cart.
+  productEntryBlockedRef.current = Boolean(
+    showPaymentDialog || showReturn || showDeliveryModal || showDeliverySettleModal || showSaveLayaway,
+  );
   useEffect(() => {
     if (!needsBankAccounts) return;
     if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;

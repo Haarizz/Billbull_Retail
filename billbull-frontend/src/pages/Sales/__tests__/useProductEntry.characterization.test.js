@@ -69,7 +69,7 @@ const log = (name) => (...args) => { events.push([name, ...args]); return undefi
  * Renders useProductEntry on top of a real useCart, exactly as POSSales composes them.
  * Every non-cart input is a spy so the boundary is observable.
  */
-const setup = ({ posSettings = EXCLUSIVE_5, productEntryMode, cacheSeed = [], voucherOutcome } = {}) => {
+const setup = ({ posSettings = EXCLUSIVE_5, productEntryMode, cacheSeed = [], voucherOutcome, entryBlockedRef } = {}) => {
   events = [];
   const settings = productEntryMode ? { ...posSettings, productEntryMode } : posSettings;
 
@@ -99,6 +99,7 @@ const setup = ({ posSettings = EXCLUSIVE_5, productEntryMode, cacheSeed = [], vo
       recalculateInvoice: cart.recalculateInvoice,
       productCacheRef,
       showFeedback,
+      entryBlockedRef,
       ...spies,
     });
     return { cart, entry };
@@ -994,5 +995,94 @@ describe('cross-hook cart authority', () => {
     expect(items(h)[0].isVoided).toBe(true);
     await act(async () => { h.cart.removeFromInvoice('p1'); });
     expect(items(h)).toHaveLength(0);
+  });
+});
+
+// ── P0: the overlay gate and in-flight serialisation ────────────────────────────────────────
+
+describe('P0 — handleUnifiedEntry overlay gate', () => {
+  it('refuses every value while an overlay owns the screen: no lookup, no cart line, no toast', async () => {
+    const entryBlockedRef = { current: true };
+    const h = setup({ entryBlockedRef, cacheSeed: [cached({ barcode: 'BC-C' })] });
+    await scan(h, 'BC-C');
+    await scan(h, 'BC-1');
+    expect(items(h)).toHaveLength(0);
+    expect(resolvePosEntry).not.toHaveBeenCalled();
+    expect(feedback()).toEqual([]);
+  });
+
+  it('accepts entry again once the overlay closes', async () => {
+    const entryBlockedRef = { current: true };
+    const h = setup({ entryBlockedRef, cacheSeed: [cached({ barcode: 'BC-C' })] });
+    await scan(h, 'BC-C');
+    entryBlockedRef.current = false;
+    await scan(h, 'BC-C');
+    expect(items(h)).toHaveLength(1);
+    expect(items(h)[0].quantity).toBe(1);
+  });
+});
+
+describe('P0 — one scan, one entry: an identical value in flight is dropped', () => {
+  it('one scan delivered twice in the same tick adds one unit (cache fast path)', async () => {
+    const h = setup({ cacheSeed: [cached({ barcode: 'BC-C' })] });
+    await act(async () => {
+      await Promise.all([h.entry.handleUnifiedEntry('BC-C'), h.entry.handleUnifiedEntry('BC-C')]);
+    });
+    expect(items(h)).toHaveLength(1);
+    expect(items(h)[0].quantity).toBe(1);
+  });
+
+  it('a duplicate while the lookup is pending makes no second lookup and no second line', async () => {
+    const h = setup();
+    let release;
+    resolvePosEntry.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    let first;
+    await act(async () => {
+      first = h.entry.handleUnifiedEntry('BC-1');
+      await h.entry.handleUnifiedEntry('BC-1');
+    });
+    expect(resolvePosEntry).toHaveBeenCalledTimes(1);
+    await act(async () => { release({ type: 'PRODUCT', product: aggregate() }); await first; });
+    expect(items(h)).toHaveLength(1);
+    expect(items(h)[0].quantity).toBe(1);
+  });
+
+  it('the same pinned batch scanned twice before the first answers lands once', async () => {
+    const h = setup();
+    let release;
+    const batch = { type: 'PRODUCT', product: aggregate({ isBatch: true }), pinnedBatchNumber: 'BATCH-A' };
+    resolvePosEntry.mockImplementationOnce(() => new Promise((r) => { release = r; }));
+    let first;
+    await act(async () => {
+      first = h.entry.handleUnifiedEntry('BATCH-A');
+      await h.entry.handleUnifiedEntry('BATCH-A');
+    });
+    await act(async () => { release(batch); await first; });
+    expect(items(h)).toHaveLength(1);
+  });
+
+  it('a later scan of the same item, after the first landed, still adds a second unit', async () => {
+    const h = setup({ cacheSeed: [cached({ barcode: 'BC-C' })] });
+    await scan(h, 'BC-C');
+    await scan(h, 'BC-C');
+    expect(items(h)[0].quantity).toBe(2);
+  });
+
+  it('different values never wait on or block each other', async () => {
+    const h = setup({ cacheSeed: [cached({ barcode: 'BC-C' })] });
+    resolvePosEntry.mockImplementationOnce(() => new Promise(() => {})); // BC-1 never answers
+    await act(async () => { h.entry.handleUnifiedEntry('BC-1'); });
+    await scan(h, 'BC-C');
+    expect(items(h).map((i) => i.id)).toEqual(['c1']);
+  });
+
+  it('a value whose lookup failed can be scanned again', async () => {
+    const h = setup();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    resolvePosEntry.mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({ type: 'PRODUCT', product: aggregate() });
+    await scan(h, 'BC-1');
+    await scan(h, 'BC-1');
+    expect(items(h)).toHaveLength(1);
   });
 });

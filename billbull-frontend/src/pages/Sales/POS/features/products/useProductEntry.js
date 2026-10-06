@@ -75,6 +75,11 @@ import { cachePosProduct, getPriceFloor, mapPosProductAggregateItem, toNumber } 
  * @param {string}   args.posTemplate            active layout id. Product Entry Mode is only
  *                                               honoured on the template that owns the Item
  *                                               Entry dialog - see templateSupportsEntryDialog.
+ * @param {object}   [args.entryBlockedRef]      `.current` is true while an overlay owns the
+ *                                               screen (checkout, payment, return, delivery,
+ *                                               layaway). handleUnifiedEntry refuses every
+ *                                               value then, so nothing reaches the sale behind
+ *                                               the overlay whichever template or path sent it.
  */
 export function useProductEntry({
   posSettings,
@@ -89,6 +94,7 @@ export function useProductEntry({
   setSearchQuery,
   setSelectedCustomer,
   applyScannedVoucher,
+  entryBlockedRef = null,
   showFeedback,
 }) {
   // -- Late-binding refs (see the REFS note above) ----------------------------
@@ -313,7 +319,7 @@ export function useProductEntry({
    *   • no exact match              → leave the text in the grid filter
    * Supports an "N*VALUE" / "NxVALUE" quantity prefix.
    */
-  const handleUnifiedEntry = useCallback(async (raw, { fromGrid = false } = {}) => {
+  const resolveUnifiedEntry = useCallback(async (raw, { fromGrid = false } = {}) => {
     console.log(`\n======================================================`);
     console.log(`[handleUnifiedEntry EXECUTION - BARCODE SCANNER PATH]`);
     console.log(`- Captured Render ID: ${currentRenderCount}`);
@@ -487,6 +493,39 @@ export function useProductEntry({
     } else {
       showFeedback('error', `No product found: ${value}`);
       setBarcodeInput('');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Values whose resolution is still running, keyed by the normalised entry text.
+  const inFlightEntriesRef = useRef(new Map());
+
+  /**
+   * The one entry point every scan, keypad Enter and grid Enter goes through.
+   *
+   *  - Refused outright while an overlay owns the screen (entryBlockedRef): a scan must never
+   *    add a product behind checkout, payment, a return or a delivery dialog.
+   *  - An identical value that arrives while the first is still in flight is dropped. That is
+   *    the shape of one scan delivered twice (two listeners on one keystroke) and of an
+   *    impatient re-scan before the first lookup answered. It cannot safely be queued instead:
+   *    the cart ref only catches up after React commits the first add, so a queued second
+   *    resolve of a pinned batch/serial would still read the old cart, pass the "already in
+   *    cart" check and add the same unit twice. A genuine second unit is simply scanned again
+   *    once the first has landed — the cashier sees one line either way.
+   */
+  const handleUnifiedEntry = useCallback(async (raw, options) => {
+    if (entryBlockedRef?.current) return;
+    const key = (raw || '').trim().toLowerCase();
+    if (!key) return;
+    const inFlight = inFlightEntriesRef.current;
+    if (inFlight.has(key)) return;
+    // Started immediately, so the cache fast path stays synchronous as it always was.
+    const run = resolveUnifiedEntry(raw, options);
+    inFlight.set(key, run);
+    try {
+      await run;
+    } finally {
+      inFlight.delete(key);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
