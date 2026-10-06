@@ -6,6 +6,7 @@ import { ArrowRightCircle, Mail, MessageCircle, Printer, RotateCcw, Smartphone }
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import CheckoutCompleteActions from '../features/checkout/CheckoutCompleteActions';
+import { isSheetPaper } from '../device/printing/posSheetTemplates';
 
 /**
  * Characterization of the POSSales.jsx payment-complete ACTION BLOCK — New Sale, Print Receipt,
@@ -29,16 +30,17 @@ import CheckoutCompleteActions from '../features/checkout/CheckoutCompleteAction
  *
  * Known current behaviours pinned as-is (do NOT fix here):
  *   - Print Receipt has no in-flight guard, never disables, never kicks the drawer, reports
- *     failure via window.alert, and compares tplInvoicePaper strictly against 'A4'.
+ *     failure via window.alert, and sends every sheet format (isSheetPaper: A4 / A5 / A5
+ *     landscape / pre-printed) to buildInvoiceSheetHtml — anything else prints thermal.
  */
 
 // ── the verbatim block ──────────────────────────────────────────────────────────────────
 function OriginalActionBlock({
-  closeComplete, lastPaidInvoice, getSalesInvoiceById, tplInvoicePaper, resolveInvoiceA4TemplateFor,
+  closeComplete, lastPaidInvoice, getSalesInvoiceById, paperForSale, isSheetPaper,
   buildPosPrintData, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument, tplInvoiceHeader,
   tplReceiptHeader, tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
   company, tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml,
-  generateDocumentPrintHtml, buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter,
+  buildInvoiceSheetHtml, buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter,
   setShowReprintModal, setReceiptShareChannel,
 }) {
   return (
@@ -58,11 +60,10 @@ function OriginalActionBlock({
                       if (!lastPaidInvoice?.invoice?.id) return;
                       try {
                         const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                        if (tplInvoicePaper === 'A4') {
-                          const template = resolveInvoiceA4TemplateFor(full);
+                        if (isSheetPaper(paperForSale(full))) {
                           const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                           const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                          printHtml(generateDocumentPrintHtml(template, data, options));
+                          printHtml(await buildInvoiceSheetHtml(full, data, options));
                         } else {
                           const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                             full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
@@ -111,11 +112,11 @@ function OriginalActionBlock({
 
 // ── the verbatim POSSales call site ─────────────────────────────────────────────────────
 function ExtractedActionBlock({
-  closeComplete, lastPaidInvoice, getSalesInvoiceById, tplInvoicePaper, resolveInvoiceA4TemplateFor,
+  closeComplete, lastPaidInvoice, getSalesInvoiceById, paperForSale, isSheetPaper,
   buildPosPrintData, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument, tplInvoiceHeader,
   tplReceiptHeader, tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl,
   company, tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml,
-  generateDocumentPrintHtml, buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter,
+  buildInvoiceSheetHtml, buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter,
   setShowReprintModal, setReceiptShareChannel,
 }) {
   return (
@@ -128,11 +129,10 @@ function ExtractedActionBlock({
                     if (!lastPaidInvoice?.invoice?.id) return;
                     try {
                       const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                      if (tplInvoicePaper === 'A4') {
-                        const template = resolveInvoiceA4TemplateFor(full);
+                      if (isSheetPaper(paperForSale(full))) {
                         const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                         const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                        printHtml(generateDocumentPrintHtml(template, data, options));
+                        printHtml(await buildInvoiceSheetHtml(full, data, options));
                       } else {
                         const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                           full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
@@ -175,8 +175,8 @@ function makeProps(overrides = {}) {
     closeComplete: vi.fn(),
     lastPaidInvoice: PAID,
     getSalesInvoiceById: vi.fn(async () => FULL),
-    tplInvoicePaper: '80mm',
-    resolveInvoiceA4TemplateFor: vi.fn(() => ({ id: 'tpl-a4' })),
+    paperForSale: vi.fn(() => overrides.tplInvoicePaper ?? '80mm'),
+    isSheetPaper: vi.fn(isSheetPaper),
     buildPosPrintData: vi.fn(() => ({ printData: true })),
     tplInvoiceFooter: { footerText: 'Thanks' },
     customerOptions: [{ id: 'c-1' }],
@@ -193,7 +193,7 @@ function makeProps(overrides = {}) {
     USE_NEW_POS_PRINT_TEMPLATE: true,
     tplInvoiceShowStamp: true,
     printHtml: vi.fn(),
-    generateDocumentPrintHtml: vi.fn(() => '<html>a4</html>'),
+    buildInvoiceSheetHtml: vi.fn(async () => '<html>a4</html>'),
     buildThermalReceiptArtifacts: vi.fn(async () => ({ text: 'RECEIPT TEXT', escPosBase64: 'RVNDUE9T' })),
     printThermalReceiptWithConfiguredPrinter: vi.fn(async () => {}),
     setShowReprintModal: vi.fn(),
@@ -434,7 +434,7 @@ describe.each(VARIANTS)('%s', (_variant, Block) => {
       });
     });
 
-    describe('thermal branch (tplInvoicePaper !== "A4")', () => {
+    describe('thermal branch (the sale\'s paper is not a sheet format)', () => {
       it('fetches, builds the exact 12-key thermal argument, then prints with the exact payload', async () => {
         const props = makeProps();
         const { wrapper } = renderBlock(props);
@@ -455,7 +455,7 @@ describe.each(VARIANTS)('%s', (_variant, Block) => {
         expect(Object.keys(props.printThermalReceiptWithConfiguredPrinter.mock.calls[0][0])).toEqual(['full', 'text', 'escPosBase64', 'title']);
         expect(props.getSalesInvoiceById.mock.invocationCallOrder[0]).toBeLessThan(props.buildThermalReceiptArtifacts.mock.invocationCallOrder[0]);
         expect(props.buildThermalReceiptArtifacts.mock.invocationCallOrder[0]).toBeLessThan(props.printThermalReceiptWithConfiguredPrinter.mock.invocationCallOrder[0]);
-        for (const fn of ['resolveInvoiceA4TemplateFor', 'buildPosPrintData', 'isTaxInvoiceDocument', 'generateDocumentPrintHtml', 'printHtml']) {
+        for (const fn of ['buildInvoiceSheetHtml', 'buildPosPrintData', 'isTaxInvoiceDocument', 'printHtml']) {
           expect(props[fn], fn).not.toHaveBeenCalled();
         }
         expect(globalThis.alert).not.toHaveBeenCalled();
@@ -493,12 +493,12 @@ describe.each(VARIANTS)('%s', (_variant, Block) => {
         const props = makeProps({ tplInvoicePaper: paper });
         const { wrapper } = renderBlock(props);
         await clickPrint(wrapper());
-        expect(props.resolveInvoiceA4TemplateFor).not.toHaveBeenCalled();
+        expect(props.buildInvoiceSheetHtml).not.toHaveBeenCalled();
         expect(props.buildThermalReceiptArtifacts).toHaveBeenCalledTimes(1);
       });
     });
 
-    describe('A4 branch (tplInvoicePaper === "A4")', () => {
+    describe('sheet branch (A4 / A5 / A5 landscape / pre-printed)', () => {
       const OPTIONS = {
         companyProfile: {
           companyName: 'Main Outlet', trn: '100200300400003', address: 'Dubai', phone: '04-000000', currency: 'AED',
@@ -506,17 +506,18 @@ describe.each(VARIANTS)('%s', (_variant, Block) => {
         },
       };
 
-      it('resolves the template, builds data with the tax header, and prints generateDocumentPrintHtml(template, data, options)', async () => {
+      it('builds data with the tax header, and prints await buildInvoiceSheetHtml(full, data, options)', async () => {
         const props = makeProps({ tplInvoicePaper: 'A4' });
         const { wrapper } = renderBlock(props);
         await clickPrint(wrapper());
         expect(props.getSalesInvoiceById.mock.calls).toEqual([[987]]);
-        expect(props.resolveInvoiceA4TemplateFor.mock.calls).toEqual([[FULL]]);
         expect(props.isTaxInvoiceDocument.mock.calls).toEqual([[FULL]]);
         expect(props.buildPosPrintData.mock.calls).toEqual([[FULL, props.tplInvoiceFooter, props.customerOptions, 'INVOICE-HEADER']]);
-        expect(props.generateDocumentPrintHtml.mock.calls).toEqual([[{ id: 'tpl-a4' }, { printData: true }, OPTIONS]]);
-        expect(Object.keys(props.generateDocumentPrintHtml.mock.calls[0][2])).toEqual(['companyProfile']);
-        expect(Object.keys(props.generateDocumentPrintHtml.mock.calls[0][2].companyProfile)).toEqual(
+        expect(props.buildInvoiceSheetHtml.mock.calls).toEqual([[FULL, { printData: true }, OPTIONS]]);
+        // The paper is resolved for the fetched sale: Tax Invoice paper if taxed, POS Receipt paper if not.
+        expect(props.paperForSale.mock.calls).toEqual([[FULL]]);
+        expect(Object.keys(props.buildInvoiceSheetHtml.mock.calls[0][2])).toEqual(['companyProfile']);
+        expect(Object.keys(props.buildInvoiceSheetHtml.mock.calls[0][2].companyProfile)).toEqual(
           ['companyName', 'trn', 'address', 'phone', 'currency', 'logoUrl', 'stampUrl', 'showStampInPrint'],
         );
         expect(props.printHtml.mock.calls).toEqual([['<html>a4</html>']]);
@@ -541,15 +542,27 @@ describe.each(VARIANTS)('%s', (_variant, Block) => {
         const props = makeProps({ tplInvoicePaper: 'A4', ...overrides });
         const { wrapper } = renderBlock(props);
         await clickPrint(wrapper());
-        expect(props.generateDocumentPrintHtml.mock.calls[0][2].companyProfile).toMatchObject({ currency: 'AED', ...expected });
+        expect(props.buildInvoiceSheetHtml.mock.calls[0][2].companyProfile).toMatchObject({ currency: 'AED', ...expected });
       });
 
-      it('generateDocumentPrintHtml\'s return value goes to printHtml unawaited', async () => {
-        const pending = new Promise(() => {});
-        const props = makeProps({ tplInvoicePaper: 'A4', generateDocumentPrintHtml: vi.fn(() => pending) });
+      it('buildInvoiceSheetHtml is awaited: nothing prints until the HTML resolves', async () => {
+        const html = deferred();
+        const props = makeProps({ tplInvoicePaper: 'A4', buildInvoiceSheetHtml: vi.fn(() => html.promise) });
         const { wrapper } = renderBlock(props);
         await clickPrint(wrapper());
-        expect(props.printHtml.mock.calls[0][0]).toBe(pending);
+        expect(props.printHtml).not.toHaveBeenCalled();
+        await act(async () => { html.resolve('<html>late</html>'); });
+        await flush();
+        expect(props.printHtml.mock.calls).toEqual([['<html>late</html>']]);
+      });
+
+      it.each(['A5', 'A5L', 'PREPRINTED'])('%s takes the sheet branch, never the thermal one', async (paper) => {
+        const props = makeProps({ tplInvoicePaper: paper });
+        const { wrapper } = renderBlock(props);
+        await clickPrint(wrapper());
+        expect(props.buildInvoiceSheetHtml.mock.calls).toHaveLength(1);
+        expect(props.printHtml.mock.calls).toEqual([['<html>a4</html>']]);
+        expect(props.buildThermalReceiptArtifacts).not.toHaveBeenCalled();
       });
     });
 
@@ -596,7 +609,7 @@ describe.each(VARIANTS)('%s', (_variant, Block) => {
         ['fetch', '80mm', { getSalesInvoiceById: vi.fn(async () => { throw new Error('offline'); }) }, 'Print failed: offline.'],
         ['thermal build', '80mm', { buildThermalReceiptArtifacts: vi.fn(async () => { throw new Error('bad template'); }) }, 'Print failed: bad template.'],
         ['thermal print', '80mm', { printThermalReceiptWithConfiguredPrinter: vi.fn(async () => { throw new Error('No printer'); }) }, 'Print failed: No printer.'],
-        ['A4 render (sync)', 'A4', { generateDocumentPrintHtml: vi.fn(() => { throw new Error('template missing'); }) }, 'Print failed: template missing.'],
+        ['sheet render', 'A4', { buildInvoiceSheetHtml: vi.fn(async () => { throw new Error('template missing'); }) }, 'Print failed: template missing.'],
         ['A4 printHtml (sync)', 'A4', { printHtml: vi.fn(() => { throw new Error('popup blocked'); }) }, 'Print failed: popup blocked.'],
         ['message-less', '80mm', { getSalesInvoiceById: vi.fn(async () => { throw {}; }) }, 'Print failed: printer error.'],
         ['empty message', '80mm', { getSalesInvoiceById: vi.fn(async () => { throw new Error(''); }) }, 'Print failed: printer error.'],
@@ -786,11 +799,11 @@ const expectedComponentBody = () => {
 const ALERT = "alert(`Print failed: ${err?.message || 'printer error'}.`)";
 /** Every render-time closure the block reads from POSSales (excluding lucide icons). */
 const BLOCK_DEPENDENCIES = [
-  'closeComplete', 'lastPaidInvoice', 'getSalesInvoiceById', 'tplInvoicePaper', 'resolveInvoiceA4TemplateFor',
+  'closeComplete', 'lastPaidInvoice', 'getSalesInvoiceById', 'paperForSale', 'isSheetPaper',
   'buildPosPrintData', 'tplInvoiceFooter', 'customerOptions', 'isTaxInvoiceDocument', 'tplInvoiceHeader',
   'tplReceiptHeader', 'tplOutletName', 'effectiveOutletTrn', 'tplOutletAddress', 'tplOutletPhone', 'tplLogoDataUrl',
   'company', 'tplStampDataUrl', 'USE_NEW_POS_PRINT_TEMPLATE', 'tplInvoiceShowStamp', 'printHtml',
-  'generateDocumentPrintHtml', 'buildThermalReceiptArtifacts', 'printThermalReceiptWithConfiguredPrinter',
+  'buildInvoiceSheetHtml', 'buildThermalReceiptArtifacts', 'printThermalReceiptWithConfiguredPrinter',
   'setShowReprintModal', 'setReceiptShareChannel',
 ];
 const PRINT_DEPENDENCIES = BLOCK_DEPENDENCIES.filter((d) => !['closeComplete', 'setShowReprintModal', 'setReceiptShareChannel'].includes(d));
@@ -804,9 +817,9 @@ const signature = (fnName) => {
 };
 
 describe('6. source — the copies', () => {
-  it('the original copy is the pre-extraction block (60 lines, 22-line Print Receipt button)', () => {
-    expect(originalCopy().split('\n')).toHaveLength(60);
-    expect(originalPrintBody().split('\n')).toHaveLength(17);
+  it('the original copy is the pre-extraction block (59 lines, 21-line Print Receipt button)', () => {
+    expect(originalCopy().split('\n')).toHaveLength(59);
+    expect(originalPrintBody().split('\n')).toHaveLength(16);
     expect(count(originalCopy(), ALERT)).toBe(1);
   });
 
@@ -823,9 +836,9 @@ describe('6. source — the copies', () => {
     expect(`${BLOCK_START}${restored}`).toBe(originalCopy());
   });
 
-  it('the call-site copy in this file is the live POSSales call site, byte for byte (28 lines)', () => {
+  it('the call-site copy in this file is the live POSSales call site, byte for byte (27 lines)', () => {
     expect(callCopy()).toBe(callSite());
-    expect(callSite().split('\n')).toHaveLength(28);
+    expect(callSite().split('\n')).toHaveLength(27);
     expect(count(POS_SALES, BLOCK_START)).toBe(1);
     expect(count(POS_SALES, '{/* 6. Action Priority */}')).toBe(1);
   });
@@ -834,7 +847,7 @@ describe('6. source — the copies', () => {
     const original = originalPrintBody().split('\n');
     for (const line of original) expect(line.startsWith('  '), line).toBe(true);
     expect(callPrintBody()).toBe(original.map((l) => l.slice(2)).join('\n'));
-    expect(callPrintBody().split('\n')).toHaveLength(17);
+    expect(callPrintBody().split('\n')).toHaveLength(16);
   });
 
   it('both harness prop lists are exactly the block\'s POSSales dependencies, all read by the call site', () => {
@@ -950,7 +963,7 @@ describe('6. source — POSSales call site, location and boundary', () => {
     expect(words(c, 'setReceiptShareChannel')).toBe(1);
     expect(count(c, 'onPrintReceipt={async () => {')).toBe(1);
     expect(count(c, 'async')).toBe(1);
-    expect(count(c, "tplInvoicePaper === 'A4'")).toBe(1);
+    expect(count(c, 'isSheetPaper(paperForSale(full))')).toBe(1);
   });
 
   it('things the call site deliberately does not contain', () => {
@@ -980,8 +993,8 @@ describe('6. source — Print Receipt alert ownership', () => {
     for (const needle of [
       '                    if (!lastPaidInvoice?.invoice?.id) return;',
       '                      const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);',
-      "                      if (tplInvoicePaper === 'A4') {",
-      '                        printHtml(generateDocumentPrintHtml(template, data, options));',
+      '                      if (isSheetPaper(paperForSale(full))) {',
+      '                        printHtml(await buildInvoiceSheetHtml(full, data, options));',
       '                        const { text, escPosBase64 } = await buildThermalReceiptArtifacts({',
       '                        await printThermalReceiptWithConfiguredPrinter({',
       "                          full, text, escPosBase64, title: `Receipt ${full.invoiceNumber || ''}`.trim(),",

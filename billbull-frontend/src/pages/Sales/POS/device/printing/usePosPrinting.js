@@ -21,6 +21,9 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { applyTaxAwareDisplayOptions, buildPosA4Template, USE_NEW_POS_PRINT_TEMPLATE } from '../../posPrintUtils';
 import { isTaxInvoiceDocument } from '../../../../../utils/documentTaxType';
+import { generatePrintHtmlAsync } from '../../../../../utils/printGenerator';
+import { generateOverlayInvoiceHtml } from '../../../../../utils/overlayInvoiceRenderer';
+import { isOverlayTemplate, paperForDocument, pickSheetTemplate, sheetFormatLabel } from './posSheetTemplates';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../../../../../utils/localPrintAgent';
 
 /**
@@ -32,6 +35,11 @@ import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '
  * @param {object}   args.invoiceTemplateOptions   the tplInvoice* designer flags, assembled
  *                                                 by POSSales (they are shared config)
  * @param {string}   args.tplInvoiceFooter
+ * @param {string}   args.tplInvoicePaper     paper / sheet format for a taxed sale (Tax Invoice tab)
+ * @param {string}   args.tplReceiptPaper     paper / sheet format for a no-tax sale (POS Receipt tab)
+ * @param {Array|null} args.posInvoiceTemplateFamily  every "Sales Invoice*" template
+ *                                                    (A4, A5 variants, pre-printed)
+ * @param {*}        args.branchId            the till's branch, for template scoping
  */
 export function usePosPrinting({
   printerConfigs,
@@ -40,6 +48,10 @@ export function usePosPrinting({
   resolvedPosCreditNoteTemplate,
   invoiceTemplateOptions,
   tplInvoiceFooter,
+  tplInvoicePaper = 'A4',
+  tplReceiptPaper = '80mm',
+  posInvoiceTemplateFamily = null,
+  branchId = null,
 } = {}) {
   const [printFeedback, setPrintFeedback] = useState(null);
 
@@ -76,6 +88,45 @@ export function usePosPrinting({
     setPrintFeedback({ type: 'error', message });
     setTimeout(() => setPrintFeedback(null), 6000);
   }, []);
+
+  /** The configured paper for this sale: Tax Invoice tab if taxed, POS Receipt tab if not. */
+  const paperForSale = useCallback(
+    (doc) => paperForDocument(doc, tplInvoicePaper, tplReceiptPaper),
+    [tplInvoicePaper, tplReceiptPaper],
+  );
+
+  /**
+   * Printable HTML for a sale document on a sheet format (A4 / A5 Portrait / A5
+   * Landscape / Pre-printed). The format defaults to the sale's own configured paper.
+   * A4 is the resolved default template, exactly as before.
+   * The other formats print the matching Back Office "Sales Invoice" family template;
+   * when the family has none, the default template is used and the cashier is told,
+   * rather than the print failing at the till.
+   *
+   * Overlay (pre-printed) templates are fixed-position forms, not column-driven, so
+   * they go through the overlay renderer and are not made tax-aware — the same rule
+   * Back Office's SalesInvoice print applies.
+   */
+  const buildInvoiceSheetHtml = useCallback(async (doc, data, options, format = paperForSale(doc)) => {
+    let template = null;
+    if (format && format !== 'A4') {
+      template = pickSheetTemplate(posInvoiceTemplateFamily, format, branchId);
+      if (!template) {
+        setPrintFeedback({
+          type: 'warning',
+          message: `No ${sheetFormatLabel(format)} Sales Invoice template is set up, so this printed with the default template. Create one under Sales → Print & Email Templates.`,
+        });
+        setTimeout(() => setPrintFeedback(null), 8000);
+      }
+    }
+    if (template && isOverlayTemplate(template)) {
+      return generateOverlayInvoiceHtml(template, data, options);
+    }
+    const resolved = template
+      ? applyTaxAwareDisplayOptions(template, isTaxInvoiceDocument(doc))
+      : resolveInvoiceA4TemplateFor(doc);
+    return generatePrintHtmlAsync(resolved, data, options);
+  }, [paperForSale, posInvoiceTemplateFamily, branchId, resolveInvoiceA4TemplateFor]);
 
   // ESC/POS-first: raw ESC/POS is the only path with real density/heat/font/
   // logo control, so it's always attempted first. If the Windows queue's driver
@@ -121,9 +172,12 @@ export function usePosPrinting({
     resolveInvoiceA4Template,
     resolveCreditNoteA4Template,
     resolveInvoiceA4TemplateFor,
+    buildInvoiceSheetHtml,
+    paperForSale,
   }), [
     printFeedback, notifyPrintFallback, printThermalReceiptWithConfiguredPrinter,
     resolveInvoiceA4Template, resolveCreditNoteA4Template, resolveInvoiceA4TemplateFor,
+    buildInvoiceSheetHtml, paperForSale,
   ]);
 }
 

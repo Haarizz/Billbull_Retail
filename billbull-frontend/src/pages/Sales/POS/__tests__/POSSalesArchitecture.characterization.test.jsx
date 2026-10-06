@@ -469,7 +469,7 @@ describe('cross-feature orchestration handlers', () => {
   it('useCheckout owns the post-payment device sequence: printing then drawer', () => {
     const start = at('    printing: {');
     const group = SRC.slice(start, SRC.indexOf('},', start));
-    for (const dep of ['resolveInvoiceA4TemplateFor', 'printThermalReceiptWithConfiguredPrinter',
+    for (const dep of ['buildInvoiceSheetHtml', 'printThermalReceiptWithConfiguredPrinter',
       'buildThermalReceiptArtifacts', 'openCashDrawer']) {
       expect(group, dep).toContain(dep);
     }
@@ -554,16 +554,16 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 229 top-level useState pairs', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(229);
+  it('declares 231 top-level useState pairs (+2: the invoice template family and the reprint sheet format)', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(231);
   });
 
   it('declares 16 top-level refs', () => {
     expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(16);
   });
 
-  it('declares 33 top-level effects', () => {
-    expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(33);
+  it('declares 34 top-level effects (+1: the Sales Invoice template family load)', () => {
+    expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(34);
   });
 
   it('declares 19 top-level memos and 25 top-level callbacks', () => {
@@ -998,7 +998,7 @@ describe('candidate boundary coupling budget', () => {
     // It spans payment allocation, printing, approval, session and template settings at once.
     for (const crossing of ['deliverySettlePayment', 'deliverySettleFields', 'checkoutCompatibility',
       'checkoutOnlineBankAccounts', 'buildThermalReceiptArtifacts', 'printThermalReceiptWithConfiguredPrinter',
-      'resolveInvoiceA4TemplateFor', 'requestApproval', 'syncPosData', 'sessionId', 'tplInvoicePaper']) {
+      'buildInvoiceSheetHtml', 'requestApproval', 'syncPosData', 'sessionId', 'paperForSale']) {
       expect(body, crossing).toContain(crossing);
     }
   });

@@ -332,21 +332,27 @@ export const ServiceJobA4Preview = ({ companyName, trn, address, phone, footerNo
   return <A4PreviewFrame html={html} scale={scale} />;
 };
 
-export const PaperSizePicker = ({ value, onChange }) => (
+// options: paper ids, or { id, label } for a sheet whose label differs from its id
+// (the Tax Invoice tab adds A5 Portrait / A5 Landscape / Pre-printed).
+export const PaperSizePicker = ({ value, onChange, options = ['80mm', '58mm', 'A4'] }) => (
   <div className="flex flex-wrap gap-1.5">
-    {['80mm', '58mm', 'A4'].map(s => (
-      <button
-        type="button"
-        key={s}
-        onClick={() => onChange(s)}
-        className={`px-3 py-1 rounded-lg border text-xs font-bold transition-all ${value === s
-            ? 'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]'
-            : 'border-gray-200 text-gray-400 hover:border-gray-300'
-          }`}
-      >
-        {s}
-      </button>
-    ))}
+    {options.map(opt => {
+      const id = typeof opt === 'string' ? opt : opt.id;
+      const label = typeof opt === 'string' ? opt : opt.label;
+      return (
+        <button
+          type="button"
+          key={id}
+          onClick={() => onChange(id)}
+          className={`px-3 py-1 rounded-lg border text-xs font-bold transition-all ${value === id
+              ? 'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]'
+              : 'border-gray-200 text-gray-400 hover:border-gray-300'
+            }`}
+        >
+          {label}
+        </button>
+      );
+    })}
   </div>
 );
 

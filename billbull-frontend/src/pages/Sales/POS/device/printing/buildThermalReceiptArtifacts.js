@@ -95,7 +95,7 @@ export async function buildThermalReceiptArtifacts({
     t2ReceiptShowDelivery, t2ReceiptShowFooterText, t2ReceiptShowLogo,
     t2ReceiptShowLoyalty, t2ReceiptShowPaymentDetails, t2ReceiptShowQRCode,
     tplInvoiceColDiscount, tplInvoiceColVatAmt, tplInvoiceFooter,
-    tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoicePaper,
+    tplInvoiceHeader, tplInvoiceHeaderAr, tplInvoicePaper, tplReceiptPaper,
     tplInvoiceQrPlacement, tplInvoiceShowBankDetails, tplInvoiceShowCompanyDetails,
     tplInvoiceShowCustomerDetails, tplInvoiceShowGrandTotalBanner, tplInvoiceShowLogo,
     tplInvoiceShowNotes, tplInvoiceShowQRCode, tplInvoiceShowTerms,
@@ -157,6 +157,11 @@ export async function buildThermalReceiptArtifacts({
     // tax — diverging from the checkout preview (which reads currentInvoice.tax)
     // and from buildPosPrintData/the A4 sites (which already read taxTotal).
     const hasTax = isTaxInvoiceDocument(full);
+    // Paper width follows the same split: a no-tax receipt prints at the POS Receipt
+    // tab's width (58mm / 80mm), a Tax Invoice at the Tax Invoice tab's. A sheet value
+    // (A4 / A5 / pre-printed — reached only when the reprint dialog forces thermal)
+    // has no "58" in it, so the ESC/POS and text builders treat it as 80mm.
+    const thermalPaper = hasTax ? tplInvoicePaper : tplReceiptPaper;
     // Credit/Account Balance toggle is per-sub-tab too (POS Receipt tab's
     // tplReceiptShowBankDetails vs Tax Invoice tab's tplInvoiceShowBankDetails) —
     // same rule as activeShowLogo etc. below. Previously this always read the
@@ -308,7 +313,7 @@ export async function buildThermalReceiptArtifacts({
     // (paperSize, invoice, opts) signature, so this is a straight swap.
     const activeReceiptTemplate = getReceiptTemplate(receiptTemplateId);
     const buildReceiptEscPosBase64 = activeReceiptTemplate.buildEscPosBase64 || buildEscPosReceiptBase64;
-    const escPosPromise = buildReceiptEscPosBase64(tplInvoicePaper, full, escPosOpts).catch((err) => {
+    const escPosPromise = buildReceiptEscPosBase64(thermalPaper, full, escPosOpts).catch((err) => {
       console.warn('ESC/POS receipt build failed, will fall back to text/HTML print', err);
       return null;
     });
@@ -323,7 +328,7 @@ export async function buildThermalReceiptArtifacts({
     // the print critical path was pure dead work on every sale and every reprint, so
     // it is gone. `text` below is still built: it is the real ESC/POS→text/GDI
     // compatibility fallback payload AND the print-job audit payload.
-    const text = buildThermalReceiptText(tplInvoicePaper, full, {
+    const text = buildThermalReceiptText(thermalPaper, full, {
       companyName: tplOutletName,
       trn: effectiveOutletTrn,
       documentTitle: activeHeader,

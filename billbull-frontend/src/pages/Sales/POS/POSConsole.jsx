@@ -14,6 +14,8 @@ import { buildDocumentPreviewHtml, buildThermalPrintHtml, buildThermalSampleHtml
 import { mergeSavedPosSettings } from './posUtils';
 import { printHtml } from '../../../utils/printGenerator';
 import { generateDocumentPrintHtml } from '../../../utils/documentTemplateRenderer';
+import { generateOverlayInvoiceHtml } from '../../../utils/overlayInvoiceRenderer';
+import { isOverlayTemplate, isSheetPaper, pickSheetTemplate, POS_SHEET_FORMATS, sheetFormatLabel, sheetPixelSize } from './device/printing/posSheetTemplates';
 import { RECEIPT_TEMPLATES, getReceiptTemplate, DEFAULT_RECEIPT_TEMPLATE_ID } from './receiptTemplates';
 import { buildSampleTxn } from './receiptTemplates/billBullTaxInvoiceData';
 import { buildSampleInvoice, buildSampleOpts } from './receiptTemplates/sampleInvoice';
@@ -37,21 +39,33 @@ import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
 // hasTax=false (POS Receipt sub-tab) builds a no-tax Sales Invoice sample AND
 // strips every tax element from the resolved template, so the designer preview
 // matches the real no-tax checkout print. Defaults true (Tax Invoice tab).
+// The same sample sale rendered through a real template: the overlay renderer for a
+// pre-printed form, the document renderer (tax-aware) for A4 / A5 sheets — the same
+// split usePosPrinting.buildInvoiceSheetHtml applies at the till.
+const buildResolvedTemplateSampleHtml = (template, { isReturn = false, hasTax = true, outlet, footerNote }) => {
+  const sampleInvoice = buildSampleInvoice({ isReturn, noTax: !hasTax });
+  const data = buildPosPrintData(sampleInvoice, footerNote);
+  const options = {
+    companyProfile: {
+      companyName: outlet.name, trn: outlet.trn, address: outlet.address, phone: outlet.phone,
+      currency: 'AED', logoUrl: outlet.logoDataUrl || undefined, stampUrl: outlet.stampDataUrl || undefined,
+      showStampInPrint: !!outlet.stampDataUrl,
+    },
+  };
+  if (isOverlayTemplate(template)) return generateOverlayInvoiceHtml(template, data, options);
+  return generateDocumentPrintHtml(applyTaxAwareDisplayOptions(template, hasTax), data, options);
+};
+
 const ResolvedTemplateA4Preview = ({ template, isReturn, hasTax = true, outlet, footerNote, scale }) => {
-  const html = useMemo(() => {
-    const sampleInvoice = buildSampleInvoice({ isReturn, noTax: !hasTax });
-    const data = buildPosPrintData(sampleInvoice, footerNote);
-    const taxAwareTemplate = applyTaxAwareDisplayOptions(template, hasTax);
-    const options = {
-      companyProfile: {
-        companyName: outlet.name, trn: outlet.trn, address: outlet.address, phone: outlet.phone,
-        currency: 'AED', logoUrl: outlet.logoDataUrl || undefined, stampUrl: outlet.stampDataUrl || undefined,
-        showStampInPrint: !!outlet.stampDataUrl,
-      },
-    };
-    return generateDocumentPrintHtml(taxAwareTemplate, data, options);
-  }, [template, isReturn, hasTax, outlet.name, outlet.trn, outlet.address, outlet.phone, outlet.logoDataUrl, outlet.stampDataUrl, footerNote]);
-  return <A4PreviewFrame html={html} scale={scale} />;
+  const html = useMemo(
+    () => buildResolvedTemplateSampleHtml(template, { isReturn, hasTax, outlet, footerNote }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [template, isReturn, hasTax, outlet.name, outlet.trn, outlet.address, outlet.phone, outlet.logoDataUrl, outlet.stampDataUrl, footerNote],
+  );
+  const { width, height } = sheetPixelSize(template);
+  // Keep the preview the width an A4 page renders at, whatever the sheet.
+  const fitScale = scale * (794 / width);
+  return <A4PreviewFrame html={html} scale={fitScale} pageWidth={width} pageHeight={height} />;
 };
 
 /**
@@ -129,7 +143,7 @@ const POSConsole = React.memo((props) => {
     // rows (read-only here — see POSSales.jsx for the fetch). Used so this designer's
     // live preview shows the SAME template that actually prints at checkout, instead
     // of a separate approximation built from this screen's own toggles.
-    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
+    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate, posInvoiceTemplateFamily,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt, 
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
@@ -1996,7 +2010,17 @@ const POSConsole = React.memo((props) => {
             // whenever a thermal paper size is selected (not A4). receiptTemplateId
             // is a single global setting — the same choice drives both documents at
             // checkout — so Return / Job Card stay pinned to the native template.
-            const templateSelectorAvailable = (templateSubTab === 'receipt' || templateSubTab === 'invoice') && cfg.paper !== 'A4';
+            // A sheet (non-thermal) paper: A4 on every tab, plus A5 Portrait / A5
+            // Landscape / Pre-printed on the two sale documents — POS Receipt (no-tax
+            // sale) and Tax Invoice (taxed sale). Those three print a Back Office "Sales
+            // Invoice" family template, previewed here as it will print.
+            const saleSheetTab = templateSubTab === 'invoice' || templateSubTab === 'receipt';
+            const isSheet = isSheetPaper(cfg.paper);
+            const sheetTemplate = saleSheetTab && isSheet && cfg.paper !== 'A4'
+              ? pickSheetTemplate(posInvoiceTemplateFamily, cfg.paper, currentTerminal?.branchId)
+              : null;
+            const sheetOutlet = { name: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, logoDataUrl: tplLogoDataUrl, stampDataUrl: tplStampDataUrl };
+            const templateSelectorAvailable = (templateSubTab === 'receipt' || templateSubTab === 'invoice') && !isSheet;
             const activeTemplate = getReceiptTemplate(templateSelectorAvailable ? receiptTemplateId : DEFAULT_RECEIPT_TEMPLATE_ID);
             const useComponentTemplate = templateSelectorAvailable && activeTemplate.kind === 'component';
             // Build the shared data model once for component templates (preview + print).
@@ -2059,7 +2083,9 @@ const POSConsole = React.memo((props) => {
                 return;
               }
               let html;
-              if (cfg.paper === 'A4') {
+              if (sheetTemplate) {
+                html = buildResolvedTemplateSampleHtml(sheetTemplate, { hasTax: hasTaxPreview, outlet: sheetOutlet, footerNote: cfg.footer });
+              } else if (isSheet) {
                 html = templateSubTab === 'jobcard'
                   ? buildServiceJobA4Html({companyName:tplOutletName,trn:effectiveOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer})
                   : buildDocumentPreviewHtml(templateSubTab==='return'?'Sales Return':'Sales Invoice',{companyName:tplOutletName,trn:effectiveOutletTrn,address:tplOutletAddress,phone:tplOutletPhone,footerNote:cfg.footer},{
@@ -2097,7 +2123,11 @@ const POSConsole = React.memo((props) => {
               // A4 and the Service Job Card always use the browser print pipeline —
               // there is no thermal/ESC-POS equivalent for those, and this task only
               // changes the 58mm/80mm receipt path.
-              if (cfg.paper === 'A4') {
+              if (sheetTemplate) {
+                printHtml(buildResolvedTemplateSampleHtml(sheetTemplate, { hasTax: hasTaxPreview, outlet: sheetOutlet, footerNote: cfg.footer }));
+                return;
+              }
+              if (isSheet) {
                 const toggles = {
                   hasTax:hasTaxPreview,
                   showLogo:cfg.showLogo,showCompanyDetails:cfg.showCompanyDetails,showTrn:cfg.showTrn,showCustomerDetails:cfg.showCustomerDetails,
@@ -2270,7 +2300,7 @@ const POSConsole = React.memo((props) => {
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2">Paper Size</label>
-                          <PaperSizePicker value={cfg.paper} onChange={cfg.setPaper} />
+                          <PaperSizePicker value={cfg.paper} onChange={cfg.setPaper} options={saleSheetTab ? ['80mm', '58mm', ...POS_SHEET_FORMATS] : undefined} />
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-1.5">Header Custom Text (multi-line)</label>
@@ -2412,17 +2442,17 @@ const POSConsole = React.memo((props) => {
                             // already forced false above; disable so it reads as
                             // locked rather than merely unchecked.
                             ['Show TRN', cfg.showTrn, cfg.setShowTrn, templateSubTab === 'receipt'],
-                            ...(cfg.paper !== 'A4' ? [] : [['Show Stamp / Seal', cfg.showStamp, cfg.setShowStamp]]),
+                            ...(!isSheet ? [] : [['Show Stamp / Seal', cfg.showStamp, cfg.setShowStamp]]),
                           ])}
-                          {cfg.paper !== 'A4' && fieldToggleSection('TRANSACTION', [
+                          {!isSheet && fieldToggleSection('TRANSACTION', [
                             ['Show Service Charge', cfg.showServiceCharge, cfg.setShowServiceCharge],
                             ['Show VAT Summary', cfg.showVatSummary, cfg.setShowVatSummary, templateSubTab === 'receipt'],
                             ['Show Payment Details (Cash / Change / Mode)', cfg.showPaymentDetails, cfg.setShowPaymentDetails],
                           ])}
-                          {cfg.paper !== 'A4' && fieldToggleSection('AFTER PAYMENT', [
+                          {!isSheet && fieldToggleSection('AFTER PAYMENT', [
                             ['Show QR / Social Image', cfg.showQRCode, cfg.setShowQRCode],
                           ])}
-                          {cfg.paper === 'A4' && fieldToggleSection('DOCUMENT SECTIONS', [
+                          {isSheet && fieldToggleSection('DOCUMENT SECTIONS', [
                             ['Show Grand Total Highlight', cfg.showServiceCharge, cfg.setShowServiceCharge],
                             ['Show QR / Stamp', cfg.showQRCode, cfg.setShowQRCode],
                             ['Show Bank Details', cfg.showCreditBalance, cfg.setShowCreditBalance],
@@ -2430,7 +2460,7 @@ const POSConsole = React.memo((props) => {
                           ])}
                           {fieldToggleSection('CUSTOMER DETAILS', [
                             ['Show Customer Details (Name, Mobile, Email, TRN, Address)', cfg.showCustomerDetails, cfg.setShowCustomerDetails],
-                            ...(cfg.paper !== 'A4' ? [
+                            ...(!isSheet ? [
                               ['Show Loyalty Points (Earned / Used / Remaining)', cfg.showLoyaltyPoints, cfg.setShowLoyaltyPoints],
                               ['Show Customer Credit Balance', cfg.showCreditBalance, cfg.setShowCreditBalance],
                             ] : []),
@@ -2438,7 +2468,7 @@ const POSConsole = React.memo((props) => {
                           {fieldToggleSection('FOOTER', [
                             ['Show Footer Custom Text', cfg.showFooterText, cfg.setShowFooterText],
                           ])}
-                          {cfg.paper === 'A4' && fieldToggleSection('COLUMNS (A4 only)', [
+                          {isSheet && fieldToggleSection('COLUMNS (A4 / A5 only)', [
                             ['Item Code', cfg.colItemCode, cfg.setColItemCode],
                             ['Item Image', cfg.colItemImage, cfg.setColItemImage],
                             ['Barcode', cfg.colBarcode, cfg.setColBarcode],
@@ -2463,9 +2493,18 @@ const POSConsole = React.memo((props) => {
                           <span className="text-sm font-bold text-[#1E293B]">Live Preview</span>
                         </div>
                         <span className="text-[11px] font-semibold text-gray-400 bg-gray-100 px-2.5 py-1 rounded-lg">
-                          {cfg.paper === 'A4' ? 'A4 document' : `${cfg.paper} thermal`}
+                          {isSheet ? `${sheetFormatLabel(cfg.paper)} document` : `${cfg.paper} thermal`}
                         </span>
                       </div>
+
+                      {/* Which Back Office template an A5 / Pre-printed sheet prints with. */}
+                      {saleSheetTab && isSheet && cfg.paper !== 'A4' && (
+                        sheetTemplate
+                          ? <p className="px-4 pt-3 text-[11px] text-gray-500">Prints with <span className="font-semibold text-[#1E293B]">{sheetTemplate.name}</span>. Edit it under Sales → Print &amp; Email Templates.</p>
+                          : <p className="mx-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                              No {sheetFormatLabel(cfg.paper)} Sales Invoice template exists yet, so the default template prints instead. Create one under Sales → Print &amp; Email Templates.
+                            </p>
+                      )}
 
                       {/* ── Receipt template selector (Template 1 / Template 2 …) ── */}
                       {templateSelectorAvailable && (
@@ -2496,7 +2535,15 @@ const POSConsole = React.memo((props) => {
                                 </div>
                               );
                             })()
-                          : cfg.paper === 'A4'
+                          : sheetTemplate
+                          ? <ResolvedTemplateA4Preview
+                              template={sheetTemplate}
+                              hasTax={hasTaxPreview}
+                              outlet={sheetOutlet}
+                              footerNote={cfg.footer}
+                              scale={0.42}
+                            />
+                          : isSheet
                           ? (USE_NEW_POS_PRINT_TEMPLATE && (templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate))
                             ? <ResolvedTemplateA4Preview
                                 template={templateSubTab==='return' ? resolvedPosCreditNoteTemplate : resolvedPosInvoiceTemplate}

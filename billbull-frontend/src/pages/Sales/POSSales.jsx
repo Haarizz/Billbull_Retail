@@ -43,14 +43,15 @@ import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSale
 import SalesReturnScreen from './SalesReturn/SalesReturnScreen';
 import { ENTRY_POINT } from './SalesReturn/constants';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
-import { resolvePrintTemplate } from '../../api/printTemplateApi';
+import { getTemplateFamily, resolvePrintTemplate } from '../../api/printTemplateApi';
+import { isSheetPaper, POS_SHEET_FORMATS, sheetFormatLabel } from './POS/device/printing/posSheetTemplates';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
 import { computeLineTaxTotals } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
 import { CASH_NOTE_KEYS, CASH_COIN_KEYS, DENOM_KEYS, DENOM_LABELS, emptyDenominations, setDenominationLadder } from '../../utils/cashDenominations';
 import { calculateDenominationTotal } from '../../utils/posReportViewModel';
-import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
+import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
 import { isSessionUsableForSelling, resolveSessionBusinessDate, sessionBusinessDay } from '../../utils/posSessionBusinessDay';
@@ -905,6 +906,13 @@ export default function POSSales() {
   // resolvedPosInvoiceTemplate below, which every print call site now goes through.
   const [resolvedPosInvoiceTemplate, setResolvedPosInvoiceTemplate] = useState(null);
   const [resolvedPosCreditNoteTemplate, setResolvedPosCreditNoteTemplate] = useState(null);
+  // Every "Sales Invoice*" template (A4, A5 portrait/landscape, pre-printed). The A5
+  // and Pre-printed sheet formats print a member of this family; A4 keeps using the
+  // resolved default above.
+  const [posInvoiceTemplateFamily, setPosInvoiceTemplateFamily] = useState(null);
+  // Sheet format the Reprint dialog's A4/PDF actions print on. Seeded from the
+  // configured invoice paper whenever the dialog opens.
+  const [reprintSheetFormat, setReprintSheetFormat] = useState('A4');
 
   // The tplInvoice* designer flags an A4 print applies. Assembled here because these
   // flags are general POS configuration (each is also read by the designer JSX and the
@@ -940,11 +948,14 @@ export default function POSSales() {
     printThermalReceiptWithConfiguredPrinter,
     resolveInvoiceA4Template,
     resolveCreditNoteA4Template,
-    resolveInvoiceA4TemplateFor,
+    buildInvoiceSheetHtml,
+    paperForSale,
   } = usePosPrinting({
     printerConfigs, currentTerminal,
     resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
     invoiceTemplateOptions, tplInvoiceFooter,
+    tplInvoicePaper, tplReceiptPaper, posInvoiceTemplateFamily,
+    branchId: currentTerminal?.branchId || currentSession?.branchId || null,
   });
 
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
@@ -1822,6 +1833,18 @@ export default function POSSales() {
     })();
     return () => { cancelled = true; };
   }, [currentTerminal?.branchId, currentSession?.branchId]);
+
+  // The A5 / Pre-printed sheet formats print a member of the Back Office "Sales
+  // Invoice" family, so load the family once. Not gated on the cutover flag: those
+  // formats have no fabricated fallback design, only the real templates. A failed
+  // load leaves it null and buildInvoiceSheetHtml falls back to the default.
+  useEffect(() => {
+    let cancelled = false;
+    getTemplateFamily('Sales Invoice')
+      .then((family) => { if (!cancelled && Array.isArray(family)) setPosInvoiceTemplateFamily(family); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   // Auto-load report data when entering report views
   useEffect(() => {
@@ -2756,11 +2779,10 @@ export default function POSSales() {
       const savedInvoice = await posCheckout(payload);
 
       try {
-        if (tplInvoicePaper === 'A4') {
-          const template = resolveInvoiceA4TemplateFor(savedInvoice);
+        if (isSheetPaper(paperForSale(savedInvoice))) {
           const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
           const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-          printHtml(await generatePrintHtmlAsync(template, data, options));
+          printHtml(await buildInvoiceSheetHtml(savedInvoice, data, options));
         } else {
           const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
           const creditInvoiceCreditAuto = creditPrevBalAuto != null ? deliveryDueAmt : null;
@@ -2828,7 +2850,7 @@ export default function POSSales() {
   }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
     deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
     currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder,
-    tplInvoiceShowBankDetails, tplInvoicePaper]);
+    tplInvoiceShowBankDetails, paperForSale, buildInvoiceSheetHtml]);
 
 
   // ── Hold (persisted, session-scoped) ───────────────────────────────────────
@@ -2869,7 +2891,11 @@ export default function POSSales() {
 
   // Fetch real POS invoices when the reprint modal opens.
   useEffect(() => {
-    if (showReprintModal) fetchReprintInvoices();
+    if (showReprintModal) {
+      fetchReprintInvoices();
+      // Start from the till's configured sheet; a thermal till starts on A4.
+      setReprintSheetFormat([tplInvoicePaper, tplReceiptPaper].find(isSheetPaper) || 'A4');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showReprintModal]);
 
@@ -2934,7 +2960,7 @@ export default function POSSales() {
             footer: tplReceiptFooter,
             showTrn: tplReceiptShowTrn,
           };
-          if (tplReceiptPaper === 'A4') {
+          if (isSheetPaper(tplReceiptPaper)) { // any sheet till prints the slip via the browser
             printHtml(buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts), { fast: true });
           } else {
             const printer = resolvePrinterForContext(printerConfigs, {
@@ -3165,7 +3191,7 @@ export default function POSSales() {
       targetRequired, targetReady, refreshReadiness, openTargetReadinessWarning,
     },
     printing: {
-      resolveInvoiceA4TemplateFor, printThermalReceiptWithConfiguredPrinter,
+      buildInvoiceSheetHtml, paperForSale, printThermalReceiptWithConfiguredPrinter,
       buildThermalReceiptArtifacts, openCashDrawer,
     },
     a4Template: {
@@ -3385,9 +3411,8 @@ export default function POSSales() {
           : i));
         const companyOptions = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
-          const template = resolveInvoiceA4TemplateFor(full);
           const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
-          const html = await generatePrintHtmlAsync(template, data, companyOptions);
+          const html = await buildInvoiceSheetHtml(full, data, companyOptions, reprintSheetFormat);
           if (reprintPrintMode === 'pdf') {
             const filename = `${full.invoiceNumber || reprintSelectedInvoice}.pdf`;
             try { await downloadPdfViaServer(html, filename); } catch {
@@ -6866,7 +6891,7 @@ export default function POSSales() {
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
-    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
+    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate, posInvoiceTemplateFamily,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
@@ -8326,11 +8351,10 @@ export default function POSSales() {
                     if (!lastPaidInvoice?.invoice?.id) return;
                     try {
                       const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                      if (tplInvoicePaper === 'A4') {
-                        const template = resolveInvoiceA4TemplateFor(full);
+                      if (isSheetPaper(paperForSale(full))) {
                         const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                         const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                        printHtml(generateDocumentPrintHtml(template, data, options));
+                        printHtml(await buildInvoiceSheetHtml(full, data, options));
                       } else {
                         const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                           full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
@@ -8651,11 +8675,10 @@ export default function POSSales() {
                 });
                 const full = reprintResult.invoice;
                 openCashDrawer('RECEIPT_PRINT');
-                if (tplInvoicePaper === 'A4') {
-                  const template = resolveInvoiceA4TemplateFor(full);
+                if (isSheetPaper(paperForSale(full))) {
                   const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                   const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                  printHtml(await generatePrintHtmlAsync(template, data, options));
+                  printHtml(await buildInvoiceSheetHtml(full, data, options));
                 } else {
                   // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
                   // rather than re-querying posCreditBalance — by now it already reflects
@@ -9122,9 +9145,19 @@ export default function POSSales() {
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
                         <Printer className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'thermal' ? 'Printing…' : 'Print Thermal Receipt'}
                       </button>
+                      {/* Sheet format for the invoice print and the PDF: A4, the A5 variants or the pre-printed form. */}
+                      <select
+                        aria-label="Invoice sheet format"
+                        value={reprintSheetFormat}
+                        onChange={(e) => setReprintSheetFormat(e.target.value)}
+                        disabled={selected.status === 'Cancelled' || reprintPrinting}
+                        className="text-xs px-2 py-1.5 rounded border border-[#F5C742]/40 bg-white text-[#1E293B] disabled:opacity-50"
+                      >
+                        {POS_SHEET_FORMATS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                      </select>
                       <button onClick={() => { setReprintPrintMode('a4'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-[#F5C742]/40 text-[#F5C742] hover:bg-[#F5C742]/5'}`}>
-                        <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'a4' ? 'Printing…' : 'Print A4 Invoice'}
+                        <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'a4' ? 'Printing…' : `Print ${sheetFormatLabel(reprintSheetFormat)} Invoice`}
                       </button>
                       <button onClick={() => { setReprintPrintMode('pdf'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
@@ -9181,7 +9214,7 @@ export default function POSSales() {
             <Button variant="outline" onClick={() => setReprintConfirmOpen(false)}>Cancel</Button>
             <Button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]" onClick={handleReprintConfirm} disabled={reprintPrinting}>
               {reprintPrintMode === 'pdf' ? <Download className="h-4 w-4 mr-1" /> : <Printer className="h-4 w-4 mr-1" />}
-              {reprintPrinting ? (reprintPrintMode === 'pdf' ? 'Downloading…' : 'Printing…') : (reprintPrintMode === 'thermal' ? 'Confirm & Print Thermal' : reprintPrintMode === 'a4' ? 'Confirm & Print A4' : 'Confirm & Download PDF')}
+              {reprintPrinting ? (reprintPrintMode === 'pdf' ? 'Downloading…' : 'Printing…') : (reprintPrintMode === 'thermal' ? 'Confirm & Print Thermal' : reprintPrintMode === 'a4' ? `Confirm & Print ${sheetFormatLabel(reprintSheetFormat)}` : 'Confirm & Download PDF')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -10376,11 +10409,10 @@ export default function POSSales() {
               // mode actually selected here rather than trusting that stamp.
               const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
               const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
-              if (tplInvoicePaper === 'A4') {
-                const template = resolveInvoiceA4TemplateFor(receiptInvoice);
+              if (isSheetPaper(paperForSale(receiptInvoice))) {
                 const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(receiptInvoice) ? tplInvoiceHeader : tplReceiptHeader);
                 const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                printHtml(await generatePrintHtmlAsync(template, data, options));
+                printHtml(await buildInvoiceSheetHtml(receiptInvoice, data, options));
               } else {
                 // Delivery Settlement receipt: unlike the Out-for-Delivery slip, this
                 // one MUST carry the CREDIT ACCOUNT block. Snapshot the customer's

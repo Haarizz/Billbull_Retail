@@ -94,7 +94,10 @@ const makeArgs = (over = {}) => {
       deliveryDriver: '', deliveryNotes: '',
     },
     printing: {
-      resolveInvoiceA4TemplateFor: vi.fn(() => ({ category: 'Sales Invoice', displayOptions: '{}' })),
+      buildInvoiceSheetHtml: vi.fn(async () => '<html></html>'),
+      // The sale's configured paper. The harness knob stays a4Template.tplInvoicePaper; the
+      // taxed/no-tax split itself is covered in posSheetTemplates.test.js.
+      paperForSale: vi.fn(() => args.a4Template.tplInvoicePaper),
       printThermalReceiptWithConfiguredPrinter: vi.fn(async () => { events.push('print.thermal'); return { mode: 'agent-escpos' }; }),
       buildThermalReceiptArtifacts: vi.fn(async () => { events.push('build.artifacts'); return { text: 'R', escPosBase64: 'AAEC' }; }),
       openCashDrawer,
@@ -405,9 +408,23 @@ describe('printing branch selection', () => {
     await settle(ctx);
 
     expect(printHtml).toHaveBeenCalledTimes(1);
-    expect(generatePrintHtmlAsync).toHaveBeenCalledTimes(1);
+    expect(ctx.args.printing.buildInvoiceSheetHtml).toHaveBeenCalledTimes(1);
+    expect(ctx.args.printing.buildInvoiceSheetHtml.mock.calls[0][3]).toBe('A4');
+    // The paper is asked for the SAVED invoice, so a no-tax sale gets the POS Receipt paper.
+    expect(ctx.args.printing.paperForSale.mock.calls).toEqual([[SAVED]]);
+    expect(generatePrintHtmlAsync).not.toHaveBeenCalled();
     expect(events).not.toContain('build.artifacts');
     expect(events).toContain('drawer:RECEIPT_PRINT');
+  });
+
+  it.each(['A5', 'A5L', 'PREPRINTED'])('takes the sheet path for %s and hands the snapshotted format to the builder', async (paper) => {
+    const ctx = setup({ a4Template: { tplInvoicePaper: paper } });
+    await settle(ctx);
+
+    expect(printHtml).toHaveBeenCalledTimes(1);
+    expect(ctx.args.printing.buildInvoiceSheetHtml.mock.calls[0][0]).toBe(SAVED);
+    expect(ctx.args.printing.buildInvoiceSheetHtml.mock.calls[0][3]).toBe(paper);
+    expect(events).not.toContain('build.artifacts');
   });
 
   it('opens the drawer for change only when change is due', async () => {

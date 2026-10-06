@@ -17,18 +17,18 @@ import { CurrencyAmount } from '../POSCurrency';
  * PRE-EXTRACTION. This file makes ZERO production changes; POSSales.jsx is untouched.
  *
  * (1) EXACT CURRENT SOURCE BOUNDARY
- *   POSSales.jsx:9207-9245 — 39 lines.
- *     9207  the `Promotions Dialog` comment
- *     9208  <Dialog open={showPromotionsDialog} onOpenChange={setShowPromotionsDialog}>
- *     9209  <DialogContent className="max-w-md bg-white">
- *     9245  the closing </Dialog>
+ *   POSSales.jsx:9240-9278 — 39 lines.
+ *     9240  the `Promotions Dialog` comment
+ *     9241  <Dialog open={showPromotionsDialog} onOpenChange={setShowPromotionsDialog}>
+ *     9242  <DialogContent className="max-w-md bg-white">
+ *     9278  the closing </Dialog>
  *   The region is reproduced VERBATIM below between REGION-VERBATIM-START/END and is the
  *   pinned behavioural reference for this whole suite.
  *
  * (2) STABLE SOURCE PIN
  *   sha256 of the 39 LF-normalised lines (trailing newline included):
  *     056496812d31fe18ddd3af6adb17f4f4f11a024ac2d60228b195e071c1109399
- *   sha256 of lines 9208-9245 only (the JSX, leading comment excluded):
+ *   sha256 of lines 9241-9278 only (the JSX, leading comment excluded):
  *     2b56cc5ba93c74fec5d09587187ceb007f4f23cf43b3708e30caaf724423de6d
  *   The `source contract` describe asserts BOTH against the live POSSales.jsx, so any drift in
  *   the inline region fails this suite immediately.
@@ -563,8 +563,8 @@ describe('source contract', () => {
   it('finds the region exactly once, at the pinned boundary', () => {
     expect(START).toBeGreaterThan(-1);
     expect(LINES.indexOf(ANCHOR, START + 1)).toBe(-1);
-    expect(START + 1).toBe(9207); // 1-indexed line 9207
-    expect(END + 1).toBe(9245);
+    expect(START + 1).toBe(9240); // 1-indexed line 9240
+    expect(END + 1).toBe(9278);
     expect(LIVE_REGION.split('\n')).toHaveLength(39);
   });
 
@@ -635,8 +635,8 @@ describe('source contract', () => {
 
   it('`Zap` is used ONLY by this region in POSSales — it becomes the child\'s import', () => {
     const zapLines = LINES.map((l, i) => [i + 1, l]).filter(([, l]) => l.includes('Zap'));
-    expect(zapLines.map(([n]) => n)).toEqual([103, 9211, 9235]);
-    expect(LINES[102]).toBe('  Zap,'); // the lucide import entry, line 103
+    expect(zapLines.map(([n]) => n)).toEqual([104, 9244, 9268]);
+    expect(LINES[103]).toBe('  Zap,'); // the lucide import entry, line 104
     expect(LIVE_REGION.split('<Zap ').length - 1).toBe(2);
   });
 

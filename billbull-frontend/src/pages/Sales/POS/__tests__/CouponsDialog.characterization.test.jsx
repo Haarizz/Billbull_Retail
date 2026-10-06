@@ -757,7 +757,7 @@ describe('source contract', () => {
     const reprint = region('      {/* Reprint Confirm Popup */}');
     const promotions = region('      {/* Promotions Dialog */}');
     expect(reprint.split('\n')).toHaveLength(26);
-    expect(sha(reprint)).toBe('acf14106a827419ce1389b149fe971cac6e9cb073c60fa723699028f77d1e3cd');
+    expect(sha(reprint)).toBe('06f674b2e3524c9a2c539c7e894a374e35be119002bf5a82cfafd1bea6844feb'); // confirm label names the sheet format
     expect(promotions.split('\n')).toHaveLength(39);
     expect(sha(promotions)).toBe('056496812d31fe18ddd3af6adb17f4f4f11a024ac2d60228b195e071c1109399');
     // …and they still bracket the new call site, in the original order.

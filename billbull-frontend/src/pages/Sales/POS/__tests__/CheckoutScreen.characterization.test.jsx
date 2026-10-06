@@ -19,6 +19,7 @@ import CheckoutSettlementSummary from '../features/checkout/CheckoutSettlementSu
 import CheckoutPaymentHeader from '../features/checkout/CheckoutPaymentHeader';
 import CheckoutPaymentFooter from '../features/checkout/CheckoutPaymentFooter';
 import CheckoutRemarks from '../features/checkout/CheckoutRemarks';
+import { isSheetPaper } from '../device/printing/posSheetTemplates';
 import CheckoutPaymentPreview from '../features/checkout/CheckoutPaymentPreview';
 
 // The preview column's inner content now lives in CheckoutPaymentPreview, which imports the
@@ -57,8 +58,8 @@ vi.mock('../POSPrintPreview', async (importOriginal) => ({
  *   - Complete-screen Print Receipt omits paymentBlock/depositApplied/balanceDue/shippingCharge/
  *     isReprint/cashierNameOverride, never kicks the drawer, has no in-flight guard, and reports
  *     failure through window.alert.
- *   - Its A4 branch hard-codes currency 'AED' and hands generateDocumentPrintHtml's return value
- *     straight to printHtml without awaiting it.
+ *   - Its sheet branch (A4 / A5 / A5 landscape / pre-printed) hard-codes currency 'AED' and
+ *     awaits buildInvoiceSheetHtml before handing the HTML to printHtml.
  *   - showA4CheckoutPreview is a hard-coded `false`; the A4 preview branch is dead.
  *   - The orders-list "checkout" opener sets showPaymentDialog without resetting checkoutPhase.
  *   - The header X and the footer Cancel close differently (X keeps the error and the tenders).
@@ -69,10 +70,10 @@ function OriginalCheckoutMarkup({
   showPaymentDialog, checkoutPhase, lastPaidInvoice,
   setShowPaymentDialog, setCheckoutPhase, setCheckoutSettling, setCheckoutFinalizing,
   setReceiptShareChannel, setSelectedCustomer, checkoutFinalizing, formatCurrencyStr,
-  getSalesInvoiceById, tplInvoicePaper, resolveInvoiceA4TemplateFor, buildPosPrintData,
+  getSalesInvoiceById, paperForSale, isSheetPaper, buildPosPrintData,
   tplInvoiceFooter, customerOptions, isTaxInvoiceDocument, tplInvoiceHeader, tplReceiptHeader,
   tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, company,
-  tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, generateDocumentPrintHtml,
+  tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, buildInvoiceSheetHtml,
   buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter, setShowReprintModal,
   receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend,
   shippingCharge, currentInvoice, activeLayawayDeposit, checkoutEffectiveDue, previewInvoiceNo,
@@ -146,11 +147,10 @@ function OriginalCheckoutMarkup({
                     if (!lastPaidInvoice?.invoice?.id) return;
                     try {
                       const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                      if (tplInvoicePaper === 'A4') {
-                        const template = resolveInvoiceA4TemplateFor(full);
+                      if (isSheetPaper(paperForSale(full))) {
                         const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                         const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                        printHtml(generateDocumentPrintHtml(template, data, options));
+                        printHtml(await buildInvoiceSheetHtml(full, data, options));
                       } else {
                         const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                           full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
@@ -353,8 +353,8 @@ function makeProps(overrides = {}) {
     checkoutFinalizing: false,
     formatCurrencyStr,
     getSalesInvoiceById: vi.fn(async () => FULL),
-    tplInvoicePaper: '80mm',
-    resolveInvoiceA4TemplateFor: vi.fn(() => ({ id: 'tpl-a4' })),
+    paperForSale: vi.fn(() => overrides.tplInvoicePaper ?? '80mm'),
+    isSheetPaper: vi.fn(isSheetPaper),
     buildPosPrintData: vi.fn(() => ({ printData: true })),
     tplInvoiceFooter: { footerText: 'Thanks' },
     customerOptions: [{ id: 'c-1' }],
@@ -371,7 +371,7 @@ function makeProps(overrides = {}) {
     USE_NEW_POS_PRINT_TEMPLATE: true,
     tplInvoiceShowStamp: true,
     printHtml: vi.fn(),
-    generateDocumentPrintHtml: vi.fn(() => '<html>a4</html>'),
+    buildInvoiceSheetHtml: vi.fn(async () => '<html>a4</html>'),
     buildThermalReceiptArtifacts: vi.fn(async () => ({ text: 'RECEIPT TEXT', escPosBase64: 'RVNDUE9T' })),
     printThermalReceiptWithConfiguredPrinter: vi.fn(async () => {}),
     setShowReprintModal: vi.fn(),
@@ -1299,7 +1299,7 @@ describe('12. complete-screen Print Receipt', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  describe('A. thermal branch (tplInvoicePaper !== "A4")', () => {
+  describe('A. thermal branch (the sale\'s paper is not a sheet format)', () => {
     it('fetches the full invoice, builds thermal artifacts with the exact 12-key argument, then prints', async () => {
       const props = completeProps();
       renderMarkup(props);
@@ -1356,7 +1356,7 @@ describe('12. complete-screen Print Receipt', () => {
       const props = completeProps({ openCashDrawer: vi.fn() });
       renderMarkup(props);
       await clickPrint();
-      for (const fn of ['resolveInvoiceA4TemplateFor', 'buildPosPrintData', 'isTaxInvoiceDocument', 'generateDocumentPrintHtml', 'printHtml', 'openCashDrawer',
+      for (const fn of ['buildInvoiceSheetHtml', 'buildPosPrintData', 'isTaxInvoiceDocument', 'printHtml', 'openCashDrawer',
         'setShowPaymentDialog', 'setCheckoutPhase', 'setCheckoutFinalizing', 'setReceiptShareChannel']) {
         expect(props[fn], fn).not.toHaveBeenCalled();
       }
@@ -1400,7 +1400,7 @@ describe('12. complete-screen Print Receipt', () => {
     });
   });
 
-  describe('B. A4 branch (tplInvoicePaper === "A4")', () => {
+  describe('B. sheet branch (A4 / A5 / A5 landscape / pre-printed)', () => {
     const OPTIONS = {
       companyProfile: {
         companyName: 'Main Outlet', trn: '100200300400003', address: 'Dubai', phone: '04-000000', currency: 'AED',
@@ -1408,16 +1408,15 @@ describe('12. complete-screen Print Receipt', () => {
       },
     };
 
-    it('resolves the template, builds print data with the tax header, and prints generateDocumentPrintHtml(template, data, options)', async () => {
+    it('builds print data with the tax header, and prints await buildInvoiceSheetHtml(full, data, options)', async () => {
       const props = completeProps({ tplInvoicePaper: 'A4' });
       renderMarkup(props);
       await clickPrint();
       expect(props.getSalesInvoiceById.mock.calls).toEqual([[987]]);
-      expect(props.resolveInvoiceA4TemplateFor.mock.calls).toEqual([[FULL]]);
       expect(props.isTaxInvoiceDocument.mock.calls).toEqual([[FULL]]);
       expect(props.buildPosPrintData.mock.calls).toEqual([[FULL, props.tplInvoiceFooter, props.customerOptions, 'INVOICE-HEADER']]);
-      expect(props.generateDocumentPrintHtml.mock.calls).toEqual([[{ id: 'tpl-a4' }, { printData: true }, OPTIONS]]);
-      expect(Object.keys(props.generateDocumentPrintHtml.mock.calls[0][2].companyProfile)).toEqual(
+      expect(props.buildInvoiceSheetHtml.mock.calls).toEqual([[FULL, { printData: true }, OPTIONS]]);
+      expect(Object.keys(props.buildInvoiceSheetHtml.mock.calls[0][2].companyProfile)).toEqual(
         ['companyName', 'trn', 'address', 'phone', 'currency', 'logoUrl', 'stampUrl', 'showStampInPrint'],
       );
       expect(props.printHtml.mock.calls).toEqual([['<html>a4</html>']]);
@@ -1432,13 +1431,22 @@ describe('12. complete-screen Print Receipt', () => {
       expect(props.buildPosPrintData.mock.calls[0][3]).toBe('RECEIPT-HEADER');
     });
 
-    it('KNOWN BEHAVIOUR: generateDocumentPrintHtml is used synchronously — a returned promise is handed to printHtml unawaited', async () => {
+    it('buildInvoiceSheetHtml is awaited: nothing prints while the HTML is pending', async () => {
       const pending = new Promise(() => {});
-      const props = completeProps({ tplInvoicePaper: 'A4', generateDocumentPrintHtml: vi.fn(() => pending) });
+      const props = completeProps({ tplInvoicePaper: 'A4', buildInvoiceSheetHtml: vi.fn(() => pending) });
       renderMarkup(props);
       await clickPrint();
-      expect(props.printHtml).toHaveBeenCalledTimes(1);
-      expect(props.printHtml.mock.calls[0][0]).toBe(pending);
+      expect(props.buildInvoiceSheetHtml).toHaveBeenCalledTimes(1);
+      expect(props.printHtml).not.toHaveBeenCalled();
+    });
+
+    it.each(['A5', 'A5L', 'PREPRINTED'])('%s takes the sheet branch', async (paper) => {
+      const props = completeProps({ tplInvoicePaper: paper });
+      renderMarkup(props);
+      await clickPrint();
+      expect(props.buildInvoiceSheetHtml).toHaveBeenCalledTimes(1);
+      expect(props.printHtml.mock.calls).toEqual([['<html>a4</html>']]);
+      expect(props.buildThermalReceiptArtifacts).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -1451,7 +1459,7 @@ describe('12. complete-screen Print Receipt', () => {
       const props = completeProps({ tplInvoicePaper: 'A4', ...overrides });
       renderMarkup(props);
       await clickPrint();
-      expect(props.generateDocumentPrintHtml.mock.calls[0][2].companyProfile).toMatchObject({ currency: 'AED', ...expected });
+      expect(props.buildInvoiceSheetHtml.mock.calls[0][2].companyProfile).toMatchObject({ currency: 'AED', ...expected });
     });
 
     it('never kicks a drawer or closes the screen', async () => {
@@ -1466,12 +1474,12 @@ describe('12. complete-screen Print Receipt', () => {
       const props = completeProps({ tplInvoicePaper: 'a4' });
       renderMarkup(props);
       await clickPrint();
-      expect(props.resolveInvoiceA4TemplateFor).not.toHaveBeenCalled();
+      expect(props.buildInvoiceSheetHtml).not.toHaveBeenCalled();
       expect(props.buildThermalReceiptArtifacts).toHaveBeenCalledTimes(1);
     });
 
-    it('a synchronous render failure goes through the same alert path', async () => {
-      const props = completeProps({ tplInvoicePaper: 'A4', generateDocumentPrintHtml: vi.fn(() => { throw new Error('template missing'); }) });
+    it('a render failure goes through the same alert path', async () => {
+      const props = completeProps({ tplInvoicePaper: 'A4', buildInvoiceSheetHtml: vi.fn(async () => { throw new Error('template missing'); }) });
       renderMarkup(props);
       await clickPrint();
       expect(props.printHtml).not.toHaveBeenCalled();
@@ -1740,7 +1748,7 @@ const codeLines = (s) => s.split('\n').map((l) => l.trim()).filter((l) => l && !
 const count = (src, needle) => src.split(needle).length - 1;
 
 describe('18. source anchors — the copy', () => {
-  it('the verbatim copy is the live POSSales checkout region, byte for byte (203 lines)', () => {
+  it('the verbatim copy is the live POSSales checkout region, byte for byte (202 lines)', () => {
     const copy = between(SELF, '{/* VERBATIM-START */}\n', '\n      {/* VERBATIM-END */}');
     expect(copy).toBe(region());
     // 423 before the complete-phase summary body moved to CheckoutCompleteSummary (109 lines → a 6-line call);
@@ -1756,7 +1764,7 @@ describe('18. source anchors — the copy', () => {
     // the Remarks comment and the surrounding blank lines stay in POSSales);
     // 215 before the preview column's inner content moved to CheckoutPaymentPreview (18 lines → a
     // 6-line call; the outer column <div> and its class template stay in POSSales).
-    expect(region().split('\n')).toHaveLength(203);
+    expect(region().split('\n')).toHaveLength(202);
     expect(count(region(), '<CheckoutPaymentPreview\n')).toBe(1);
     expect(region()).toContain("              'lg:w-[280px] xl:w-[340px] 2xl:w-[400px]'\n            }`}>\n              <CheckoutPaymentPreview\n                showA4CheckoutPreview={showA4CheckoutPreview}\n                checkoutA4Html={checkoutA4Html}\n                checkoutA4BlobUrl={checkoutA4BlobUrl}\n                checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}\n              />\n            </div>\n\n            {/* ══ RIGHT: Payment & Settlement");
     expect(region()).not.toMatch(/<A4ScaledPreview|<ThermalScaledPreview|Add items to preview/);
@@ -1835,7 +1843,7 @@ describe('18. source anchors — invariants the extraction must keep', () => {
     }
     expect(r).toContain('alert(`Print failed: ${err?.message || \'printer error\'}.`)');
     expect(r).toContain("currency: 'AED'");
-    expect(r).toContain('printHtml(generateDocumentPrintHtml(template, data, options));');
+    expect(r).toContain('printHtml(await buildInvoiceSheetHtml(full, data, options));');
   });
 
   it('the A4 checkout preview stays hard-disabled while its html memo and blob hook still run', () => {

@@ -46,7 +46,8 @@ import { buildPosPrintData, USE_NEW_POS_PRINT_TEMPLATE } from '../../posPrintUti
 import { buildPosCheckoutItems } from '../../posUtils';
 import { buildPaymentBlock, paymentAuditSnapshot, reconcilePaymentBlock } from '../../payments/paymentPresentation';
 import { isTaxInvoiceDocument } from '../../../../../utils/documentTaxType';
-import { generatePrintHtmlAsync, printHtml } from '../../../../../utils/printGenerator';
+import { printHtml } from '../../../../../utils/printGenerator';
+import { isSheetPaper } from '../../device/printing/posSheetTemplates';
 
 /**
  * @param {object} args grouped domain inputs - see each group's members below.
@@ -69,7 +70,7 @@ export function useCheckout({
                   //   Phase 2 adds the advisory gate inputs: salespersonRequired,
                   //   salespersonVerified, openSalespersonScanModal, targetRequired, targetReady,
                   //   refreshReadiness, openTargetReadinessWarning.
-  printing,       // { resolveInvoiceA4TemplateFor, printThermalReceiptWithConfiguredPrinter,
+  printing,       // { buildInvoiceSheetHtml, paperForSale, printThermalReceiptWithConfiguredPrinter,
                   //   buildThermalReceiptArtifacts, openCashDrawer }
   a4Template,     // the tpl*/outlet values the A4 print branch reads, plus company
   errorRouting,   // { isClosureWorkflowError, showClosureRequiredBlock, setShowPaymentDialog,
@@ -96,11 +97,11 @@ export function useCheckout({
   const { activeLayawayId, activeLayawayDeposit, setActiveLayawayId, setActiveLayawayDeposit } = layaway;
   const { shippingCharge, shippingAddress, deliveryAddress, deliveryDriver, deliveryNotes } = shipping;
   const {
-    resolveInvoiceA4TemplateFor, printThermalReceiptWithConfiguredPrinter,
+    buildInvoiceSheetHtml, paperForSale, printThermalReceiptWithConfiguredPrinter,
     buildThermalReceiptArtifacts, openCashDrawer,
   } = printing;
   const {
-    tplInvoicePaper, tplInvoiceFooter, tplInvoiceHeader, tplReceiptHeader,
+    tplInvoiceFooter, tplInvoiceHeader, tplReceiptHeader,
     tplInvoiceShowStamp, tplOutletName, tplOutletAddress, tplOutletPhone,
     tplLogoDataUrl, tplStampDataUrl, tplInvoiceShowBankDetails, effectiveOutletTrn, company,
   } = a4Template;
@@ -302,7 +303,8 @@ export function useCheckout({
       // state resets below wipe the React state it was reading from (customer,
       // amounts, layaway id). savedInvoice/paid/changeDue etc. are already locals.
       const layawayIdSnapshot = activeLayawayId;
-      const printPaper = tplInvoicePaper;
+      // Tax Invoice paper for a taxed sale, POS Receipt paper for a no-tax one.
+      const printPaper = paperForSale(savedInvoice);
 
       // ── Show success immediately, then finalize in the background ───────────
       // The payment is already confirmed (posCheckout resolved). Commit the
@@ -351,11 +353,11 @@ export function useCheckout({
           if (changeDue > 0) openCashDrawer('CHANGE_RETURN');
 
           try {
-            if (printPaper === 'A4') {
-              const template = resolveInvoiceA4TemplateFor(savedInvoice);
+            if (isSheetPaper(printPaper)) {
               const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
               const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-              printHtml(await generatePrintHtmlAsync(template, data, options));
+              // A4, A5 or pre-printed — the snapshotted format picks the template.
+              printHtml(await buildInvoiceSheetHtml(savedInvoice, data, options, printPaper));
               openCashDrawer('RECEIPT_PRINT');
             } else {
               // Credit account fields ALL come from the single pre-checkout snapshot
