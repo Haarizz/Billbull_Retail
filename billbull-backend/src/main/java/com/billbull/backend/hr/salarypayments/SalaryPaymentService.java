@@ -50,6 +50,33 @@ public class SalaryPaymentService {
         return stats;
     }
 
+    /**
+     * One employee's payroll at a glance: this period's line, year-to-date paid salary and the
+     * last payslip. Two bounded reads keyed by employee code — never the whole month's roster.
+     */
+    public EmployeePayrollSummaryResponse getEmployeeSummary(String employeeCode, java.time.LocalDate today) {
+        int month = today.getMonthValue();
+        int year = today.getYear();
+        List<SalaryPayment> yearLines = repository.findByEmployeeIdAndSalaryYear(employeeCode, year);
+
+        EmployeePayrollSummaryResponse summary = new EmployeePayrollSummaryResponse();
+        yearLines.stream()
+                .filter(p -> p.getSalaryMonth() == month)
+                .findFirst()
+                .map(EmployeePayrollSummaryResponse.Period::of)
+                .ifPresent(summary::setCurrentMonth);
+        summary.setYtdYear(year);
+        summary.setSalaryYtd(yearLines.stream()
+                .filter(p -> PAID.equals(p.getStatus()))
+                .map(SalaryPayment::getNetPayable)
+                .filter(java.util.Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
+        repository.findFirstByEmployeeIdAndStatusOrderBySalaryYearDescSalaryMonthDesc(employeeCode, PAID)
+                .map(EmployeePayrollSummaryResponse.LatestPayslip::of)
+                .ifPresent(summary::setLatestPayslip);
+        return summary;
+    }
+
     // --- Create / Update ---
 
     public SalaryPayment createPaymentRecord(SalaryPaymentRequest req) {

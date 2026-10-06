@@ -49,6 +49,18 @@ public class SalaryPaymentController {
         return ResponseEntity.ok(service.getPayrollStats(month, year));
     }
 
+    // One employee's payroll summary for the global search panel. Same hr.payroll gate as the
+    // list it summarises; the panel only calls it when the user explicitly reveals payroll.
+    @GetMapping("/employee/{employeeCode}/summary")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<EmployeePayrollSummaryResponse> getEmployeePayrollSummary(
+            @PathVariable String employeeCode,
+            HttpServletRequest request) {
+        modulePermissionService.requireCanView(MODULE);
+        auditLogService.logAllowedAccess("/api/payroll/employee/summary", "GET", request);
+        return ResponseEntity.ok(service.getEmployeeSummary(employeeCode, java.time.LocalDate.now()));
+    }
+
     // 3. Get Recent Transactions (History) - ADMIN/HR only
     @GetMapping("/transactions")
     @PreAuthorize("isAuthenticated()")

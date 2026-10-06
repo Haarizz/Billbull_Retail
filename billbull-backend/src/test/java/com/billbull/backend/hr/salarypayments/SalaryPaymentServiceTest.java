@@ -200,6 +200,56 @@ class SalaryPaymentServiceTest {
         verify(repository, never()).findBySalaryMonthAndSalaryYear(anyInt(), anyInt());
     }
 
+    // ── employee summary (global search) ────────────────────────────────────
+
+    @Test
+    void employeeSummaryCarriesThisPeriodPaidYtdAndTheLastPayslip() {
+        SalaryPayment jan = pendingRecord();
+        jan.setSalaryMonth(1);
+        jan.setStatus("Paid");
+        jan.setPaymentDate(LocalDate.of(2026, 1, 31));
+        SalaryPayment feb = pendingRecord();
+        feb.setSalaryMonth(2);
+        feb.setStatus("Paid");
+        feb.setNetPayable(new BigDecimal("5500.00"));
+        feb.setPaymentDate(LocalDate.of(2026, 2, 28));
+        SalaryPayment mar = pendingRecord(); // Pending: not salary received yet
+        mar.setBaseSalary(new BigDecimal("4500.00"));
+        mar.setAllowances(new BigDecimal("700.00"));
+        mar.setDeductions(new BigDecimal("200.00"));
+        when(repository.findByEmployeeIdAndSalaryYear("EMP001", 2026)).thenReturn(List.of(jan, feb, mar));
+        when(repository.findFirstByEmployeeIdAndStatusOrderBySalaryYearDescSalaryMonthDesc("EMP001", "Paid"))
+                .thenReturn(java.util.Optional.of(feb));
+
+        EmployeePayrollSummaryResponse summary =
+                service.getEmployeeSummary("EMP001", LocalDate.of(2026, 3, 15));
+
+        assertEquals(3, summary.getCurrentMonth().getMonth());
+        assertEquals("Pending", summary.getCurrentMonth().getStatus());
+        assertEquals(new BigDecimal("4500.00"), summary.getCurrentMonth().getBaseSalary());
+        assertEquals(new BigDecimal("5000.00"), summary.getCurrentMonth().getNetPayable());
+        assertEquals(2026, summary.getYtdYear());
+        assertEquals(new BigDecimal("10500.00"), summary.getSalaryYtd());
+        assertEquals(2, summary.getLatestPayslip().getMonth());
+        assertEquals(LocalDate.of(2026, 2, 28), summary.getLatestPayslip().getPaymentDate());
+        // Never the whole month's roster.
+        verify(repository, never()).findBySalaryMonthAndSalaryYear(anyInt(), anyInt());
+    }
+
+    @Test
+    void employeeSummaryWithNoLinesIsEmptyNotZeroFilled() {
+        when(repository.findByEmployeeIdAndSalaryYear("EMP001", 2026)).thenReturn(List.of());
+        when(repository.findFirstByEmployeeIdAndStatusOrderBySalaryYearDescSalaryMonthDesc("EMP001", "Paid"))
+                .thenReturn(java.util.Optional.empty());
+
+        EmployeePayrollSummaryResponse summary =
+                service.getEmployeeSummary("EMP001", LocalDate.of(2026, 3, 15));
+
+        assertEquals(null, summary.getCurrentMonth());
+        assertEquals(null, summary.getLatestPayslip());
+        assertEquals(BigDecimal.ZERO, summary.getSalaryYtd());
+    }
+
     private SalaryPayment pendingRecord() {
         SalaryPayment record = new SalaryPayment();
         record.setId(1L);
