@@ -500,6 +500,33 @@ const buildPayload = ({ typeId, name, isDefault, settings }) => {
     };
 };
 
+// Paper-size variants seeded alongside a type's default A4 template. They reuse
+// the exact same A4 designer settings — only paperSize/orientation differ — so an
+// A5 print is the A4 layout reflowed onto the smaller sheet.
+const PAPER_VARIANTS = {
+    "sales-invoice": [
+        { name: "A5 · Portrait", paperSize: "A5", orientation: "portrait" },
+        { name: "A5 · Landscape", paperSize: "A5", orientation: "landscape" }
+    ]
+};
+
+// A template already in the database was seeded before paperLocked existed, so the
+// lock is derived from the variant list by name rather than trusted from storage.
+const isPaperVariant = (typeId, name) =>
+    (PAPER_VARIANTS[typeId] || []).some(
+        (variant) => variant.name.toLowerCase() === String(name || "").trim().toLowerCase()
+    );
+
+const variantSettingsFor = (typeId, variant) => ({
+    ...defaultSettingsFor(typeId, variant.name),
+    templateName: variant.name,
+    paperSize: variant.paperSize,
+    orientation: variant.orientation,
+    // The sheet is the whole point of a paper variant: the designer shows it as a
+    // locked field so editing one cannot quietly turn it back into another A4.
+    paperLocked: true
+});
+
 const CARD_FRAME = "rounded-xl border border-[#DDE3EA] bg-white shadow-[0_1px_3px_rgba(15,23,42,0.13)]";
 const ICON_TILE = "flex h-9 w-9 items-center justify-center rounded-lg bg-[#FFF8DC] text-[#D99A00]";
 const PAGE_BG = "bg-[#F6F7F9]";
@@ -561,17 +588,34 @@ export default function PrintEmailTemplates() {
             }
 
             if (seedMissing) {
-                const missingTypes = TEMPLATE_TYPES.filter(
-                    (type) => !rows.some((row) => row.type === type.id)
-                );
-
-                if (missingTypes.length > 0) {
-                    await Promise.all(missingTypes.map((type) => createPrintTemplate(buildPayload({
+                const seeds = TEMPLATE_TYPES
+                    .filter((type) => !rows.some((row) => row.type === type.id))
+                    .map((type) => buildPayload({
                         typeId: type.id,
                         name: `Default ${type.label}`,
                         isDefault: true,
                         settings: defaultSettingsFor(type.id, `Default ${type.label}`)
-                    }))));
+                    }));
+
+                // A5 variants sit beside the A4 default; never default themselves.
+                for (const [typeId, variants] of Object.entries(PAPER_VARIANTS)) {
+                    for (const variant of variants) {
+                        const exists = rows.some(
+                            (row) => row.type === typeId
+                                && (row.name || "").trim().toLowerCase() === variant.name.toLowerCase()
+                        );
+                        if (exists) continue;
+                        seeds.push(buildPayload({
+                            typeId,
+                            name: variant.name,
+                            isDefault: false,
+                            settings: variantSettingsFor(typeId, variant)
+                        }));
+                    }
+                }
+
+                if (seeds.length > 0) {
+                    await Promise.all(seeds.map((payload) => createPrintTemplate(payload)));
 
                     const refreshed = await getPrintTemplates();
                     setTemplates(
@@ -607,7 +651,13 @@ export default function PrintEmailTemplates() {
         const templateName = row?.name || settings.templateName || `New ${meta.label} Template`;
 
         setActiveDesigner(typeId);
-        setDesignerSettings({ ...settings, templateName, docType: settings.docType || meta.docType, mode: settings.mode || meta.mode });
+        setDesignerSettings({
+            ...settings,
+            templateName,
+            docType: settings.docType || meta.docType,
+            mode: settings.mode || meta.mode,
+            paperLocked: settings.paperLocked || isPaperVariant(typeId, templateName)
+        });
         setDesignerTemplateName(templateName);
         setEditingTemplate(row);
     };
@@ -790,6 +840,9 @@ export default function PrintEmailTemplates() {
                                 {row.isDefault && (
                                     <span className="rounded bg-[#F5C742] px-1.5 py-0.5 text-[10px] font-bold leading-4 text-black">Default</span>
                                 )}
+                                <span className="rounded bg-[#FFF8DC] px-1.5 py-0.5 text-[10px] font-semibold capitalize leading-4 text-[#A16207]">
+                                    {row.paperSize} {String(row.orientation || "Portrait").toLowerCase()}
+                                </span>
                             </div>
                             <div className="mt-2 space-y-0.5 text-[11px] leading-4 text-slate-600">
                                 <p>Last modified: <span className="font-medium text-slate-700">{row.lastModified}</span></p>

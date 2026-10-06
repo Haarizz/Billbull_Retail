@@ -79,6 +79,12 @@ const VendorDetailPanel = ({ detail, currency = "AED" }) => {
           title={vendorName}
           subtitle={[vendorCode, branch].filter(Boolean).join(" • ")}
           badge={status || undefined}
+          chips={[
+            overdueInvoiceCount > 0
+              ? `${overdueInvoiceCount} overdue invoice${overdueInvoiceCount === 1 ? "" : "s"}`
+              : null,
+            lastLpoDate ? `Last PO ${lastLpoDate}` : null,
+          ]}
         />
 
         <DetailSection title="Account">
@@ -134,7 +140,7 @@ const VendorDetailPanel = ({ detail, currency = "AED" }) => {
           ) : (
             <table className="w-full text-[11px]" data-testid="vendor-lpo-table">
               <thead>
-                <tr className="text-left text-slate-400">
+                <tr className="border-b border-slate-100 text-left text-[9px] uppercase tracking-[0.08em] text-slate-400">
                   <th className="py-1 pr-2 font-medium">LPO</th>
                   <th className="py-1 pr-2 font-medium">Date</th>
                   <th className="py-1 pr-2 font-medium">Status</th>
@@ -145,7 +151,7 @@ const VendorDetailPanel = ({ detail, currency = "AED" }) => {
                 {lpos.map((lpo, index) => (
                   <tr
                     key={lpo.id ?? `${lpo.lpoNumber}-${index}`}
-                    className="border-t border-slate-100 text-slate-700"
+                    className="border-t border-slate-50 text-slate-700"
                   >
                     <td className="max-w-[92px] truncate py-1.5 pr-2">{lpo.lpoNumber || DASH}</td>
                     <td className="whitespace-nowrap py-1.5 pr-2">{lpo.lpoDate || DASH}</td>

@@ -119,6 +119,25 @@ public class SalesReturn  implements com.billbull.backend.common.ownership.Owned
     @Enumerated(EnumType.STRING)
     private SalesReturnStatus status;
 
+    /**
+     * When this return was reversed. Null means it never was — the only reading of "not
+     * reversed" the schema needs, since a reversal is a one-way transition out of APPROVED.
+     */
+    @Column(name = "reversed_at")
+    private java.time.LocalDateTime reversedAt;
+
+    /** Who reversed it. Captured for the finance trail, not for authorization. */
+    @Column(name = "reversed_by", length = 150)
+    private String reversedBy;
+
+    /**
+     * Why it was reversed. Mandatory at the service layer: a reversal restates a period that may
+     * already have been reported on, so a reviewer finding one with no explanation has no way to
+     * tell a keying mistake from a genuine commercial change.
+     */
+    @Column(name = "reversal_reason", length = 500)
+    private String reversalReason;
+
     // ARCHFIX §1.6: LAZY (was EAGER). Read paths that serialize items use a JOIN FETCH finder
     // (findAllWithItems / findByIdWithItems); the nested batches load via @BatchSize on the item.
     @OneToMany(mappedBy = "salesReturn", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
@@ -273,6 +292,15 @@ public class SalesReturn  implements com.billbull.backend.common.ownership.Owned
 
     public String getAuthorizationReason() { return authorizationReason; }
     public void setAuthorizationReason(String authorizationReason) { this.authorizationReason = authorizationReason; }
+
+    public java.time.LocalDateTime getReversedAt() { return reversedAt; }
+    public void setReversedAt(java.time.LocalDateTime reversedAt) { this.reversedAt = reversedAt; }
+
+    public String getReversedBy() { return reversedBy; }
+    public void setReversedBy(String reversedBy) { this.reversedBy = reversedBy; }
+
+    public String getReversalReason() { return reversalReason; }
+    public void setReversalReason(String reversalReason) { this.reversalReason = reversalReason; }
 
     /**
      * The credit voucher issued by this return, populated only in the response to the approval

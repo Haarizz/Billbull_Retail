@@ -494,6 +494,23 @@ export const settleDeliveryOrder = async (invoiceId, payload) => {
   return res.data;
 };
 
+/**
+ * Return the goods on a delivery order the customer refused, instead of settling it.
+ *
+ * Only for unpaid orders — the backend refuses anything already part-paid, because money that
+ * has to go back needs a refund method and belongs in the full Sales Return screen.
+ *
+ * Send `lines: []` (or omit it) for the whole order, which is the common case; send
+ * `[{ itemCode, returnQty }]` when the customer kept some of what arrived. Amounts are never
+ * sent: the server pro-rates every figure from the invoice the customer was actually billed.
+ *
+ * Returns { returnNumber, returnValue, fullReturn, deliveryChargeWaived, outstanding, orderClosed }.
+ */
+export const returnDeliveryOrder = async (invoiceId, payload) => {
+  const res = await api.post(`${BASE}/checkout/deliveries/${invoiceId}/return`, payload);
+  return res.data;
+};
+
 
 export const verifySessionClosurePermission = async (sessionId, usernameOrEmail, password) => {
   const res = await api.post(`${BASE}/sessions/${sessionId}/authorize-closure`, { usernameOrEmail, password });

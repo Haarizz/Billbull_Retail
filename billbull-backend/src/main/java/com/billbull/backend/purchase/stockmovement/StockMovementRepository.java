@@ -219,6 +219,13 @@ public interface StockMovementRepository
         // ✅ Bin stock - get all stock movements for a specific bin
         List<StockMovement> findByBinId(Long binId);
 
+        /**
+         * Every movement a given document wrote, for one source type. Used by the Sales Return
+         * reversal to find the inbound legs it has to mirror back out, and to check whether it has
+         * already done so — the ledger is append-only, so idempotency is a read, not an upsert.
+         */
+        List<StockMovement> findBySourceTypeAndReferenceNo(StockSourceType sourceType, String referenceNo);
+
         // ✅ Bin stock summary - get stock by bin grouped by product
         @Query("""
                             SELECT sm.productId, COALESCE(SUM(sm.quantity), 0)
@@ -790,4 +797,25 @@ public interface StockMovementRepository
         List<StockMovement> findAllInBranchScope(
                         @Param("branchIds") java.util.Collection<Long> branchIds,
                         org.springframework.data.domain.Sort sort);
+
+    /**
+     * Product ids, most active first — the ranking behind the global search modal's
+     * empty-query preview.
+     *
+     * <p>Counts movements inside the activity window and breaks ties on the most recent
+     * of them, so a product moved twice today outranks one moved twice last quarter.
+     * Every quantity change in the system posts here (sales, receipts, stock takes,
+     * transfers), which is what makes this "most used" rather than "most edited".
+     *
+     * <p>Runs over the existing {@code idx_sm_product_id} / {@code created_at} indexes
+     * and returns ids only. The caller re-reads the products through its own
+     * branch-scoped query, so this decides order and nothing about visibility.
+     */
+    @Query("SELECT sm.productId FROM StockMovement sm "
+            + "WHERE sm.productId IS NOT NULL AND sm.createdAt >= :since "
+            + "GROUP BY sm.productId "
+            + "ORDER BY COUNT(sm.id) DESC, MAX(sm.createdAt) DESC")
+    List<Long> findMostActiveProductIds(@Param("since") java.time.LocalDateTime since,
+            org.springframework.data.domain.Pageable pageable);
+
 }

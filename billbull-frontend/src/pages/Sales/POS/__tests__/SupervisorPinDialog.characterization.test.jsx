@@ -71,6 +71,8 @@ function OriginalSupervisorPinMarkup({
                       ? `Supervisor authorization is required to settle this delivery because it was created by another user.`
                       : pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION'
                       ? 'Authorize force closure of this session.'
+                      : pendingSupervisorAction?.type === 'POS_FUNCTION'
+                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to open ${pendingSupervisorAction.label || 'this function'}`
                       : pendingLayawayAbortAction
                       ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to clear layaway cart' : 'Enter PIN to clear layaway cart')
                       : (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize void' : 'Enter PIN to authorize void')}
@@ -449,6 +451,14 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       ['FORCE_CLOSE_SESSION (mode-independent)', { pendingSupervisorAction: { type: 'FORCE_CLOSE_SESSION' } },
         'Authorize force closure of this session.',
         'Authorize force closure of this session.'],
+      // Action Button Access, SUPERVISOR_PASSWORD mode: the dialog names the function being
+      // opened, so the cashier knows what the supervisor is authorizing.
+      ['POS_FUNCTION', { pendingSupervisorAction: { type: 'POS_FUNCTION', label: 'Return', run: noop } },
+        'Enter PIN to open Return',
+        'Enter password to open Return'],
+      ['POS_FUNCTION without a label', { pendingSupervisorAction: { type: 'POS_FUNCTION', run: noop } },
+        'Enter PIN to open this function',
+        'Enter password to open this function'],
       ['layaway abort (thunk)', { pendingLayawayAbortAction: layawayThunk },
         'Enter PIN to clear layaway cart',
         'Enter password to clear layaway cart'],
@@ -1217,7 +1227,7 @@ describe('SupervisorPinDialog source', () => {
     expect(counts).toEqual([3, 1, 1]);
     const live = between(COMPONENT, '  return (\n', '\n  );\n}');
     expect(trimmedLines(live)).toEqual(expected);
-    expect(trimmedLines(live)).toHaveLength(156);
+    expect(trimmedLines(live)).toHaveLength(158);
   });
 
   it('has exactly the 17-prop surface and imports only React and the two existing icons', () => {

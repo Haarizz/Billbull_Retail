@@ -76,6 +76,29 @@ export const updateSalesReturnStatus = async (id, status, authorization = null) 
     return res.data;
 };
 
+/**
+ * Reverses an approved return: contra journals, stock back out, the receivable allocation
+ * reversed, and any voucher or drawer cash given back. The original return is left intact and
+ * moves to REVERSED — a reversal is new entries, never an edit of the old ones.
+ *
+ * Deliberately not routed through updateSalesReturnStatus. That endpoint changes a field; this
+ * unwinds posted money, and needs a reason and supervisor sign-off every time, not only when
+ * policy flags it. Reason and credentials travel in the body for the same logging reason as above.
+ *
+ * The backend refuses a batch-tracked return, and a voucher the customer has already redeemed,
+ * rather than half-unwinding either — surface the message it returns.
+ *
+ * @param {{reason: string, supervisorUsername: string, supervisorPassword: string}} payload
+ */
+export const reverseSalesReturn = async (id, payload) => {
+    const res = await api.post(`${BASE_URL}/${id}/reverse`, {
+        reason: payload?.reason ?? null,
+        supervisorUsername: payload?.supervisorUsername ?? null,
+        supervisorPassword: payload?.supervisorPassword ?? null,
+    });
+    return res.data;
+};
+
 // --------------------
 // DELETE
 // --------------------

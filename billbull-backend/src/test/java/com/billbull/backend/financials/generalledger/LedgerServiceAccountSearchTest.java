@@ -31,8 +31,15 @@ class LedgerServiceAccountSearchTest {
     @Mock
     private AccountRepository accountRepository;
 
+    @Mock
+    private JournalLineRepository journalLineRepository;
+
     @InjectMocks
     private LedgerService ledgerService;
+
+    private static AccountSearchResponse account(String code, String name) {
+        return new AccountSearchResponse("acc-" + code, code, name, "Asset", "Assets", "active", false);
+    }
 
     @Test
     void searchReturnsMatchingAccounts() {
@@ -106,6 +113,7 @@ class LedgerServiceAccountSearchTest {
 
     @Test
     void previewIsBoundedInTheDatabase() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class))).thenReturn(List.of());
         when(accountRepository.previewAccounts(any(Pageable.class))).thenReturn(List.of());
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
 
@@ -118,6 +126,7 @@ class LedgerServiceAccountSearchTest {
 
     @Test
     void previewSizeIsCappedServerSide() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class))).thenReturn(List.of());
         when(accountRepository.previewAccounts(any(Pageable.class))).thenReturn(List.of());
         ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
 
@@ -129,10 +138,90 @@ class LedgerServiceAccountSearchTest {
 
     @Test
     void previewNeverFallsBackToTheUnboundedAccountsRead() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class))).thenReturn(List.of());
         when(accountRepository.previewAccounts(any(Pageable.class))).thenReturn(List.of());
 
         ledgerService.previewAccounts(2);
 
         verify(accountRepository, never()).findAll();
+    }
+
+    /** The ranking read is bounded too — it is the one query that is not capped to `size`. */
+    @Test
+    void theActivityRankingReadIsAlsoBoundedInTheDatabase() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class))).thenReturn(List.of());
+        when(accountRepository.previewAccounts(any(Pageable.class))).thenReturn(List.of());
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+
+        ledgerService.previewAccounts(10_000);
+
+        verify(journalLineRepository).findMostActiveAccountCodes(any(), pageable.capture());
+        assertThat(pageable.getValue().getPageSize())
+                .isLessThanOrEqualTo(com.billbull.backend.util.SearchLimit.MAX_SIZE * 2);
+        assertThat(pageable.getValue().getPageNumber()).isZero();
+    }
+
+    /** The whole point: the busiest accounts lead, not the lowest codes. */
+    @Test
+    void previewLeadsWithTheMostPostedToAccounts() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class)))
+                .thenReturn(List.of("1100", "1001"));
+        when(accountRepository.findByCodes(List.of("1100", "1001")))
+                // Deliberately handed back in the opposite order: the database makes no
+                // promise about IN ordering, so the service must re-impose the rank.
+                .thenReturn(List.of(account("1001", "Cash in Hand"),
+                        account("1100", "Accounts Receivable Control")));
+
+        assertThat(ledgerService.previewAccounts(2))
+                .extracting(AccountSearchResponse::getCode)
+                .containsExactly("1100", "1001");
+
+        // Activity filled every slot, so the code-ordered read is never reached.
+        verify(accountRepository, never()).previewAccounts(any(Pageable.class));
+    }
+
+    /** A fresh chart of accounts has no postings — the preview must not come back empty. */
+    @Test
+    void previewTopsUpFromCodeOrderWhenActivityDoesNotFillIt() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class)))
+                .thenReturn(List.of("1100"));
+        when(accountRepository.findByCodes(List.of("1100")))
+                .thenReturn(List.of(account("1100", "Accounts Receivable Control")));
+        when(accountRepository.previewAccounts(any(Pageable.class)))
+                .thenReturn(List.of(account("1000", "Assets"), account("1001", "Cash in Hand")));
+
+        assertThat(ledgerService.previewAccounts(2))
+                .extracting(AccountSearchResponse::getCode)
+                .containsExactly("1100", "1000");
+    }
+
+    /** A ranked code whose account has since been deleted must not leave a hole. */
+    @Test
+    void previewSkipsRankedCodesThatNoLongerResolveToAnAccount() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class)))
+                .thenReturn(List.of("9999", "1100"));
+        when(accountRepository.findByCodes(List.of("9999", "1100")))
+                .thenReturn(List.of(account("1100", "Accounts Receivable Control")));
+        when(accountRepository.previewAccounts(any(Pageable.class)))
+                .thenReturn(List.of(account("1000", "Assets")));
+
+        assertThat(ledgerService.previewAccounts(2))
+                .extracting(AccountSearchResponse::getCode)
+                .containsExactly("1100", "1000");
+    }
+
+    /** The top-up must not repeat an account the ranking already placed. */
+    @Test
+    void previewNeverShowsTheSameAccountTwice() {
+        when(journalLineRepository.findMostActiveAccountCodes(any(), any(Pageable.class)))
+                .thenReturn(List.of("1001"));
+        when(accountRepository.findByCodes(List.of("1001")))
+                .thenReturn(List.of(account("1001", "Cash in Hand")));
+        when(accountRepository.previewAccounts(any(Pageable.class)))
+                .thenReturn(List.of(account("1001", "Cash in Hand"), account("1000", "Assets")));
+
+        assertThat(ledgerService.previewAccounts(2))
+                .extracting(AccountSearchResponse::getCode)
+                .containsExactly("1001", "1000");
     }
 }

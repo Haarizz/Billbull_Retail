@@ -50,8 +50,9 @@ const EmployeeDetailPanel = ({ detail, onOpen }) => {
       <div className="pb-4" data-testid="employee-detail-panel">
         <DetailHeader
           title={name}
-          subtitle={[employeeCode, branch].filter(Boolean).join(" • ")}
+          subtitle={[employeeCode, role, department].filter(Boolean).join(" • ")}
           badge={status || undefined}
+          chips={[branch || null]}
         />
 
         <DetailSection title="Employee">

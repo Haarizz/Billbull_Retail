@@ -6,6 +6,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -39,6 +40,19 @@ public interface SalesReturnCreditApplicationRepository
             + "AND a.status = com.billbull.backend.sales.returns.credit"
             + ".SalesReturnCreditApplicationStatus.APPLIED")
     BigDecimal sumAppliedByReturnNumber(@Param("returnNumber") String returnNumber);
+
+    /**
+     * Credit applied across a set of invoices, in one query.
+     *
+     * <p>Read by the POS Day Close sales reconciliation: credit applied to an invoice that was
+     * sold inside the closing range settles that invoice without ever producing tender, so the
+     * sales identity has to add it back or the whole allocation reads as a variance.
+     */
+    @Query("SELECT COALESCE(SUM(a.appliedAmount), 0) FROM SalesReturnCreditApplication a "
+            + "WHERE a.invoiceNumber IN :invoiceNumbers "
+            + "AND a.status = com.billbull.backend.sales.returns.credit"
+            + ".SalesReturnCreditApplicationStatus.APPLIED")
+    BigDecimal sumAppliedByInvoiceNumbers(@Param("invoiceNumbers") Collection<String> invoiceNumbers);
 
     List<SalesReturnCreditApplication> findByReturnNumber(String returnNumber);
 

@@ -394,6 +394,13 @@ public class PosSettingsService {
                             || !Objects.equals(existing.getSupervisorApprovalMode(), settings.getSupervisorApprovalMode())
                             || !Objects.equals(existing.getRequirePriceOverrideApproval(), settings.getRequirePriceOverrideApproval())
                             || !Objects.equals(existing.getRequireSupervisorForDayClose(), settings.getRequireSupervisorForDayClose())
+                            // Who may use the POS action buttons is a supervisor-approval decision in
+                            // the same sense as the void gate: relaxing it back to ALL_USERS hands every
+                            // cashier the Return and Cash Drawer functions again, so a cashier with
+                            // console access must not be able to do it to themselves.
+                            || (settings.getPosFunctionAccessMode() != null
+                                && !Objects.equals(existing.getPosFunctionAccessMode(),
+                                                   PosFunctionAccessMode.resolve(settings.getPosFunctionAccessMode()).name()))
                             || (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank());
                     if (changesSupervisorConfig && !currentUserCanConfigureSupervisorSettings()) {
                         throw new AccessDeniedException(
@@ -448,6 +455,22 @@ public class PosSettingsService {
                     existing.setRequireCashMovementCategory(settings.getRequireCashMovementCategory());
                     existing.setSupervisorApprovalMode(settings.getSupervisorApprovalMode());
                     existing.setRequirePriceOverrideApproval(settings.getRequirePriceOverrideApproval());
+                    // Null means "field absent from this request" (the partial-POST convention used
+                    // by businessDayExtensionMinutes below), so an older client that does not know
+                    // this setting cannot silently unlock the action buttons for a branch that has
+                    // restricted them.
+                    if (settings.getPosFunctionAccessMode() != null) {
+                        existing.setPosFunctionAccessMode(
+                                PosFunctionAccessMode.resolve(settings.getPosFunctionAccessMode()).name());
+                    }
+                    // Same partial-POST convention as posFunctionAccessMode above: null means the
+                    // field was absent from this request, so an older client cannot silently reset
+                    // a branch that has chosen to retain (or ask about) the delivery charge.
+                    if (settings.getDeliveryReturnChargePolicy() != null) {
+                        existing.setDeliveryReturnChargePolicy(
+                                PosDeliveryReturnChargePolicy.fromCode(
+                                        settings.getDeliveryReturnChargePolicy()).name());
+                    }
                     // ARCHFIX S5: hash a newly supplied PIN; a blank/absent PIN leaves the stored hash untouched.
                     if (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank()) {
                         existing.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
@@ -509,6 +532,11 @@ public class PosSettingsService {
                     validateBusinessDayScheduleChange(none, settings);
                     validateCreditVoucherExpiryConfig(settings);
                     settings.setCreditVoucherExpiryMode(normalisedExpiryMode(settings));
+                    settings.setPosFunctionAccessMode(
+                            PosFunctionAccessMode.resolve(settings.getPosFunctionAccessMode()).name());
+                    settings.setDeliveryReturnChargePolicy(
+                            PosDeliveryReturnChargePolicy.fromCode(
+                                    settings.getDeliveryReturnChargePolicy()).name());
                     settings.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
                     return withBusinessDayScheduleLock(repo.save(settings));
                 });

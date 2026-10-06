@@ -97,6 +97,28 @@ public interface EmployeeRepository extends JpaRepository<Employee, Long> {
             org.springframework.data.domain.Pageable pageable);
 
     /**
+     * The employees behind a set of ids, for the global search modal's activity-ranked
+     * preview.
+     *
+     * <p>Same identity-only projection and same branch predicate as
+     * {@link #searchEmployees}. The ranking that produced the ids runs over POS sessions
+     * without branch scope, so this is where scope is reapplied: a ranked employee the
+     * caller may not see simply does not come back. No ordering is promised — the caller
+     * holds the rank and re-imposes it.
+     */
+    @Query("""
+            select new com.billbull.backend.hr.employees.EmployeeSearchResponse(
+                e.id, e.employeeCode, e.firstName, e.middleName, e.lastName,
+                e.role, e.department, e.branch, e.status)
+            from Employee e
+            where e.id in :ids
+              and (:allBranches = true or e.branchEntity is null or e.branchEntity.id in :branchIds)
+            """)
+    List<EmployeeSearchResponse> findByIdsInScope(@Param("ids") java.util.Collection<Long> ids,
+            @Param("allBranches") boolean allBranches,
+            @Param("branchIds") java.util.Collection<Long> branchIds);
+
+    /**
      * The first few employees, for the global search modal's empty-query preview.
      *
      * <p>Same projection — identity only, no payroll, attendance or leave — same branch

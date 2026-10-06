@@ -47,7 +47,6 @@ class PostingEngineServiceTest {
     @Mock private VoucherSequenceService voucherSequenceService;
     @Mock private com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
     @Mock private com.billbull.backend.purchase.grn.GrnRepository grnRepository;
-    @Mock private com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
     @Mock private com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
     @Mock private com.billbull.backend.financials.currency.CurrencyService currencyService;
     @Mock private com.billbull.backend.settings.outlet.OutletRepository outletRepository;
@@ -70,7 +69,6 @@ class PostingEngineServiceTest {
                 voucherSequenceService,
                 customerCreditService,
                 grnRepository,
-                glBalanceRepository,
                 salesSettingsService,
                 currencyService,
                 outletRepository);

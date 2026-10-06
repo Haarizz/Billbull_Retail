@@ -153,6 +153,15 @@ public class PosSessionService {
     @org.springframework.beans.factory.annotation.Autowired
     private com.billbull.backend.pos.auth.PosCredentialVerificationService credentialVerificationService;
 
+    /** Return credit and advances allocated against invoices — the two non-tender ways an
+     *  invoice's balance falls. Read only by {@link #buildSalesSummary}; see the note there. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.sales.returns.credit.SalesReturnCreditApplicationRepository
+            returnCreditApplicationRepository;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
+
     /** Null-safe view of a monetary field: treats {@code null} as zero (preserves the
      *  legacy {@code x != null ? x : 0} coalescing the {@code double} code relied on). */
     private static BigDecimal nz(BigDecimal v) { return v != null ? v : BigDecimal.ZERO; }
@@ -2519,8 +2528,18 @@ public class PosSessionService {
         BigDecimal advanceCollections = (BigDecimal) summary.getOrDefault("advanceCollections", BigDecimal.ZERO);
         BigDecimal outOfPeriodCollections = earlierInvoiceCollections.add(advanceCollections);
 
+        // The mirror term: value SOLD today whose receivable was settled without tender — a
+        // return credit note applied back onto today's invoice, or an advance allocated to it.
+        // Both reduce the invoice's balance, which is where `creditSales` comes from, so the
+        // settled portion appears in neither `credit` nor any tender bucket and has to be added
+        // back. See the matching block in buildSalesSummary for the full rationale.
+        BigDecimal returnCreditApplied = (BigDecimal) summary.getOrDefault("returnCreditApplied", BigDecimal.ZERO);
+        BigDecimal advanceApplied = (BigDecimal) summary.getOrDefault("advanceApplied", BigDecimal.ZERO);
+        BigDecimal nonTenderSettlement = returnCreditApplied.add(advanceApplied);
+
         BigDecimal computedTotalSales = cashSales.add(cardSales).add(creditSales).add(otherSales)
-                .subtract(outOfPeriodCollections);
+                .subtract(outOfPeriodCollections)
+                .add(nonTenderSettlement);
         BigDecimal salesVariance = totalSales.subtract(computedTotalSales);
         if (salesVariance.abs().compareTo(new BigDecimal("0.05")) > 0) {
             Map<String, Object> breakdown = new java.util.LinkedHashMap<>();
@@ -2528,6 +2547,8 @@ public class PosSessionService {
             breakdown.put("computedTotalSales", computedTotalSales);
             breakdown.put("earlierInvoiceCollections", earlierInvoiceCollections);
             breakdown.put("advanceCollections", advanceCollections);
+            breakdown.put("returnCreditApplied", returnCreditApplied);
+            breakdown.put("advanceApplied", advanceApplied);
             breakdown.put("variance", salesVariance);
             breakdown.put("cash", cashSales);
             breakdown.put("card", cardSales);
@@ -3421,6 +3442,34 @@ public class PosSessionService {
         s.put("earlierInvoiceCollectionCount", earlierInvoiceCollectionCount);
         s.put("advanceCollections", advanceCollections);
         s.put("advanceCollectionCount", advanceCollectionCount);
+
+        // ── Non-tender settlement of invoices SOLD in this range ─────────────────────────
+        // The mirror of the block above. There, money arrived that belonged to another day's
+        // sale; here, a sale was made whose receivable was settled without any money arriving
+        // at all — a Sales Return's credit note applied back onto the invoice, or a customer
+        // advance allocated to it. Both reduce SalesInvoice.balance through
+        // InvoiceBalanceService.recomputeInvoiceBalance (total − receipts − advances − credit),
+        // and `creditSales` above is sourced from exactly that balance. So the settled portion
+        // leaves `credit` without ever appearing in `cash/card/other`, and the sales identity
+        // in closeDay() has to add it back or it reads as a pure variance.
+        //
+        // Scoped to invoices sold in this range, for the same reason the collections split is:
+        // credit applied to an OLDER invoice settles a receivable that was recognised as a sale
+        // on its own day and must not touch this day's identity.
+        //
+        // Without this, a customer returning goods against the same day's bill blocked Day
+        // Close with a variance equal to the whole credit note — a 2800.00 return against a
+        // 2810.00 invoice left `credit` at 10.00 and every tender bucket at zero.
+        BigDecimal returnCreditApplied = BigDecimal.ZERO;
+        BigDecimal advanceApplied = BigDecimal.ZERO;
+        if (!soldInvoiceNumbers.isEmpty()) {
+            returnCreditApplied = nz(returnCreditApplicationRepository
+                    .sumAppliedByInvoiceNumbers(soldInvoiceNumbers));
+            advanceApplied = nz(advanceApplicationRepository
+                    .sumAppliedByInvoiceNumbers(soldInvoiceNumbers));
+        }
+        s.put("returnCreditApplied", returnCreditApplied);
+        s.put("advanceApplied", advanceApplied);
         s.put("totalPaid", tender.total);
         s.put("cashInvoiceCount", tender.countByBucket.getOrDefault("cash", 0L));
         s.put("cardInvoiceCount", tender.countByBucket.getOrDefault("card", 0L));

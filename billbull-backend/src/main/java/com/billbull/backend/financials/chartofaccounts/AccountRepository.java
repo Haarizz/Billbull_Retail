@@ -29,6 +29,17 @@ public interface AccountRepository extends JpaRepository<Account, String> {
     List<AccountSearchResponse> searchAccounts(@Param("q") String q, Pageable pageable);
 
     /**
+     * The accounts behind a set of codes, for the global search modal's activity-ranked
+     * preview. Same projection as {@link #searchAccounts}; no ordering is promised — the
+     * caller holds the rank and re-imposes it.
+     */
+    @Query("SELECT new com.billbull.backend.financials.chartofaccounts.AccountSearchResponse("
+            + "a.id, a.code, a.name, a.accountType, a.accountGroup, a.status, a.isGroup) "
+            + "FROM Account a WHERE a.code IN :codes")
+    List<AccountSearchResponse> findByCodes(
+            @org.springframework.data.repository.query.Param("codes") java.util.Collection<String> codes);
+
+    /**
      * The first few accounts, for the global search modal's empty-query preview.
      *
      * <p>Same projection and same {@code code} ordering as {@link #searchAccounts}, with

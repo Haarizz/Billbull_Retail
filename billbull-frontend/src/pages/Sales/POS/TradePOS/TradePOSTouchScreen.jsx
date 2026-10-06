@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { TradeHeader } from './components/layout/TradeHeader';
 import { TradeMainCanvas } from './components/layout/TradeMainCanvas';
+import { TradeFunctionsPanel } from './components/layout/TradeFunctionsPanel';
 import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
 import QuickCustomerModal from '../features/customers/QuickCustomerModal';
@@ -82,11 +83,60 @@ export const TradePOSTouchScreen = React.memo((props) => {
     quickCustomerLoading,
     quickCustomerError,
     handleSaveQuickCustomer,
-    showFeedback
+    showFeedback,
+
+    // Shared POS functions. Trade POS has no permanent action column, so these reach the
+    // user through the header's Functions button and TradeFunctionsPanel. Every one of
+    // them is POSSales-owned state — this template only opens the dialogs, never owns them.
+    hiddenPanelButtons,
+    setShowQuickProductModal,
+    setShowLayawaysList,
+    setShowSaveLayaway,
+    setShowSaveOrderDialog,
+    setShowAddShippingDialog,
+    setShowCouponsDialog,
+    setShowPromotionsDialog,
+    setShowReturn,
+    setShowProductSearch,
+    setProductSearchQuery,
+    setProductSearchResults,
+    setShowPriceCheck,
+    setPriceCheckQuery,
+    setPriceCheckResult,
+    setShowCreditBalance,
+    setCreditBalanceQuery,
+    setCreditBalanceResult,
+    setShowSerialBatch,
+    setSerialBatchQuery,
+    setSerialBatchResult,
+    setSerialBatchSubView,
+    setSerialBatchInvoiceNo,
+    setSerialBatchItemCode,
+    setSerialBatchCustomerMobile,
+    setSerialBatchSelectedItem,
+    setShowLastReceiptDialog,
+    setShowOrdersListDialog,
+    setShowReprintModal,
+    setShowDeliverySettleModal,
+    setDeliverySettleSearch,
+    setDeliverySettlePersonFilter,
+    setDeliverySettleSelected,
+    setShowLockPOS,
+    // Action Button Access (Console -> Behavior). Forwarded verbatim to TradeFunctionsPanel,
+    // which hands them to buildPosFunctionButtons — the same gate the other two templates use.
+    posFunctionAccessMode,
+    isPosSupervisorUser,
+    requestFunctionApproval,
+    onFunctionDenied
   } = props;
 
   // Presentation state for mobile/tablet responsive behavior
   const [mobileActiveTab, setMobileActiveTab] = useState('catalog'); // 'catalog' | 'cart'
+
+  // Functions slide-over, opened from the header button.
+  const [showFunctions, setShowFunctions] = useState(false);
+  const openFunctions = useCallback(() => setShowFunctions(true), []);
+  const closeFunctions = useCallback(() => setShowFunctions(false), []);
 
   // Keyboard highlight in the Quick Pick list (-1 = nothing highlighted, so a plain Enter
   // still goes through handleUnifiedEntry and barcode scans behave exactly as before).
@@ -132,9 +182,10 @@ export const TradePOSTouchScreen = React.memo((props) => {
   const headerProps = useMemo(() => ({
     setCurrentView,
     setShowPOSConfig,
+    onOpenFunctions: openFunctions,
     currentSession,
     posSettings
-  }), [setCurrentView, setShowPOSConfig, currentSession, posSettings]);
+  }), [setCurrentView, setShowPOSConfig, openFunctions, currentSession, posSettings]);
 
   const catalogProps = useMemo(() => ({
     searchQuery,
@@ -292,6 +343,58 @@ export const TradePOSTouchScreen = React.memo((props) => {
           Invoice ({currentInvoice?.items?.filter(i => !i.isVoided)?.length || 0})
         </button>
       </nav>
+
+      {/* Shared POS functions — the compact template's stand-in for the Classic/Cart Focus
+          Actions column, opened from the header's Functions button. */}
+      <TradeFunctionsPanel
+        open={showFunctions}
+        onClose={closeFunctions}
+        hiddenPanelButtons={hiddenPanelButtons}
+        salespersonRequired={salespersonRequired}
+        verifiedSalesperson={verifiedSalesperson}
+        openSalespersonScanModal={openSalespersonScanModal}
+        setShowQuickProductModal={setShowQuickProductModal}
+        setShowLayawaysList={setShowLayawaysList}
+        setShowSaveLayaway={setShowSaveLayaway}
+        setShowSaveOrderDialog={setShowSaveOrderDialog}
+        setShowAddShippingDialog={setShowAddShippingDialog}
+        setShowCouponsDialog={setShowCouponsDialog}
+        setShowPromotionsDialog={setShowPromotionsDialog}
+        setShowReturn={setShowReturn}
+        setShowProductSearch={setShowProductSearch}
+        setProductSearchQuery={setProductSearchQuery}
+        setProductSearchResults={setProductSearchResults}
+        setShowPriceCheck={setShowPriceCheck}
+        setPriceCheckQuery={setPriceCheckQuery}
+        setPriceCheckResult={setPriceCheckResult}
+        setShowCreditBalance={setShowCreditBalance}
+        setCreditBalanceQuery={setCreditBalanceQuery}
+        setCreditBalanceResult={setCreditBalanceResult}
+        setShowSerialBatch={setShowSerialBatch}
+        setSerialBatchQuery={setSerialBatchQuery}
+        setSerialBatchResult={setSerialBatchResult}
+        setSerialBatchSubView={setSerialBatchSubView}
+        setSerialBatchInvoiceNo={setSerialBatchInvoiceNo}
+        setSerialBatchItemCode={setSerialBatchItemCode}
+        setSerialBatchCustomerMobile={setSerialBatchCustomerMobile}
+        setSerialBatchSelectedItem={setSerialBatchSelectedItem}
+        setShowCashDropDialog={setShowCashDropDialog}
+        setShowLastReceiptDialog={setShowLastReceiptDialog}
+        setShowOrdersListDialog={setShowOrdersListDialog}
+        setShowReprintModal={setShowReprintModal}
+        openDeliveryModal={openDeliveryModal}
+        setShowDeliverySettleModal={setShowDeliverySettleModal}
+        setDeliverySettleSearch={setDeliverySettleSearch}
+        setDeliverySettlePersonFilter={setDeliverySettlePersonFilter}
+        setDeliverySettleSelected={setDeliverySettleSelected}
+        setShowLockPOS={setShowLockPOS}
+        currentSession={currentSession}
+        setCurrentView={setCurrentView}
+        posFunctionAccessMode={posFunctionAccessMode}
+        isPosSupervisorUser={isPosSupervisorUser}
+        requestFunctionApproval={requestFunctionApproval}
+        onFunctionDenied={onFunctionDenied}
+      />
 
       {/* Quick customer creation — the counterpart of the "Create New Customer" button in
           TradeMainCanvas's customer dropdown. */}

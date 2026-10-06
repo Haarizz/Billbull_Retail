@@ -114,7 +114,6 @@ public class PostingEngineService {
         private final VoucherSequenceService  voucherSequenceService;
         private final com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService;
         private final com.billbull.backend.purchase.grn.GrnRepository grnRepository;
-        private final com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository;
         private final com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService;
         private final com.billbull.backend.financials.currency.CurrencyService currencyService;
         private final com.billbull.backend.settings.outlet.OutletRepository outletRepository;
@@ -128,7 +127,6 @@ public class PostingEngineService {
                         VoucherSequenceService  voucherSequenceService,
                         com.billbull.backend.sales.customerledger.CustomerCreditService customerCreditService,
                         com.billbull.backend.purchase.grn.GrnRepository grnRepository,
-                        com.billbull.backend.financials.generalledger.GlAccountBalanceRepository glBalanceRepository,
                         com.billbull.backend.sales.settings.SalesSettingsService salesSettingsService,
                         com.billbull.backend.financials.currency.CurrencyService currencyService,
                         com.billbull.backend.settings.outlet.OutletRepository outletRepository) {
@@ -140,7 +138,6 @@ public class PostingEngineService {
                 this.voucherSequenceService  = voucherSequenceService;
                 this.customerCreditService   = customerCreditService;
                 this.grnRepository           = grnRepository;
-                this.glBalanceRepository     = glBalanceRepository;
                 this.salesSettingsService    = salesSettingsService;
                 this.currencyService         = currencyService;
                 this.outletRepository        = outletRepository;
@@ -1252,6 +1249,158 @@ public class PostingEngineService {
                                 amount, BigDecimal.ZERO);
                 addLine(entry, "Inventory", ACC_INVENTORY,
                                 "Reverse inventory increase for " + salesReturn.getReturnNumber(),
+                                BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        // =========================================================
+        // SALES RETURN REVERSAL (unwinding an approved return)
+        // =========================================================
+
+        /**
+         * Contra of the main Sales Return journal — the revenue and VAT reversal is itself
+         * reversed, putting the sale back on the books.
+         *
+         * <pre>
+         * Dr Accounts Receivable    (1100)  [totalAmount]
+         *   Cr Sales / Deferred Revenue     [netRevenue]
+         *   Cr VAT Output           (2100)  [taxAmount]   (if &gt; 0)
+         * </pre>
+         *
+         * <p>Every line is the mirror of {@link #createJournalFromSalesReturn}, derived from the
+         * same figures on the same entity, so the pair nets to zero by construction rather than
+         * by a reviewer checking two independently-computed numbers. The discount residual is
+         * derived identically ({@code subTotal + taxAmount - totalAmount}) for the same reason.
+         *
+         * <p><b>Dated on the reversal, not on the original.</b> Back-dating onto the original
+         * return date would silently restate a period that may already have been reported on, and
+         * would be refused outright by the period-lock trigger once that month closes. A reversal
+         * is an event in its own right and belongs on the day it happened; the narration carries
+         * the original date so the pair is still legible.
+         *
+         * @param salesReturn   the approved return being unwound
+         * @param reversalDate  the date the reversal is posted on, normally today
+         * @param revenueWasRecognized must match what the original posting used, so the credit
+         *                             lands back on the same account the debit came from
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnReversal(
+                        SalesReturn salesReturn,
+                        LocalDate reversalDate,
+                        boolean revenueWasRecognized) {
+
+                String ref = salesReturn.getReturnNumber() + "-REV";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                LocalDate date = reversalDate != null ? reversalDate : LocalDate.now();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Reversal of Sales Return " + salesReturn.getReturnNumber()
+                                                + " (originally posted " + salesReturn.getReturnDate() + ")",
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                BigDecimal subTotal    = nz(salesReturn.getSubTotal());
+                BigDecimal taxAmount   = nz(salesReturn.getTaxAmount());
+                BigDecimal totalAmount = nz(salesReturn.getTotalAmount());
+                BigDecimal discountAmount = subTotal.add(taxAmount).subtract(totalAmount).max(BigDecimal.ZERO);
+                BigDecimal netRevenue  = subTotal.subtract(discountAmount);
+
+                String revenueAccount     = revenueWasRecognized ? ACC_SALES_REVENUE : ACC_DEFERRED_REVENUE;
+                String revenueAccountName = revenueWasRecognized ? "Sales Revenue"    : "Deferred Revenue";
+
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Reverse return credit note", totalAmount, BigDecimal.ZERO);
+                addLine(entry, revenueAccountName, revenueAccount,
+                                "Reinstate revenue", BigDecimal.ZERO, netRevenue);
+                if (taxAmount.compareTo(BigDecimal.ZERO) > 0) {
+                        addLine(entry, "VAT Output", ACC_VAT_OUTPUT, "Reinstate VAT", BigDecimal.ZERO, taxAmount);
+                }
+
+                return post(entry);
+        }
+
+        /**
+         * Contra of the {@code -INV} inventory leg, for a reversal of a return that did restock.
+         *
+         * <pre>
+         * Dr COGS       (5001)  [amount]
+         * Cr Inventory  (1200)  [amount]
+         * </pre>
+         *
+         * <p>Same shape as {@link #createJournalFromSalesReturnInventoryReversal} and the same
+         * economics — the goods leave stock again and the cost goes back to COGS — but under a
+         * distinct {@code -REV-INV} reference so the two can never collide. They mean different
+         * things: {@code -INVREV} corrects a return whose goods never came back at all, while
+         * this undoes a return whose goods genuinely did and are now going out again.
+         *
+         * @param amount the 1200 debit of the original {@code -INV} entry
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnReversalInventory(
+                        SalesReturn salesReturn,
+                        BigDecimal amount,
+                        LocalDate reversalDate) {
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String ref = salesReturn.getReturnNumber() + "-REV-INV";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                LocalDate date = reversalDate != null ? reversalDate : LocalDate.now();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Reversal of stock return " + salesReturn.getReturnNumber(),
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                addLine(entry, "COGS", ACC_COGS,
+                                "Restore COGS on reversal of " + salesReturn.getReturnNumber(),
+                                amount, BigDecimal.ZERO);
+                addLine(entry, "Inventory", ACC_INVENTORY,
+                                "Remove returned stock on reversal of " + salesReturn.getReturnNumber(),
+                                BigDecimal.ZERO, amount);
+
+                return post(entry);
+        }
+
+        /**
+         * Contra of the {@code -RFND} settlement, for a reversal of a card or bank refund.
+         *
+         * <pre>
+         * Dr Merchant Clearing (1013) or Bank (1010)  [amount]
+         *   Cr Accounts Receivable            (1100)  [amount]
+         * </pre>
+         *
+         * <p>The money comes back from the card processor or the bank. Note this says nothing
+         * about whether it has physically arrived — like the original settlement, it records the
+         * business's position, and the bank reconciliation is where the two meet.
+         *
+         * @param viaBank must match the original settlement, so the reversal faces the same
+         *                account the refund was paid from
+         */
+        @Transactional
+        public JournalEntry createJournalFromSalesReturnReversalSettlement(
+                        SalesReturn salesReturn,
+                        BigDecimal amount,
+                        boolean viaBank,
+                        LocalDate reversalDate) {
+
+                if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) return null;
+
+                String ref = salesReturn.getReturnNumber() + "-REV-RFND";
+                { JournalEntry _dup = findDuplicate(ref); if (_dup != null) return _dup; }
+
+                String settlementAccount = viaBank ? ACC_BANK : ACC_MERCHANT_CLEARING;
+                String settlementName    = viaBank ? "Bank Account" : "Merchant Clearing";
+
+                LocalDate date = reversalDate != null ? reversalDate : LocalDate.now();
+                JournalEntry entry = createBaseEntry(date, ref,
+                                "Reversal of Sales Return refund " + salesReturn.getReturnNumber(),
+                                TX_CREDIT_NOTE, salesReturn.getBranch());
+
+                addLine(entry, settlementName, settlementAccount,
+                                "Refund recovered for " + salesReturn.getReturnNumber(),
+                                amount, BigDecimal.ZERO);
+                addLine(entry, "Accounts Receivable", ACC_ACCOUNTS_RECEIVABLE,
+                                "Reverse settlement of " + salesReturn.getReturnNumber(),
                                 BigDecimal.ZERO, amount);
 
                 return post(entry);
@@ -2371,10 +2520,11 @@ public class PostingEngineService {
 
         private JournalEntry persist(JournalEntry entry) {
                 JournalEntry saved = journalEntryRepository.save(entry);
+                // postEntry now owns the pre-aggregated GL balance upsert (PDF §20 / Phase 8.1).
+                // It used to be done here instead, which kept every automatic posting correct and
+                // silently skipped every MANUAL journal voucher — those post through postEntry and
+                // never came back through this method. See GlAccountBalanceService.
                 journalEntryService.postEntry(saved.getId(), "System");
-                // Atomically upsert the pre-aggregated GL balance rows (PDF §20 / Phase 8.1).
-                // Keeps gl_account_balances in sync with every posting without a full ledger scan.
-                upsertGlBalances(saved);
                 return saved;
         }
 
@@ -2382,73 +2532,11 @@ public class PostingEngineService {
          * Upserts one {@link GlAccountBalance} row per (accountCode, periodId, branchId) triple
          * for each line in the just-posted entry. Runs inside the same transaction as persist().
          */
-        private void upsertGlBalances(JournalEntry entry) {
-                Long branchId   = entry.getBranch() != null ? entry.getBranch().getId() : null;
-                Long periodId   = accountingPeriodService.findCoveringPeriod(entry.getDate()) != null
-                                ? accountingPeriodService.findCoveringPeriod(entry.getDate()).getId() : null;
-
-                for (JournalLine line : entry.getLines()) {
-                        String code = line.getAccountCode();
-                        if (code == null || code.isBlank()) continue;
-
-                        BigDecimal dr = nvl(line.getDebit());
-                        BigDecimal cr = nvl(line.getCredit());
-
-                        applyGlBalanceDelta(code, periodId, branchId, dr, cr);
-                }
-        }
-
-        /**
-         * Atomically applies a (debit, credit) delta to the GlAccountBalance row for a
-         * (accountCode, periodId, branchId) triple, creating it if absent.
-         *
-         * Concurrency (ARCHFIX P0 §1.3): the row is read through a PESSIMISTIC_WRITE lock so
-         * two concurrent postings to the same triple are serialized and no increment is lost.
-         * The first-ever insert for a triple is guarded with a flush + retry: if a concurrent
-         * thread wins the insert, we fall back to the now-existing locked row and re-apply.
-         */
-        private void applyGlBalanceDelta(String code, Long periodId, Long branchId,
-                        BigDecimal dr, BigDecimal cr) {
-                java.util.Optional<com.billbull.backend.financials.generalledger.GlAccountBalance> existing =
-                                glBalanceRepository.findForUpdate(code, periodId, branchId);
-
-                if (existing.isPresent()) {
-                        com.billbull.backend.financials.generalledger.GlAccountBalance bal = existing.get();
-                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
-                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
-                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
-                        glBalanceRepository.save(bal);
-                        return;
-                }
-
-                com.billbull.backend.financials.generalledger.GlAccountBalance b
-                                = new com.billbull.backend.financials.generalledger.GlAccountBalance();
-                b.setAccountCode(code);
-                b.setFiscalPeriodId(periodId);
-                b.setBranchId(branchId);
-                b.setDebitTotal(dr);
-                b.setCreditTotal(cr);
-                b.setClosingBalance(dr.subtract(cr));
-                try {
-                        glBalanceRepository.saveAndFlush(b);
-                } catch (org.springframework.dao.DataIntegrityViolationException raceLost) {
-                        // A concurrent posting inserted the row first. Re-read under lock and re-apply.
-                        com.billbull.backend.financials.generalledger.GlAccountBalance bal =
-                                        glBalanceRepository.findForUpdate(code, periodId, branchId)
-                                                .orElseThrow(() -> raceLost);
-                        bal.setDebitTotal(nvl(bal.getDebitTotal()).add(dr));
-                        bal.setCreditTotal(nvl(bal.getCreditTotal()).add(cr));
-                        bal.setClosingBalance(bal.getDebitTotal().subtract(bal.getCreditTotal()));
-                        glBalanceRepository.save(bal);
-                }
-        }
-
         private void notifyPosted(JournalEntry entry) {
                 log.info("[PostingEngine] Posted {} (ref='{}', {} lines).",
                                 entry.getEntryNumber(), entry.getReference(), entry.getLines().size());
         }
 
-        /** Null-safe BigDecimal — returns ZERO when source is null. */
         private static BigDecimal nvl(BigDecimal value) {
                 return value != null ? value : BigDecimal.ZERO;
         }

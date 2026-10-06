@@ -122,4 +122,20 @@ public interface LpoRepository extends JpaRepository<Lpo, Long> {
         if (dateTo != null) return findForReportsToDate(dateTo);
         return findForReportsAll();
     }
+
+    /**
+     * Vendor ids, most ordered-from first — the ranking behind the global search modal's
+     * empty-query preview.
+     *
+     * <p>Counts LPOs inside the activity window and breaks ties on the most recent of
+     * them. Returns ids only; the caller re-reads the vendors through its own
+     * branch-scoped query, so this decides order and nothing about visibility.
+     */
+    @Query("SELECT l.vendorId FROM Lpo l "
+            + "WHERE l.vendorId IS NOT NULL AND l.createdAt >= :since "
+            + "GROUP BY l.vendorId "
+            + "ORDER BY COUNT(l.id) DESC, MAX(l.createdAt) DESC")
+    List<Long> findMostActiveVendorIds(@org.springframework.data.repository.query.Param("since") java.time.LocalDateTime since,
+            Pageable pageable);
+
 }

@@ -87,10 +87,10 @@ describe('hook inventory and call order', () => {
     ['usePaymentManager (checkout)', 'const checkoutPayment = usePaymentManager({'],
     ['usePaymentManager (delivery settle)', 'const deliverySettlePayment = usePaymentManager({ invoiceTotal: deliverySettleBalance });'],
     ['usePaymentManager (layaway deposit)', 'const saveLayawayPayment = usePaymentManager({ invoiceTotal: saveLayawayTotal });'],
-    ['useCheckoutCapabilities', 'const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog || showSaveLayaway);'],
     ['useIdleTimeout', '  useIdleTimeout({'],
     ['useProductEntry', '} = useProductEntry({'],
     ['useDelivery', '} = useDelivery({'],
+    ['useCheckoutCapabilities', 'const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog || showSaveLayaway || showDeliverySettleModal);'],
     ['useHeldSales', '} = useHeldSales({'],
     ['useCashDrawer', 'const { openCashDrawer } = useCashDrawer(posSettings);'],
     ['useCheckout', '} = useCheckout({'],
@@ -554,8 +554,8 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 227 top-level useState pairs', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(227);
+  it('declares 229 top-level useState pairs', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(229);
   });
 
   it('declares 16 top-level refs', () => {
@@ -566,9 +566,10 @@ describe('shape counters (update deliberately)', () => {
     expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(33);
   });
 
-  it('declares 19 top-level memos and 23 top-level callbacks', () => {
+  it('declares 19 top-level memos and 25 top-level callbacks', () => {
     expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useMemo\(/)).toHaveLength(19);
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(23);
+    // 25 since Action Button Access: requestFunctionApproval and notifyPosFunctionDenied.
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(25);
   });
 
   it('all state is declared in the first 1,300 lines — the render tree below owns none', () => {
@@ -793,6 +794,7 @@ describe('candidate boundary coupling budget', () => {
     const CHILD = read('../features/products/ProductSearch.jsx');
     const CHILD_CODE = CHILD.replace(/^\/\/.*\n/gm, '');
     const TOUCH = read('../POSTouchScreen.jsx');
+    const FUNCS = read('../lib/posFunctionButtons.jsx');
     // Both product hooks are still called exactly once, and only in POSSales.
     expect(SRC.split('useProductCatalog(').length - 1).toBe(1);
     expect(SRC).toContain('} = useProductCatalog({ currentTerminal, currentSession, barcodeInput, posActionMode });');
@@ -816,8 +818,9 @@ describe('candidate boundary coupling budget', () => {
     expect(SRC.split('{showProductSearch && ').length - 1).toBe(1);
     expect(SRC.split('<ProductSearch').length - 1).toBe(1);
     expect(CHILD_CODE).not.toContain('showProductSearch &&');
-    // POSTouchScreen is untouched: it still owns the only opener and knows nothing of the child.
-    expect(TOUCH).toContain("action: () => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); } },");
+    // The opener is still exactly one, in the shared Functions builder every template renders;
+    // POSTouchScreen knows nothing of the child.
+    expect(FUNCS).toContain("action: () => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); } },");
     expect(TOUCH).not.toContain('ProductSearch from');
     expect(TOUCH).not.toContain('<ProductSearch');
   });
@@ -826,6 +829,7 @@ describe('candidate boundary coupling budget', () => {
     const CHILD = read('../features/products/PriceCheck.jsx');
     const CHILD_CODE = CHILD.replace(/^\/\/.*\n/gm, '');
     const TOUCH = read('../POSTouchScreen.jsx');
+    const FUNCS = read('../lib/posFunctionButtons.jsx');
     // usePosSession and useProductEntry are still called exactly once, and only in POSSales.
     expect(SRC.split('usePosSession(').length - 1).toBe(1);
     expect(SRC).toContain('} = usePosSession({ posSettings, handlersRef: sessionLifecycleHandlersRef });');
@@ -853,9 +857,9 @@ describe('candidate boundary coupling budget', () => {
     for (const forbidden of ['checkoutPayment', 'processPayment', 'setCurrentInvoice', 'xReportData']) {
       expect(CHILD_CODE, `price check must not reach ${forbidden}`).not.toContain(forbidden);
     }
-    // POSTouchScreen is untouched: it still owns the only opener, POSSales still forwards the setters,
-    // and the touch screen knows nothing of the child.
-    expect(TOUCH).toContain("action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },");
+    // The opener is still exactly one, in the shared Functions builder; POSSales still forwards the
+    // setters, and the touch screen knows nothing of the child.
+    expect(FUNCS).toContain("action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },");
     expect(SRC).toContain('    setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,\n    setPriceCheckResult, setShowProductSearch, setProductSearchQuery, setProductSearchResults,\n');
     expect(TOUCH).not.toContain('PriceCheck from');
     expect(TOUCH).not.toContain('<PriceCheck');
@@ -865,6 +869,7 @@ describe('candidate boundary coupling budget', () => {
     const CHILD = read('../features/service/ServiceRepair.jsx');
     const CHILD_CODE = CHILD.replace(/^\/\/.*\n/gm, '');
     const TOUCH = read('../POSTouchScreen.jsx');
+    const FUNCS = read('../lib/posFunctionButtons.jsx');
     // All five Service & Repair states (and setters) remain declared in POSSales, unchanged.
     expect(SRC).toContain('  // Service & Repair view\n'
       + '  const [showServiceRepair, setShowServiceRepair] = useState(false);\n'
@@ -914,6 +919,7 @@ describe('candidate boundary coupling budget', () => {
     const CHILD = read('../features/products/SerialBatch.jsx');
     const CHILD_CODE = CHILD.replace(/^\/\/.*\n/gm, '');
     const TOUCH = read('../POSTouchScreen.jsx');
+    const FUNCS = read('../lib/posFunctionButtons.jsx');
     // All twelve Serial / Batch states (and setters) are declared in POSSales, contiguous, exactly once.
     expect(SRC).toContain('  // Serial / Batch Check modal\n'
       + '  const [showSerialBatch, setShowSerialBatch] = useState(false);\n'
@@ -976,7 +982,7 @@ describe('candidate boundary coupling budget', () => {
     }
     // POSTouchScreen is untouched: it still owns the only opener, POSSales still forwards the setters,
     // and the touch screen knows nothing of the child.
-    expect(TOUCH).toContain("action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },");
+    expect(FUNCS).toContain("action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },");
     const BAG = '    setShowSerialBatch, setSerialBatchQuery, setSerialBatchResult, setSerialBatchSubView,\n'
       + '    setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile, setSerialBatchSelectedItem,\n'
       + '    setShowServiceRepair, setServiceView, setShowReturn, setShowAddShippingDialog,\n';

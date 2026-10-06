@@ -733,16 +733,18 @@ const LAYAWAY_CALL = [
   '                          />',
 ].join('\n');
 
+// Indented two levels deeper than the other two call sites: the delivery row now chooses
+// between settling and returning, and the allocation panel is the settle branch of that.
 const DELIVERY_CALL = [
-  '                                <PaymentAllocationPanel',
-  '                                  payment={deliverySettlePayment}',
-  '                                  compatibility={checkoutCompatibility}',
-  '                                  bankAccounts={checkoutOnlineBankAccounts}',
-  '                                  bankAccountsLoading={checkoutOnlineBankAccountsLoading}',
-  '                                  selectedCustomerName={o.customer}',
-  '                                  methods={DELIVERY_SETTLE_METHODS}',
-  '                                  compact',
-  '                                />',
+  '                                    <PaymentAllocationPanel',
+  '                                      payment={deliverySettlePayment}',
+  '                                      compatibility={checkoutCompatibility}',
+  '                                      bankAccounts={checkoutOnlineBankAccounts}',
+  '                                      bankAccountsLoading={checkoutOnlineBankAccountsLoading}',
+  '                                      selectedCustomerName={o.customer}',
+  '                                      methods={DELIVERY_SETTLE_METHODS}',
+  '                                      compact',
+  '                                    />',
 ].join('\n');
 
 describe('11. POSSales call sites (source)', () => {
@@ -789,7 +791,7 @@ describe('11. POSSales call sites (source)', () => {
     expect(count(POS_SALES, '  const [checkoutOnlineBankAccounts, setCheckoutOnlineBankAccounts] = useState([]);')).toBe(1);
     expect(count(POS_SALES, '  const [checkoutOnlineBankAccountsLoading, setCheckoutOnlineBankAccountsLoading] = useState(false);')).toBe(1);
     expect(count(POS_SALES, '  const customerOptions = useMemo(() => [WALK_IN_CUSTOMER, ...posCustomers], [posCustomers]);')).toBe(1);
-    expect(count(POS_SALES, '  const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog || showSaveLayaway);')).toBe(1);
+    expect(count(POS_SALES, '  const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog || showSaveLayaway || showDeliverySettleModal);')).toBe(1);
     expect(count(POS_SALES, '  const loadPosCustomers = useCallback(async () => {')).toBe(1);
     expect(POS_SALES).toMatch(/import \{[^}]*\bDELIVERY_SETTLE_METHODS\b[^}]*\} from '[^']*deliveryConstants'/);
     for (const id of ['checkoutPayment', 'saveLayawayPayment', 'deliverySettlePayment', 'selectedCustomer', 'selectedCustomerData']) {

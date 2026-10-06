@@ -48,6 +48,13 @@ public class PosSettings extends BaseEntity {
     @Column(name = "require_price_override_approval")
     private Boolean requirePriceOverrideApproval = false;
 
+    /** What happens to the delivery charge when a delivery order's goods are returned from the
+     *  POS Delivery Settlement screen. See {@link PosDeliveryReturnChargePolicy}. Stored as the
+     *  enum name; defaults to WAIVE so an unconfigured branch cancels the charge with the order
+     *  rather than silently leaving a small uncollectable balance behind in the delivery list. */
+    @Column(name = "delivery_return_charge_policy", length = 20)
+    private String deliveryReturnChargePolicy = PosDeliveryReturnChargePolicy.WAIVE.name();
+
     // Void behavior
     @Column(name = "void_mode", length = 20)
     private String voidMode = "VOID"; // VOID = strikethrough, DELETE = remove
@@ -249,6 +256,12 @@ public class PosSettings extends BaseEntity {
     @Column(name = "require_supervisor_for_day_close")
     private Boolean requireSupervisorForDayClose = false;
 
+    /** Who may use the POS Functions/Actions buttons — see {@link PosFunctionAccessMode}.
+     *  Branch-wide and template-independent: Classic, Cart Focus and Compact all honour it,
+     *  so the rule cannot be sidestepped by switching screen templates. */
+    @Column(name = "pos_function_access_mode", length = 30)
+    private String posFunctionAccessMode = PosFunctionAccessMode.ALL_USERS.name();
+
     // ---- Credit Voucher expiry policy (per branch) -------------------------------------
     //
     // All three are nullable, and null means "not configured — use the global
@@ -293,6 +306,15 @@ public class PosSettings extends BaseEntity {
 
     public Boolean getRequirePriceOverrideApproval() { return requirePriceOverrideApproval; }
     public void setRequirePriceOverrideApproval(Boolean requirePriceOverrideApproval) { this.requirePriceOverrideApproval = requirePriceOverrideApproval; }
+
+    public String getDeliveryReturnChargePolicy() { return deliveryReturnChargePolicy; }
+    public void setDeliveryReturnChargePolicy(String deliveryReturnChargePolicy) { this.deliveryReturnChargePolicy = deliveryReturnChargePolicy; }
+
+    /** The policy as an enum, never null — unknown or unset values resolve to WAIVE. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public PosDeliveryReturnChargePolicy resolvedDeliveryReturnChargePolicy() {
+        return PosDeliveryReturnChargePolicy.fromCode(deliveryReturnChargePolicy);
+    }
 
     // ARCHFIX S5: never serialize the supervisor PIN (now a BCrypt hash) to the client. The setter
     // stays public so the save request body can still carry a new raw PIN (Jackson deserializes via
@@ -440,6 +462,9 @@ public class PosSettings extends BaseEntity {
 
     public Boolean getRequireSupervisorForDayClose() { return requireSupervisorForDayClose; }
     public void setRequireSupervisorForDayClose(Boolean requireSupervisorForDayClose) { this.requireSupervisorForDayClose = requireSupervisorForDayClose; }
+
+    public String getPosFunctionAccessMode() { return posFunctionAccessMode; }
+    public void setPosFunctionAccessMode(String posFunctionAccessMode) { this.posFunctionAccessMode = posFunctionAccessMode; }
 
     public String getCreditVoucherExpiryMode() { return creditVoucherExpiryMode; }
     public void setCreditVoucherExpiryMode(String creditVoucherExpiryMode) { this.creditVoucherExpiryMode = creditVoucherExpiryMode; }

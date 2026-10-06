@@ -50,6 +50,8 @@ function SupervisorPinDialog({
                       ? `Supervisor authorization is required to settle this delivery because it was created by another user.`
                       : pendingSupervisorAction?.type === 'FORCE_CLOSE_SESSION'
                       ? 'Authorize force closure of this session.'
+                      : pendingSupervisorAction?.type === 'POS_FUNCTION'
+                      ? `${supervisorApprovalMode === 'PASSWORD' ? 'Enter password' : 'Enter PIN'} to open ${pendingSupervisorAction.label || 'this function'}`
                       : pendingLayawayAbortAction
                       ? (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to clear layaway cart' : 'Enter PIN to clear layaway cart')
                       : (supervisorApprovalMode === 'PASSWORD' ? 'Enter password to authorize void' : 'Enter PIN to authorize void')}

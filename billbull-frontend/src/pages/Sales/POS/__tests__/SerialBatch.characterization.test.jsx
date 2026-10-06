@@ -1480,6 +1480,7 @@ describe('source contract', () => {
   const CHILD_CODE = CHILD.replace(/^\/\/.*\n/gm, '');
   const TEST = read('./SerialBatch.characterization.test.jsx');
   const TOUCH = read('../POSTouchScreen.jsx');
+  const FUNCS = read('../lib/posFunctionButtons.jsx');
   const TRADE = read('../TradePOS/TradePOSTouchScreen.jsx');
   const CONSOLE = read('../POSConsole.jsx');
   const LINES = PARENT.split('\n');
@@ -1783,9 +1784,10 @@ describe('source contract', () => {
     expect(PARENT).toContain('    currentSession, setCurrentSession,\n    currentTerminal, setCurrentTerminal,\n');
   });
 
-  it('writers outside the child: only the POSTouchScreen opener (via the unchanged touch prop bag); no other POSSales write', () => {
+  it('writers outside the child: only the shared Functions-builder opener (via the unchanged touch prop bag); no other POSSales write', () => {
     const OPENER = "action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },";
-    expect(count(TOUCH, OPENER)).toBe(1);
+    expect(count(FUNCS, OPENER)).toBe(1);
+    expect(count(TOUCH, OPENER)).toBe(0);
     expect(TEST).toContain(`onClick={() => { ${OPENER.slice('action: () => { '.length, -' } },'.length)} }}`);
     expect(count(PARENT, BAG)).toBe(1);
     expect(count(TOUCH, BAG)).toBe(1);
@@ -1796,7 +1798,10 @@ describe('source contract', () => {
       .forEach((n) => expect(TOUCH, n).not.toContain(n));
     expect(TOUCH.match(/serialBatch|SerialBatch/g)).toHaveLength(16);
     expect(TOUCH).not.toMatch(/<SerialBatch\b|SerialBatch from/);
-    expect(TRADE).not.toMatch(/serialBatch|SerialBatch/);
+    // TradePOS forwards the setters into TradeFunctionsPanel; it mounts no SerialBatch and
+    // restates no opener of its own.
+    expect(TRADE).not.toMatch(/<SerialBatch|SerialBatch from/);
+    expect(TRADE).not.toContain('setShowSerialBatch(true)');
     expect(CONSOLE).not.toMatch(/serialBatch|SerialBatch/);
   });
 

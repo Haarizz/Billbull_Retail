@@ -638,6 +638,7 @@ describe('DOM parity', () => {
 describe('source contract', () => {
   const PARENT = read('../../POSSales.jsx');
   const TOUCH = read('../POSTouchScreen.jsx');
+  const FUNCS = read('../lib/posFunctionButtons.jsx');
   const LINES = PARENT.split('\n');
   const ANCHOR = '      {/* Coupons Dialog */}';
   const start = LINES.indexOf(ANCHOR);
@@ -802,9 +803,13 @@ describe('source contract', () => {
     // …therefore they could not move into the extracted child.
   });
 
-  it('POSTouchScreen is the only opener and hands the setter through touchScreenProps', () => {
-    expect(TOUCH).toContain('action: () => setShowCouponsDialog(true) },');
-    expect(TOUCH.split('setShowCouponsDialog(true)').length - 1).toBe(1);
+  it('the shared Functions builder is the only opener; POSSales hands the setter through touchScreenProps', () => {
+    // The button definition lives in POS/lib/posFunctionButtons.jsx, which every template renders
+    // (Classic and Cart Focus through POSTouchScreen, compact through TradeFunctionsPanel). There
+    // is still exactly ONE opener in the whole POS surface — it just is not inlined per template.
+    expect(FUNCS).toContain('action: () => setShowCouponsDialog(true) },');
+    expect(FUNCS.split('setShowCouponsDialog(true)').length - 1).toBe(1);
+    expect(TOUCH).not.toContain('setShowCouponsDialog(true)');
     expect(PARENT).toContain('    setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,\n');
     expect(PARENT).not.toContain('setShowCouponsDialog(true)');
   });

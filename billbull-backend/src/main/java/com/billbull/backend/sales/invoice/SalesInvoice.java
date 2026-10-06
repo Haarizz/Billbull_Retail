@@ -192,6 +192,23 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
     @Column(name = "pos_driver_employee_code", length = 100)
     private String posDriverEmployeeCode;
 
+    /** When this delivery order was closed out by a return raised from POS Delivery Settlement,
+     *  leaving nothing to collect. Set only once the order owes nothing: a return that leaves
+     *  the delivery charge (or part of the goods) payable deliberately leaves this null, because
+     *  the cashier still has to settle that balance and the order must stay in the list.
+     *
+     *  <p>This, not the invoice status, is what removes a returned order from the pending
+     *  delivery list — see {@code SalesInvoiceRepository#findPendingDeliveryOrders}. The status
+     *  is left alone on purpose: the sale genuinely happened and its journals stand; what
+     *  changed is that there is no longer a delivery to settle. */
+    @Column(name = "pos_delivery_returned_at")
+    private java.time.LocalDateTime posDeliveryReturnedAt;
+
+    /** The sales return that closed this delivery order out, for the audit trail and so the
+     *  register can navigate from the order back to its credit note. */
+    @Column(name = "pos_delivery_return_number", length = 50)
+    private String posDeliveryReturnNumber;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "pos_driver_employee_id", insertable = false, updatable = false)
     @com.fasterxml.jackson.annotation.JsonIgnore
@@ -652,6 +669,12 @@ public class SalesInvoice implements com.billbull.backend.common.ownership.Owned
 
     public String getPosDriverName() { return posDriverName; }
     public void setPosDriverName(String posDriverName) { this.posDriverName = posDriverName; }
+
+    public java.time.LocalDateTime getPosDeliveryReturnedAt() { return posDeliveryReturnedAt; }
+    public void setPosDeliveryReturnedAt(java.time.LocalDateTime posDeliveryReturnedAt) { this.posDeliveryReturnedAt = posDeliveryReturnedAt; }
+
+    public String getPosDeliveryReturnNumber() { return posDeliveryReturnNumber; }
+    public void setPosDeliveryReturnNumber(String posDeliveryReturnNumber) { this.posDeliveryReturnNumber = posDeliveryReturnNumber; }
 
     public Long getPosDriverEmployeeId() { return posDriverEmployeeId; }
     public void setPosDriverEmployeeId(Long posDriverEmployeeId) { this.posDriverEmployeeId = posDriverEmployeeId; }

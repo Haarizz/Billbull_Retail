@@ -16,9 +16,13 @@ import java.util.List;
  * If drift is detected, an alert is logged (WARN level). In production, wire this log
  * line to an alerting channel (PagerDuty, Slack webhook, etc.).
  *
- * A full rebuild can be triggered manually via:
- *   POST /api/admin/gl-balance/rebuild
- * (not implemented yet — deferred to Phase 9 operations tooling)
+ * A full rebuild is triggered manually via:
+ *   POST /api/admin/gl-balance/rebuild        (admin only; optional ?accountCode= to narrow it)
+ *   GET  /api/admin/gl-balance/drift          (the same check this job runs, on demand)
+ *
+ * See GlAccountBalanceAdminController. Drift used to be detectable and unfixable: this job named
+ * an endpoint that had never been built, so the only available repair was a hand-written
+ * correcting JV — which, going through the manual path, was itself a cause of drift.
  */
 @Component
 @Slf4j

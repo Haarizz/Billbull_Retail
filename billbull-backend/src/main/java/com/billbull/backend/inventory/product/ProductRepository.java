@@ -276,6 +276,26 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
         List<Product> findAllActiveInBranchScope(
                         @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
 
+        /**
+         * The active products among a given set of ids, for the global search modal's
+         * activity-ranked preview.
+         *
+         * <p>The ranking that produced the ids runs unscoped over the stock-movement
+         * ledger, so this is where branch scope and the active flag are reapplied: a
+         * ranked id the caller may not see simply does not come back. No ordering is
+         * promised — the caller holds the rank and re-imposes it.
+         */
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                        "WHERE p.isActive = true AND p.id IN :ids")
+        List<Product> findActiveForListByIds(
+                        @org.springframework.data.repository.query.Param("ids") java.util.Collection<Long> ids);
+
+        @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
+                        "WHERE p.isActive = true AND p.id IN :ids AND (p.branch.id IN :branchIds OR p.branch IS NULL)")
+        List<Product> findActiveForListByIdsInBranchScope(
+                        @org.springframework.data.repository.query.Param("ids") java.util.Collection<Long> ids,
+                        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
+
         @Query("SELECT p FROM Product p LEFT JOIN FETCH p.brand LEFT JOIN FETCH p.department " +
                         "WHERE p.isActive = true AND (p.branch.id IN :branchIds OR p.branch IS NULL) ")
         Page<Product> findAllActiveForListInBranchScope(

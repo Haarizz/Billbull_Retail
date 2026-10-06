@@ -49,6 +49,24 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
         @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
 
     /**
+     * The customers behind a set of codes, for the global search modal's activity-ranked
+     * preview.
+     *
+     * <p>The ranking that produced the codes runs unscoped over the sales-invoice table,
+     * so this is where the same branch predicate the search uses is reapplied: a ranked
+     * customer the caller may not see simply does not come back. No ordering is promised
+     * — the caller holds the rank and re-imposes it.
+     */
+    @org.springframework.data.jpa.repository.Query("SELECT c FROM Customer c WHERE c.code IN :codes AND (" +
+        ":allBranches = TRUE OR c.branchEntity IS NULL OR c.branchEntity.id IN :branchIds OR " +
+        "EXISTS (SELECT 1 FROM CustomerBranchAllocation a " +
+        "        WHERE a.customer = c AND a.branch.id IN :branchIds))")
+    List<Customer> findByCodesInScope(
+        @org.springframework.data.repository.query.Param("codes") java.util.Collection<String> codes,
+        @org.springframework.data.repository.query.Param("allBranches") boolean allBranches,
+        @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
+
+    /**
      * The first few customers, for the global search modal's empty-query preview.
      *
      * <p>The same branch predicate as {@link #searchAllFields}, with the match clause

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Settings, ShoppingCart } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, Settings, ShoppingCart } from 'lucide-react';
 import BusinessDayStatusChip from '../../../../../../components/pos/BusinessDayStatusChip';
 
 export const TradeHeader = React.memo(({
   setCurrentView,
   setShowPOSConfig,
+  onOpenFunctions,
   currentSession,
   posSettings
 }) => {
@@ -28,14 +29,27 @@ export const TradeHeader = React.memo(({
             <span className="hidden sm:inline">Dashboard</span>
           </button>
 
-          {/* Settings / Configure */}
-          <button
-            onClick={() => setShowPOSConfig && setShowPOSConfig(true)}
-            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors py-1.5 px-3 border border-gray-200 hover:bg-gray-50 rounded-full text-xs sm:text-sm font-semibold shadow-sm shrink-0"
-          >
-            <Settings className="w-4 h-4" />
-            <span className="hidden sm:inline">Configure</span>
-          </button>
+          {/* Settings / Configure, with the Functions launcher stacked under it. Trade POS
+              has no permanent action column, so this button is the only way into the shared
+              POS functions from this template. */}
+          <div className="flex flex-col items-end gap-1.5 shrink-0">
+            <button
+              onClick={() => setShowPOSConfig && setShowPOSConfig(true)}
+              className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors py-1.5 px-3 border border-gray-200 hover:bg-gray-50 rounded-full text-xs sm:text-sm font-semibold shadow-sm"
+            >
+              <Settings className="w-4 h-4" />
+              <span className="hidden sm:inline">Configure</span>
+            </button>
+
+            <button
+              onClick={() => onOpenFunctions && onOpenFunctions()}
+              aria-label="Open POS functions"
+              className="flex items-center gap-2 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors py-1.5 px-3 border border-amber-200 rounded-full text-xs sm:text-sm font-bold shadow-sm"
+            >
+              <LayoutGrid className="w-4 h-4" />
+              <span>Functions</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 min-w-0">

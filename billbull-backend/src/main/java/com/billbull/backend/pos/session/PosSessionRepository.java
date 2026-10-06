@@ -180,4 +180,27 @@ public interface PosSessionRepository extends JpaRepository<PosSession, Long> {
             @Param("mixedDelta")  BigDecimal mixedDelta,
             @Param("onlineDelta") BigDecimal onlineDelta,
             @Param("voidDelta")   int voidDelta);
+
+    /**
+     * Employee ids, most POS-active first — the ranking behind the global search modal's
+     * empty-query preview.
+     *
+     * <p>Counts sessions opened inside the activity window and breaks ties on the most
+     * recent of them. A session records the user who opened it, so it reaches the
+     * employee through {@code User.linkedEmployee}; a session whose user is not linked to
+     * an employee record simply ranks nobody.
+     *
+     * <p>Only staff who work a till ever open a session, so this ranks cashiers and
+     * supervisors and says nothing about finance, HR or admin staff. The caller tops the
+     * preview up from its own ordering rather than leaving it short, so those employees
+     * are still reachable — they just are not claimed to be "most active".
+     */
+    @Query("SELECT u.linkedEmployee.id FROM PosSession s "
+            + "JOIN com.billbull.backend.user.User u ON u.id = s.ownerUserId "
+            + "WHERE u.linkedEmployee IS NOT NULL AND s.openedAt >= :since "
+            + "GROUP BY u.linkedEmployee.id "
+            + "ORDER BY COUNT(s.id) DESC, MAX(s.openedAt) DESC")
+    java.util.List<Long> findMostActiveEmployeeIds(@Param("since") java.time.LocalDateTime since,
+            org.springframework.data.domain.Pageable pageable);
+
 }
