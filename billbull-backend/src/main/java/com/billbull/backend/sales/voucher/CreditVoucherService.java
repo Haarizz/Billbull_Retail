@@ -422,6 +422,21 @@ public class CreditVoucherService {
     }
 
     /**
+     * The voucher a return issued, mapped to its response inside the transaction — the response
+     * reads the lazy branch, which would fail with "no session" if mapped in the controller.
+     */
+    /** {@link #cancel}, mapped to its response inside the transaction for the same reason. */
+    @Transactional
+    public CreditVoucherResponse cancelToResponse(Long voucherId, String reason) {
+        return CreditVoucherResponse.from(cancel(voucherId, reason));
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<CreditVoucherResponse> findResponseBySalesReturnNumber(String returnNumber) {
+        return findBySalesReturnNumber(returnNumber).map(CreditVoucherResponse::from);
+    }
+
+    /**
      * Brings lapsed vouchers' status into line with their expiry date.
      *
      * <p>Purely cosmetic for reporting — {@link #assertRedeemable} already refuses an expired
