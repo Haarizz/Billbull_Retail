@@ -14,7 +14,8 @@ import {
   CreditCard,
   AlignLeft,
   Eye,
-  Check
+  Check,
+  Lock
 } from "lucide-react";
 import { Badge, Button } from "./PurchaseTemplateUI";
 import toast from "react-hot-toast";
@@ -101,6 +102,26 @@ function CurrencyPreviewToken({ currencyConfig, currencyDisplay = "symbol" }) {
 
   return <span>{currencyConfig.label}</span>;
 }
+// Screen pixel size of each supported sheet at 96dpi, so the live preview
+// canvas matches the paper the template actually prints on.
+const PAGE_PX = {
+  A4: { width: 794, height: 1123 },
+  A5: { width: 559, height: 794 },
+  Letter: { width: 816, height: 1056 }
+};
+function pagePx(paperSize, orientation) {
+  const base = PAGE_PX[paperSize] || PAGE_PX.A4;
+  return String(orientation || "portrait").toLowerCase() === "landscape"
+    ? { width: base.height, height: base.width }
+    : base;
+}
+// "A5 Landscape (794 × 559 px)" — the sheet named the way the person picking it
+// thinks about it, with the canvas size that proves what they are editing.
+function pageLabel(paperSize, orientation) {
+  const page = pagePx(paperSize, orientation);
+  const facing = String(orientation || "portrait").toLowerCase() === "landscape" ? "Landscape" : "Portrait";
+  return `${paperSize || "A4"} ${facing} (${page.width} × ${page.height} px)`;
+}
 function defaultSettings(docType) {
   const isInv = docType === "sales-invoice" || docType === "proforma-invoice" || docType === "purchase-invoice";
   const isCN = docType === "credit-note" || docType === "debit-note" || docType === "purchase-return";
@@ -122,6 +143,7 @@ function defaultSettings(docType) {
     fontFamily: "Inter, sans-serif",
     fontSize: 9,
     paperSize: "A4",
+    orientation: "portrait",
     logoUrl: "",
     stampUrl: "",
     showRowLines: true,
@@ -639,6 +661,10 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
   });
   const [tab, setTab] = useState("style");
   const [zoom, setZoom] = useState(0.6);
+  const page = pagePx(s.paperSize, s.orientation);
+  // Mirrors the print renderer: a sheet narrower than A4 shows the SAME A4 design
+  // scaled down, rather than a reflowed one that would overflow the page edge.
+  const pageZoom = Math.min(1, page.width / PAGE_PX.A4.width);
   function upd(key, val) {
     setS((prev) => ({ ...prev, [key]: val }));
   }
@@ -740,6 +766,15 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
     { value: "corporate", label: "Corporate (Dark Header)" }
   ]} />
               </Row>
+              {s.paperLocked ? (
+                <Row label="Paper Size">
+                  <div className="flex items-center gap-2 rounded-md border border-[#FDE6A9] bg-[#FFF8E7] px-2.5 py-1.5">
+                    <span className="flex-1 text-[11px] font-semibold text-slate-700">{pageLabel(s.paperSize, s.orientation)}</span>
+                    <Lock className="h-3 w-3 shrink-0 text-[#A16207]" />
+                    <span className="shrink-0 text-[9px] font-semibold uppercase tracking-wide text-[#A16207]">locked</span>
+                  </div>
+                </Row>
+              ) : (<>
               <Row label="Paper Size">
                 <Sel value={s.paperSize} onChange={(v) => upd("paperSize", v)} options={[
     { value: "A4", label: "A4" },
@@ -747,6 +782,13 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
     { value: "A5", label: "A5" }
   ]} />
               </Row>
+              <Row label="Orientation">
+                <Sel value={String(s.orientation || "portrait").toLowerCase()} onChange={(v) => upd("orientation", v)} options={[
+    { value: "portrait", label: "Portrait" },
+    { value: "landscape", label: "Landscape" }
+  ]} />
+              </Row>
+              </>)}
 
               <SectionLabel icon={<Palette className="h-3 w-3" />} label="Colors" />
               <Row label="Accent / Highlight"><ColorPick value={s.accentColor} onChange={(v) => upd("accentColor", v)} /></Row>
@@ -978,17 +1020,22 @@ function DocumentTemplateDesigner({ docType, templateName, initialSettings, onCl
               Live preview — toggle settings on the left to update instantly
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] bg-white">{s.paperSize}</Badge>
+              <Badge variant="outline" className="text-[10px] bg-white capitalize">{s.paperSize} · {String(s.orientation || "portrait").toLowerCase()}</Badge>
               <Badge variant="outline" className="text-[10px] bg-white capitalize">{s.layoutStyle}</Badge>
             </div>
           </div>
 
           {
-    /* A4 canvas */
+    /* Paper canvas */
   }
-          <div style={{ transformOrigin: "top center", transform: `scale(${zoom})`, width: 794, marginLeft: "auto", marginRight: "auto", marginBottom: `${-(794 * (1 - zoom) * 1.414)}px` }}>
-            <div style={{ width: 794, minHeight: 1123, background: "#fff", boxShadow: "0 4px 32px rgba(0,0,0,0.18)" }}>
-              <ClassicPreview s={s} currencyConfig={previewCurrencyConfig} />
+          <div className="mb-2 text-center text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+            {s.paperSize || "A4"} {String(s.orientation || "portrait").toLowerCase() === "landscape" ? "Landscape" : "Portrait"} · {page.width} × {page.height} px
+          </div>
+          <div style={{ transformOrigin: "top center", transform: `scale(${zoom})`, width: page.width, marginLeft: "auto", marginRight: "auto", marginBottom: `${-(page.height * (1 - zoom))}px` }}>
+            <div style={{ width: page.width, minHeight: page.height, background: "#fff", boxShadow: "0 4px 32px rgba(0,0,0,0.18)", overflow: "hidden" }}>
+              <div style={pageZoom < 1 ? { zoom: pageZoom } : undefined}>
+                <ClassicPreview s={s} currencyConfig={previewCurrencyConfig} />
+              </div>
             </div>
           </div>
 

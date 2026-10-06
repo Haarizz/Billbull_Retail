@@ -1065,10 +1065,13 @@ export default function FinancialVoucherDesigner({ voucherType, templateName, in
                         <div
                             className="bg-white shadow-2xl rounded"
                             style={{
-                                width: settings.paperSize === "A5" ? 595 : 794,
+                                // Sheet width at 96dpi: A4 210mm = 794px, A5 148mm = 559px.
+                                width: settings.paperSize === "A5" ? 559 : 794,
                                 transform: `scale(${zoom / 100})`,
                                 transformOrigin: "top center",
-                                marginBottom: `${(zoom / 100 - 1) * (settings.paperSize === "A5" ? 420 : 560)}px`,
+                                // Half the sheet height (A4 1123px, A5 794px), to reserve
+                                // the room a zoomed-in page grows into below the fold.
+                                marginBottom: `${(zoom / 100 - 1) * (settings.paperSize === "A5" ? 397 : 560)}px`,
                             }}
                         >
                             {renderPreview()}

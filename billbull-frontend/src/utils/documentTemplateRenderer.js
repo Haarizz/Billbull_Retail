@@ -1240,7 +1240,10 @@ const buildPaymentCard = (layout) => {
 const buildSummaryNotes = (layout, renderTarget = 'print') => {
     // Email handles notes+totals together in buildSummarySection's table layout.
     if (renderTarget === 'email') return '';
-    const showNotes = layout.showNotesSection !== false;
+    // A landscape sheet has no room for an empty Notes placeholder, so it is
+    // shown there only when there is actual note text. Portrait is unchanged.
+    const showNotes = layout.showNotesSection !== false
+        && (!layout.isLandscape || Boolean(asText(layout.notes).trim()));
     const hasTerms = Boolean(layout.displayOptions.showTerms !== false && layout.terms);
     const bankRows = Array.isArray(layout.bankRows) ? layout.bankRows.filter((row) => row?.value) : [];
 
@@ -2740,7 +2743,15 @@ const buildCoreStyles = () => `
 `;
 
 const buildTemplateThemeStyles = (layout) => {
-    const theme = layout.theme || buildTheme();
+    const baseTheme = layout.theme || buildTheme();
+    // A landscape sheet has roughly half a portrait page's height, so the body
+    // text steps down one point. Scaling the theme base (rather than forcing a
+    // size onto every element) keeps the derived sizes — title, grand total,
+    // small print — in their designed proportion to it. Still larger than the
+    // ~7px effective size A5 portrait's uniform zoom produces.
+    const theme = layout.isLandscape
+        ? { ...baseTheme, fontSize: Math.max(7, baseTheme.fontSize - 1) }
+        : baseTheme;
     const mutedBorder = theme.borderColor;
     const mutedBorderSoft = theme.borderColor.startsWith('#') ? `${theme.borderColor}18` : theme.borderColor;
     const accentSoft = theme.accentColor.startsWith('#') ? `${theme.accentColor}22` : theme.accentColor;
@@ -2905,20 +2916,178 @@ const buildTemplateThemeStyles = (layout) => {
     `;
 };
 
+// Landscape sheets are wide and short (A5 landscape is 210 x 148 mm — A4's width
+// on roughly half its height). The portrait design stacks grand total, items,
+// totals, bank and terms vertically, which overflows a short sheet and spills a
+// one-line invoice across several pages. Landscape therefore gets a re-proportioned
+// layout rather than a scale: a tighter vertical rhythm, and totals set beside the
+// bank/terms block instead of below it. Scaling cannot solve this — fitting A4's
+// ~273 mm of content into 124 mm needs ~45% zoom, which is unreadable.
+// Emitted only for Landscape orientation, so portrait output is untouched.
+const buildLandscapeStyles = (important = false) => {
+    const i = important ? ' !important' : '';
+    return `
+        .document-shell-landscape .document-header,
+        .document-shell-landscape .document-header-designer,
+        .document-shell-landscape .document-header-sales {
+            margin-bottom: 4px${i};
+        }
+        /* The bill-to column is the tallest in the header and so sets the height
+           of the whole top band — the last of the vertical budget comes from its
+           title margin and line spacing, not from shrinking anything visible. */
+        .document-shell-landscape .document-header-sales .document-title {
+            margin-bottom: 6px${i};
+        }
+        .document-shell-landscape .bill-to-line,
+        .document-shell-landscape .bill-to-code {
+            line-height: 1.25${i};
+        }
+        /* The 44px offset exists to drop the meta grid below the title and the
+           bill-to name. With the logo now beside the company block this column
+           can become the tallest in the header, so the offset is reduced to the
+           smallest that still clears the title. */
+        .document-shell-landscape .document-header-sales .header-center {
+            padding-top: 26px${i};
+        }
+        .document-shell-landscape .grand-total-display,
+        .document-shell-landscape.document-shell-designer .grand-total-display {
+            margin: 0 0 3px${i};
+            padding: 0${i};
+        }
+        /* Grand total reads as one line (label beside figure) rather than a
+           two-line band — the vertical space matters more than the emphasis. */
+        .document-shell-landscape .grand-total-display,
+        .document-shell-landscape.document-shell-designer .grand-total-display {
+            flex-direction: row${i};
+            align-items: baseline${i};
+            justify-content: flex-end${i};
+            gap: 8px${i};
+        }
+        .document-shell-landscape .grand-total-label,
+        .document-shell-landscape.document-shell-designer .grand-total-label {
+            margin: 0${i};
+        }
+        .document-shell-landscape .grand-total-value {
+            font-size: 17px${i};
+        }
+
+        .document-shell-landscape .content-stack > * {
+            margin-bottom: 4px${i};
+        }
+        .document-shell-landscape .table-section {
+            margin-bottom: 4px${i};
+        }
+        /* Landscape keeps portrait's stacked order — totals, then bank details,
+           terms and the footer block beneath them, each full width. An earlier
+           two-column split (totals beside bank/terms) saved a sheet on compact
+           invoices, but it reads worse and strands the stamp beside long terms,
+           so the stacked order was chosen deliberately. The density reductions
+           below are what keep a compact invoice on one sheet. */
+        .document-shell-landscape .summary-section,
+        .document-shell-landscape .summary-notes-section {
+            padding-top: 2px${i};
+        }
+        .document-shell-landscape .footer-push-spacer {
+            display: none${i};
+        }
+        .document-shell-landscape .bank-box,
+        .document-shell-landscape .terms-box,
+        .document-shell-landscape.document-shell-designer .terms-box {
+            margin-bottom: 4px${i};
+            padding: 4px 10px${i};
+        }
+        .document-shell-landscape .summary-label {
+            margin-bottom: 3px${i};
+        }
+        .document-shell-landscape .summary-notes-inline {
+            margin-top: 2px${i};
+        }
+        .document-shell-landscape .totals-table td,
+        .document-shell-landscape.document-shell-designer .totals-table td {
+            padding-top: 1px${i};
+            padding-bottom: 1px${i};
+        }
+        .document-shell-landscape .tot-words {
+            padding-top: 4px${i};
+        }
+        /* Stamp + QR are sized for a tall page; at 90-100px square they are the
+           one block that still tips a complete landscape invoice onto a second
+           sheet. Scaled to fit the space left below the totals, captions intact.
+           The QR img carries inline width/height, so its override must always be
+           !important regardless of the surrounding block. */
+        .document-shell-landscape .document-footer-group {
+            gap: 4px${i};
+        }
+        .document-shell-landscape .stamp-row {
+            margin-top: 2px${i};
+            gap: 14px${i};
+        }
+        .document-shell-landscape .stamp-container img,
+        .document-shell-landscape .stamp-placeholder {
+            width: 32px${i};
+            height: 32px${i};
+        }
+        .document-shell-landscape .qr-container img {
+            width: 36px !important;
+            height: 36px !important;
+        }
+        .document-shell-landscape .stamp-caption {
+            margin-top: 2px${i};
+        }
+        .document-shell-landscape .page-number-label {
+            margin-top: 2px${i};
+        }
+        /* Logo stays stacked above the company block. Setting them side by side
+           looked like free height, but it squeezes the company column, and the
+           company name is set nowrap — a long trading name then overflows across
+           the logo. Capping the logo's size gives the height back without that. */
+        .document-shell-landscape .company-logo img {
+            max-width: 72px${i};
+            max-height: 52px${i};
+            object-fit: contain${i};
+        }
+        .document-shell-landscape .company-logo-fallback {
+            width: 52px${i};
+            height: 52px${i};
+        }
+        .document-shell-landscape .company-logo-fallback span {
+            font-size: 14px${i};
+        }
+    `;
+};
+
 const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {}) => {
     const resolvedPaperSize = paperSize || 'A4';
     const resolvedOrientation = orientation || 'Portrait';
     const page = resolvePaperDimensions(resolvedPaperSize, resolvedOrientation);
+    const isLandscape = page.width > page.height;
+    // A sheet narrower than A4 (A5 portrait) prints the SAME A4 design, uniformly
+    // reduced onto the smaller page — not a reflowed, re-proportioned layout. The
+    // shell keeps its A4 measure and `zoom` scales it; unlike `transform: scale`,
+    // zoom is a layout-level scale in Chromium (both print paths here), so long
+    // documents still paginate and break across pages correctly. Sheets at least
+    // as wide as A4 (A4, Letter, Legal, A3, A5 landscape) take no scaling at all,
+    // leaving their output byte-identical to before.
+    const contentWidth = Math.max(page.width, PAPER_DIMENSIONS_MM.A4.width);
+    const pageZoom = page.width / contentWidth;
+    const isScaled = pageZoom < 1;
+    const shellZoom = isScaled ? `zoom: ${pageZoom.toFixed(4)};` : '';
+    // min-height is inside the zoomed box, so it is expressed in pre-zoom units.
+    const shellMinHeight = `${(page.height / pageZoom).toFixed(2)}mm`;
     const isDesignerLayout = layout.isPurchaseDesigner || layout.isSalesDesigner;
-    const shellPadding = isDesignerLayout ? '28px 32px' : '12mm';
+    // The designer shell's 28px top/bottom padding is ~10% of a landscape A5
+    // sheet's height. Trimmed there (side padding kept, since width is not the
+    // constraint); portrait keeps the designed padding.
+    const designerPadding = isLandscape ? '10px 28px' : '28px 32px';
+    const shellPadding = isDesignerLayout ? designerPadding : '12mm';
     // Strategy: @page handles top+bottom margins on every page (incl. continuation).
     // Shell padding handles left+right, plus a small cloned top buffer for rows
     // that start on a continuation page when browser print margins are tight.
     // Designer layouts (purchase + sales) keep their own padding without @page adjustment.
-    const pageTopBottom = isDesignerLayout ? '0' : '12mm';
-    const continuousPageTop = isDesignerLayout ? '0' : '26mm';
+    const pageTopBottom = isDesignerLayout ? '0' : (isLandscape ? '8mm' : '12mm');
+    const continuousPageTop = isDesignerLayout ? '0' : (isLandscape ? '12mm' : '26mm');
     const continuationInnerGap = isDesignerLayout ? '0' : '4mm';
-    const shellPaddingPrint = isDesignerLayout ? '28px 32px' : `${continuationInnerGap} 12mm 0 12mm`;
+    const shellPaddingPrint = isDesignerLayout ? designerPadding : `${continuationInnerGap} 12mm 0 12mm`;
 
     return `
         @page {
@@ -2938,8 +3107,9 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
             padding: 0;
         }
         .document-shell {
-            width: ${page.width}mm;
-            min-height: ${page.height}mm;
+            ${shellZoom}
+            width: ${contentWidth}mm;
+            min-height: ${shellMinHeight};
             height: auto;
             max-width: none;
             margin: 0 auto;
@@ -2966,7 +3136,8 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 padding: 0;
             }
             .document-shell {
-                width: ${page.width}mm;
+                ${shellZoom}
+                width: ${contentWidth}mm;
                 min-height: unset;
                 height: auto;
                 margin: 0;
@@ -3268,7 +3439,9 @@ const buildPrintStyles = (paperSize = 'A4', orientation = 'Portrait', layout = {
                 word-break: break-word !important;
                 overflow-wrap: break-word !important;
             }
+            ${isLandscape ? buildLandscapeStyles(true) : ''}
         }
+        ${isLandscape ? buildLandscapeStyles(false) : ''}
     `;
 };
 
@@ -4058,16 +4231,19 @@ const normaliseGenericLayout = (template, data, companyProfile, renderTarget) =>
 
 const buildLayout = (template, data, options = {}, renderTarget = 'print') => {
     const companyProfile = options.companyProfile || {};
+    // Landscape sheets are short; builders use this to drop space that only
+    // earns its place on a tall page (see buildSummaryNotes).
+    const isLandscape = /landscape/i.test(String(template?.orientation || ''));
 
     if (PURCHASE_TEMPLATE_CATEGORIES.has(template?.category) || looksLikePurchasePayload(data)) {
-        return normalisePurchaseLayout(template, data, companyProfile, renderTarget, options);
+        return { ...normalisePurchaseLayout(template, data, companyProfile, renderTarget, options), isLandscape };
     }
 
     if (hasDesignerLayoutSettings(template)) {
-        return normaliseSalesDesignerLayout(template, data, companyProfile, renderTarget, options);
+        return { ...normaliseSalesDesignerLayout(template, data, companyProfile, renderTarget, options), isLandscape };
     }
 
-    return normaliseGenericLayout(template, data, companyProfile, renderTarget);
+    return { ...normaliseGenericLayout(template, data, companyProfile, renderTarget), isLandscape };
 };
 
 const titleCaseStatementType = (type) => {
@@ -5130,7 +5306,10 @@ const buildDocumentHtml = (template, data, options = {}, renderTarget = 'print')
     const layout = buildLayout(template, data, options, renderTarget);
     const shellClasses = [
         'document-shell',
-        (layout.isPurchaseDesigner || layout.isSalesDesigner) ? 'document-shell-designer' : ''
+        (layout.isPurchaseDesigner || layout.isSalesDesigner) ? 'document-shell-designer' : '',
+        // Landscape re-proportions the layout (see buildLandscapeStyles) rather
+        // than scaling the portrait design onto a short, wide sheet.
+        /landscape/i.test(String(template.orientation || '')) ? 'document-shell-landscape' : ''
     ].filter(Boolean).join(' ');
     const styles = renderTarget === 'email'
         ? `${buildCoreStyles()}${buildTemplateThemeStyles(layout)}${buildEmailStyles()}`

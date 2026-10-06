@@ -13,7 +13,7 @@ import { getTemplateFamily } from '../../../api/printTemplateApi';
 //                printer. Disabled (with a reason) when no printer resolves, rather
 //                than failing after the click.
 const PAPER_GROUPS = [
-    ['FULL', 'A4 / Standard'],
+    ['FULL', 'Standard'],
     ['LETTERHEAD', 'Letterhead'],
     ['PREPRINTED', 'Preprint form'],
 ];
@@ -110,6 +110,9 @@ export default function PrintTemplateMenu({
                                                 ? <span className="text-[#F5C742] shrink-0">★</span>
                                                 : <span className="w-2.5 shrink-0" />}
                                             <span className="truncate text-slate-700">{t.name}</span>
+                                            <span className="ml-auto shrink-0 text-[9px] font-semibold uppercase tracking-wide text-slate-400">
+                                                {t.paperSize || 'A4'}{String(t.orientation || '').toLowerCase() === 'landscape' ? ' · LS' : ''}
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
