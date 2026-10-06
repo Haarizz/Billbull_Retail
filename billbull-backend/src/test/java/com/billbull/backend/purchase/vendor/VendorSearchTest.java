@@ -185,6 +185,30 @@ class VendorSearchTest {
     }
 
     @Test
+    void previewPutsMostPurchasedVendorsFirstThenRecentLposThenNameOrder() {
+        VendorSearchResponse purchased = vendorRow(9L, "ABDULLA ALI");
+        VendorSearchResponse ordered = vendorRow(46L, "AL NADOUD");
+        VendorSearchResponse alphabetical = vendorRow(1L, "123456");
+        when(invRepo.findMostPurchasedVendorIds(any(java.time.LocalDate.class), any(Pageable.class)))
+                .thenReturn(List.of(9L));
+        // 9 also has LPOs; it must not be listed twice or lose its invoice rank.
+        when(lpoRepo.findMostActiveVendorIds(any(java.time.LocalDateTime.class), any(Pageable.class)))
+                .thenReturn(List.of(46L, 9L));
+        when(repo.findByIdsInScope(anyCollection(), anyBoolean(), anyCollection()))
+                .thenReturn(List.of(ordered, purchased));
+        when(repo.previewVendors(anyBoolean(), anyCollection(), any(Pageable.class)))
+                .thenReturn(List.of(alphabetical, purchased));
+
+        List<VendorSearchResponse> rows = service().preview(3);
+
+        assertThat(rows).extracting(VendorSearchResponse::getId).containsExactly(9L, 46L, 1L);
+    }
+
+    private static VendorSearchResponse vendorRow(Long id, String name) {
+        return new VendorSearchResponse(id, "V-" + id, name, null, null, null, "Active", null);
+    }
+
+    @Test
     void blankQueryStillReturnsNothingUnlessThePreviewIsAskedForExplicitly() {
         VendorService service = service();
 
