@@ -889,6 +889,7 @@ const POSConsole = React.memo((props) => {
               requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
               supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
               requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
+              posFunctionAccessMode: posSettings?.posFunctionAccessMode || 'ALL_USERS',
               // Write-only field — the backend never returns the raw PIN (see supervisorPinSet below).
               supervisorPin: '',
               voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',
@@ -1106,6 +1107,47 @@ const POSConsole = React.memo((props) => {
                   </div>
                   <Switch checked={d.requirePriceOverrideApproval} onCheckedChange={v=>patch({ requirePriceOverrideApproval: v })} />
                 </div>
+              </div>
+
+              {/* Action Button Access — who may use the right-hand Actions panel (Classic and
+                  Cart Focus) and the Functions slide-over (Compact). One branch-wide rule for all
+                  three screen templates, so it cannot be weakened by switching layouts. The POS
+                  enforces it in POS/lib/posFunctionAccess.js. */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Shield className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Action Button Access
+                  <span className="px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[10px] font-bold uppercase tracking-wide text-[#b8920e]">
+                    All screen templates
+                  </span>
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">
+                  Who may use the POS action buttons — Returns, Layaways, Coupons, Cash Drawer, Reprint,
+                  Delivery Settlement and the rest of the Actions / Functions panel.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    ['ALL_USERS','All Users','Any cashier signed in at the till can use every action button.'],
+                    ['SUPERVISOR_PASSWORD','Supervisor Approval','Any cashier can use them, but each use is authorized with the supervisor ' + (d.supervisorApprovalMode === 'PASSWORD' ? 'password' : 'PIN') + ' first.'],
+                    ['SUPERVISOR_ONLY','Supervisors Only','Only users with a supervisor role can use them. Everyone else is refused.'],
+                  ].map(([val,label,desc])=>(
+                    <button key={val} type="button" onClick={()=>patch({ posFunctionAccessMode: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.posFunctionAccessMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.posFunctionAccessMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
+                      {d.posFunctionAccessMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
+                    </button>
+                  ))}
+                </div>
+                {d.posFunctionAccessMode === 'SUPERVISOR_PASSWORD' && !posSettings?.supervisorPinSet && d.supervisorApprovalMode !== 'PASSWORD' && !d.supervisorPin && (
+                  <p className="text-[11px] text-red-500 mt-3">
+                    No supervisor PIN is set for this branch — set one below, or cashiers will not be able to get these actions approved.
+                  </p>
+                )}
+                <p className="text-[10px] text-gray-400 mt-3">
+                  Salesperson verification and Lock POS are always available to the cashier: gating them
+                  would stop the cashier selling, or stop them securing the till.
+                </p>
               </div>
 
               {/* Void behavior */}

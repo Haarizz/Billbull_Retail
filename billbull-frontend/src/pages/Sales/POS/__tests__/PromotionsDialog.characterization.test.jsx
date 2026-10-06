@@ -17,27 +17,27 @@ import { CurrencyAmount } from '../POSCurrency';
  * PRE-EXTRACTION. This file makes ZERO production changes; POSSales.jsx is untouched.
  *
  * (1) EXACT CURRENT SOURCE BOUNDARY
- *   POSSales.jsx:9224-9262 — 39 lines.
- *     9224  the `Promotions Dialog` comment
- *     9225  <Dialog open={showPromotionsDialog} onOpenChange={setShowPromotionsDialog}>
- *     9226  <DialogContent className="max-w-md bg-white">
- *     9262  the closing </Dialog>
+ *   POSSales.jsx:9207-9245 — 39 lines.
+ *     9207  the `Promotions Dialog` comment
+ *     9208  <Dialog open={showPromotionsDialog} onOpenChange={setShowPromotionsDialog}>
+ *     9209  <DialogContent className="max-w-md bg-white">
+ *     9245  the closing </Dialog>
  *   The region is reproduced VERBATIM below between REGION-VERBATIM-START/END and is the
  *   pinned behavioural reference for this whole suite.
  *
  * (2) STABLE SOURCE PIN
  *   sha256 of the 39 LF-normalised lines (trailing newline included):
  *     056496812d31fe18ddd3af6adb17f4f4f11a024ac2d60228b195e071c1109399
- *   sha256 of lines 9225-9262 only (the JSX, leading comment excluded):
+ *   sha256 of lines 9208-9245 only (the JSX, leading comment excluded):
  *     2b56cc5ba93c74fec5d09587187ceb007f4f23cf43b3708e30caaf724423de6d
  *   The `source contract` describe asserts BOTH against the live POSSales.jsx, so any drift in
  *   the inline region fails this suite immediately.
  *
  * (3) IMMEDIATE NEIGHBOURS
  *   BEFORE — the already-extracted `Coupons Dialog` comment + <CouponsDialog ... /> call site
- *            (POSSales.jsx:9207-9222), separated by one blank line.
+ *            (POSSales.jsx:9190-9205), separated by one blank line.
  *   AFTER  — the `Save as Order Dialog` comment + its inline
- *            <Dialog open={showSaveOrderDialog} ...> (POSSales.jsx:9264-…), one blank line on.
+ *            <Dialog open={showSaveOrderDialog} ...> (POSSales.jsx:9247-…), one blank line on.
  *   Both neighbours are siblings in the same top-level JSX fragment; nothing nests the region.
  *
  * (4) PARENT-OWNED STATE READ BY THE REGION
@@ -552,6 +552,7 @@ describe('DOM parity', () => {
 describe('source contract', () => {
   const PARENT = read('../../POSSales.jsx');
   const TOUCH = read('../POSTouchScreen.jsx');
+  const FUNCS = read('../lib/posFunctionButtons.jsx');
   const LINES = PARENT.split('\n');
   const ANCHOR = '      {/* Promotions Dialog */}';
   const START = LINES.indexOf(ANCHOR);
@@ -562,8 +563,8 @@ describe('source contract', () => {
   it('finds the region exactly once, at the pinned boundary', () => {
     expect(START).toBeGreaterThan(-1);
     expect(LINES.indexOf(ANCHOR, START + 1)).toBe(-1);
-    expect(START + 1).toBe(9224); // 1-indexed line 9224
-    expect(END + 1).toBe(9262);
+    expect(START + 1).toBe(9207); // 1-indexed line 9207
+    expect(END + 1).toBe(9245);
     expect(LIVE_REGION.split('\n')).toHaveLength(39);
   });
 
@@ -634,8 +635,8 @@ describe('source contract', () => {
 
   it('`Zap` is used ONLY by this region in POSSales — it becomes the child\'s import', () => {
     const zapLines = LINES.map((l, i) => [i + 1, l]).filter(([, l]) => l.includes('Zap'));
-    expect(zapLines.map(([n]) => n)).toEqual([104, 9228, 9252]);
-    expect(LINES[103]).toBe('  Zap,'); // the lucide import entry, line 104
+    expect(zapLines.map(([n]) => n)).toEqual([103, 9211, 9235]);
+    expect(LINES[102]).toBe('  Zap,'); // the lucide import entry, line 103
     expect(LIVE_REGION.split('<Zap ').length - 1).toBe(2);
   });
 
@@ -651,12 +652,13 @@ describe('source contract', () => {
     expect(PARENT).toContain('  const [couponDiscount, setCouponDiscount] = useState(0);');
   });
 
-  it('setShowPromotionsDialog is owned by POSSales and handed to POSTouchScreen', () => {
+  it('setShowPromotionsDialog is owned by POSSales and handed to the templates', () => {
     expect(PARENT).toContain('  const [showPromotionsDialog, setShowPromotionsDialog] = useState(false);');
     expect(PARENT).toContain('setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,');
-    expect(TOUCH).toContain("action: () => setShowPromotionsDialog(true) }");
-    // The ONLY opener in the whole POS surface.
-    expect(TOUCH.split('setShowPromotionsDialog(true)').length - 1).toBe(1);
+    expect(FUNCS).toContain("action: () => setShowPromotionsDialog(true) }");
+    // The ONLY opener in the whole POS surface — one shared definition, every template.
+    expect(FUNCS.split('setShowPromotionsDialog(true)').length - 1).toBe(1);
+    expect(TOUCH).not.toContain('setShowPromotionsDialog(true)');
   });
 
   it('NO production change has been made — no PromotionsDialog component or import exists yet', () => {

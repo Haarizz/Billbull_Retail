@@ -137,6 +137,114 @@ class PosSettingsServiceTest {
         assertTrue(encoder.matches("1234", saved.getSupervisorPin()));
     }
 
+    // ── Action Button Access (pos_function_access_mode) ─────────────────────
+    //
+    // Who may use the POS Actions/Functions buttons. Relaxing it hands every cashier the
+    // Return and Cash Drawer functions back, so it is held to the supervisor bar like the
+    // void gate — and a request that does not carry the field at all must not disturb it.
+
+    @Test
+    void nonSupervisorCannotChangeActionButtonAccess() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        existing.setPosFunctionAccessMode("SUPERVISOR_ONLY");
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+
+        authenticateAs("CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setPosFunctionAccessMode("ALL_USERS");
+
+        assertThrows(AccessDeniedException.class, () -> service.save(incoming));
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void supervisorCanChangeActionButtonAccess() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_MANAGER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setPosFunctionAccessMode("SUPERVISOR_PASSWORD");
+
+        assertEquals("SUPERVISOR_PASSWORD", service.save(incoming).getPosFunctionAccessMode());
+    }
+
+    @Test
+    void actionButtonAccessIsNormalisedOnSave() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setPosFunctionAccessMode("  supervisor_only  ");
+
+        assertEquals("SUPERVISOR_ONLY", service.save(incoming).getPosFunctionAccessMode());
+    }
+
+    @Test
+    void anUnknownActionButtonAccessModeFallsBackToAllUsers() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setPosFunctionAccessMode("NONSENSE");
+
+        assertEquals("ALL_USERS", service.save(incoming).getPosFunctionAccessMode());
+    }
+
+    /** A partial POST from a client that does not know the field must leave it alone — an older
+     *  POS saving an unrelated setting cannot unlock a branch that has restricted the buttons. */
+    @Test
+    void anAbsentActionButtonAccessModeLeavesTheStoredOneUntouched() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        existing.setPosFunctionAccessMode("SUPERVISOR_ONLY");
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("CASHIER");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setPosFunctionAccessMode(null);
+        incoming.setDefaultLayout("compact");
+
+        PosSettings saved = service.save(incoming);
+
+        assertEquals("SUPERVISOR_ONLY", saved.getPosFunctionAccessMode());
+        assertEquals("compact", saved.getDefaultLayout());
+    }
+
+    @Test
+    void aBranchWithNoSettingsRowGetsANormalisedActionButtonAccessMode() {
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setPosFunctionAccessMode("supervisor_password");
+
+        assertEquals("SUPERVISOR_PASSWORD", service.save(incoming).getPosFunctionAccessMode());
+    }
+
     @Test
     void nonSupervisorCanStillSaveUnrelatedSettings() {
         PosSettings existing = new PosSettings();

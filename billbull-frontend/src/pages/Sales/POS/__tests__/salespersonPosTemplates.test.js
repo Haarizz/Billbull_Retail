@@ -15,10 +15,13 @@ const read = (rel) => fs.readFileSync(path.resolve(__dirname, rel), 'utf8').repl
 
 const TOUCH = read('../POSTouchScreen.jsx');
 const TRADE = read('../TradePOS/TradePOSTouchScreen.jsx');
+// The template-independent Actions/Functions buttons live in one module that every template
+// renders, so a template's salesperson surface is its own source plus that builder.
+const FUNCS = read('../lib/posFunctionButtons.jsx');
 const POS_SALES = read('../../POSSales.jsx');
 
 describe('every POS template renders the salesperson scan affordance', () => {
-  for (const [name, src] of [['POSTouchScreen (Classic + Cart Focus)', TOUCH], ['TradePOSTouchScreen (compact)', TRADE]]) {
+  for (const [name, src] of [['POSTouchScreen (Classic + Cart Focus)', TOUCH + FUNCS], ['TradePOSTouchScreen (compact)', TRADE + FUNCS]]) {
     it(`${name} accepts the verification props`, () => {
       expect(src).toContain('salespersonRequired');
       expect(src).toContain('verifiedSalesperson');
@@ -103,18 +106,18 @@ describe('Checkout opens the scan modal itself', () => {
 
 describe('the Actions panel entry', () => {
   it('exists, and only while verification is required', () => {
-    expect(TOUCH).toContain("id: 'salesperson'");
-    expect(TOUCH).toContain('...(salespersonRequired ? [{');
+    expect(FUNCS).toContain("id: 'salesperson'");
+    expect(FUNCS).toContain('...(salespersonRequired ? [{');
   });
 
   it('opens the SAME modal as the header button — not a second source of truth', () => {
-    expect(TOUCH).toContain('action: () => openSalespersonScanModal?.()');
+    expect(FUNCS).toContain('action: () => openSalespersonScanModal?.()');
     // Exactly one modal instance exists, rendered at the POS root.
     expect(POS_SALES.match(/<SalespersonScanModal/g) || []).toHaveLength(1);
   });
 
   it('shows the current salesperson on the button when one is verified', () => {
-    expect(TOUCH).toContain('`Salesperson: ${verifiedSalesperson.name');
+    expect(FUNCS).toContain('`Salesperson: ${verifiedSalesperson.name');
   });
 });
 

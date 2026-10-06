@@ -237,6 +237,7 @@ import ConfirmAction from './POS/features/notifications/ConfirmAction';
 import CouponsDialog from './POS/features/sales/CouponsDialog';
 import { buildThermalReceiptArtifacts as buildThermalReceiptArtifactsImpl } from './POS/device/printing/buildThermalReceiptArtifacts';
 import { round2Money, formatMoney2, todayInputDate, parseUTCDate } from './POS/lib/posFormatting';
+import { resolvePosFunctionAccessMode, isPosSupervisorUser as resolveIsPosSupervisorUser } from './POS/lib/posFunctionAccess';
 import { buildZReportExcelSections, buildXReportExcelRows } from './POS/features/reports/reportExcelBuilders';
 
 
@@ -2327,6 +2328,29 @@ export default function POSSales() {
 
   // Supervisor approval mode: PIN (numeric keypad) or PASSWORD (manager login).
   const supervisorApprovalMode = posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN';
+
+  // Console -> Behavior -> Action Button Access. Resolved once here and handed to every
+  // template, so Classic, Cart Focus and Compact enforce one branch-wide rule; the gate itself
+  // lives in POS/lib/posFunctionAccess.js and is applied inside buildPosFunctionButtons.
+  const posFunctionAccessMode = resolvePosFunctionAccessMode(posSettings?.posFunctionAccessMode);
+  const isPosSupervisorUser = resolveIsPosSupervisorUser(hasAnyRole);
+
+  // SUPERVISOR_PASSWORD mode: hold the button's own action and replay it once the credential
+  // is verified. resetEmail matches the other per-action gates (Day Close, delivery settlement)
+  // — the supervisor authorizing this is not necessarily the one who authorized the last.
+  const requestFunctionApproval = useCallback((fn) => {
+    requestApproval({
+      supervisorAction: { type: 'POS_FUNCTION', label: fn?.label, run: fn?.run },
+      resetEmail: true,
+    });
+  }, [requestApproval]);
+
+  // SUPERVISOR_ONLY mode: the refusal. alert() rather than a toast because the three templates
+  // have different feedback surfaces (and the Trade panel has none), and this must never be the
+  // notification a cashier misses while wondering why the button did nothing.
+  const notifyPosFunctionDenied = useCallback((message) => {
+    window.alert(message);
+  }, []);
 
   const handleHandoverSubmit = async () => {
     if (!handoverEmail) { setHandoverError('Enter supervisor email or username.'); return; }
@@ -7020,6 +7044,10 @@ export default function POSSales() {
     // skip verification — and none of them can offer a manual picker, because there is no roster
     // to pick from.
     salespersonRequired, verifiedSalesperson, openSalespersonScanModal,
+    // Action Button Access (Console -> Behavior). Every template forwards these four straight
+    // into buildPosFunctionButtons — none of them decides anything about access itself.
+    posFunctionAccessMode, isPosSupervisorUser,
+    requestFunctionApproval, onFunctionDenied: notifyPosFunctionDenied,
     // Product Entry Mode is decided here, once, for every template.
     handleProductSelection, handleEditItem,
     // addToInvoice/createInvoiceLine/updateInvoiceLine are deliberately NOT

@@ -5,6 +5,7 @@ import BusinessDayStatusChip from '../../../components/pos/BusinessDayStatusChip
 import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
+import { buildPosFunctionButtons } from './lib/posFunctionButtons';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
 import { ScanLine } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
@@ -25,6 +26,14 @@ import QuickAddProductModal from '../../../components/inventory/QuickAddProductM
  * a name chosen from a list is not a verification, and offering one would be a way around the
  * barcode rule rather than a convenience.
  */
+// Cart table column tracks for the classic POS layout. ITEM takes all the slack and
+// may shrink to nothing (minmax(0,1fr)); QTY/RATE/AMT/void get fixed tracks sized to
+// their own controls, so the row's intrinsic width can never exceed the cart panel.
+// The header and the item rows are separate grid containers, so they must share this
+// exact string or the headings stop lining up with the values under them.
+const CART_GRID_COLS =
+  'grid-cols-[minmax(0,1fr)_4.5rem_2.5rem_4.25rem_0.875rem] xl:grid-cols-[minmax(0,1fr)_5rem_3rem_4.75rem_1rem]';
+
 const SalespersonBar = ({ required = false, verified = null, onScan }) => {
   if (!required) return null;
   return (
@@ -94,6 +103,9 @@ const POSTouchScreen = React.memo((props) => {
     // reads them and reports intent, it holds none of this state itself, and it has no roster to
     // pick from because a scan is the only way to name a salesperson.
     salespersonRequired = false, verifiedSalesperson = null, openSalespersonScanModal,
+    // Action Button Access (Console -> Behavior). Forwarded straight into
+    // buildPosFunctionButtons, which applies the gate — this template decides nothing here.
+    posFunctionAccessMode, isPosSupervisorUser, requestFunctionApproval, onFunctionDenied,
     // product entry — POSSales.jsx owns the Product Entry Mode decision and the
     // Item Entry dialog; this template only reports which product was picked.
     handleProductSelection,
@@ -281,49 +293,29 @@ const POSTouchScreen = React.memo((props) => {
     setBarcodeSuggestions([]);
   }, [handleProductSelection, showFeedback, setBarcodeInput, setBarcodeSuggestions]);
 
-  // Shared, template-independent Actions/Functions buttons. Defined once so the
-  // Classic and Cart Focus panels render the same set, labels, icons and colours
-  // and never drift apart. Interaction-specific buttons (Add Qty / Discount /
-  // Price / Remove) stay inline in each template because their behaviour depends
-  // on that template's editing model (inline numpad vs middle-column keypad).
-  const commonActionButtons = (iconCls = 'h-4 w-4') => [
-    // Salesperson re-verification. Present only while POS salesperson verification is ON, and it
-    // opens the SAME modal the header's Scan button does, writing to the SAME useSalesperson
-    // state — it is a second entry point, never a second source of truth.
-    ...(salespersonRequired ? [{
-      id: 'salesperson',
-      label: verifiedSalesperson
-        ? `Salesperson: ${verifiedSalesperson.name || verifiedSalesperson.employeeCode || ''}`.trim()
-        : 'Salesperson',
-      icon: <ScanLine className={iconCls} />,
-      color: verifiedSalesperson
-        ? 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700'
-        : 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700',
-      action: () => openSalespersonScanModal?.(),
-    }] : []),
-    { id: 'quick-add-product', label: 'Quick Add Product', icon: <Plus className={iconCls} />, color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowQuickProductModal(true) },
-    { id: 'layaways', label: 'Layaways', icon: <Pause className={iconCls} />, color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700', action: () => setShowLayawaysList(true) },
-    { id: 'save-layaway', label: 'Save Layaway', icon: <Archive className={iconCls} />, color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700', action: () => setShowSaveLayaway(true) },
-    { id: 'save-order', label: 'Save as Order', icon: <FileText className={iconCls} />, color: 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700', action: () => setShowSaveOrderDialog(true) },
-    { id: 'add-shipping', label: 'Add Shipping', icon: <Truck className={iconCls} />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700', action: () => setShowAddShippingDialog(true) },
-    { id: 'coupons', label: 'Coupons', icon: <Tag className={iconCls} />, color: 'bg-pink-50 hover:bg-pink-100 border-pink-200 text-pink-700', action: () => setShowCouponsDialog(true) },
-    { id: 'promotions', label: 'Promotions', icon: <Zap className={iconCls} />, color: 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800', action: () => setShowPromotionsDialog(true) },
-    // Opens the shared Sales Return workflow. It owns and resets its own state on mount,
-    // so there is nothing for POS to clear here.
-    { id: 'return', label: 'Return', icon: <RotateCcw className={iconCls} />, color: 'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700', action: () => setShowReturn(true) },
-    { id: 'search-products', label: 'Search Products', icon: <Search className={iconCls} />, color: 'bg-sky-50 hover:bg-sky-100 border-sky-200 text-sky-700', action: () => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); } },
-    { id: 'price-chk', label: 'Price Check', icon: <Calculator className={iconCls} />, color: 'bg-cyan-50 hover:bg-cyan-100 border-cyan-200 text-cyan-700', action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },
-    { id: 'credit-balance', label: 'Credit Balance', icon: <CreditCard className={iconCls} />, color: 'bg-violet-50 hover:bg-violet-100 border-violet-200 text-violet-700', action: () => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },
-    { id: 'serial-batch', label: 'Serial/Batch Check', icon: <Hash className={iconCls} />, color: 'bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700', action: () => { setSerialBatchQuery(''); setSerialBatchResult(null); setSerialBatchSubView('check'); setSerialBatchInvoiceNo(''); setSerialBatchItemCode(''); setSerialBatchCustomerMobile(''); setSerialBatchSelectedItem(null); setShowSerialBatch(true); } },
-    { id: 'cash-drop', label: 'Cash Drawer', icon: <DollarSign className={iconCls} />, color: 'bg-emerald-50 hover:bg-emerald-100 border-emerald-200 text-emerald-700', action: () => setShowCashDropDialog(true) },
-    { id: 'last-receipt', label: 'Last Receipt', icon: <Receipt className={iconCls} />, color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600', action: () => setShowLastReceiptDialog(true) },
-    { id: 'orders', label: 'Orders', icon: <Package className={iconCls} />, color: 'bg-orange-50 hover:bg-orange-100 border-orange-200 text-orange-700', action: () => setShowOrdersListDialog() },
-    { id: 'reprint', label: 'Reprint', icon: <Printer className={iconCls} />, color: 'bg-gray-50 hover:bg-gray-100 border-gray-200 text-gray-600', action: () => setShowReprintModal(true) },
-    { id: 'delivery', label: 'Delivery', icon: <Truck className={iconCls} />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => openDeliveryModal() },
-    { id: 'delivery-settle', label: 'Delivery Settle', icon: <PackageCheck className={iconCls} />, color: 'bg-[#327F74]/10 hover:bg-[#327F74]/20 border-[#327F74]/40 text-[#327F74]', action: () => { setDeliverySettleSearch(''); setDeliverySettlePersonFilter('All Persons'); setDeliverySettleSelected(null); setShowDeliverySettleModal(true); } },
-    { id: 'lock-pos', label: 'Lock POS', icon: <Lock className={iconCls} />, color: 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700', action: () => setShowLockPOS(true) },
-    { id: 'close-session', label: 'Close Session', icon: <XCircle className={iconCls} />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action: () => { if (currentSession?.status === 'OPEN') setCurrentView('x-report'); } },
-  ];
+  // Shared, template-independent Actions/Functions buttons. They live in one place —
+  // lib/posFunctionButtons.jsx — so the Classic, Cart Focus and compact Trade POS panels
+  // render the same set, labels, icons and colours and never drift apart. Interaction-specific
+  // buttons (Add Qty / Discount / Price / Remove) stay inline in each template because their
+  // behaviour depends on that template's editing model (inline numpad vs middle-column keypad).
+  const commonActionButtons = (iconCls = 'h-4 w-4') => buildPosFunctionButtons({
+    salespersonRequired, verifiedSalesperson, openSalespersonScanModal,
+    setShowQuickProductModal, setShowLayawaysList, setShowSaveLayaway,
+    setShowSaveOrderDialog, setShowAddShippingDialog, setShowCouponsDialog,
+    setShowPromotionsDialog, setShowReturn,
+    setShowProductSearch, setProductSearchQuery, setProductSearchResults,
+    setShowPriceCheck, setPriceCheckQuery, setPriceCheckResult,
+    setShowCreditBalance, setCreditBalanceQuery, setCreditBalanceResult,
+    setShowSerialBatch, setSerialBatchQuery, setSerialBatchResult, setSerialBatchSubView,
+    setSerialBatchInvoiceNo, setSerialBatchItemCode, setSerialBatchCustomerMobile,
+    setSerialBatchSelectedItem,
+    setShowCashDropDialog, setShowLastReceiptDialog, setShowOrdersListDialog,
+    setShowReprintModal, openDeliveryModal,
+    setShowDeliverySettleModal, setDeliverySettleSearch, setDeliverySettlePersonFilter,
+    setDeliverySettleSelected,
+    setShowLockPOS, currentSession, setCurrentView,
+    posFunctionAccessMode, isPosSupervisorUser, requestFunctionApproval, onFunctionDenied,
+  }, iconCls);
 
   return (
     <div className="h-screen flex flex-col bg-[#F7F7FA]">
@@ -897,9 +889,13 @@ const POSTouchScreen = React.memo((props) => {
                   // Held bills are managed from the Layaways list (Save Layaway /
                   // Layaways action) — not duplicated here as a separate notifier.
                   return (
+                    // Action Button Access: a SUPERVISOR_ONLY-locked button stays visible and
+                    // clickable so the click can explain itself (see posFunctionAccess.js), but
+                    // reads as unavailable to both sighted and assistive users.
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2">
                       {visible.map(btn => (
                         <button key={btn.id} type="button" onClick={btn.action}
+                          aria-disabled={btn.locked || undefined} title={btn.lockReason || undefined}
                           className={`flex flex-col items-center justify-center gap-1.5 min-h-[72px] py-2 rounded-xl border transition-colors ${btn.color}`}>
                           {btn.icon}
                           <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
@@ -1013,7 +1009,7 @@ const POSTouchScreen = React.memo((props) => {
         <div className="flex-1 flex flex-col lg:flex-row overflow-hidden bg-[#F7F7FA]">
 
           {/* ══ COL 1: CART ════════════════════════════════════════ */}
-          <div className="w-full lg:w-[260px] xl:w-[340px] 2xl:w-[440px] shrink-0 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 lg:border-r-2 border-b-2 lg:border-b-0 border-[#F5C742]/30 bg-white">
+          <div className="w-full lg:w-[300px] xl:w-[400px] 2xl:w-[480px] shrink-0 flex flex-col max-h-[45vh] lg:max-h-none min-h-0 lg:border-r-2 border-b-2 lg:border-b-0 border-[#F5C742]/30 bg-white">
 
             {/* Customer bar — gold, matches Cart Focus */}
             <div className="bg-[#F5C742] px-3 py-2.5 shrink-0 relative border-b border-[#e6b838]">
@@ -1097,20 +1093,21 @@ const POSTouchScreen = React.memo((props) => {
               </div>
             </div>
 
-            {/* Cart table header + rows — horizontal scroll is the safety net on narrow
-                widths so the 12-col grid degrades to scrollable instead of clipping. */}
-            <div className="flex-1 flex flex-col overflow-x-auto overflow-y-hidden min-h-0">
+            {/* Cart table header + rows — CART_GRID_COLS sizes the fixed columns to their
+                own controls and lets ITEM absorb the remainder, so a row can never grow
+                wider than the panel. overflow-x-hidden is only a backstop, not the fix. */}
+            <div className="flex-1 flex flex-col overflow-x-hidden overflow-y-hidden min-h-0">
               {/* Cart table header */}
-              <div className="grid grid-cols-12 gap-1 px-3 py-1.5 border-b border-gray-100 bg-gray-50 shrink-0 min-w-[360px]">
-                <span className="col-span-5 text-[9px] font-bold uppercase tracking-wide text-gray-400">Item</span>
-                <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-center">Qty</span>
-                <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right">Rate</span>
-                <span className="col-span-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right pr-2">Amt</span>
-                <span className="col-span-1"></span>
+              <div className={`grid ${CART_GRID_COLS} gap-x-1 px-3 py-1.5 border-b border-gray-100 bg-gray-50 shrink-0`}>
+                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 truncate">Item</span>
+                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 text-center">Qty</span>
+                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right">Rate</span>
+                <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 text-right pr-0.5">Amt</span>
+                <span></span>
               </div>
 
               {/* Cart item rows */}
-              <div className="flex-1 overflow-y-auto min-w-[360px]">
+              <div className="flex-1 overflow-y-auto overflow-x-hidden">
                 {currentInvoice.items.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-gray-300 gap-2">
                     <ShoppingCart className="h-10 w-10" />
@@ -1120,12 +1117,12 @@ const POSTouchScreen = React.memo((props) => {
                 ) : (
                   currentInvoice.items.map((item, idx) => (
                     <div key={item.id}
-                      className={`grid grid-cols-12 gap-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
+                      className={`grid ${CART_GRID_COLS} gap-x-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
                       onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
-                      <div className="col-span-5 min-w-0 pr-1">
+                      <div className="min-w-0 pr-1">
                         {/* Voided line: muted red + [VOID] tag + negative amounts (no
                             strike-through). Excluded from the total; disclosed below. */}
-                        <p className={`text-[11px] font-semibold break-words leading-tight ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
+                        <p className={`text-[11px] font-semibold break-words line-clamp-2 leading-tight ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>
                           {item.name}
                           {item.isVoided && <span className="ml-1 text-[9px] font-bold text-red-500">[VOID]</span>}
                         </p>
@@ -1142,20 +1139,20 @@ const POSTouchScreen = React.memo((props) => {
                         ))}
                         {!item.isVoided && item.discount > 0 && <p className="text-[9px] text-green-600">−{item.discount}% disc</p>}
                       </div>
-                      <div className="col-span-2 flex items-center justify-center gap-0.5">
+                      <div className="flex items-center justify-center gap-0.5 min-w-0">
                         {!item.isVoided && !item.batchControlled && <>
                           <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity - 1); }}
-                            className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
+                            className="w-6 h-6 xl:w-7 xl:h-7 shrink-0 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
                             <Minus className="h-2.5 w-2.5" />
                           </button>
                         </>}
-                        <span className={`text-xs font-bold w-5 text-center ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
+                        <span className={`text-xs font-bold w-4 xl:w-5 shrink-0 text-center tabular-nums ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? `- ${item.quantity}` : item.quantity}</span>
                         {!item.isVoided && !item.batchControlled && <button type="button" onClick={e => { e.stopPropagation(); updateQuantity(item.id, item.quantity + 1); }}
-                          className="w-7 h-7 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
+                          className="w-6 h-6 xl:w-7 xl:h-7 shrink-0 rounded bg-gray-100 hover:bg-[#F5C742]/20 flex items-center justify-center text-gray-500 transition-colors">
                           <Plus className="h-2.5 w-2.5" />
                         </button>}
                       </div>
-                      <span className={`col-span-2 flex items-center justify-end gap-0.5 text-[10px] text-right ${item.isVoided ? 'text-red-500' : 'text-gray-500'}`}>
+                      <span className={`flex items-center justify-end gap-0.5 min-w-0 overflow-hidden text-[10px] text-right tabular-nums ${item.isVoided ? 'text-red-500' : 'text-gray-500'}`}>
                         {(() => {
                           const priceWarning = getCartPriceWarning(item);
                           return priceWarning && (
@@ -1164,9 +1161,9 @@ const POSTouchScreen = React.memo((props) => {
                         })()}
                         {item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}
                       </span>
-                      <span className={`col-span-2 text-[11px] font-bold text-right pr-2 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
+                      <span className={`text-[11px] font-bold text-right pr-0.5 truncate tabular-nums ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
                       <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
-                        className={`col-span-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
+                        className={`flex items-center justify-center justify-self-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
                         <XCircle className="h-3 w-3" />
                       </button>
                     </div>
@@ -1191,8 +1188,8 @@ const POSTouchScreen = React.memo((props) => {
                     <span>Bill Discount</span><span>−{formatCurrency(currentInvoice.billDiscountAmount)}</span>
                   </div>
                 )}
-                <div className="flex justify-between text-xs text-gray-500">
-                  <span>{getPosVatLabel(currentInvoice, posSettings)}</span><span>{formatCurrency(currentInvoice.tax)}</span>
+                <div className="flex justify-between gap-2 text-xs text-gray-500">
+                  <span className="min-w-0 truncate">{getPosVatLabel(currentInvoice, posSettings)}</span><span className="shrink-0">{formatCurrency(currentInvoice.tax)}</span>
                 </div>
                 {/* Informational: voided lines excluded from TOTAL, shown only
                     when at least one line was voided. */}
@@ -1244,36 +1241,36 @@ const POSTouchScreen = React.memo((props) => {
                   );
                 })}
               </div>
-              <div className="bg-[#F5C742] px-3 py-2.5 flex items-center justify-between">
-                <div>
+              <div className="bg-[#F5C742] px-3 py-2.5 flex items-center justify-between gap-2">
+                <div className="min-w-0">
                   {activeLayawayId && activeLayawayDeposit > 0 ? (
                     <>
                       <p className="text-[10px] font-bold text-white/80 uppercase tracking-wide">Balance Due</p>
-                      <p className="text-xl font-black text-white leading-none">{formatCurrency(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}</p>
-                      <p className="text-[10px] text-white/70">Total: {formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</p>
+                      <p className="text-xl font-black text-white leading-none truncate">{formatCurrency(Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - activeLayawayDeposit))}</p>
+                      <p className="text-[10px] text-white/70 truncate">Total: {formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</p>
                     </>
                   ) : voucherRedeemedTotal > 0 ? (
                     // A voucher is already-surrendered value, so the headline figure becomes
                     // what is still to be collected — the number the cashier has to take.
                     <>
                       <p className="text-[10px] font-bold text-white/80 uppercase tracking-wide">Amount Due</p>
-                      <p className="text-xl font-black text-white leading-none">
+                      <p className="text-xl font-black text-white leading-none truncate">
                         {formatCurrency(amountDueAfterVouchers != null
                           ? amountDueAfterVouchers
                           : Math.max(0, currentInvoice.total + (Number(shippingCharge) || 0) - voucherRedeemedTotal))}
                       </p>
-                      <p className="text-[10px] text-white/70">
+                      <p className="text-[10px] text-white/70 truncate">
                         Total: {formatCurrencyStr(currentInvoice.total + (Number(shippingCharge) || 0))} · Voucher: −{formatCurrencyStr(voucherRedeemedTotal)}
                       </p>
                     </>
                   ) : (
                     <>
                       <p className="text-[10px] font-bold text-white/80 uppercase tracking-wide">Total</p>
-                      <p className="text-xl font-black text-white leading-none">{formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</p>
+                      <p className="text-xl font-black text-white leading-none truncate">{formatCurrency(currentInvoice.total + (Number(shippingCharge) || 0))}</p>
                     </>
                   )}
                 </div>
-                <div className="flex gap-1.5">
+                <div className="flex gap-1.5 shrink-0">
                   <button type="button" onClick={holdInvoice} disabled={currentInvoice.items.length === 0 || holdBusy || !sessionId}
                     title={!sessionId ? 'Open a POS session to hold a bill' : ''}
                     className="px-2.5 py-1.5 bg-white/20 hover:bg-white/30 rounded-lg text-white text-xs font-bold transition-colors flex items-center gap-1 disabled:opacity-40">
@@ -1364,7 +1361,7 @@ const POSTouchScreen = React.memo((props) => {
                       {posProductsError}
                     </div>
                   )}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-3 gap-y-2.5 justify-items-center">
                     {filteredProducts.map(product => {
                       const isFav = favouriteProductIds.has(product.id);
                       return (
@@ -1381,9 +1378,9 @@ const POSTouchScreen = React.memo((props) => {
                           }
                           if (pin) setSearchQuery('');
                         }}
-                          className="group bg-white rounded-xl border border-gray-200 hover:border-[#F5C742] hover:shadow-md transition-all text-left overflow-hidden active:scale-95">
+                          className="group w-full max-w-[215px] bg-white rounded-xl border border-gray-200 hover:border-[#F5C742] hover:shadow-md transition-all text-left overflow-hidden active:scale-95">
                           {/* Image area */}
-                          <div className="aspect-[0.95/1] bg-gradient-to-br from-[#F7F7FA] to-gray-100 flex items-center justify-center relative border-b border-gray-100">
+                          <div className="h-16 sm:h-[72px] xl:h-20 bg-gradient-to-br from-[#F7F7FA] to-gray-100 flex items-center justify-center relative border-b border-gray-100">
                             {product.image ? (
                               <img
                                 src={product.image}
@@ -1434,10 +1431,10 @@ const POSTouchScreen = React.memo((props) => {
                     })}
                   </div>
                   {posProductsLoading && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1.5">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-3 gap-y-2.5 justify-items-center">
                       {Array.from({ length: 10 }).map((_, index) => (
-                        <div key={index} className="h-44 animate-pulse rounded-xl border border-gray-200 bg-white">
-                          <div className="h-28 rounded-t-xl bg-gray-100" />
+                        <div key={index} className="h-[136px] w-full max-w-[215px] animate-pulse rounded-xl border border-gray-200 bg-white">
+                          <div className="h-16 sm:h-[72px] xl:h-20 rounded-t-xl bg-gray-100" />
                           <div className="space-y-2 p-2">
                             <div className="h-3 rounded bg-gray-100" />
                             <div className="h-2 w-2/3 rounded bg-gray-100" />
@@ -1637,6 +1634,7 @@ const POSTouchScreen = React.memo((props) => {
                       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-2 gap-1.5">
                         {visible.map(btn => (
                           <button key={btn.id} type="button" onClick={btn.action}
+                            aria-disabled={btn.locked || undefined} title={btn.lockReason || undefined}
                             className={`flex flex-col items-center justify-center gap-1 min-h-[60px] py-1.5 rounded-xl border transition-colors ${btn.color}`}>
                             {btn.icon}
                             <span className="text-[9px] font-bold leading-tight text-center px-0.5">{btn.label}</span>

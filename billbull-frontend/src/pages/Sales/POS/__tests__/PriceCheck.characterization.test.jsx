@@ -1088,6 +1088,7 @@ describe('source contract', () => {
   const CHILD_CODE = CHILD.replace(/^\/\/.*\n/gm, '');
   const TEST = read('./PriceCheck.characterization.test.jsx');
   const TOUCH = read('../POSTouchScreen.jsx');
+  const FUNCS = read('../lib/posFunctionButtons.jsx');
   const TRADE = read('../TradePOS/TradePOSTouchScreen.jsx');
   const CONSOLE = read('../POSConsole.jsx');
   const ENTRY = read('../features/products/useProductEntry.js');
@@ -1313,10 +1314,14 @@ describe('source contract', () => {
     expect(PARENT_CALLSITE).toContain('          handleProductSelection={handleProductSelection}\n');
   });
 
-  it('openers: POSTouchScreen owns the only one; POSSales only forwards setters; TradePOS and POSConsole open nothing', () => {
-    expect(TOUCH).toContain("action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },");
+  it('openers: the shared Functions builder owns the only one; POSSales only forwards setters; the templates and POSConsole open nothing themselves', () => {
+    // POS/lib/posFunctionButtons.jsx is the one place the Price Check button is defined; the
+    // templates render it (POSTouchScreen's Actions panel, TradePOS's Functions slide-over) and
+    // neither restates the action.
+    expect(FUNCS).toContain("action: () => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); } },");
     expect(TEST).toContain("onClick={() => { setPriceCheckQuery(''); setPriceCheckResult(null); setShowPriceCheck(true); }}");
-    expect(count(TOUCH, 'setShowPriceCheck(')).toBe(1);
+    expect(count(FUNCS, 'setShowPriceCheck(')).toBe(1);
+    expect(count(TOUCH, 'setShowPriceCheck(')).toBe(0);
     expect(TOUCH).not.toMatch(/PriceCheck from|<PriceCheck\b/);
     expect(PARENT).toContain('    setShowCouponsDialog, setShowPromotionsDialog, setShowPriceCheck, setPriceCheckQuery,\n    setPriceCheckResult, setShowProductSearch, setProductSearchQuery, setProductSearchResults,\n');
     // the setter calls left with the region: POSSales no longer calls any of them
@@ -1327,7 +1332,9 @@ describe('source contract', () => {
     expect(count(PARENT, 'priceCheckResult')).toBe(count(PARENT_CALLSITE, 'priceCheckResult') + 1);
     expect(count(PARENT, 'priceCheckQuery')).toBe(count(PARENT_CALLSITE, 'priceCheckQuery') + 1);
     expect(count(PARENT, 'showPriceCheck')).toBe(count(PARENT_CALLSITE, 'showPriceCheck') + 1);
-    expect(TRADE).not.toMatch(/PriceCheck/);
+    // TradePOS forwards the setters into TradeFunctionsPanel but mounts no PriceCheck of its own.
+    expect(TRADE).not.toMatch(/<PriceCheck|PriceCheck from/);
+    expect(TRADE).not.toContain('setShowPriceCheck(true)');
     expect(CONSOLE).not.toContain('setShowPriceCheck');
     expect(CONSOLE).toContain("{ id:'price-chk',label:'Price Check' }");
   });

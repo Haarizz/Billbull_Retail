@@ -29,6 +29,10 @@ export function usePosBehaviourSettings({ posSettings, setPosSettings, businessD
       requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
       supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
       requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
+      // Who may use the POS Actions/Functions buttons — ALL_USERS | SUPERVISOR_PASSWORD |
+      // SUPERVISOR_ONLY. Seeded from the stored value rather than defaulted blind, so saving an
+      // unrelated setting can never relax a branch that has restricted them.
+      posFunctionAccessMode: posSettings?.posFunctionAccessMode || 'ALL_USERS',
       // Write-only — the backend never returns the raw PIN (see supervisorPinSet on posSettings).
       supervisorPin: '',
       voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',

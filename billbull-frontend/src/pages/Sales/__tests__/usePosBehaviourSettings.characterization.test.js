@@ -66,6 +66,9 @@ describe('beginEditSettings — draft seeding', () => {
       requireSupervisorForDayClose: false,
       supervisorApprovalMode: 'PIN',
       requirePriceOverrideApproval: false,
+      // Action Button Access — seeded from the stored value, so an edit of any other setting
+      // cannot quietly relax a branch that has restricted the POS action buttons.
+      posFunctionAccessMode: 'ALL_USERS',
       supervisorPin: '',
       voidMode: 'VOID',
       productEntryMode: 'DIRECT_ADD',
@@ -97,11 +100,13 @@ describe('beginEditSettings — draft seeding', () => {
       operatingStartTime: '08:00',
       operatingEndTime: '22:00',
       businessDayExtensionMinutes: 30,
+      posFunctionAccessMode: 'SUPERVISOR_ONLY',
     });
     act(() => view.result.current.beginEditSettings());
     const d = view.result.current.settingsDraft;
 
     expect(d.requireSupervisorForVoid).toBe(true);
+    expect(d.posFunctionAccessMode).toBe('SUPERVISOR_ONLY');
     expect(d.supervisorApprovalMode).toBe('PASSWORD');
     expect(d.voidMode).toBe('DELETE');
     expect(d.productEntryMode).toBe('MODAL');

@@ -259,6 +259,13 @@ export function useSupervisorApproval() {
         setPendingSupervisorAction(null);
         if (action.type === 'DAY_CLOSE') {
           handleCloseDay(action.payload?.acknowledgeExclusions);
+        } else if (action.type === 'POS_FUNCTION') {
+          // Console -> Behavior -> Action Button Access, SUPERVISOR_PASSWORD mode. `run` is the
+          // button's own original action, captured before the gate replaced it, so the function
+          // opens exactly as it would have without the gate. Nothing is sent to the server here:
+          // the credential authorized reaching the workflow, and the workflow's own endpoints
+          // still apply their own checks.
+          action.run?.();
         } else if (action.type === 'DELIVERY_SETTLEMENT') {
           action.retry(
             supervisorApprovalMode === 'PASSWORD'

@@ -840,6 +840,7 @@ describe('source contract', () => {
   const HOOK = read('../features/products/useProductCatalog.js');
   const ENTRY = read('../features/products/useProductEntry.js');
   const TOUCH = read('../POSTouchScreen.jsx');
+  const FUNCS = read('../lib/posFunctionButtons.jsx');
   const CONSOLE = read('../POSConsole.jsx');
   const LINES = PARENT.split('\n');
   const ANCHOR = '      {/* ─── SEARCH PRODUCTS MODAL ─── */}';
@@ -1000,13 +1001,15 @@ describe('source contract', () => {
     expect(PARENT).not.toContain('useState(false);\n  const [productSearch');
   });
 
-  it('POSSales never writes search state itself: the only opener is POSTouchScreen', () => {
+  it('POSSales never writes search state itself: the only opener is the shared Functions builder', () => {
     // the setter calls moved into the child with the region; POSSales now only forwards setters
     expect(PARENT.split('setShowProductSearch(').length - 1).toBe(0);
     expect(PARENT.split('setProductSearchQuery(').length - 1).toBe(0);
     expect(PARENT.split('setProductSearchResults(').length - 1).toBe(0);
     expect(PARENT).toContain('    setPriceCheckResult, setShowProductSearch, setProductSearchQuery, setProductSearchResults,\n');
-    expect(TOUCH).toContain("action: () => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); } },");
+    expect(FUNCS).toContain("action: () => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); } },");
+    expect(FUNCS.split('setShowProductSearch(true)').length - 1).toBe(1);
+    expect(TOUCH).not.toContain('setShowProductSearch(true)');
     expect(TEST).toContain("onClick={() => { setProductSearchQuery(''); setProductSearchResults([]); setShowProductSearch(true); }}");
     // POSConsole only lists the button id for layout config; it opens nothing
     expect(CONSOLE).not.toContain('setShowProductSearch');

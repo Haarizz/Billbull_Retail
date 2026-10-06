@@ -249,6 +249,12 @@ public class PosSettings extends BaseEntity {
     @Column(name = "require_supervisor_for_day_close")
     private Boolean requireSupervisorForDayClose = false;
 
+    /** Who may use the POS Functions/Actions buttons — see {@link PosFunctionAccessMode}.
+     *  Branch-wide and template-independent: Classic, Cart Focus and Compact all honour it,
+     *  so the rule cannot be sidestepped by switching screen templates. */
+    @Column(name = "pos_function_access_mode", length = 30)
+    private String posFunctionAccessMode = PosFunctionAccessMode.ALL_USERS.name();
+
     // ---- Credit Voucher expiry policy (per branch) -------------------------------------
     //
     // All three are nullable, and null means "not configured — use the global
@@ -440,6 +446,9 @@ public class PosSettings extends BaseEntity {
 
     public Boolean getRequireSupervisorForDayClose() { return requireSupervisorForDayClose; }
     public void setRequireSupervisorForDayClose(Boolean requireSupervisorForDayClose) { this.requireSupervisorForDayClose = requireSupervisorForDayClose; }
+
+    public String getPosFunctionAccessMode() { return posFunctionAccessMode; }
+    public void setPosFunctionAccessMode(String posFunctionAccessMode) { this.posFunctionAccessMode = posFunctionAccessMode; }
 
     public String getCreditVoucherExpiryMode() { return creditVoucherExpiryMode; }
     public void setCreditVoucherExpiryMode(String creditVoucherExpiryMode) { this.creditVoucherExpiryMode = creditVoucherExpiryMode; }

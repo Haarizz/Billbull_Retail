@@ -801,6 +801,7 @@ describe('source contract', () => {
   const CHILD = read('../features/customers/CreditBalance.jsx');
   const TEST = read('./CreditBalance.characterization.test.jsx');
   const TOUCH = read('../POSTouchScreen.jsx');
+  const FUNCS = read('../lib/posFunctionButtons.jsx');
   const LINES = PARENT.split('\n');
   const ANCHOR = '      {/* ─── CREDIT BALANCE MODAL ─── */}';
   const start = LINES.indexOf(ANCHOR);
@@ -891,8 +892,10 @@ describe('source contract', () => {
     expect(PARENT).toContain('  const [posCustomers, setPosCustomers] = useState([]);');
   });
 
-  it('the harness opener mirrors the only opener (POSTouchScreen credit-balance action)', () => {
-    expect(TOUCH).toContain("action: () => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },");
+  it('the harness opener mirrors the only opener (the shared credit-balance action)', () => {
+    // One definition, in POS/lib/posFunctionButtons.jsx, rendered by every template.
+    expect(FUNCS).toContain("action: () => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); } },");
+    expect(TOUCH).not.toContain('setShowCreditBalance(true)');
     expect(TEST).toContain("onClick={() => { setCreditBalanceQuery(''); setCreditBalanceResult(null); setShowCreditBalance(true); }}");
     // POSSales only hands the setters to the touch screen; it never calls setShowCreditBalance(true) itself.
     expect(PARENT).not.toContain('setShowCreditBalance(true)');
