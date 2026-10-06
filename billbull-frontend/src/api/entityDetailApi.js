@@ -138,6 +138,12 @@ export const fetchProductDetail = async (result, { signal } = {}) => {
   }
 
   const product = aggregate?.product ?? null;
+  const policy = aggregate?.inventory ?? product?.inventory ?? null;
+  // Barcodes live on the packings; the base unit's (conversion 1) is the one a scanner
+  // reads for a single item, so it wins over a carton's.
+  const packings = (policy?.packings ?? []).filter((pk) => pk?.barcode);
+  const barcode =
+    (packings.find((pk) => Number(pk.conversion) === 1) ?? packings[0])?.barcode ?? null;
   const locations = (stock?.locations ?? []).map((loc) => ({
     locationId: loc.locationId ?? null,
     name: loc.name ?? "",
@@ -168,8 +174,13 @@ export const fetchProductDetail = async (result, { signal } = {}) => {
     sku: product?.sku ?? null,
     // Only shown when the payload actually carries it — no invented status.
     status: product?.status ?? null,
+    barcode,
+    category: product?.department?.name ?? product?.category ?? null,
     unitPrice: toNumber(productSellingPrice(aggregate)),
-    reorderLevel: toNumber(aggregate?.inventory?.reorderLevel ?? product?.inventory?.reorderLevel),
+    reorderLevel: toNumber(policy?.reorderLevel),
+    // The product's configured maximum stock (ProductInventoryPolicy.maxStock) — the only
+    // "capacity" the model has. Null when unset; the panel then makes no capacity claim.
+    maxStock: toNumber(policy?.maxStock),
     uom: locations.find((l) => l.uom)?.uom ?? null,
     onHand: sum(locations, "onHand"),
     reserved: sum(locations, "reserved"),
@@ -215,6 +226,8 @@ export const fetchLedgerDetail = async (result, { signal } = {}) => {
     accountType: summary?.accountType ?? null,
     accountGroup: summary?.accountGroup ?? null,
     status: summary?.status ?? null,
+    // From the search row: the summary does not carry it.
+    isGroup: result?.meta?.isGroup === true,
     debitTotal: toNumber(summary?.debitTotal) ?? 0,
     creditTotal: toNumber(summary?.creditTotal) ?? 0,
     // Backend convention: closingBalance = debitTotal - creditTotal. Echoed as given.
@@ -235,7 +248,10 @@ export const fetchLedgerDetail = async (result, { signal } = {}) => {
       description: t.description ?? null,
       debitAmount: toNumber(t.debitAmount),
       creditAmount: toNumber(t.creditAmount),
+      // Stored on the entry at posting time as an unsigned amount plus its side
+      // ("Dr"/"Cr"); the Ledger page renders the pair the same way. Never recomputed.
       runningBalance: toNumber(t.runningBalance),
+      balanceType: t.balanceType ?? null,
       branchName: t.branchName ?? null,
     })),
   };
@@ -311,6 +327,11 @@ export const fetchCustomerDetail = async (result, { signal } = {}) => {
   // Null when the section was denied or empty — the panel says so rather than guessing.
   const lastInvoice = invoiceRows[0] ?? null;
 
+  // Contact and credit terms are not on the summary; they ride in on the search row the
+  // user selected, which is the customer entity itself. Absent fields stay null so the
+  // header drops them rather than rendering an empty chip.
+  const meta = result?.meta ?? {};
+
   return {
     entityType: "customer",
     id: summary?.id ?? customerId,
@@ -331,6 +352,11 @@ export const fetchCustomerDetail = async (result, { signal } = {}) => {
     invoicesForbidden: invoices.forbidden === true,
     invoicesFailed: invoices.failed === true,
     invoices: invoiceRows,
+    mobile: meta.mobile ?? null,
+    email: meta.email ?? null,
+    creditLimitAmount: toNumber(meta.creditLimitAmount),
+    creditLimitDays: toNumber(meta.creditLimitDays),
+    blockCredit: meta.blockCredit === true,
   };
 };
 
@@ -376,6 +402,8 @@ export const fetchVendorDetail = async (result, { signal } = {}) => {
     id: lpo.id ?? null,
     lpoNumber: lpo.lpoNumber ?? null,
     lpoDate: lpo.lpoDate ?? null,
+    // The LPO's own expected delivery date — the panel's ETA. Null when never set.
+    expectedDeliveryDate: lpo.expectedDeliveryDate ?? null,
     grandTotal: toNumber(lpo.grandTotal),
     status: lpo.status ?? null,
     branchName: lpo.branchName ?? null,
@@ -383,6 +411,10 @@ export const fetchVendorDetail = async (result, { signal } = {}) => {
 
   // Newest-first from the backend, so the head of the list is the last LPO.
   const lastLpo = lpoRows[0] ?? null;
+
+  // Phone and email are not on the summary; they ride in on the search row the user
+  // selected (VendorSearchResponse). A missing one stays null and the header drops it.
+  const meta = result?.meta ?? {};
 
   return {
     entityType: "vendor",
@@ -403,45 +435,116 @@ export const fetchVendorDetail = async (result, { signal } = {}) => {
     lposForbidden: lpos.forbidden === true,
     lposFailed: lpos.failed === true,
     lpos: lpoRows,
+    phone: meta.phone ?? null,
+    email: meta.email ?? null,
   };
 };
 
 // ==================== EMPLOYEE ====================
 
+const targetMonth = (m) =>
+  m
+    ? {
+        month: m.month ?? null,
+        targetAmount: toNumber(m.targetAmount),
+        sales: toNumber(m.sales),
+        bills: toNumber(m.bills) ?? 0,
+        achievementPercent: toNumber(m.achievementPercent),
+        targetStatus: m.targetStatus ?? null,
+      }
+    : null;
+
 /**
- * Employee details: identity only, and no request at all.
+ * Employee details: identity from the search row, plus this month's and last month's
+ * target achievement.
  *
- * <p>This is the one fetcher that issues no network call, and that is the whole design.
- * `GET /api/employees/{id}` returns the full `Employee` — basic salary, allowances,
- * deductions, document numbers, contact details. A global search box is reachable by
- * keyboard from every screen and is frequently on-screen in shared and counter contexts,
- * so the blast radius of putting that payload behind it is a personnel incident rather
- * than a data error. The panel is therefore built from the search row alone, which comes
- * from `EmployeeSearchResponse` — a projection that carries identity, designation,
- * department, branch and status, and nothing else.
+ * <p>Identity still comes from the row alone (`EmployeeSearchResponse`), and
+ * `GET /api/employees/{id}` is still never called: that payload is the whole `Employee` —
+ * salary columns, document numbers and contact details included — and the panel must never
+ * hold it. The one read made here is `GET /api/hr/targets/employee/{id}`, a slim projection
+ * of the admin Performance & Targets row (target, sales, bills, achievement, status) behind
+ * the same `hr.employee` gate as the search itself, with the commission columns left out.
+ * It is a section: a denial or a failure there leaves the identity card standing.
  *
- * <p>Consequences worth stating plainly, because they are choices and not gaps: there is
- * no salary, no payroll, no attendance, no leave and no performance data here, and there
- * is no way to reach any of it from this panel. The panel offers a link to the HR
- * employee page instead, where those fields live behind their own permissions.
- *
- * <p>`hr.employee` already gates the search endpoint that produced this row, so no
- * further permission is required — and none is claimed. No payroll permission is
- * involved because no payroll data is exposed.
+ * <p>Payroll is not fetched here. It sits behind `hr.payroll` and is read only when the
+ * user explicitly reveals it — see {@link fetchEmployeePayrollSummary}. Attendance and
+ * leave have no module behind them, so there is nothing to fetch for either.
  *
  * @param {{ id?: string, title?: string, employee?: object }} result the selected row
  */
-export const fetchEmployeeDetail = async (result) => {
+export const fetchEmployeeDetail = async (result, { signal } = {}) => {
   const e = result?.employee ?? {};
+  const employeeId = result?.id;
+
+  const targets = employeeId
+    ? await section(() =>
+        api
+          .get(`/api/hr/targets/employee/${encodeURIComponent(employeeId)}`, { signal })
+          .then((r) => r.data)
+      )
+    : { rows: null };
+
   return {
     entityType: "employee",
-    id: result?.id ?? null,
+    id: employeeId ?? null,
     name: e.name ?? result?.title ?? "",
     employeeCode: e.employeeCode ?? null,
     role: e.role ?? null,
     department: e.department ?? null,
     branch: e.branch ?? null,
     status: e.status ?? null,
+    targets: targets.rows
+      ? {
+          currentMonth: targetMonth(targets.rows.currentMonth),
+          previousMonth: targetMonth(targets.rows.previousMonth),
+        }
+      : null,
+    targetsForbidden: targets.forbidden === true,
+    targetsFailed: targets.failed === true,
+  };
+};
+
+/**
+ * One employee's payroll summary: this period's line, salary YTD and the last payslip.
+ *
+ * <p>Deliberately not part of {@link fetchEmployeeDetail}. Global search is on-screen at
+ * shared counters, so payroll is read only when a user holding `hr.payroll` asks to see
+ * it — never as a side effect of arrowing through a result list. The endpoint enforces
+ * the same permission server-side; a 403 surfaces as {@link EntityDetailForbiddenError}.
+ * Figures only: no payment method, no bank details.
+ *
+ * @param {string} employeeCode the code payroll lines are keyed by
+ */
+export const fetchEmployeePayrollSummary = async (employeeCode, { signal } = {}) => {
+  if (!employeeCode) throw new Error("Payroll needs an employee code.");
+  const data = await request(() =>
+    api
+      .get(`/api/payroll/employee/${encodeURIComponent(employeeCode)}/summary`, { signal })
+      .then((r) => r.data)
+  );
+  const current = data?.currentMonth;
+  const latest = data?.latestPayslip;
+  return {
+    currentMonth: current
+      ? {
+          month: toNumber(current.month),
+          year: toNumber(current.year),
+          baseSalary: toNumber(current.baseSalary),
+          allowances: toNumber(current.allowances),
+          deductions: toNumber(current.deductions),
+          netPayable: toNumber(current.netPayable),
+          status: current.status ?? null,
+        }
+      : null,
+    ytdYear: toNumber(data?.ytdYear),
+    salaryYtd: toNumber(data?.salaryYtd),
+    latestPayslip: latest
+      ? {
+          month: toNumber(latest.month),
+          year: toNumber(latest.year),
+          paymentDate: latest.paymentDate ?? null,
+        }
+      : null,
   };
 };
 
@@ -465,5 +568,6 @@ export default {
   fetchCustomerDetail,
   fetchVendorDetail,
   fetchEmployeeDetail,
+  fetchEmployeePayrollSummary,
   hasEntityDetail,
 };

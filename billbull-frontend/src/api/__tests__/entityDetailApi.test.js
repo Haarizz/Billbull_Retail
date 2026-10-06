@@ -11,6 +11,7 @@ import {
   PARTY_DOCUMENT_LIMIT,
   fetchCustomerDetail,
   fetchEmployeeDetail,
+  fetchEmployeePayrollSummary,
   fetchLedgerDetail,
   fetchProductDetail,
   fetchVendorDetail,
@@ -123,7 +124,7 @@ describe('entityDetailApi', () => {
     expect(hasEntityDetail('ledger')).toBe(true);
     expect(hasEntityDetail('customer')).toBe(true);
     expect(hasEntityDetail('vendor')).toBe(true);
-    // Employee now has a panel, but an identity-only one — see the employee block below.
+    // Employee: identity + targets; payroll only on demand — see the employee blocks below.
     expect(hasEntityDetail('employee')).toBe(true);
     expect(hasEntityDetail('spaceship')).toBe(false);
   });
@@ -345,6 +346,29 @@ describe('entityDetailApi', () => {
       expect(detail.totalSales).toBe(18300);
     });
 
+    it('carries contact and credit terms over from the selected search row', async () => {
+      route({
+        '/api/sales/customer-ledger/3/summary': CUSTOMER_SUMMARY,
+        '/api/sales/invoices/recent': CUSTOMER_INVOICES,
+      });
+
+      const withMeta = await fetchCustomerDetail({
+        type: 'customer',
+        id: '3',
+        meta: { mobile: '0501234567', email: 'a@acme.test', creditLimitAmount: '25000', blockCredit: true },
+      });
+      expect(withMeta.mobile).toBe('0501234567');
+      expect(withMeta.email).toBe('a@acme.test');
+      expect(withMeta.creditLimitAmount).toBe(25000);
+      expect(withMeta.creditLimitDays).toBeNull();
+      expect(withMeta.blockCredit).toBe(true);
+
+      const bare = await fetchCustomerDetail({ type: 'customer', id: '3' });
+      expect(bare.mobile).toBeNull();
+      expect(bare.creditLimitAmount).toBeNull();
+      expect(bare.blockCredit).toBe(false);
+    });
+
     it('carries no due amount or generic last transaction field', async () => {
       route({
         '/api/sales/customer-ledger/3/summary': CUSTOMER_SUMMARY,
@@ -478,6 +502,40 @@ describe('entityDetailApi', () => {
       expect(detail).not.toHaveProperty('overdueCount');
       // PurchaseInvoice has no per-invoice balance, so no document-level due either.
       expect(detail.lpos[0]).not.toHaveProperty('balance');
+    });
+
+    it('echoes the LPO expected delivery date as-is, and null when unset', async () => {
+      route({
+        '/api/vendors/21/summary': VENDOR_SUMMARY,
+        '/api/lpos/recent': [
+          { ...VENDOR_LPOS[0], expectedDeliveryDate: '2026-10-02' },
+          { id: 8, lpoNumber: 'LPO-0008', lpoDate: '2026-09-01', grandTotal: 10, status: 'DRAFT' },
+        ],
+      });
+
+      const detail = await fetchVendorDetail({ type: 'vendor', id: '21' });
+
+      expect(detail.lpos[0].expectedDeliveryDate).toBe('2026-10-02');
+      expect(detail.lpos[1].expectedDeliveryDate).toBeNull();
+    });
+
+    it('takes phone and email from the selected search row, never inventing them', async () => {
+      route({
+        '/api/vendors/21/summary': VENDOR_SUMMARY,
+        '/api/lpos/recent': VENDOR_LPOS,
+      });
+
+      const withContact = await fetchVendorDetail({
+        type: 'vendor',
+        id: '21',
+        meta: { phone: '+971 4 234 5678', email: 'sales@techsupply.ae' },
+      });
+      expect(withContact.phone).toBe('+971 4 234 5678');
+      expect(withContact.email).toBe('sales@techsupply.ae');
+
+      const bare = await fetchVendorDetail({ type: 'vendor', id: '21' });
+      expect(bare.phone).toBeNull();
+      expect(bare.email).toBeNull();
     });
 
     it('resolves the vendor by id and asks for its LPOs by id, bounded', async () => {
@@ -716,7 +774,19 @@ describe('entityDetailApi', () => {
       },
     };
 
+    const TARGETS = {
+      currentMonth: {
+        month: '2026-10-01', targetAmount: '50000.00', sales: '36000.00', bills: 12,
+        achievementPercent: '72.00', targetStatus: 'On Track',
+      },
+      previousMonth: {
+        month: '2026-09-01', targetAmount: null, sales: '8000.00', bills: 3,
+        achievementPercent: null, targetStatus: 'No Target',
+      },
+    };
+
     it('renders identity from the search row', async () => {
+      api.get.mockResolvedValue({ data: TARGETS });
       const detail = await fetchEmployeeDetail(ROW);
 
       expect(detail.entityType).toBe('employee');
@@ -728,36 +798,49 @@ describe('entityDetailApi', () => {
       expect(detail.status).toBe('Active');
     });
 
-    /**
-     * The load-bearing test. GET /api/employees/{id} returns the whole Employee,
-     * salary columns included. The panel must never cause that payload to exist.
-     */
-    it('issues no request at all', async () => {
-      await fetchEmployeeDetail(ROW);
-
-      expect(api.get).not.toHaveBeenCalled();
-    });
-
-    it('exposes no salary, payroll, attendance, leave or performance field', async () => {
+    it('reads only the per-employee targets summary, and passes the server figures through', async () => {
+      api.get.mockResolvedValue({ data: TARGETS });
       const detail = await fetchEmployeeDetail(ROW);
 
-      const forbiddenKeys = [
-        'salary', 'basicSalary', 'allowances', 'deductions', 'netPay', 'salaryYtd',
-        'payslip', 'latestPayslip', 'performance', 'attendance', 'leave',
-        'leaveBalance', 'checkIn', 'present', 'absent',
-      ];
-      for (const key of forbiddenKeys) {
-        expect(detail).not.toHaveProperty(key);
+      expect(api.get).toHaveBeenCalledTimes(1);
+      expect(api.get.mock.calls[0][0]).toBe('/api/hr/targets/employee/42');
+      expect(detail.targets.currentMonth).toEqual({
+        month: '2026-10-01', targetAmount: 50000, sales: 36000, bills: 12,
+        achievementPercent: 72, targetStatus: 'On Track',
+      });
+      // No target stays null — never 0%.
+      expect(detail.targets.previousMonth.achievementPercent).toBeNull();
+      expect(detail.targets.previousMonth.targetAmount).toBeNull();
+    });
+
+    /**
+     * The load-bearing test. GET /api/employees/{id} returns the whole Employee,
+     * salary columns included. The panel must never cause that payload to exist —
+     * and payroll is never read as a side effect of selecting a row.
+     */
+    it('never reads the full employee record or payroll', async () => {
+      api.get.mockResolvedValue({ data: TARGETS });
+      await fetchEmployeeDetail(ROW);
+
+      const urls = api.get.mock.calls.map(([url]) => url);
+      expect(urls.some((u) => u.startsWith('/api/employees/'))).toBe(false);
+      expect(urls.some((u) => u.startsWith('/api/payroll'))).toBe(false);
+    });
+
+    it('exposes no salary, commission, attendance or leave field', async () => {
+      api.get.mockResolvedValue({
+        data: { currentMonth: { ...TARGETS.currentMonth, commission: '500.00', commissionRate: '2.00' } },
+      });
+      const detail = await fetchEmployeeDetail(ROW);
+
+      const keys = JSON.stringify(detail).toLowerCase();
+      for (const fragment of ['salar', 'commission', 'payslip', 'allowance', 'deduction', 'leave', 'attend', 'checkin']) {
+        expect(keys).not.toContain(fragment);
       }
-      // And nothing salary-shaped slipped in under another name.
-      const keys = Object.keys(detail).join(' ').toLowerCase();
-      expect(keys).not.toContain('salar');
-      expect(keys).not.toContain('pay');
-      expect(keys).not.toContain('leave');
-      expect(keys).not.toContain('attend');
     });
 
     it('does not carry contact or document details either', async () => {
+      api.get.mockResolvedValue({ data: TARGETS });
       const detail = await fetchEmployeeDetail(ROW);
 
       for (const key of ['email', 'phone', 'mobile', 'passportNumber', 'emiratesId', 'visaNumber']) {
@@ -765,11 +848,73 @@ describe('entityDetailApi', () => {
       }
     });
 
+    it('keeps the identity card when targets are denied or fail', async () => {
+      api.get.mockRejectedValueOnce({ response: { status: 403 } });
+      const denied = await fetchEmployeeDetail(ROW);
+      expect(denied.name).toBe('Ahmed Al Mansoori');
+      expect(denied.targets).toBeNull();
+      expect(denied.targetsForbidden).toBe(true);
+
+      api.get.mockRejectedValueOnce({ response: { status: 500 } });
+      const failed = await fetchEmployeeDetail(ROW);
+      expect(failed.targets).toBeNull();
+      expect(failed.targetsFailed).toBe(true);
+    });
+
     it('falls back to the row title when the projection is missing', async () => {
+      api.get.mockResolvedValue({ data: TARGETS });
       const detail = await fetchEmployeeDetail({ id: '42', type: 'employee', title: 'Unknown Person' });
 
       expect(detail.name).toBe('Unknown Person');
       expect(detail.employeeCode).toBeNull();
+    });
+  });
+
+  describe('employee payroll summary (on demand)', () => {
+    it('reads the per-employee payroll summary by code and shapes the figures', async () => {
+      api.get.mockResolvedValue({
+        data: {
+          currentMonth: {
+            month: 10, year: 2026, baseSalary: '8000.00', allowances: '1500.00',
+            deductions: '250.00', netPayable: '9250.00', status: 'Pending',
+            // A field the panel must never carry, even if the server ever sends it.
+            paymentMethod: 'Bank Transfer',
+          },
+          ytdYear: 2026,
+          salaryYtd: '83250.00',
+          latestPayslip: { month: 9, year: 2026, paymentDate: '2026-09-30' },
+        },
+      });
+
+      const summary = await fetchEmployeePayrollSummary('EMP 0234');
+
+      expect(api.get.mock.calls[0][0]).toBe('/api/payroll/employee/EMP%200234/summary');
+      expect(summary.currentMonth).toEqual({
+        month: 10, year: 2026, baseSalary: 8000, allowances: 1500,
+        deductions: 250, netPayable: 9250, status: 'Pending',
+      });
+      expect(summary.salaryYtd).toBe(83250);
+      expect(summary.latestPayslip).toEqual({ month: 9, year: 2026, paymentDate: '2026-09-30' });
+      expect(JSON.stringify(summary)).not.toContain('Bank');
+    });
+
+    it('keeps a missing period as null rather than zeros', async () => {
+      api.get.mockResolvedValue({ data: { currentMonth: null, ytdYear: 2026, salaryYtd: '0', latestPayslip: null } });
+
+      const summary = await fetchEmployeePayrollSummary('EMP-1');
+
+      expect(summary.currentMonth).toBeNull();
+      expect(summary.latestPayslip).toBeNull();
+    });
+
+    it('turns a 403 into a forbidden error', async () => {
+      api.get.mockRejectedValue({ response: { status: 403 } });
+
+      await expect(fetchEmployeePayrollSummary('EMP-1')).rejects.toBeInstanceOf(EntityDetailForbiddenError);
+    });
+
+    it('refuses to run without an employee code', async () => {
+      await expect(fetchEmployeePayrollSummary(null)).rejects.toThrow();
       expect(api.get).not.toHaveBeenCalled();
     });
   });

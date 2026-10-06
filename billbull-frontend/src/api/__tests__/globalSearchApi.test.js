@@ -80,6 +80,23 @@ describe('globalSearchApi', () => {
     });
   });
 
+  it('carries the structured product fields the result row lays out', async () => {
+    mockEndpoints({
+      '/api/products/search': [{
+        product: { id: 5, code: 'P-5', sku: 'SKU-5', name: 'Hub', department: { name: 'Electronics' } },
+        inventory: { reorderLevel: 20 },
+        stock: 7,
+      }],
+    });
+
+    const res = await globalSearch('hub', { category: SEARCH_CATEGORY.PRODUCTS });
+
+    expect(res.data[0]).toMatchObject({
+      code: 'P-5',
+      meta: { sku: 'SKU-5', category: 'Electronics', stock: 7, reorderLevel: 20, badge: 'Stock: 7' },
+    });
+  });
+
   it('queries only the matching source when a category is given', async () => {
     mockEndpoints({ '/api/products/search': [productRow] });
 
@@ -111,6 +128,32 @@ describe('globalSearchApi', () => {
     expect(api.get).toHaveBeenCalledTimes(1);
     expect(api.get).toHaveBeenCalledWith('/api/sales/customer-ledger/search', expect.anything());
     expect(res.data.every((r) => r.type === 'customer')).toBe(true);
+  });
+
+  it('maps a customer with structured row fields and no invented figures', async () => {
+    mockEndpoints({
+      '/api/sales/customer-ledger/search': [
+        { ...customerRow, email: 'a@acme.test', status: 'Active', groupType: 'Corporate',
+          branchEntity: { name: 'Dubai' }, creditLimitAmount: 25000, blockCredit: false },
+      ],
+    });
+
+    const res = await globalSearch('acme', { canView: (m) => m === 'sales.customer' });
+    const [row] = res.data;
+
+    expect(row.subtitle).toBe('CUS-0042 • +971 50 234 5678 • Dubai');
+    expect(row.meta).toMatchObject({
+      badge: 'Corporate',
+      code: 'CUS-0042',
+      mobile: '+971 50 234 5678',
+      email: 'a@acme.test',
+      branch: 'Dubai',
+      status: 'Active',
+      creditLimitAmount: 25000,
+      blockCredit: false,
+    });
+    expect(row.meta).not.toHaveProperty('balance');
+    expect(row.meta).not.toHaveProperty('overdueAmount');
   });
 
   it('reads paged responses from their content array', async () => {
@@ -226,6 +269,17 @@ describe('globalSearchApi', () => {
         subtitle: 'VEN-0021 \u2022 +971 4 234 5678 \u2022 Dubai',
         meta: { badge: 'Active' },
       });
+      // Structured copies for the vendor row; the primary contact number wins over mobile.
+      expect(res.data[0].meta).toMatchObject({
+        code: 'VEN-0021',
+        phone: '+971 4 234 5678',
+        email: 'sales@techsupply.ae',
+        branch: 'Dubai',
+        status: 'Active',
+      });
+      // VendorSearchResponse carries no balance, so none is invented.
+      expect(res.data[0].meta).not.toHaveProperty('balance');
+      expect(res.data[0].meta).not.toHaveProperty('branchCount');
     });
 
     it('dispatches the ledger account search endpoint for the ledger category', async () => {
@@ -242,8 +296,17 @@ describe('globalSearchApi', () => {
         type: 'ledger',
         title: 'Accounts Receivable',
         subtitle: 'Acc 1100 \u2022 Assets',
-        meta: { badge: 'Asset' },
+        meta: {
+          badge: 'Asset',
+          accountCode: '1100',
+          accountType: 'Asset',
+          accountGroup: 'Assets',
+          status: 'active',
+          isGroup: false,
+        },
       });
+      // AccountSearchResponse carries no balance; the mapper must not invent one.
+      expect(res.data[0].meta).not.toHaveProperty('balance');
     });
 
     it('dispatches the employee search endpoint for the employees category', async () => {

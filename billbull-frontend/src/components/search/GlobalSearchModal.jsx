@@ -34,6 +34,11 @@ import LedgerDetailPanel from "./details/LedgerDetailPanel";
 import CustomerDetailPanel from "./details/CustomerDetailPanel";
 import VendorDetailPanel from "./details/VendorDetailPanel";
 import EmployeeDetailPanel from "./details/EmployeeDetailPanel";
+import ProductResultRow from "./ProductResultRow";
+import CustomerResultRow from "./CustomerResultRow";
+import VendorResultRow from "./VendorResultRow";
+import LedgerResultRow from "./LedgerResultRow";
+import EmployeeResultRow from "./EmployeeResultRow";
 import {
   DetailError,
   DetailForbidden,
@@ -81,9 +86,8 @@ const countsKeyFor = (term) => (term.trim() === "" ? COUNTS_PREVIEW_KEY : term.t
  * truthful "details are coming next" placeholder rather than implying a view that does
  * not exist.
  *
- * <p>Employee is present but identity-only, by decision rather than by stage: no salary,
- * payroll, attendance, leave or performance data appears in global search. See
- * EmployeeDetailPanel for the reasoning.
+ * <p>Employee shows identity and monthly target achievement; payroll only on an explicit
+ * reveal by an `hr.payroll` user. See EmployeeDetailPanel for the reasoning.
  */
 const DETAIL_PANELS = {
   product: ProductDetailPanel,
@@ -91,6 +95,18 @@ const DETAIL_PANELS = {
   customer: CustomerDetailPanel,
   vendor: VendorDetailPanel,
   employee: EmployeeDetailPanel,
+};
+
+/**
+ * Types with their own result row. Each is a drop-in for the generic row below (same
+ * role, aria-selected and click-to-select); every other type keeps the generic row.
+ */
+const RICH_ROWS = {
+  product: ProductResultRow,
+  customer: CustomerResultRow,
+  vendor: VendorResultRow,
+  ledger: LedgerResultRow,
+  employee: EmployeeResultRow,
 };
 
 const KeyHint = ({ keys, children }) => (
@@ -478,8 +494,9 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         // Header, tabs and footer stay put; only the two body columns scroll. max-h keeps
-        // the whole thing inside the viewport on a short screen.
-        className="top-[10%] flex max-h-[80vh] w-full max-w-[820px] translate-y-0 flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[820px]"
+        // the whole thing inside the viewport on a short screen; the width cap is what a
+        // 1080p screen shows, and below it the modal keeps a 1rem gutter each side.
+        className="top-[6vh] flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-[1120px] translate-y-0 flex-col gap-0 overflow-hidden rounded-xl p-0 sm:max-w-[1120px]"
         // Esc is the documented way out and the footer says so; a corner X on top of the
         // search field is the one piece of chrome the design does without.
         showCloseButton={false}
@@ -558,7 +575,7 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
         {/* Body */}
         {/* The only part that scrolls. It keeps its designed height and shrinks (rather
             than pushing the footer off) when the viewport cannot fit it. */}
-        <div className="grid h-[460px] min-h-0 grid-cols-1 overflow-hidden sm:grid-cols-[minmax(0,268px)_minmax(0,1fr)]">
+        <div className="grid h-[640px] min-h-0 grid-cols-1 overflow-hidden sm:grid-cols-[minmax(0,280px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,320px)_minmax(0,1fr)]">
           {/* Left — results */}
           <div className="min-w-0 overflow-hidden border-slate-100 sm:border-r">
             <ScrollArea className="h-full" fitWidth>
@@ -599,6 +616,17 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
                 )}
 
                 {results.map((item, index) => {
+                  const RichRow = RICH_ROWS[item.type];
+                  if (RichRow) {
+                    return (
+                      <RichRow
+                        key={`${item.type}-${item.id}`}
+                        item={item}
+                        active={index === selectedIndex}
+                        onSelect={() => selectResult(index)}
+                      />
+                    );
+                  }
                   const badge = TYPE_BADGE[item.type] ?? { short: "?", label: item.type };
                   const active = index === selectedIndex;
                   return (
@@ -700,6 +728,9 @@ const GlobalSearchModal = ({ open: controlledOpen, onOpenChange: controlledOnOpe
                     // way out of the modal — selection itself never navigates — and it
                     // stays secondary to the details it sits under.
                     onOpen={selected.type === "employee" ? () => openResult(selected) : undefined}
+                    // Only the employee panel reads it, to decide whether payroll may be
+                    // offered at all. UX only; the payroll endpoint enforces it again.
+                    canView={selected.type === "employee" ? canView : undefined}
                   />
                 )}
               </div>
