@@ -928,7 +928,6 @@ const POSConsole = React.memo((props) => {
               creditVoucherExpiryDate: posSettings?.creditVoucherExpiryDate || '',
             };
             const patch = (changes) => setSettingsDraft({ ...d, ...changes });
-            const credLabel = d.supervisorApprovalMode === 'PASSWORD' ? 'Supervisor Password' : 'Supervisor PIN';
 
             // Business Day schedule lock — server-computed (PosSettingsService), never derived
             // here. The backend refuses the change regardless; disabling the controls just
@@ -955,6 +954,14 @@ const POSConsole = React.memo((props) => {
               ['cartShowSerialNumber', 'Serial Number'],
               ['cartShowExpiryDate', 'Expiry Date'],
             ];
+            // Group heading for the Behavior tab — the same h2/caption pair the Devices and
+            // Terminals tabs open with, so the tab gains structure without a new visual style.
+            const behaviorGroupHeading = (title, desc) => (
+              <div className="pt-2">
+                <h2 className="text-base font-bold text-[#1E293B]">{title}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{desc}</p>
+              </div>
+            );
             const drawerTriggers = [
               ['CASH_PAYMENT', 'Successful Cash Payment Completion'],
               ['RECEIPT_PRINT', 'Receipt Printing'],
@@ -967,6 +974,11 @@ const POSConsole = React.memo((props) => {
             return (
             <div className="space-y-6">
 
+              {/* The tab is grouped by what a setting decides, not by which screen it touches:
+                  Sale Behavior (what the POS does), Supervisor Credential (how an approval is
+                  authenticated), Approval Policies (which operations need one) and Business Day.
+                  Grouping only — every control below edits the same draft keys it always did. */}
+              {behaviorGroupHeading('Sale Behavior', 'What the POS does while a sale is being rung up.')}
               {/* Product Entry Mode */}
               <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
                 <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
@@ -1056,71 +1068,25 @@ const POSConsole = React.memo((props) => {
                 )}
               </div>
 
-              {/* Item Removal / Supervisor approval */}
+              {/* Void behavior */}
               <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
                 <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Shield className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Item Removal
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><XCircle className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Removal Behavior
                 </h3>
-                <p className="text-xs text-gray-400 mb-4">Control how cashiers remove items from a bill.</p>
-
-                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl mb-3">
-                  <div>
-                    <p className="text-sm font-medium text-[#1E293B]">Require Supervisor Authorization for Item Removal</p>
-                    <p className="text-[10px] text-gray-400">Cashier cannot remove items without supervisor approval.</p>
-                  </div>
-                  <Switch checked={d.requireSupervisorForVoid} onCheckedChange={v=>patch({ requireSupervisorForVoid: v })} />
-                </div>
-
-                {d.requireSupervisorForVoid && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
-                    <div>
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Approval Method</label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {[['PIN','PIN'],['PASSWORD','Password']].map(([val,lbl])=>(
-                          <button key={val} type="button" onClick={()=>patch({ supervisorApprovalMode: val })}
-                            className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${d.supervisorApprovalMode===val?'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]':'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
-                            {lbl}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
-                        {credLabel}
-                        {posSettings?.supervisorPinSet ? (
-                          <span className="normal-case font-semibold text-green-600 flex items-center gap-0.5"><CheckCircle className="h-3 w-3" />Configured</span>
-                        ) : (
-                          <span className="normal-case font-semibold text-gray-400">Not set</span>
-                        )}
-                      </label>
-                      <input
-                        type="password"
-                        value={d.supervisorPin}
-                        onChange={e=>patch({ supervisorPin: e.target.value })}
-                        maxLength={d.supervisorApprovalMode==='PIN' ? 8 : 64}
-                        placeholder={posSettings?.supervisorPinSet ? 'Leave blank to keep current' : (d.supervisorApprovalMode==='PIN' ? 'e.g. 1234' : 'Manager password')}
-                        className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Price Override */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Wallet className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Price Override
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Control whether adding/editing an item below its minimum price requires supervisor approval.</p>
-
-                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl">
-                  <div>
-                    <p className="text-sm font-medium text-[#1E293B]">Require Supervisor Approval for Price Override</p>
-                    <p className="text-[10px] text-gray-400">When on, adding a line or editing its price below the minimum price prompts for supervisor PIN/password immediately. When off, only the checkout-time check applies.</p>
-                  </div>
-                  <Switch checked={d.requirePriceOverrideApproval} onCheckedChange={v=>patch({ requirePriceOverrideApproval: v })} />
+                <p className="text-xs text-gray-400 mb-4">Decide what happens to a line when the cashier removes it.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    ['VOID','Void (recommended)','Mark in red + strike-through, keep on receipt, audit log & reports.'],
+                    ['DELETE','Delete','Remove the line entirely. Not recorded.'],
+                  ].map(([val,label,desc])=>(
+                    <button key={val} type="button" onClick={()=>patch({ voidMode: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.voidMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.voidMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
+                      {d.voidMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -1148,69 +1114,6 @@ const POSConsole = React.memo((props) => {
                   ))}
                 </div>
                 <p className="text-[10px] text-gray-400 mt-3">A partial return never waives the charge: the customer kept something, so the trip was made for goods they still have.</p>
-              </div>
-
-              {/* Action Button Access — who may use the right-hand Actions panel (Classic and
-                  Cart Focus) and the Functions slide-over (Compact). One branch-wide rule for all
-                  three screen templates, so it cannot be weakened by switching layouts. The POS
-                  enforces it in POS/lib/posFunctionAccess.js. */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Shield className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Action Button Access
-                  <span className="px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[10px] font-bold uppercase tracking-wide text-[#b8920e]">
-                    All screen templates
-                  </span>
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">
-                  Who may use the POS action buttons — Returns, Layaways, Coupons, Cash Drawer, Reprint,
-                  Delivery Settlement and the rest of the Actions / Functions panel.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {[
-                    ['ALL_USERS','All Users','Any cashier signed in at the till can use every action button.'],
-                    ['SUPERVISOR_PASSWORD','Supervisor Approval','Any cashier can use them, but each use is authorized with the supervisor ' + (d.supervisorApprovalMode === 'PASSWORD' ? 'password' : 'PIN') + ' first.'],
-                    ['SUPERVISOR_ONLY','Supervisors Only','Only users with a supervisor role can use them. Everyone else is refused.'],
-                  ].map(([val,label,desc])=>(
-                    <button key={val} type="button" onClick={()=>patch({ posFunctionAccessMode: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.posFunctionAccessMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.posFunctionAccessMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.posFunctionAccessMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
-                {d.posFunctionAccessMode === 'SUPERVISOR_PASSWORD' && !posSettings?.supervisorPinSet && d.supervisorApprovalMode !== 'PASSWORD' && !d.supervisorPin && (
-                  <p className="text-[11px] text-red-500 mt-3">
-                    No supervisor PIN is set for this branch — set one below, or cashiers will not be able to get these actions approved.
-                  </p>
-                )}
-                <p className="text-[10px] text-gray-400 mt-3">
-                  Salesperson verification and Lock POS are always available to the cashier: gating them
-                  would stop the cashier selling, or stop them securing the till.
-                </p>
-              </div>
-
-              {/* Void behavior */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><XCircle className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Removal Behavior
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Decide what happens to a line when the cashier removes it.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {[
-                    ['VOID','Void (recommended)','Mark in red + strike-through, keep on receipt, audit log & reports.'],
-                    ['DELETE','Delete','Remove the line entirely. Not recorded.'],
-                  ].map(([val,label,desc])=>(
-                    <button key={val} type="button" onClick={()=>patch({ voidMode: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.voidMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.voidMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.voidMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* Cart display */}
@@ -1266,6 +1169,161 @@ const POSConsole = React.memo((props) => {
                 </div>
               </div>
 
+              {behaviorGroupHeading('Supervisor Credential', 'How a supervisor authenticates when a POS operation asks for approval.')}
+              {/* Supervisor Credential — shared by every approval prompt at the till (the
+                  policies below, Delivery Settlement, Business Day Close), so it is always shown
+                  rather than only while Item Removal approval is on. Same draft keys as before:
+                  supervisorApprovalMode and the write-only supervisorPin. */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Lock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Approval Method &amp; PIN
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">Used by every policy in Approval Policies below. Set it up before turning any policy on.</p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">Approval Method</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {[['PIN','PIN'],['PASSWORD','Password']].map(([val,lbl])=>(
+                        <button key={val} type="button" onClick={()=>patch({ supervisorApprovalMode: val })}
+                          className={`py-2 rounded-lg text-xs font-bold border-2 transition-all ${d.supervisorApprovalMode===val?'border-[#F5C742] bg-[#F5C742]/10 text-[#1E293B]':'border-gray-200 text-gray-500 hover:border-[#F5C742]/40'}`}>
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-1.5">
+                      {d.supervisorApprovalMode === 'PASSWORD'
+                        ? 'The supervisor signs in with their own email/username and password. The account must hold a supervisor role.'
+                        : 'The supervisor enters the branch supervisor PIN set here.'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
+                      Branch Supervisor PIN
+                      {posSettings?.supervisorPinSet ? (
+                        <span className="normal-case font-semibold text-green-600 flex items-center gap-0.5"><CheckCircle className="h-3 w-3" />Configured</span>
+                      ) : (
+                        <span className="normal-case font-semibold text-gray-400">Not set</span>
+                      )}
+                    </label>
+                    <input
+                      type="password"
+                      value={d.supervisorPin}
+                      onChange={e=>patch({ supervisorPin: e.target.value })}
+                      maxLength={d.supervisorApprovalMode==='PIN' ? 8 : 64}
+                      placeholder={posSettings?.supervisorPinSet ? 'Leave blank to keep current' : 'e.g. 1234'}
+                      className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#F5C742]"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1.5">
+                      {d.supervisorApprovalMode === 'PASSWORD'
+                        ? 'Not asked for by Password approvals. Still used for session takeover and cross-branch session transfer.'
+                        : 'One PIN shared by all supervisors at this branch.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {behaviorGroupHeading('Approval Policies', 'Controls which POS operations require supervisor approval or supervisor-level access. Each policy is set independently.')}
+              {/* Item Removal approval policy. The credential it asks for lives in Supervisor
+                  Credential above; how the line is removed (Void/Delete) is Removal Behavior. */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Shield className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Item Removal
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">Whether removing a line from the cart needs supervisor approval. Void or Delete is chosen in Removal Behavior.</p>
+
+                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl">
+                  <div>
+                    <p className="text-sm font-medium text-[#1E293B]">Require Supervisor Authorization for Item Removal</p>
+                    <p className="text-[10px] text-gray-400">When on, a line's Void / Remove button asks for supervisor approval first, as does clearing a layaway being converted. Checked at the till; lowering a line's quantity is not gated.</p>
+                  </div>
+                  <Switch checked={d.requireSupervisorForVoid} onCheckedChange={v=>patch({ requireSupervisorForVoid: v })} />
+                </div>
+              </div>
+
+              {/* Price Override */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Wallet className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Price Override
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">Whether selling below an item's minimum price needs supervisor approval.</p>
+
+                <div className="flex items-center justify-between py-3 px-4 bg-gray-50 rounded-xl">
+                  <div>
+                    <p className="text-sm font-medium text-[#1E293B]">Require Supervisor Approval for Price Override</p>
+                    <p className="text-[10px] text-gray-400">When on, adding a line or changing its price or discount to below the minimum price (or cost, when no minimum is set) asks for approval, and checkout re-checks it on the server. When off, below-minimum prices are not checked.</p>
+                  </div>
+                  <Switch checked={d.requirePriceOverrideApproval} onCheckedChange={v=>patch({ requirePriceOverrideApproval: v })} />
+                </div>
+              </div>
+
+              {/* Action Button Access — who may use the right-hand Actions panel (Classic and
+                  Cart Focus) and the Functions slide-over (Compact). One branch-wide rule for all
+                  three screen templates, so it cannot be weakened by switching layouts. The POS
+                  enforces it in POS/lib/posFunctionAccess.js. */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Shield className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Action Button Access
+                  <span className="px-2 py-0.5 rounded-full bg-[#FFF8E7] border border-[#FDE6A9] text-[10px] font-bold uppercase tracking-wide text-[#b8920e]">
+                    All screen templates
+                  </span>
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">
+                  Who may use the buttons in the POS Actions / Functions panel — Returns, Layaways, Coupons,
+                  Cash Drawer, Reprint, Delivery Settlement and the rest. Applied to that panel at the till.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    ['ALL_USERS','All Users','Any signed-in user can use every action button.'],
+                    ['SUPERVISOR_PASSWORD','Supervisor Approval','Any signed-in user can use them once a supervisor approves each use with ' + (d.supervisorApprovalMode === 'PASSWORD' ? 'their own login' : 'the branch supervisor PIN') + '. Users with a supervisor role are not asked.'],
+                    ['SUPERVISOR_ONLY','Supervisors Only','The signed-in user must hold a supervisor role. For everyone else the buttons are locked, with no approval prompt.'],
+                  ].map(([val,label,desc])=>(
+                    <button key={val} type="button" onClick={()=>patch({ posFunctionAccessMode: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.posFunctionAccessMode===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.posFunctionAccessMode===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
+                      {d.posFunctionAccessMode===val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
+                    </button>
+                  ))}
+                </div>
+                {d.posFunctionAccessMode === 'SUPERVISOR_PASSWORD' && !posSettings?.supervisorPinSet && d.supervisorApprovalMode !== 'PASSWORD' && !d.supervisorPin && (
+                  <p className="text-[11px] text-red-500 mt-3">
+                    No supervisor PIN is set for this branch — set one in Supervisor Credential above, or cashiers will not be able to get these actions approved.
+                  </p>
+                )}
+                <p className="text-[10px] text-gray-400 mt-3">
+                  Salesperson verification and Lock POS are always available to the cashier: gating them
+                  would stop the cashier selling, or stop them securing the till.
+                </p>
+              </div>
+
+              {/* Business Day Closing */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Lock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Business Day Closing
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">Control who is allowed to perform the Business Day (Z Report) closing.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
+                  {[
+                    [false, 'All Users', 'Any authenticated POS user may perform Business Day Close.'],
+                    [true, 'Supervisor Privilege Required', 'Business Day Close must be performed by a user signed in with a supervisor role.'],
+                  ].map(([val, label, desc]) => (
+                    <button key={String(val)} type="button" onClick={() => patch({ requireSupervisorForDayClose: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.requireSupervisorForDayClose === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.requireSupervisorForDayClose === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
+                      {d.requireSupervisorForDayClose === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {behaviorGroupHeading('Business Day', 'How POS sessions are grouped into Trading Dates.')}
               {/* Business Day */}
               <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
                 <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
@@ -1401,28 +1459,6 @@ const POSConsole = React.memo((props) => {
                     </p>
                   </>
                 )}
-              </div>
-
-              {/* Business Day Closing */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
-                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
-                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Lock className="h-3.5 w-3.5 text-[#b8920e]" /></div>
-                  Business Day Closing
-                </h3>
-                <p className="text-xs text-gray-400 mb-4">Control who is allowed to perform the Business Day (Z Report) closing.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-1">
-                  {[
-                    [false, 'All Users', 'Any authenticated POS user may perform Business Day Close.'],
-                    [true, 'Supervisor Privilege Required', 'Business Day Close requires supervisor authorization.'],
-                  ].map(([val, label, desc]) => (
-                    <button key={String(val)} type="button" onClick={() => patch({ requireSupervisorForDayClose: val })}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.requireSupervisorForDayClose === val ? 'border-[#F5C742] bg-[#F5C742]/5' : 'border-gray-200 hover:border-[#F5C742]/40'}`}>
-                      <p className={`text-sm font-bold ${d.requireSupervisorForDayClose === val ? 'text-[#1E293B]' : 'text-gray-700'}`}>{label}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5">{desc}</p>
-                      {d.requireSupervisorForDayClose === val && <p className="text-[10px] font-bold text-[#b8920e] mt-2 flex items-center gap-1"><CheckCircle className="h-3 w-3" />Active</p>}
-                    </button>
-                  ))}
-                </div>
               </div>
 
             </div>
