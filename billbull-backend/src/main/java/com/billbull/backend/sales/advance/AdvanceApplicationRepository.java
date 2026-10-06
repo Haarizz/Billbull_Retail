@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
 
 public interface AdvanceApplicationRepository extends JpaRepository<AdvanceApplication, Long> {
@@ -24,4 +25,15 @@ public interface AdvanceApplicationRepository extends JpaRepository<AdvanceAppli
      */
     @Query("SELECT COALESCE(SUM(a.appliedAmount), 0) FROM AdvanceApplication a WHERE a.invoiceNumber = :invoiceNumber AND a.status = 'APPLIED'")
     BigDecimal sumAppliedByInvoiceNumber(@Param("invoiceNumber") String invoiceNumber);
+
+    /**
+     * The same sum across a set of invoices, in one query.
+     *
+     * <p>Read by the POS Day Close sales reconciliation: an advance applied to an invoice sold
+     * inside the closing range settles it without producing tender in that range (the money was
+     * collected when the advance was taken, possibly on another day), so the sales identity has
+     * to add the allocation back.
+     */
+    @Query("SELECT COALESCE(SUM(a.appliedAmount), 0) FROM AdvanceApplication a WHERE a.invoiceNumber IN :invoiceNumbers AND a.status = 'APPLIED'")
+    BigDecimal sumAppliedByInvoiceNumbers(@Param("invoiceNumbers") Collection<String> invoiceNumbers);
 }

@@ -7,6 +7,7 @@ import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,8 +41,22 @@ class PosSalesReconciliationSplitTest {
     private static final List<Long> SESSION_IDS = List.of(111L, 115L);
 
     @Mock private PaymentRepository paymentRepository;
+    @Mock private com.billbull.backend.sales.returns.credit.SalesReturnCreditApplicationRepository
+            returnCreditApplicationRepository;
+    @Mock private com.billbull.backend.sales.advance.AdvanceApplicationRepository advanceApplicationRepository;
 
     @InjectMocks private PosSessionService posSessionService;
+
+    /** @InjectMocks fills the constructor, not the @Autowired fields the allocation ledgers
+     *  live in, so they are set here by hand -- the same way the rest of the POS session
+     *  suite wires them. */
+    @org.junit.jupiter.api.BeforeEach
+    void wireAllocationLedgers() {
+        org.springframework.test.util.ReflectionTestUtils.setField(posSessionService,
+                "returnCreditApplicationRepository", returnCreditApplicationRepository);
+        org.springframework.test.util.ReflectionTestUtils.setField(posSessionService,
+                "advanceApplicationRepository", advanceApplicationRepository);
+    }
 
     @Test
     void settlementOfAnEarlierInvoiceIsSplitOutAndDoesNotCreateSalesVariance() throws Exception {
@@ -117,6 +132,68 @@ class PosSalesReconciliationSplitTest {
         assertEquals(0, reconciledVariance(summary).compareTo(BigDecimal.ZERO));
     }
 
+    @Test
+    void returnCreditAppliedToTheSameDaysInvoiceIsNotASalesVariance() throws Exception {
+        // The shape that blocked a real close: a 2800.00 credit note raised against the same
+        // day's 2810.00 bill. The credit settles the receivable, so the invoice's balance --
+        // and with it creditSales -- falls to 10.00, while no tender is ever collected.
+        List<SalesInvoice> soldToday = List.of(invoice("INV-2026-0228", "2810.00", "10.00"));
+
+        when(paymentRepository.sumTenderByModeForSessions(SESSION_IDS)).thenReturn(List.<Object[]>of());
+        when(paymentRepository.findTenderForSessions(SESSION_IDS)).thenReturn(List.of());
+        when(returnCreditApplicationRepository.sumAppliedByInvoiceNumbers(Set.of("INV-2026-0228")))
+                .thenReturn(new BigDecimal("2800.00"));
+
+        Map<String, Object> summary = summarize(soldToday, List.of());
+
+        assertEquals(new BigDecimal("2800.00"), summary.get("returnCreditApplied"));
+        assertEquals(BigDecimal.ZERO, summary.get("advanceApplied"));
+
+        // The pre-fix identity -- 10.00 of credit against 2810.00 sold, a 2800.00 variance.
+        assertEquals(new BigDecimal("10.00"), rawComputedTotalSales(summary));
+
+        assertEquals(0, reconciledVariance(summary).compareTo(BigDecimal.ZERO),
+                "a credit note against the same day's invoice must not register as a sales variance");
+    }
+
+    @Test
+    void returnCreditAppliedToAnEarlierInvoiceLeavesThisDaysIdentityAlone() throws Exception {
+        // Credit applied to an invoice sold on another day settles a receivable that was
+        // recognised as a sale then, so it must not enter this day's identity at all. The
+        // repository is asked only about invoices sold in the range, which is what enforces it.
+        List<SalesInvoice> soldToday = List.of(invoice("INV-2026-4001", "500.00", "0.00"));
+
+        when(paymentRepository.sumTenderByModeForSessions(SESSION_IDS)).thenReturn(List.<Object[]>of(
+                new Object[] { "Cash", new BigDecimal("500.00"), 1L }));
+        when(paymentRepository.findTenderForSessions(SESSION_IDS)).thenReturn(List.of(
+                payment("PAY-2026-4001", "INV-2026-4001", "Cash", "500.00")));
+        // 246.75 of credit was applied today, but to INV-2026-0120 -- an earlier bill.
+        when(returnCreditApplicationRepository.sumAppliedByInvoiceNumbers(Set.of("INV-2026-4001")))
+                .thenReturn(BigDecimal.ZERO);
+
+        Map<String, Object> summary = summarize(soldToday, List.of());
+
+        assertEquals(BigDecimal.ZERO, summary.get("returnCreditApplied"));
+        assertEquals(0, reconciledVariance(summary).compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
+    void anAdvanceAllocatedToTheSameDaysInvoiceIsNotASalesVariance() throws Exception {
+        // The advance was collected on an earlier day, so no tender lands in this range at all;
+        // allocating it just clears the receivable.
+        List<SalesInvoice> soldToday = List.of(invoice("INV-2026-5001", "750.00", "0.00"));
+
+        when(paymentRepository.sumTenderByModeForSessions(SESSION_IDS)).thenReturn(List.<Object[]>of());
+        when(paymentRepository.findTenderForSessions(SESSION_IDS)).thenReturn(List.of());
+        when(advanceApplicationRepository.sumAppliedByInvoiceNumbers(Set.of("INV-2026-5001")))
+                .thenReturn(new BigDecimal("750.00"));
+
+        Map<String, Object> summary = summarize(soldToday, List.of());
+
+        assertEquals(new BigDecimal("750.00"), summary.get("advanceApplied"));
+        assertEquals(0, reconciledVariance(summary).compareTo(BigDecimal.ZERO));
+    }
+
     /* ===== helpers ===== */
 
     /** Runs the real aggregateTender -> buildSalesSummary path the Z-Report/Day Close uses. */
@@ -145,7 +222,9 @@ class PosSalesReconciliationSplitTest {
     private static BigDecimal reconciledVariance(Map<String, Object> summary) {
         BigDecimal computed = rawComputedTotalSales(summary)
                 .subtract(big(summary, "earlierInvoiceCollections"))
-                .subtract(big(summary, "advanceCollections"));
+                .subtract(big(summary, "advanceCollections"))
+                .add(big(summary, "returnCreditApplied"))
+                .add(big(summary, "advanceApplied"));
         return big(summary, "totalSales").subtract(computed);
     }
 

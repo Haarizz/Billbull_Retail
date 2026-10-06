@@ -175,6 +175,15 @@ class PosSessionServiceTest {
         org.springframework.test.util.ReflectionTestUtils.setField(service,
                 "credentialVerificationService", org.mockito.Mockito.mock(
                         com.billbull.backend.pos.auth.PosCredentialVerificationService.class));
+        // Allocation ledgers: no test here settles an invoice with return credit or an advance,
+        // so bare mocks (returning null, coalesced to zero) are the right fixture -- the
+        // same-day-credit path has its own tests in PosSalesReconciliationSplitTest.
+        org.springframework.test.util.ReflectionTestUtils.setField(service,
+                "returnCreditApplicationRepository", org.mockito.Mockito.mock(
+                        com.billbull.backend.sales.returns.credit.SalesReturnCreditApplicationRepository.class));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,
+                "advanceApplicationRepository", org.mockito.Mockito.mock(
+                        com.billbull.backend.sales.advance.AdvanceApplicationRepository.class));
 
         lenient().when(repo.save(any(PosSession.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(effectiveCorrectionViewService.resolveOverlays(any(), org.mockito.ArgumentMatchers.anyList(), any())).thenAnswer(inv -> inv.getArgument(1));
