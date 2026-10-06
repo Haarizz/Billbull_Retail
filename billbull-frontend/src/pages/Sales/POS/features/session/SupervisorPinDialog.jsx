@@ -110,7 +110,10 @@ function SupervisorPinDialog({
                 </div>
               )}
 
-              <div className="space-y-3">
+              {/* Own <form> + explicit autocomplete hints keep Chrome's password manager out:
+                  without them it autofilled the saved login password into the PIN field and
+                  paired the nearest text input — the POS product search — as the "username". */}
+              <form className="space-y-3" autoComplete="off" onSubmit={e => e.preventDefault()}>
                 {supervisorApprovalMode === 'PASSWORD' && (
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
@@ -122,6 +125,7 @@ function SupervisorPinDialog({
                       onChange={e => { setSupervisorPinEmail(e.target.value); setSupervisorPinError(''); }}
                       onKeyDown={e => { if (e.key === 'Enter') onSubmit(); }}
                       autoFocus
+                      autoComplete="off"
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
                     />
                   </div>
@@ -137,6 +141,8 @@ function SupervisorPinDialog({
                     onKeyDown={e => { if (e.key === 'Enter') onSubmit(); }}
                     autoFocus={supervisorApprovalMode !== 'PASSWORD'}
                     maxLength={supervisorApprovalMode === 'PASSWORD' ? 64 : 8}
+                    autoComplete={supervisorApprovalMode === 'PASSWORD' ? 'new-password' : 'one-time-code'}
+                    inputMode={supervisorApprovalMode === 'PASSWORD' ? undefined : 'numeric'}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ${supervisorApprovalMode === 'PASSWORD' ? 'text-sm' : 'text-center text-lg tracking-[0.5em]'}`}
                     placeholder={supervisorApprovalMode === 'PASSWORD' ? '' : '····'}
                   />
@@ -146,7 +152,7 @@ function SupervisorPinDialog({
                     </p>
                   )}
                 </div>
-              </div>
+              </form>
 
               {supervisorApprovalMode !== 'PASSWORD' && (
                 <div className="grid grid-cols-3 gap-2">

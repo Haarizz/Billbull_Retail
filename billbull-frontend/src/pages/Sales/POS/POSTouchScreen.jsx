@@ -1322,6 +1322,8 @@ const POSTouchScreen = React.memo((props) => {
                     <div className="relative flex-1 min-w-[140px]">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                       <input
+                        type="search"
+                        autoComplete="off"
                         placeholder="Scan or search — item, barcode, batch, customer…"
                         value={searchQuery}
                         onChange={e => setSearchQuery(e.target.value)}
