@@ -463,6 +463,14 @@ public class PosSettingsService {
                         existing.setPosFunctionAccessMode(
                                 PosFunctionAccessMode.resolve(settings.getPosFunctionAccessMode()).name());
                     }
+                    // Same partial-POST convention as posFunctionAccessMode above: null means the
+                    // field was absent from this request, so an older client cannot silently reset
+                    // a branch that has chosen to retain (or ask about) the delivery charge.
+                    if (settings.getDeliveryReturnChargePolicy() != null) {
+                        existing.setDeliveryReturnChargePolicy(
+                                PosDeliveryReturnChargePolicy.fromCode(
+                                        settings.getDeliveryReturnChargePolicy()).name());
+                    }
                     // ARCHFIX S5: hash a newly supplied PIN; a blank/absent PIN leaves the stored hash untouched.
                     if (settings.getSupervisorPin() != null && !settings.getSupervisorPin().isBlank()) {
                         existing.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
@@ -526,6 +534,9 @@ public class PosSettingsService {
                     settings.setCreditVoucherExpiryMode(normalisedExpiryMode(settings));
                     settings.setPosFunctionAccessMode(
                             PosFunctionAccessMode.resolve(settings.getPosFunctionAccessMode()).name());
+                    settings.setDeliveryReturnChargePolicy(
+                            PosDeliveryReturnChargePolicy.fromCode(
+                                    settings.getDeliveryReturnChargePolicy()).name());
                     settings.setSupervisorPin(hashPinIfNeeded(settings.getSupervisorPin()));
                     return withBusinessDayScheduleLock(repo.save(settings));
                 });

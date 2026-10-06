@@ -98,6 +98,19 @@ export function useDelivery({
         invoiceAmt: toNumber(inv.invoiceTotal) - toNumber(inv.deliveryCharge),
         deliveryCharge: toNumber(inv.deliveryCharge),
         paidAmt: toNumber(inv.amountPaid),
+        // Sold lines, for the return panel line picker. Voided lines are dropped here rather
+        // than in the panel: they were struck off before the driver left, so there is nothing
+        // of them in the van to bring back, and showing them invites returning thin air.
+        items: Array.isArray(inv.items)
+          ? inv.items.filter(it => !it.voided).map(it => ({
+            itemCode: it.itemCode,
+            itemName: it.itemName,
+            unit: it.unit,
+            soldQty: toNumber(it.quantity),
+            price: toNumber(it.price),
+            lineTotal: toNumber(it.netAmount),
+          }))
+          : [],
       })) : []);
     } catch (err) {
       console.warn('Failed to load delivery orders', err);

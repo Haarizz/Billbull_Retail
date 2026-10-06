@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers, Gift } from 'lucide-react';
+import { LayoutGrid, Shield, Printer, FileText, Hash, ChevronRight, Settings, CheckCircle, LayoutTemplate, Columns, Eye, Zap, XCircle, ShoppingCart, Wallet, Plus, Search, CreditCard, Package, Trash2, X, Users, RotateCcw, Wrench, RefreshCw, Info, Unlock, Lock, Star, Monitor, Clock, AlertTriangle, ChevronDown, ChevronUp, Cpu, Layers, Gift, Truck } from 'lucide-react';
 import { UAParser } from 'ua-parser-js';
 import { usePermissions } from '../../../context/PermissionContext';
 import { formatDistanceToNow, parseISO } from 'date-fns';
@@ -889,6 +889,7 @@ const POSConsole = React.memo((props) => {
               requireSupervisorForDayClose: !!posSettings?.requireSupervisorForDayClose,
               supervisorApprovalMode: posSettings?.supervisorApprovalMode === 'PASSWORD' ? 'PASSWORD' : 'PIN',
               requirePriceOverrideApproval: !!posSettings?.requirePriceOverrideApproval,
+              deliveryReturnChargePolicy: posSettings?.deliveryReturnChargePolicy || 'WAIVE',
               posFunctionAccessMode: posSettings?.posFunctionAccessMode || 'ALL_USERS',
               // Write-only field — the backend never returns the raw PIN (see supervisorPinSet below).
               supervisorPin: '',
@@ -1107,6 +1108,32 @@ const POSConsole = React.memo((props) => {
                   </div>
                   <Switch checked={d.requirePriceOverrideApproval} onCheckedChange={v=>patch({ requirePriceOverrideApproval: v })} />
                 </div>
+              </div>
+
+              {/* Delivery return — what happens to the delivery charge when goods come back.
+                  Lives here rather than in the return dialog because it is a commercial
+                  decision the branch makes once, not a choice the cashier re-argues at the
+                  door of every refused delivery. */}
+              <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm">
+                <h3 className="text-sm font-bold text-[#1E293B] mb-1 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-md bg-[#F5C742]/20 flex items-center justify-center"><Truck className="h-3.5 w-3.5 text-[#b8920e]" /></div>
+                  Delivery Return
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">When a customer refuses a delivery and the goods come back, the items are always credited. Decide what happens to the delivery charge.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    ['WAIVE','Waive the charge','Cancel the delivery charge with the goods. The order owes nothing and leaves the delivery list.'],
+                    ['RETAIN','Keep it payable','The trip was made, so the charge stands. The order stays in the list as a small balance to collect.'],
+                    ['ASK','Ask the cashier','Show a waive toggle on the return dialog, defaulting to waived.'],
+                  ].map(([val,label,desc])=>(
+                    <button key={val} type="button" onClick={()=>patch({ deliveryReturnChargePolicy: val })}
+                      className={`p-4 rounded-xl border-2 text-left transition-all ${d.deliveryReturnChargePolicy===val?'border-[#F5C742] bg-[#F5C742]/5':'border-gray-200 hover:border-[#F5C742]/40'}`}>
+                      <p className={`text-sm font-bold ${d.deliveryReturnChargePolicy===val?'text-[#1E293B]':'text-gray-700'}`}>{label}</p>
+                      <p className="text-[10px] text-gray-400 mt-1">{desc}</p>
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-400 mt-3">A partial return never waives the charge: the customer kept something, so the trip was made for goods they still have.</p>
               </div>
 
               {/* Action Button Access — who may use the right-hand Actions panel (Classic and

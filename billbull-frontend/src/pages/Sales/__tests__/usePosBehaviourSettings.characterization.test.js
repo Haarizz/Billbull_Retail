@@ -69,6 +69,9 @@ describe('beginEditSettings — draft seeding', () => {
       // Action Button Access — seeded from the stored value, so an edit of any other setting
       // cannot quietly relax a branch that has restricted the POS action buttons.
       posFunctionAccessMode: 'ALL_USERS',
+      // Delivery Return charge policy — likewise seeded from the stored value, because the
+      // draft is what the Behavior save posts back.
+      deliveryReturnChargePolicy: 'WAIVE',
       supervisorPin: '',
       voidMode: 'VOID',
       productEntryMode: 'DIRECT_ADD',

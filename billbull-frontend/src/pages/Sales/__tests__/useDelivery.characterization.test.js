@@ -131,7 +131,26 @@ describe('loadDeliveryOrders', () => {
       invoiceAmt: 200,        // invoiceTotal 220 - deliveryCharge 20
       deliveryCharge: 20,
       paidAmt: 50,
+      items: [],              // absent on this fixture; the projection defaults it
     });
+  });
+
+  it('carries the sold lines through for the return panel, dropping voided ones', async () => {
+    // The return panel lets the cashier send back part of an order, so it needs the lines. A
+    // voided line was struck off before the driver left — there is nothing of it in the van —
+    // so it is filtered here rather than in the panel, where it would invite returning thin air.
+    getDeliveryOrders.mockResolvedValue([order({
+      items: [
+        { itemCode: 'W', itemName: 'Widget', unit: 'PCS', quantity: 2, price: 100, netAmount: 200 },
+        { itemCode: 'V', itemName: 'Struck off', unit: 'PCS', quantity: 1, price: 20, netAmount: 20, voided: true },
+      ],
+    })]);
+    const { view } = setup();
+    await act(async () => { await view.result.current.loadDeliveryOrders(); });
+
+    expect(view.result.current.deliveryOrders[0].items).toEqual([
+      { itemCode: 'W', itemName: 'Widget', unit: 'PCS', soldQty: 2, price: 100, lineTotal: 200 },
+    ]);
   });
 
   it('CHARACTERIZED QUIRK: the mobile column is hard-coded empty', async () => {

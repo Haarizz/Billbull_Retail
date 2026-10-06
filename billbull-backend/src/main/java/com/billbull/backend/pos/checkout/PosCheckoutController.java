@@ -98,6 +98,9 @@ public class PosCheckoutController {
     /** Owns the entire delivery-settlement critical section as one atomic transaction —
      *  see {@link PosDeliverySettlementService} for why this couldn't stay inline here. */
     private final PosDeliverySettlementService deliverySettlementService;
+    /** The other way a delivery ends: the customer refused it and the goods came back.
+     *  See {@link PosDeliveryReturnService}. */
+    private final PosDeliveryReturnService deliveryReturnService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -123,11 +126,13 @@ public class PosCheckoutController {
                                   com.billbull.backend.security.ModulePermissionService modulePermissionService,
                                   com.billbull.backend.sales.voucher.CreditVoucherService creditVoucherService,
                                   PosDeliverySettlementService deliverySettlementService,
+                                  PosDeliveryReturnService deliveryReturnService,
                                   com.billbull.backend.sales.invoice.InvoiceCustomerContactService invoiceCustomerContactService,
                                   com.billbull.backend.sales.payment.InvoicePaymentSummaryService paymentSummaryService) {
         this.paymentSummaryService = paymentSummaryService;
         this.invoiceCustomerContactService = invoiceCustomerContactService;
         this.deliverySettlementService = deliverySettlementService;
+        this.deliveryReturnService = deliveryReturnService;
         this.creditVoucherService = creditVoucherService;
         this.modulePermissionService = modulePermissionService;
         this.closureWorkflowGate = closureWorkflowGate;
@@ -721,6 +726,22 @@ public class PosCheckoutController {
         LocalDate fallbackBusinessDate = posBusinessDate(req.getSessionId());
         SalesInvoice result = deliverySettlementService.settle(id, req, fallbackBusinessDate);
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Return the goods on a delivery order that the customer refused, instead of settling it.
+     *
+     * <p>The counterpart of {@link #settleDelivery}: those are the only two ways a retail
+     * delivery ends. Thin delegation for the same reason — the guard, the credit note, the
+     * delivery-charge policy and the close-out all live in
+     * {@link PosDeliveryReturnService#returnDelivery}, which reaches the ordinary returns engine
+     * rather than reimplementing any part of it.
+     */
+    @PostMapping("/deliveries/{id}/return")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<PosDeliveryReturnResponse> returnDelivery(@PathVariable Long id,
+            @RequestBody PosDeliveryReturnRequest req) {
+        return ResponseEntity.ok(deliveryReturnService.returnDelivery(id, req));
     }
 
     public static class DeliverySettleRequest {

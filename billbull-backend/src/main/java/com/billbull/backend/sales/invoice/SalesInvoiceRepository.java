@@ -43,6 +43,16 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
         Optional<SalesInvoice> findByPosCheckoutKey(String posCheckoutKey);
 
         /**
+         * Loads an invoice together with its line items in one query. For callers that read
+         * {@code invoice.getItems()} outside a transaction — {@code open-in-view} is off, so a
+         * plain {@code findById} hands back a detached entity whose lazy {@code items} collection
+         * throws {@code LazyInitializationException} on first touch (see
+         * {@code PosDeliveryReturnService.returnDelivery}, which is deliberately non-transactional).
+         */
+        @Query("SELECT s FROM SalesInvoice s LEFT JOIN FETCH s.items WHERE s.id = :id")
+        Optional<SalesInvoice> findByIdWithItems(@Param("id") Long id);
+
+        /**
          * Most recent POS sale on a given terminal — used by the Terminal Auto-Archive lifecycle
          * to compute "last activity" / archive-context snapshot. One-off lookup at archive time,
          * not on the sweep hot path (see PosTerminalActivityService for the cached last_activity_at).
@@ -703,6 +713,12 @@ public interface SalesInvoiceRepository extends JpaRepository<SalesInvoice, Long
                "WHERE s.salesChannel IN ('POS', 'Retail_POS', 'Retail_Delivery') " +
                "AND s.posDriverName IS NOT NULL AND s.posDriverName <> '' " +
                "AND s.status IN ('CONFIRMED', 'PARTIALLY_PAID') " +
+               // Orders whose goods came back and which owe nothing afterwards. Excluded here
+               // rather than by status, because the status still describes the sale correctly —
+               // what ended is the delivery, not the invoice. A return that leaves a balance
+               // (retained delivery charge, or a partial return) leaves this null and the order
+               // stays listed, which is exactly what makes that balance collectable.
+               "AND s.posDeliveryReturnedAt IS NULL " +
                "AND (:branchId IS NULL OR s.branchId = :branchId) " +
                "ORDER BY s.createdAt DESC")
         List<SalesInvoice> findPendingDeliveryOrders(@Param("branchId") Long branchId);

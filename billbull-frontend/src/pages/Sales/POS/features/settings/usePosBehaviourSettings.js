@@ -33,6 +33,9 @@ export function usePosBehaviourSettings({ posSettings, setPosSettings, businessD
       // SUPERVISOR_ONLY. Seeded from the stored value rather than defaulted blind, so saving an
       // unrelated setting can never relax a branch that has restricted them.
       posFunctionAccessMode: posSettings?.posFunctionAccessMode || 'ALL_USERS',
+      // Seeded from the stored value for the same reason as posFunctionAccessMode: the draft is
+      // what gets posted, so an absent field here would send the console's blind default back.
+      deliveryReturnChargePolicy: posSettings?.deliveryReturnChargePolicy || 'WAIVE',
       // Write-only — the backend never returns the raw PIN (see supervisorPinSet on posSettings).
       supervisorPin: '',
       voidMode: posSettings?.voidMode === 'DELETE' ? 'DELETE' : 'VOID',

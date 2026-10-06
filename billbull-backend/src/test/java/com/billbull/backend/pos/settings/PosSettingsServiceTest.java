@@ -245,6 +245,76 @@ class PosSettingsServiceTest {
         assertEquals("SUPERVISOR_PASSWORD", service.save(incoming).getPosFunctionAccessMode());
     }
 
+    // ── Delivery Return charge policy (delivery_return_charge_policy) ───────
+    //
+    // A commercial choice per branch. The console posts it with every Behavior save, so it
+    // has to survive the copy onto the existing row — it silently did not, which read as
+    // "the setting does not save".
+
+    @Test
+    void deliveryReturnChargePolicyIsPersistedOnAnExistingRow() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDeliveryReturnChargePolicy("RETAIN");
+
+        assertEquals("RETAIN", service.save(incoming).getDeliveryReturnChargePolicy());
+    }
+
+    @Test
+    void deliveryReturnChargePolicyIsNormalisedOnSave() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDeliveryReturnChargePolicy("  ask  ");
+
+        assertEquals("ASK", service.save(incoming).getDeliveryReturnChargePolicy());
+    }
+
+    /** Negative control: an absent field is a partial POST, not a reset to WAIVE. */
+    @Test
+    void anAbsentDeliveryReturnChargePolicyLeavesTheStoredOneUntouched() {
+        PosSettings existing = new PosSettings();
+        existing.setBranchId(1L);
+        existing.setDeliveryReturnChargePolicy("RETAIN");
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.of(existing));
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDeliveryReturnChargePolicy(null);
+
+        assertEquals("RETAIN", service.save(incoming).getDeliveryReturnChargePolicy());
+    }
+
+    @Test
+    void aBranchWithNoSettingsRowGetsANormalisedDeliveryReturnChargePolicy() {
+        when(repo.findByBranchIdForUpdate(1L)).thenReturn(Optional.empty());
+        when(repo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        authenticateAs("ROLE_ADMIN");
+
+        PosSettings incoming = new PosSettings();
+        incoming.setBranchId(1L);
+        incoming.setDeliveryReturnChargePolicy("retain");
+
+        assertEquals("RETAIN", service.save(incoming).getDeliveryReturnChargePolicy());
+    }
+
     @Test
     void nonSupervisorCanStillSaveUnrelatedSettings() {
         PosSettings existing = new PosSettings();

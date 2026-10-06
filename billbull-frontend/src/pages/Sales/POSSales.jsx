@@ -30,6 +30,7 @@ import {
   posCreditBalance, getPosInvoices, lookupPosInvoice,
   getPosCustomerHistory,
   settleDeliveryOrder,
+  returnDeliveryOrder,
   reprintPosReceipt,
   getPosDayStatus, getPosSessionHistory,
   transferPosSession,
@@ -190,6 +191,7 @@ import { buildTemplate2Html } from './POS/receiptTemplates/buildTemplate2Html';
 // ─── POS feature modules (Phase 3 in-place decomposition) ─────────────────────
 import { DELIVERY_SETTLE_METHODS } from './POS/features/delivery/deliveryConstants';
 import NewDeliveryOrder from './POS/features/delivery/NewDeliveryOrder';
+import DeliveryReturnPanel from './POS/features/delivery/DeliveryReturnPanel';
 import LayawaysList from './POS/features/layaway/LayawaysList';
 import CreditBalance from './POS/features/customers/CreditBalance';
 import PriceCheck from './POS/features/products/PriceCheck';
@@ -1034,6 +1036,11 @@ export default function POSSales() {
   // as an input — so the state can't originate inside the hook without a circular
   // "hook needs a value that needs the hook" dependency. Passed into useDelivery further down.
   const [deliverySettleSelected, setDeliverySettleSelected] = useState(null);
+  // Which of a delivery's two endings the expanded row is showing: collect the money, or take
+  // the goods back. 'SETTLE' | 'RETURN'. Reset whenever a different order is opened, so the
+  // cashier never lands on a return form they did not ask for on the row they just tapped.
+  const [deliveryRowAction, setDeliveryRowAction] = useState('SETTLE');
+  const [deliveryReturnLoading, setDeliveryReturnLoading] = useState(false);
 
   // Balance still owed on the delivery order the cashier has open, and the Payment Manager
   // that settles it. Same manager, selectors and validation as checkout -- one settlement
@@ -1066,13 +1073,6 @@ export default function POSSales() {
     }),
     [saveLayawayPayment.paymentLines, saveLayawayTotal],
   );
-
-  // Confirms the server accepts progressive payment allocations before any sale is settled.
-  // Probed when the checkout opens; settlement stays blocked until it answers yes, because a
-  // server that ignores the field would post the invoice with no payment recorded. The Save
-  // Layaway dialog takes a deposit through the same allocation panel, so it arms the probe
-  // too — otherwise its banner would sit on "checking" forever, never having asked.
-  const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog || showSaveLayaway);
 
   // The payment fields of the checkout payload, plus the post-checkout figures (change,
   // credit carried forward, whether the drawer opens) — all projected from the allocations.
@@ -2668,6 +2668,14 @@ export default function POSSales() {
     setPosCustomers, clearDeliverySettleLines,
     deliverySettleSelected, setDeliverySettleSelected,
   });
+
+  // Confirms the server accepts progressive payment allocations before any sale is settled.
+  // Probed when the checkout opens; settlement stays blocked until it answers yes, because a
+  // server that ignores the field would post the invoice with no payment recorded. Every
+  // surface that renders the allocation panel must arm the probe — checkout, the Save
+  // Layaway deposit and delivery settlement — or its banner sits on "checking" forever,
+  // never having asked. Declared here, below useDelivery, so the settlement flag is in scope.
+  const checkoutCompatibility = useCheckoutCapabilities(showPaymentDialog || showSaveLayaway || showDeliverySettleModal);
 
   // Lazily load configured bank accounts the first time the cashier opens any flow that
   // allocates payments — checkout, layaway deposit, or delivery settlement all render
@@ -10267,6 +10275,81 @@ export default function POSSales() {
           && deliverySettlePayment.paymentLines.length > 0;
         const displayPaymentMode = deliverySettleFields.paymentSummary;
 
+        /**
+         * Return a refused delivery: the goods go back, the customer is credited, no money moves.
+         *
+         * The whole credit note is raised server-side in one call. Nothing here computes an
+         * amount or picks a refund method — on an unpaid order there is only one legal
+         * settlement and the backend applies it, so a till that guessed could disagree with the
+         * invoice it is crediting.
+         *
+         * Supervisor sign-off is handled exactly as settlement handles it: the server decides
+         * whether this return needs it, using the same policy and threshold as a return raised
+         * anywhere else, and the retry re-runs this call with the credentials attached.
+         */
+        const handleDeliveryReturn = async (orderRow, form, supervisorOverride = null) => {
+          if (!orderRow || deliveryReturnLoading) return;
+          setDeliveryReturnLoading(true);
+          try {
+            const result = await returnDeliveryOrder(orderRow.id, {
+              ...form,
+              sessionId: currentSession?.id || null,
+              terminalId: currentTerminal?.terminalId || null,
+              counterName: currentTerminal?.counterName || null,
+              supervisorUsername: supervisorOverride?.email || null,
+              supervisorPassword: supervisorOverride?.password || null,
+            });
+
+            // Say what actually happened rather than a flat "returned". Whether the order left
+            // the list is the thing the cashier needs next: a retained delivery charge leaves it
+            // sitting there with a balance, and silently returning them to a list where the row
+            // is still present reads as a failure. The tone is declared rather than guessed from
+            // the wording -- a part-returned order is not a plain success, it is a row the
+            // cashier still has to collect against.
+            const returnOutstanding = Number(result?.outstanding || 0);
+            const returnAed = (n) => `AED ${Number(n || 0).toFixed(2)}`;
+            alert({
+              tone: result?.orderClosed ? 'success' : 'warning',
+              title: result?.orderClosed ? 'Delivery returned and closed' : 'Goods returned — balance still to collect',
+              message: result?.orderClosed
+                ? 'The goods are credited back and the order has left the delivery list. Nothing left to collect.'
+                : `The goods are credited back, but ${returnAed(returnOutstanding)} is still owed, so this order stays in the delivery list.`,
+              details: [
+                { label: 'Credit note', value: result?.returnNumber, emphasis: true },
+                { label: result?.fullReturn ? 'Returned in full' : 'Returned value', value: returnAed(result?.returnValue) },
+                { label: 'Delivery charge', value: result?.deliveryChargeWaived ? 'Waived' : null },
+                { label: 'Still to collect', value: returnAed(returnOutstanding), emphasis: returnOutstanding > 0 },
+              ],
+            });
+
+            setDeliverySettleSelected(null);
+            setDeliveryRowAction('SETTLE');
+            deliverySettlePayment.clearLines();
+            await loadDeliveryOrders();
+            syncPosData();
+          } catch (err) {
+            console.error('Delivery return failed', err);
+            const errMsg = err?.response?.data?.message || err.message;
+            if (err?.response?.status === 403 && errMsg === 'SUPERVISOR_AUTHORIZATION_REQUIRED') {
+              requestApproval({
+                supervisorAction: {
+                  type: 'DELIVERY_RETURN',
+                  retry: (override) => handleDeliveryReturn(orderRow, form, override),
+                },
+                resetEmail: true,
+              });
+            } else {
+              alert({
+                tone: 'error',
+                title: 'Return not completed',
+                message: errMsg || 'Failed to return this delivery. Please try again.',
+              });
+            }
+          } finally {
+            setDeliveryReturnLoading(false);
+          }
+        };
+
         const handleFinalize = async (supervisorOverrideOrEvent = null) => {
           if (!sel || selBalance <= 0 || deliverySettleLoading || !canFinalizeSettlement) return;
           setDeliverySettleLoading(true);
@@ -10424,7 +10507,7 @@ export default function POSSales() {
                       const isSelected = sel?.id === o.id;
                       return (
                         <div key={o.id}>
-                          <button type="button" onClick={() => { setDeliverySettleSelected(isSelected ? null : o); deliverySettlePayment.clearLines(); }}
+                          <button type="button" onClick={() => { setDeliverySettleSelected(isSelected ? null : o); setDeliveryRowAction('SETTLE'); deliverySettlePayment.clearLines(); }}
                             className={`w-full grid grid-cols-[1fr_80px_100px_80px_100px] px-4 py-3 border-b border-gray-100 text-left transition-colors ${isSelected ? 'bg-[#FFF8E7] border-[#FDE6A9]' : 'hover:bg-gray-50'}`}>
                             <div>
                               <p className="text-sm font-semibold text-[#1E293B]">{o.customer}</p>
@@ -10462,28 +10545,67 @@ export default function POSSales() {
                                   </div>
                                 ))}
                               </div>
-                              {/* The same allocation panel the till uses. A delivery balance
-                                  cannot be settled by putting it back on account -- that is
-                                  simply leaving it unpaid -- so CREDIT is not offered here. */}
-                              <div className="mb-3">
-                                <PaymentAllocationPanel
-                                  payment={deliverySettlePayment}
-                                  compatibility={checkoutCompatibility}
-                                  bankAccounts={checkoutOnlineBankAccounts}
-                                  bankAccountsLoading={checkoutOnlineBankAccountsLoading}
-                                  selectedCustomerName={o.customer}
-                                  methods={DELIVERY_SETTLE_METHODS}
-                                  compact
-                                />
+                              {/* A delivery has exactly two endings, so the row offers exactly
+                                  two. Returning a refused delivery belongs here, on the order in
+                                  front of the cashier, rather than in the back-office Sales
+                                  Return module -- until this screen settles it, the sale is not
+                                  a completed transaction at all. Return is offered only while
+                                  nothing has been paid: once the customer has handed money over
+                                  there is a refund to make, which needs the full return screen's
+                                  refund-method and authorization path. */}
+                              <div className="mb-3 grid grid-cols-2 gap-2">
+                                {[
+                                  ['SETTLE', 'Settle', CheckCircle, '#327F74'],
+                                  ['RETURN', 'Return', RotateCcw, '#E11D48'],
+                                ].map(([action, label, Icon, accent]) => {
+                                  const active = deliveryRowAction === action;
+                                  const blocked = action === 'RETURN' && o.paidAmt > 0;
+                                  return (
+                                    <button key={action} type="button" disabled={blocked}
+                                      title={blocked ? 'This order has already been part-paid. Return it from Customer & Sales → Sales Return, where the paid amount can be refunded.' : undefined}
+                                      onClick={() => setDeliveryRowAction(action)}
+                                      className={`flex items-center justify-center gap-2 rounded-xl border-2 py-2.5 text-sm font-bold transition-all disabled:cursor-not-allowed disabled:opacity-30 ${active ? 'text-white' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                                      style={active ? { backgroundColor: accent, borderColor: accent } : undefined}>
+                                      <Icon className="h-4 w-4" />{label}
+                                    </button>
+                                  );
+                                })}
                               </div>
 
-                              <button type="button"
-                                disabled={selBalance === 0 || deliverySettleLoading || !canFinalizeSettlement}
-                                onClick={handleFinalize}
-                                className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors">
-                                <CheckCircle className="h-4 w-4" />
-                                {deliverySettleLoading ? 'Finalizing…' : `Finalize Order — AED ${selBalance.toFixed(2)}`}
-                              </button>
+                              {deliveryRowAction === 'RETURN' ? (
+                                <DeliveryReturnPanel
+                                  order={o}
+                                  chargePolicy={posSettings?.deliveryReturnChargePolicy || 'WAIVE'}
+                                  submitting={deliveryReturnLoading}
+                                  onCancel={() => setDeliveryRowAction('SETTLE')}
+                                  onConfirm={payload => handleDeliveryReturn(o, payload)}
+                                />
+                              ) : (
+                                <>
+                                  {/* The same allocation panel the till uses. A delivery balance
+                                      cannot be settled by putting it back on account -- that is
+                                      simply leaving it unpaid -- so CREDIT is not offered here. */}
+                                  <div className="mb-3">
+                                    <PaymentAllocationPanel
+                                      payment={deliverySettlePayment}
+                                      compatibility={checkoutCompatibility}
+                                      bankAccounts={checkoutOnlineBankAccounts}
+                                      bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                                      selectedCustomerName={o.customer}
+                                      methods={DELIVERY_SETTLE_METHODS}
+                                      compact
+                                    />
+                                  </div>
+
+                                  <button type="button"
+                                    disabled={selBalance === 0 || deliverySettleLoading || !canFinalizeSettlement}
+                                    onClick={handleFinalize}
+                                    className="w-full py-3 rounded-xl bg-[#327F74] hover:bg-[#2a6b61] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors">
+                                    <CheckCircle className="h-4 w-4" />
+                                    {deliverySettleLoading ? 'Finalizing…' : `Finalize Order — AED ${selBalance.toFixed(2)}`}
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
