@@ -186,6 +186,7 @@ import { BusinessDayStatusProvider } from '../../components/pos/BusinessDayStatu
 import { PosOverlayProvider } from './POS/input/PosOverlayContext';
 import { usePosInputController } from './POS/input/usePosInputController';
 import { POS_OVERLAY_IDS } from './POS/input/posScope';
+import { SCANNER_INPUT_MODES, scannerInputProps } from './POS/input/posScannerField';
 import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
@@ -10567,7 +10568,9 @@ export default function POSSales() {
               <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-3">
                 <div className="flex-1 min-w-[160px] relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  {/* Scanner opt-in (posScannerField.js): the receipt's Code 128 barcode is the invoice number. */}
                   <input type="text" value={deliverySettleSearch} onChange={e => setDeliverySettleSearch(e.target.value)}
+                    {...scannerInputProps(SCANNER_INPUT_MODES.SCANNER_ALLOWED)}
                     placeholder="Search by invoice, customer, or mobile..."
                     className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
                 </div>

@@ -11,6 +11,7 @@ import {
 import { isPosFocusV2Enabled, isPosInputV2Enabled } from './posInputFlag';
 import { createPosInputRegistry } from './posInputRegistry';
 import { acceptsPaymentHotkeys, acceptsScanner, POS_SCOPES, resolvePosScope } from './posScope';
+import { acceptsScannerInput } from './posScannerField';
 import { usePosFocusController } from './usePosFocusController';
 
 /**
@@ -21,6 +22,17 @@ import { usePosFocusController } from './usePosFocusController';
 export const HOTKEY_SETTLE_MS = SCANNER_BURST_GAP_MS + 15;
 /** Idle time after which a partial wedge buffer is dropped (the P0 wedge value). */
 export const WEDGE_IDLE_RESET_MS = 250;
+
+/**
+ * Puts a controlled field back to an earlier value. The native setter is required for React to
+ * see the change; the event is the one React's onChange listens to for that element.
+ */
+const restoreFieldValue = (el, value) => {
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+  if (!setter || el.value === value) return;
+  setter.call(el, value);
+  el.dispatchEvent(new Event(el.tagName === 'SELECT' ? 'change' : 'input', { bubbles: true }));
+};
 
 const swallow = (event) => {
   event.preventDefault();
@@ -40,6 +52,8 @@ const swallow = (event) => {
  *     burst is swallowed instead of reaching them;
  *  5b. in PAYMENT scope (a payment modal) the amount keys wait the same settle window, so a
  *     person's key reaches the modal and a scanner burst, its Enter included, is dropped;
+ *  5c. in either, a text field gets a scanner burst only if it opted in (posScannerField.js);
+ *     a HUMAN_ONLY field keeps a person's typing and loses the burst, its Enter included;
  *  6. in SALE scope the template's scan surface gets the key (wedge buffer or redirect);
  *  7. anywhere else the controller does nothing and the focused element handles the key.
  */
@@ -55,6 +69,10 @@ export function createPosKeyHandler({
   let wedgeTimer = null;
   let pending = null; // { timer, at, fire } — a payment hotkey or amount key inside its settle window
   let droppedAt = 0; // when a scanner character was last dropped in PAYMENT scope
+  // A HUMAN_ONLY field's value before the printable key just delivered to it. That key may turn
+  // out to be the first character of a burst; if the next one follows at scanner speed, the
+  // field is put back to this value. Lives for exactly one keystroke.
+  let fieldSnapshot = null; // { el, value }
 
   const resetWedge = () => {
     wedgeBuffer = '';
@@ -92,6 +110,30 @@ export function createPosKeyHandler({
   });
   const paymentTarget = (ownerId) => registry.newest('payment', (p) => p.owner === ownerId);
 
+  /** An Enter that ends a burst: scanner-timed itself, or right behind dropped characters. */
+  const isBurstEnter = (key, scanEnter) => key === 'Enter'
+    && (scanEnter || (droppedAt > 0 && now() - droppedAt <= SCANNER_BURST_GAP_MS * 3));
+
+  /**
+   * Field-level scanner ownership (posScannerField.js) for a text field in a payment scope.
+   * A SCANNER_ALLOWED field types everything itself, scan and Enter included. A HUMAN_ONLY
+   * field gets a person's keys untouched; a scanner burst is dropped, its Enter too, and the
+   * one character that reached the field before the burst was recognisable is taken back out.
+   */
+  const guardField = (event, { printable, follows, scanEnter }, snapshot) => {
+    const el = event.target?.nodeType === 3 ? event.target.parentElement : event.target;
+    if (acceptsScannerInput(el)) return;
+    const { key } = event;
+    if ((printable && follows) || isBurstEnter(key, scanEnter)) {
+      if (snapshot && snapshot.el === el) restoreFieldValue(el, snapshot.value);
+      droppedAt = key === 'Enter' ? 0 : now();
+      swallow(event);
+      return;
+    }
+    droppedAt = 0;
+    if (printable && typeof el?.value === 'string') fieldSnapshot = { el, value: el.value };
+  };
+
   const handleEscape = (state, event) => {
     const top = state.overlay;
     if (!top || typeof top.onEscape !== 'function') return;
@@ -99,10 +141,12 @@ export function createPosKeyHandler({
     top.onEscape(event);
   };
 
-  const handlePaymentKeys = (state, event, { printable, follows, scanEnter }) => {
-    // A field inside the payment screen (customer search, remarks) owns its own typing.
+  const handlePaymentKeys = (state, event, { printable, follows, scanEnter }, snapshot) => {
+    // A field inside the payment screen (remarks, layaway due date, delivery search) owns a
+    // person's typing; a scanner burst reaches it only if the field opted in.
     if (isEditableTarget(event.target)) {
       cancelPending();
+      if (isFieldTarget(event.target)) guardField(event, { printable, follows, scanEnter }, snapshot);
       return;
     }
     if (pending && (follows || (event.key === 'Enter' && scanEnter))) {
@@ -146,18 +190,17 @@ export function createPosKeyHandler({
    * scanner's next character arrives first, and the whole burst, its Enter included, is dropped.
    * Enter, Backspace, Tab and Space from a person reach the modal untouched.
    */
-  const handlePaymentModalKeys = (state, event, { printable, follows, scanEnter }) => {
+  const handlePaymentModalKeys = (state, event, { printable, follows, scanEnter }, snapshot) => {
     // A field of the modal (voucher code, card approval/reference, credit amount received) owns
-    // its own typing and Enter — the voucher code field is itself a scan target.
+    // a person's typing and Enter. Only the voucher code opted in to scanner input.
     if (isFieldTarget(event.target)) {
       cancelPending();
+      guardField(event, { printable, follows, scanEnter }, snapshot);
       return;
     }
     const { key } = event;
     // An Enter right behind dropped characters ends that burst, however short the burst was.
-    const burstEnter = key === 'Enter'
-      && (scanEnter || (droppedAt > 0 && now() - droppedAt <= SCANNER_BURST_GAP_MS * 3));
-    if ((printable && follows) || burstEnter) {
+    if ((printable && follows) || isBurstEnter(key, scanEnter)) {
       // The held first character, this one and the burst's Enter are all scanner output.
       cancelPending();
       droppedAt = key === 'Enter' ? 0 : now();
@@ -237,6 +280,8 @@ export function createPosKeyHandler({
     else if (key === 'Enter') burst.reset();
 
     const state = resolve();
+    const snapshot = fieldSnapshot;
+    fieldSnapshot = null;
 
     if (key === 'Escape') {
       cancelPending();
@@ -247,11 +292,11 @@ export function createPosKeyHandler({
     if (!acceptsScanner(state.scope) || state.scanBlocked) resetWedge();
 
     if (state.scope === POS_SCOPES.PAYMENT) {
-      handlePaymentModalKeys(state, event, { printable, follows, scanEnter });
+      handlePaymentModalKeys(state, event, { printable, follows, scanEnter }, snapshot);
       return;
     }
     if (acceptsPaymentHotkeys(state.scope)) {
-      handlePaymentKeys(state, event, { printable, follows, scanEnter });
+      handlePaymentKeys(state, event, { printable, follows, scanEnter }, snapshot);
       return;
     }
     cancelPending();
@@ -267,6 +312,7 @@ export function createPosKeyHandler({
     resetWedge();
     cancelPending();
     droppedAt = 0;
+    fieldSnapshot = null;
   };
 
   return { onKeyDown, dispose };

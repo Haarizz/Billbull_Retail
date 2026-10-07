@@ -5,6 +5,7 @@ import { PAYMENT_TYPES, toAmount } from '../paymentModel';
 import { allocationTarget } from '../paymentSelectors';
 import { confirmActionLabel, remainingAfterAllocation } from '../paymentFlow';
 import PaymentModalShell, { applyAmountKey } from './PaymentModalShell';
+import { SCANNER_INPUT_MODES, scannerInputProps } from '../../input/posScannerField';
 import { lookupCreditVoucher } from '../../../../../api/creditVoucherApi';
 
 const ACCENT = '#8B5CF6';
@@ -157,6 +158,8 @@ export default function VoucherPaymentModal({ remaining, editingLine, offeredTyp
               }}
               disabled={looking}
               aria-label="Voucher code"
+              // The one payment-modal field a scanner may type into (posScannerField.js).
+              {...scannerInputProps(SCANNER_INPUT_MODES.SCANNER_ALLOWED)}
               className="w-full rounded-xl border-2 border-gray-200 bg-gray-50 py-2.5 pl-9 pr-3 font-mono text-sm uppercase outline-none focus:border-[#8B5CF6] disabled:opacity-60"
             />
           </div>

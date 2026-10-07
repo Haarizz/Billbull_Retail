@@ -269,6 +269,8 @@ describe('P2.5 payment: human typing in the Cash modal is unchanged', () => {
   });
 
   it('a field inside a payment modal owns its typing: the card reference keeps every key', () => {
+    // A person's typing. A scanner burst on this field is P2.6 (posScannerFieldP26): the card
+    // reference is HUMAN_ONLY, so the burst is dropped there.
     const payment = makePayment();
     render(<Till payment={payment} scan={vi.fn()} />);
     press(document.body, 'd', TYPE);
@@ -276,7 +278,7 @@ describe('P2.5 payment: human typing in the Cash modal is unchanged', () => {
     const ref = screen.getByPlaceholderText('e.g. TXN-001');
     ref.focus();
     for (const ch of 'TXN0012345') {
-      advance(SCAN);
+      advance(TYPE);
       expect(fireEvent.keyDown(ref, { key: ch })).toBe(true); // not prevented: the field types it
     }
   });
