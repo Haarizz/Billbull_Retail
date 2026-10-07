@@ -695,6 +695,77 @@ describe('autoFocusOnPOS=false opts every template out of proactive search focus
   });
 });
 
+// ── P2.5 popups that own focus inside the sale screen ─────────────────────────────────────
+// The audit: the only popups that coexist with the POS search layer and take focus/keys are the
+// customer dropdowns (all three templates) and Cart Focus's barcode suggestions. Radix
+// Select/Popover/DropdownMenu are not rendered by any sale template (CustomerView's Selects
+// mount only when no template is). The open customer dropdown is the registered CUSTOMER
+// target, so the registry, not the DOM, says it owns the caret.
+describe.each(TEMPLATES)('P2.5 popups — %s customer dropdown', (_, t) => {
+  const open = async (api) => {
+    await flush();
+    await click(customerOpener());
+    expectFocus(customerSearch());
+    expect(derivedTarget(api)).toBe(T.CUSTOMER);
+  };
+  const aliceOption = () => screen.getByRole('button', { name: /Alice Buyer/ });
+
+  it('8/9. opening gives the popup focus; re-renders and a click on its non-focusable body do not hand it to search', async () => {
+    const { api } = setup(t);
+    await open(api);
+    act(() => api.rerender());
+    await flush();
+    expectFocus(customerSearch());
+    await type('Ali');
+    // A mouse-down on the list's empty area blurs the field; the click restores the popup's
+    // own field, not search.
+    await click(aliceOption().parentElement);
+    expectFocus(customerSearch());
+    expect(customerSearch().value).toBe('Ali');
+  });
+
+  it('10/11/13. selecting completes once, the popup closes, then focus goes to search — no second action', async () => {
+    const { api } = setup(t);
+    await open(api);
+    await click(aliceOption());
+    // The action completed: Alice is the customer and the popup is gone.
+    expect(screen.queryByPlaceholderText(/Search (Name|Customer)/)).toBeNull();
+    expect(screen.getAllByRole('button', { name: /Alice Buyer/ }).length).toBeGreaterThan(0);
+    expectFocus(searchBox(t));
+    expect(derivedTarget(api)).toBe(T.SEARCH);
+    // Restoring focus did not re-open the popup or act again, and the next Enter is the
+    // search box's, not the customer option's.
+    await press('Enter');
+    expect(screen.queryByPlaceholderText(/Search (Name|Customer)/)).toBeNull();
+    expect(api.added).not.toHaveBeenCalled();
+    await scan(WIDGET);
+    expect(api.added.mock.calls).toEqual([[WIDGET]]);
+  });
+
+  it('12. scanner and keyboard input go to the popup while it owns focus, never to the cart', async () => {
+    const { api } = setup(t);
+    await open(api);
+    await scan(WIDGET);
+    expect(api.added).not.toHaveBeenCalled();
+    expect(customerSearch().value).toBe(WIDGET);
+    expectFocus(customerSearch());
+  });
+});
+
+describe('P2.5 popups — Cart Focus barcode suggestions', () => {
+  it('a suggestion click adds once, the list closes, and search keeps the caret for the next scan', async () => {
+    const { api } = setup('focus');
+    await flush();
+    await type('Gad');
+    const option = screen.getByRole('button', { name: /Gadget/ });
+    await click(option);
+    expect(api.added.mock.calls).toEqual([[GADGET]]);
+    expectFocus(searchBox('focus'));
+    await scan(WIDGET);
+    expect(api.added.mock.calls).toEqual([[GADGET], [WIDGET]]);
+  });
+});
+
 // ── Rollback and listener ownership ───────────────────────────────────────────────────────
 describe('rollback (posFocusV2 off) and listener ownership', () => {
   it('flag off: no focus controller is attached and Trade POS keeps its legacy retry loop', async () => {

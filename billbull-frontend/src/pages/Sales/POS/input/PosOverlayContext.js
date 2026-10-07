@@ -63,6 +63,8 @@ function useRegistryEntry(kind, id, active, fields) {
  * @param scope         POS_SCOPES value; MODAL by default
  * @param suppressScan  scanner input must not reach the sale while it is open (default true)
  * @param onEscape      set only when this overlay owns Escape; called with the keydown event
+ * @param onKey         PAYMENT only: receives a printable key (its `key` string) the controller
+ *                      held back to tell a person from a scanner, once it is known to be typed
  */
 export function usePosOverlay({
   id = null,
@@ -70,9 +72,10 @@ export function usePosOverlay({
   scope = POS_SCOPES.MODAL,
   suppressScan = true,
   onEscape = null,
+  onKey = null,
 } = {}) {
   const autoId = useId();
-  useRegistryEntry('overlay', id || `overlay${autoId}`, open, { scope, open: true, suppressScan, onEscape });
+  useRegistryEntry('overlay', id || `overlay${autoId}`, open, { scope, open: true, suppressScan, onEscape, onKey });
 }
 
 /**

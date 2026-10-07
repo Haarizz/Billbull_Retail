@@ -16,10 +16,20 @@
  */
 export const POS_KEYBOARD_OWNER_ATTR = 'data-pos-keyboard-owner';
 
-export function isEditableTarget(target) {
-  if (!target || typeof target !== 'object') return false;
+const elementOf = (target) => {
+  if (!target || typeof target !== 'object') return null;
   const el = target.nodeType === 3 ? target.parentElement : target;
-  if (!el || typeof el.tagName !== 'string') return false;
+  return el && typeof el.tagName === 'string' ? el : null;
+};
+
+/**
+ * A real text-entry field: everything isEditableTarget accepts except a keyboard-owner surface.
+ * Inside a payment modal (itself a keyboard owner) this tells "a field of the modal" apart from
+ * "the modal's own amount keys".
+ */
+export function isFieldTarget(target) {
+  const el = elementOf(target);
+  if (!el) return false;
 
   const tag = el.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
@@ -28,9 +38,14 @@ export function isEditableTarget(target) {
   if (typeof el.closest === 'function') {
     if (el.closest('[contenteditable=""], [contenteditable="true"]')) return true;
     if (el.closest('[role="textbox"]')) return true;
-    if (el.closest(`[${POS_KEYBOARD_OWNER_ATTR}="true"]`)) return true;
   }
   return false;
+}
+
+export function isEditableTarget(target) {
+  if (isFieldTarget(target)) return true;
+  const el = elementOf(target);
+  return Boolean(el && typeof el.closest === 'function' && el.closest(`[${POS_KEYBOARD_OWNER_ATTR}="true"]`));
 }
 
 export default isEditableTarget;

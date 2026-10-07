@@ -4,7 +4,7 @@ import { DECLARED_OVERLAY_SCOPES } from './posScope';
  * The POS input registry: what is on screen that owns, or may receive, keyboard input.
  *
  * Four kinds of entry:
- *  - overlay  { scope, open, suppressScan, onEscape? } — a dialog, flow or panel over the sale
+ *  - overlay  { scope, open, suppressScan, onEscape?, onKey? } — a dialog, flow or panel over the sale
  *  - surface  { kind: 'wedge'|'redirect', enabled, inputRef, onScan?, setBarcodeInput?,
  *               itemEntryActive?, itemEntryMode? } — the mounted POS template's scan target
  *  - payment  { owner, enabled, methods, onSelect } — a PaymentAllocationPanel's method hotkeys,

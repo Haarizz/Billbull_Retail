@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from 'react';
 
-import { isEditableTarget } from '../../../../utils/editableTarget';
+import { isEditableTarget, isFieldTarget } from '../../../../utils/editableTarget';
 import {
   createBurstTracker,
   isPosScreenBlocked,
@@ -10,7 +10,7 @@ import {
 } from '../device/scanner/scanGuard';
 import { isPosFocusV2Enabled, isPosInputV2Enabled } from './posInputFlag';
 import { createPosInputRegistry } from './posInputRegistry';
-import { acceptsPaymentHotkeys, acceptsScanner, resolvePosScope } from './posScope';
+import { acceptsPaymentHotkeys, acceptsScanner, POS_SCOPES, resolvePosScope } from './posScope';
 import { usePosFocusController } from './usePosFocusController';
 
 /**
@@ -38,6 +38,8 @@ const swallow = (event) => {
  *  4. Escape goes to the top overlay if, and only if, that overlay owns Escape;
  *  5. in a payment-panel scope the C/D/O/R/B hotkeys go to exactly one panel, and a scanner
  *     burst is swallowed instead of reaching them;
+ *  5b. in PAYMENT scope (a payment modal) the amount keys wait the same settle window, so a
+ *     person's key reaches the modal and a scanner burst, its Enter included, is dropped;
  *  6. in SALE scope the template's scan surface gets the key (wedge buffer or redirect);
  *  7. anywhere else the controller does nothing and the focused element handles the key.
  */
@@ -51,7 +53,8 @@ export function createPosKeyHandler({
   const burst = createBurstTracker(now);
   let wedgeBuffer = '';
   let wedgeTimer = null;
-  let pending = null; // { timer, at, fire } — a payment hotkey inside its settle window
+  let pending = null; // { timer, at, fire } — a payment hotkey or amount key inside its settle window
+  let droppedAt = 0; // when a scanner character was last dropped in PAYMENT scope
 
   const resetWedge = () => {
     wedgeBuffer = '';
@@ -135,6 +138,49 @@ export function createPosKeyHandler({
     pending = { at: now(), fire, timer: setTimer(() => { pending = null; fire(); }, HOTKEY_SETTLE_MS) };
   };
 
+  /**
+   * PAYMENT scope: a payment modal keys the amount itself (digits, '.', C to clear, Enter to
+   * confirm), so a scanner burst landing on it would become the amount and its Enter would
+   * confirm the payment. A printable key on the modal is therefore held for the settle window,
+   * as a payment hotkey is: a person's key is then delivered to the modal (overlay.onKey); a
+   * scanner's next character arrives first, and the whole burst, its Enter included, is dropped.
+   * Enter, Backspace, Tab and Space from a person reach the modal untouched.
+   */
+  const handlePaymentModalKeys = (state, event, { printable, follows, scanEnter }) => {
+    // A field of the modal (voucher code, card approval/reference, credit amount received) owns
+    // its own typing and Enter — the voucher code field is itself a scan target.
+    if (isFieldTarget(event.target)) {
+      cancelPending();
+      return;
+    }
+    const { key } = event;
+    // An Enter right behind dropped characters ends that burst, however short the burst was.
+    const burstEnter = key === 'Enter'
+      && (scanEnter || (droppedAt > 0 && now() - droppedAt <= SCANNER_BURST_GAP_MS * 3));
+    if ((printable && follows) || burstEnter) {
+      // The held first character, this one and the burst's Enter are all scanner output.
+      cancelPending();
+      droppedAt = key === 'Enter' ? 0 : now();
+      swallow(event);
+      return;
+    }
+    droppedAt = 0;
+    // A person's held key lands before the key that just arrived (Enter confirms what it typed).
+    flushPending();
+    if (!printable || key === ' ') return;
+
+    const ownerId = state.overlay?.id;
+    if (typeof state.overlay?.onKey !== 'function') return;
+    swallow(event);
+    const fire = () => {
+      // Deliver only if the same modal is still on top: it may have closed meanwhile.
+      const current = resolve();
+      if (current.scope !== POS_SCOPES.PAYMENT || current.overlay?.id !== ownerId) return;
+      current.overlay.onKey?.(key);
+    };
+    pending = { at: now(), fire, timer: setTimer(() => { pending = null; fire(); }, HOTKEY_SETTLE_MS) };
+  };
+
   const handleWedge = (scan, event, printable) => {
     const input = scan.inputRef?.current || null;
     // The barcode box handles its own Enter, so it is the one scan path while it has focus.
@@ -200,6 +246,10 @@ export function createPosKeyHandler({
 
     if (!acceptsScanner(state.scope) || state.scanBlocked) resetWedge();
 
+    if (state.scope === POS_SCOPES.PAYMENT) {
+      handlePaymentModalKeys(state, event, { printable, follows, scanEnter });
+      return;
+    }
     if (acceptsPaymentHotkeys(state.scope)) {
       handlePaymentKeys(state, event, { printable, follows, scanEnter });
       return;
@@ -216,6 +266,7 @@ export function createPosKeyHandler({
   const dispose = () => {
     resetWedge();
     cancelPending();
+    droppedAt = 0;
   };
 
   return { onKeyDown, dispose };
