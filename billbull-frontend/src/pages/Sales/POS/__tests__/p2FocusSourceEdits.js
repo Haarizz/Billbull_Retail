@@ -3,16 +3,30 @@
  * components. Their characterization pins assert the components are the verbatim POSSales
  * blocks; they keep asserting exactly that against the source with these P2 edits undone.
  *
- * Each entry is [live P2 text, pre-P2 text]. Every live text must occur exactly once, so the
+ * P3 (keyboard shortcuts) then registered each component's shortcut actions next to it — New
+ * Sale for Enter on COMPLETE, Settle/Cancel for Ctrl+Enter/Esc on CHECKOUT — and those are
+ * undone here too.
+ *
+ * Each entry is [live text, pre-P2 text]. Every live text must occur exactly once, so the
  * undo is exact: anything else that changed in the component still fails the pins.
  */
 const EDITS = {
   CheckoutCompleteActions: [
+    [
+      "  // The controller sends a person's Enter here (never a scanner's), wherever the caret is on\n"
+      + '  // this screen except another of its buttons.\n'
+      + '  usePosShortcuts({\n'
+      + '    scope: POS_SCOPES.COMPLETE,\n'
+      + '    owner: POS_OVERLAY_IDS.CHECKOUT_COMPLETE,\n'
+      + '    actions: { newSale: onNewSale },\n'
+      + '  });\n',
+      '',
+    ],
     ["import React, { useRef } from 'react';\n", "import React from 'react';\n"],
     [
-      "import { usePosFocusTarget } from '../../input/PosOverlayContext';\n"
+      "import { usePosFocusTarget, usePosShortcuts } from '../../input/PosOverlayContext';\n"
       + "import { POS_FOCUS_TARGETS } from '../../input/posFocus';\n"
-      + "import { POS_OVERLAY_IDS } from '../../input/posScope';\n",
+      + "import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';\n",
       '',
     ],
     [
@@ -24,11 +38,25 @@ const EDITS = {
     [' ref={newSaleRef}', ''],
   ],
   CheckoutPaymentFooter: [
+    [
+      '  // Ctrl+Enter is this Settle button and Esc is this Cancel button, under the same conditions:\n'
+      + '  // Settle only when it is enabled (onSettle → processPayment keeps its own re-entrancy lock and\n'
+      + '  // checkoutKey), Cancel not while a settlement is in flight.\n'
+      + '  usePosShortcuts({\n'
+      + '    scope: POS_SCOPES.CHECKOUT,\n'
+      + '    owner: POS_OVERLAY_IDS.CHECKOUT,\n'
+      + '    actions: {\n'
+      + '      settle: () => { if (settleReady) onSettle(); },\n'
+      + '      cancel: () => { if (!checkoutLoading) onCancel(); },\n'
+      + '    },\n'
+      + '  });\n',
+      '',
+    ],
     ["import React, { useRef } from 'react';\n", "import React from 'react';\n"],
     [
-      "import { usePosFocusTarget } from '../../input/PosOverlayContext';\n"
+      "import { usePosFocusTarget, usePosShortcuts } from '../../input/PosOverlayContext';\n"
       + "import { POS_FOCUS_TARGETS } from '../../input/posFocus';\n"
-      + "import { POS_OVERLAY_IDS } from '../../input/posScope';\n",
+      + "import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';\n",
       '',
     ],
     [

@@ -6,6 +6,10 @@ import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
 import QuickCustomerModal from '../features/customers/QuickCustomerModal';
 import { useStickyScanFocus } from './useStickyScanFocus';
+import { usePosSaleShortcuts } from '../input/usePosSaleShortcuts';
+
+/** F4 / F8 / F9 → the Item Entry dialog field each one opens on. */
+const ENTRY_FIELD_FOR_MODE = { qty: 'quantity', discount: 'discount', price: 'price' };
 import { ScanLine, CheckCircle2 } from 'lucide-react';
 
 /**
@@ -36,7 +40,9 @@ export const TradePOSTouchScreen = React.memo((props) => {
     openDeliveryModal,
     setShowCashDropDialog,
     handleCheckout,
-    
+    // The cart line the last add landed on — the keyboard line shortcuts' fallback target.
+    lastEnteredLineId = null,
+
     // Phase 2 salesperson verification. This template previously had NO salesperson UI at all,
     // so a compact-template branch posted every sale as Unassigned. It is in scope for the
     // mandatory-verification rule like every other layout; all state is owned by
@@ -159,6 +165,23 @@ export const TradePOSTouchScreen = React.memo((props) => {
   useStickyScanFocus(barcodeInputRef, {
     triggers: [invoiceCounter, cartLineCount, selectedCustomerData?.id, showQuickCustomerModal],
     searchFocus: scannerConfig?.autoFocusOnPOS !== false,
+  });
+
+  // Keyboard shortcuts (P3). The POS input controller owns the keys; these are this template's
+  // ways of doing each thing. Trade POS edits a line in the Item Entry dialog (a cart row's
+  // double-click), so F4/F8/F9 open it on the targeted line at Quantity/Discount/Price. F2 and
+  // F3 are registered by TradeMainCanvas, which owns the customer search.
+  usePosSaleShortcuts({
+    items: currentInvoice?.items || [],
+    selectedId: selectedFocusItemId,
+    lastEnteredId: lastEnteredLineId,
+    onCheckout: (quickCash) => handleCheckout?.(quickCash ? { quickCash } : undefined),
+    onHold: () => holdInvoice?.(),
+    onQuantity: updateQuantity,
+    onRemove: guardedRemoveFromInvoice,
+    onMode: (mode, line) => {
+      if (line) handleEditItem?.(line.id, { focusField: ENTRY_FIELD_FOR_MODE[mode] });
+    },
   });
 
   const moveProductHighlight = useCallback((delta) => {

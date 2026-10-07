@@ -26,16 +26,20 @@ const EntryForm = ({
     onConfirm,
     mode,
     uom = 'BAG',
-    // Owned by the modal so it can focus the price field when the dialog opens.
-    priceInputRef
+    // Owned by the modal so it can focus the field the dialog opens on.
+    priceInputRef,
+    quantityInputRef,
+    discountInputRef
 }) => {
     const priceId = useId();
     const qtyId = useId();
     const discId = useId();
     const localPriceRef = useRef(null);
+    const localQtyRef = useRef(null);
+    const localDiscRef = useRef(null);
     const priceRef = priceInputRef || localPriceRef;
-    const qtyRef = useRef(null);
-    const discRef = useRef(null);
+    const qtyRef = quantityInputRef || localQtyRef;
+    const discRef = discountInputRef || localDiscRef;
 
     const qtyDisabled = isReadOnly || lockQuantity;
 

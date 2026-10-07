@@ -615,7 +615,8 @@ describe('POSSales wiring (PosFeedbackToasts boundary)', () => {
     expect(at('        <NewDeliveryOrder\n')).toBeGreaterThan(toasts);
     // showFeedback (the barcode scan toaster) stays a POSSales-owned callback handed to POSTouchScreen.
     expect(POS_SALES).toContain('  const showFeedback = useCallback((type, message) => {\n    setBarcodeScanFeedback({ type, message });\n    setTimeout(() => setBarcodeScanFeedback(null), 2500);\n  }, []);');
-    expect(POS_SALES).toContain('    barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,');
+    // P3 added lastEnteredLineId (the keyboard line shortcuts' fallback target) to this line.
+    expect(POS_SALES).toContain('    barcodeScanFeedback, lastScannedItem, lastEnteredLineId, handleBarcodeScan, handleUnifiedEntry,');
     expect(CHILD).not.toContain('showFeedback');
     expect(CHILD).not.toContain('barcodeScanFeedback');
   });

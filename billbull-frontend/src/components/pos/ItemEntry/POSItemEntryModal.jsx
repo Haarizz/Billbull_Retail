@@ -31,6 +31,7 @@ const POSItemEntryModal = ({
     editablePrice,
     editableDiscount,
     lockQuantity,
+    initialFocusField = null,
     lockedBatch,
     lockedSerial,
     customerName,
@@ -38,15 +39,22 @@ const POSItemEntryModal = ({
     onSelectPrice
 }) => {
     const priceInputRef = useRef(null);
+    const quantityInputRef = useRef(null);
+    const discountInputRef = useRef(null);
 
     if (!product) return null;
 
-    // Radix focuses the first tabbable element (the close X) by default; start on Price instead.
+    // Radix focuses the first tabbable element (the close X) by default; start on Price instead,
+    // or on the field the cashier asked for (F4 quantity, F8 discount). A locked or disabled
+    // field falls back to Price.
     const handleOpenAutoFocus = (e) => {
-        if (mode === 'view' || !priceInputRef.current) return;
+        if (mode === 'view') return;
+        const requested = { quantity: quantityInputRef, discount: discountInputRef }[initialFocusField]?.current;
+        const field = requested && !requested.disabled ? requested : priceInputRef.current;
+        if (!field) return;
         e.preventDefault();
-        priceInputRef.current.focus();
-        priceInputRef.current.select();
+        field.focus();
+        field.select();
     };
 
     return (
@@ -102,6 +110,8 @@ const POSItemEntryModal = ({
                             uom={product.uom || 'BAG'}
                             lockQuantity={lockQuantity}
                             priceInputRef={priceInputRef}
+                            quantityInputRef={quantityInputRef}
+                            discountInputRef={discountInputRef}
                         />
                     </div>
                 </div>

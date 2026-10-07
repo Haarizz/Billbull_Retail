@@ -99,6 +99,8 @@ function OriginalCheckoutMarkup({
   loadPosCustomers, selectedCustomer, selectedCustomerData, checkoutOnlineBankAccounts,
   checkoutOnlineBankAccountsLoading, checkoutRemarks, setCheckoutRemarks, checkoutPaymentFields,
   checkoutError, setCheckoutError, cancelCheckoutTenders, processPayment, checkoutLoading,
+  // P3: the double/triple-Enter Cash request handed to the checkout payment panel.
+  checkoutQuickCash = null, clearCheckoutQuickCash = () => {},
 }) {
   return (
     <>
@@ -271,6 +273,8 @@ function OriginalCheckoutMarkup({
                     selectedCustomerName={selectedCustomerData?.name}
                     bankAccounts={checkoutOnlineBankAccounts}
                     bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                    quickCash={checkoutQuickCash}
+                    onQuickCashHandled={clearCheckoutQuickCash}
                   />
 
 
@@ -998,10 +1002,11 @@ const PARENT_LOCALS = [
 const readsOf = (src) => PARENT_LOCALS.filter((id) => new RegExp(`\\b${id}\\b`).test(src));
 
 describe('1. source — the copy and the complete-phase region map', () => {
-  it('the verbatim copy in this file is the live POSSales checkout region, byte for byte (202 lines)', () => {
+  it('the verbatim copy in this file is the live POSSales checkout region, byte for byte (204 lines)', () => {
     const copy = between(SELF, '{/* VERBATIM-START */}\n', '\n      {/* VERBATIM-END */}');
     expect(copy).toBe(REGION);
-    expect(REGION.split('\n')).toHaveLength(202);
+    // 202 before P3 passed the checkout panel its double/triple-Enter Cash request (+2 props).
+    expect(REGION.split('\n')).toHaveLength(204);
     expect(count(POS_SALES, REGION_START)).toBe(1);
   });
 

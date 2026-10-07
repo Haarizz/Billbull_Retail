@@ -7,9 +7,9 @@
 import React, { useRef } from 'react';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { DirhamSymbol } from '../../POSCurrency';
-import { usePosFocusTarget } from '../../input/PosOverlayContext';
+import { usePosFocusTarget, usePosShortcuts } from '../../input/PosOverlayContext';
 import { POS_FOCUS_TARGETS } from '../../input/posFocus';
-import { POS_OVERLAY_IDS } from '../../input/posScope';
+import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';
 
 function CheckoutPaymentFooter({
   changeDue,
@@ -27,6 +27,17 @@ function CheckoutPaymentFooter({
   const settleReady = canSettle && itemCount > 0 && !checkoutLoading;
   usePosFocusTarget({
     targets: POS_FOCUS_TARGETS.SETTLE, ref: settleRef, owner: POS_OVERLAY_IDS.CHECKOUT, ready: settleReady,
+  });
+  // Ctrl+Enter is this Settle button and Esc is this Cancel button, under the same conditions:
+  // Settle only when it is enabled (onSettle → processPayment keeps its own re-entrancy lock and
+  // checkoutKey), Cancel not while a settlement is in flight.
+  usePosShortcuts({
+    scope: POS_SCOPES.CHECKOUT,
+    owner: POS_OVERLAY_IDS.CHECKOUT,
+    actions: {
+      settle: () => { if (settleReady) onSettle(); },
+      cancel: () => { if (!checkoutLoading) onCancel(); },
+    },
   });
   return (
               <div className="bg-white border-t-2 border-[#F5C742]/30 px-3 sm:px-5 py-4 shrink-0">

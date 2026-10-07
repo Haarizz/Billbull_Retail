@@ -118,7 +118,10 @@ export function useProductEntry({
   applyScannedVoucherRef.current = applyScannedVoucher;
 
   const [lastScannedItem, setLastScannedItem] = useState(null);
-
+  // The cart line the last successful add landed on — a new line or the one it merged into.
+  // What the +, − and Delete shortcuts act on when no line is selected: new lines go on top and
+  // merges stay in place, so a line's position says nothing about when it was entered.
+  const [lastEnteredLineId, setLastEnteredLineId] = useState(null);
 
   // Returns { ok, reason }. Callers can surface `reason` when ok === false so
   // the cashier learns why an add was refused (one-batch-one-unit enforcement).
@@ -243,6 +246,10 @@ export function useProductEntry({
 
       return recalculateInvoice(newItems);
     });
+    // Same id the updater gives the line: only an unpinned line merges, and it merges by product id.
+    setLastEnteredLineId(isPinned
+      ? `${product.id}::${pinnedSerialNumber ? `S:${pinnedSerialNumber}` : pinnedBatchNumber}`
+      : product.id);
     return { ok: true };
   };
   addToInvoiceRef.current = addToInvoice;
@@ -601,13 +608,16 @@ export function useProductEntry({
   // live handler through a ref — same reason addToInvoiceRef exists.
   handleProductSelectionRef.current = handleProductSelection;
 
-  /** Opens the Item Entry dialog on an existing cart row. */
-  const handleEditItem = useCallback((itemId) => {
+  /**
+   * Opens the Item Entry dialog on an existing cart row. `focusField` ('quantity' | 'discount' |
+   * 'price', from the F4/F8/F9 shortcuts) is the field the dialog opens on; Price otherwise.
+   */
+  const handleEditItem = useCallback((itemId, { focusField = null } = {}) => {
     const item = currentInvoiceRef.current?.items?.find(i => i.id === itemId);
     if (!item) return;
     setItemEntryAction('edit');
     setSelectedProductForEntry(item);
-    setItemEntryContext({ lockQuantity: Boolean(item.batchControlled) });
+    setItemEntryContext({ lockQuantity: Boolean(item.batchControlled), ...(focusField ? { focusField } : {}) });
     setIsItemEntryOpen(true);
   }, []);
 
@@ -660,6 +670,8 @@ export function useProductEntry({
     // Scan banner.
     lastScannedItem,
     setLastScannedItem,
+    // Line shortcuts' fallback target.
+    lastEnteredLineId,
     // Item Entry dialog.
     isItemEntryOpen,
     selectedProductForEntry,

@@ -5,9 +5,9 @@
 
 import React, { useRef } from 'react';
 import { ArrowRightCircle, Mail, MessageCircle, Printer, RotateCcw, Smartphone } from 'lucide-react';
-import { usePosFocusTarget } from '../../input/PosOverlayContext';
+import { usePosFocusTarget, usePosShortcuts } from '../../input/PosOverlayContext';
 import { POS_FOCUS_TARGETS } from '../../input/posFocus';
-import { POS_OVERLAY_IDS } from '../../input/posScope';
+import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';
 
 function CheckoutCompleteActions({
   onNewSale,
@@ -18,6 +18,13 @@ function CheckoutCompleteActions({
   // New Sale is the COMPLETE screen's focus target: Enter starts the next sale.
   const newSaleRef = useRef(null);
   usePosFocusTarget({ targets: POS_FOCUS_TARGETS.NEW_SALE, ref: newSaleRef, owner: POS_OVERLAY_IDS.CHECKOUT_COMPLETE });
+  // The controller sends a person's Enter here (never a scanner's), wherever the caret is on
+  // this screen except another of its buttons.
+  usePosShortcuts({
+    scope: POS_SCOPES.COMPLETE,
+    owner: POS_OVERLAY_IDS.CHECKOUT_COMPLETE,
+    actions: { newSale: onNewSale },
+  });
   return (
                 <div className="px-6 pb-6 pt-4 bg-white border-t border-gray-50 shrink-0 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.02)]">
                   {/* Primary Action */}

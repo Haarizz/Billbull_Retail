@@ -93,7 +93,7 @@ describe('1. props and defaults', () => {
     expect(screen.queryByText('Cannot take payment on this terminal')).toBeNull();
   });
 
-  it('destructures exactly eleven props with the current defaults (source)', () => {
+  it('destructures exactly thirteen props with the current defaults (source)', () => {
     expect(PANEL).toContain([
       'export default function PaymentAllocationPanel({',
       '  payment,',
@@ -107,6 +107,9 @@ describe('1. props and defaults', () => {
       '  compact = false,',
       '  onCustomerCreated = null,',
       '  hotkeyOwner = POS_OVERLAY_IDS.CHECKOUT,',
+      // P3: a sale-screen Enter sequence's one-shot Cash request.
+      '  quickCash = null,',
+      '  onQuickCashHandled = null,',
       '}) {',
     ].join('\n'));
   });
@@ -649,13 +652,17 @@ describe('10. render identity', () => {
   });
 
   it('the only state is activeModal and the only ref is methodBarRef (source)', () => {
-    expect(PANEL.match(/useState\(/g)).toHaveLength(1);
+    // P3: quickCashSeen / allocatedQuickCashRef record which Enter-sequence Cash request the
+    // panel already acted on; its one effect commits an ALLOCATE request to the Payment Manager.
+    expect(PANEL.match(/useState\(/g)).toHaveLength(2);
     expect(PANEL).toContain('  const [activeModal, setActiveModal] = useState(null);');
+    expect(PANEL).toContain('  const [quickCashSeen, setQuickCashSeen] = useState(null);');
     // P2: the first method tile is the checkout's PAYMENT_METHOD focus target.
-    expect(PANEL.match(/useRef\(/g)).toHaveLength(2);
+    expect(PANEL.match(/useRef\(/g)).toHaveLength(3);
     expect(PANEL).toContain('  const methodBarRef = useRef(null);');
     expect(PANEL).toContain('  const firstMethodRef = useRef(null);');
-    expect(PANEL.match(/useEffect\(/g)).toHaveLength(1);
+    expect(PANEL).toContain('  const allocatedQuickCashRef = useRef(null);');
+    expect(PANEL.match(/useEffect\(/g)).toHaveLength(2);
     expect(PANEL).toContain("    window.addEventListener('keydown', onKey);\n    return () => window.removeEventListener('keydown', onKey);\n  }, [activeModal, posInputV2, openAdd, offeredMethods]);");
   });
 
@@ -721,6 +728,9 @@ const CHECKOUT_CALL = [
   '                    selectedCustomerName={selectedCustomerData?.name}',
   '                    bankAccounts={checkoutOnlineBankAccounts}',
   '                    bankAccountsLoading={checkoutOnlineBankAccountsLoading}',
+  // P3: the double/triple Enter Cash request (checkout only).
+  '                    quickCash={checkoutQuickCash}',
+  '                    onQuickCashHandled={clearCheckoutQuickCash}',
   '                  />',
 ].join('\n');
 
@@ -781,9 +791,9 @@ describe('11. POSSales call sites (source)', () => {
     expect(POS_SALES.slice(i + CHECKOUT_CALL.length)).toMatch(/^\n\n\n {18}\{\/\* ── Remarks ── \*\/\}\n {18}<CheckoutRemarks\n/);
   });
 
-  it('checkout mount passes the eight props (no methods, no compact, default hotkeyOwner)', () => {
+  it('checkout mount passes the ten props (no methods, no compact, default hotkeyOwner)', () => {
     const attrs = CHECKOUT_CALL.split('\n').slice(1, -1).map((l) => l.trim().split('=')[0]);
-    expect(attrs).toEqual(['payment', 'compatibility', 'customers', 'onCustomerCreated', 'selectedCustomerId', 'selectedCustomerName', 'bankAccounts', 'bankAccountsLoading']);
+    expect(attrs).toEqual(['payment', 'compatibility', 'customers', 'onCustomerCreated', 'selectedCustomerId', 'selectedCustomerName', 'bankAccounts', 'bankAccountsLoading', 'quickCash', 'onQuickCashHandled']);
   });
 
   it('no inline wrapper, local alias, memo or lazy around the panel in POSSales', () => {
@@ -816,6 +826,8 @@ describe('11. POSSales call sites (source)', () => {
       '../input/PosOverlayContext', '../input/posScope',
       // P2: the focus-target names.
       '../input/posFocus',
+      // P3: the Enter-sequence Cash request names.
+      '../input/posShortcuts',
     ]);
   });
 });

@@ -440,7 +440,8 @@ describe('cross-feature orchestration handlers', () => {
     ['saveCurrentLayaway', 'const saveCurrentLayaway = async (print = false) => {'],
     ['syncPosData', 'const syncPosData = useCallback(async () => {'],
     ['handleSupervisorPinSubmit', 'const handleSupervisorPinSubmit = () => submitSupervisorApproval({'],
-    ['handleCheckout', 'const handleCheckout = useCallback(() => {'],
+    // P3: takes the optional { quickCash } of a double/triple Enter.
+    ['handleCheckout', 'const handleCheckout = useCallback((opts) => {'],
     ['handleCashDrop', 'const handleCashDrop = async () => {'],
     ['handleStartSession', 'const handleStartSession = async () => {'],
     ['handleSessionTransfer', 'const handleSessionTransfer = async () => {'],
@@ -558,22 +559,23 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 231 top-level useState pairs (+2: the invoice template family and the reprint sheet format)', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(231);
+  it('declares 232 top-level useState pairs (+2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash)', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(232);
   });
 
-  it('declares 17 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry)', () => {
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(17);
+  it('declares 18 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry; +1 P3: quickCashSeqRef)', () => {
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(18);
   });
 
   it('declares 34 top-level effects (+1: the Sales Invoice template family load)', () => {
     expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(34);
   });
 
-  it('declares 19 top-level memos and 25 top-level callbacks', () => {
+  it('declares 19 top-level memos and 26 top-level callbacks', () => {
     expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useMemo\(/)).toHaveLength(19);
-    // 25 since Action Button Access: requestFunctionApproval and notifyPosFunctionDenied.
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(25);
+    // 25 since Action Button Access: requestFunctionApproval and notifyPosFunctionDenied;
+    // 26 since P3: clearCheckoutQuickCash.
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(26);
   });
 
   it('all state is declared in the first 1,300 lines — the render tree below owns none', () => {

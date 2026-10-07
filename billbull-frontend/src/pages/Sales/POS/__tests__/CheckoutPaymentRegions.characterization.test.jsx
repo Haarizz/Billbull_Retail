@@ -98,6 +98,8 @@ function OriginalScrollBody({
   checkoutPayment, checkoutCompatibility, customerOptions, loadPosCustomers, selectedCustomer,
   selectedCustomerData, checkoutOnlineBankAccounts, checkoutOnlineBankAccountsLoading,
   checkoutRemarks, setCheckoutRemarks,
+  // P3: the double/triple-Enter Cash request handed to the checkout payment panel.
+  checkoutQuickCash = null, clearCheckoutQuickCash = () => {},
 }) {
   return (
     <>
@@ -129,6 +131,8 @@ function OriginalScrollBody({
                     selectedCustomerName={selectedCustomerData?.name}
                     bankAccounts={checkoutOnlineBankAccounts}
                     bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                    quickCash={checkoutQuickCash}
+                    onQuickCashHandled={clearCheckoutQuickCash}
                   />
 
 
@@ -558,8 +562,8 @@ describe('source — verbatim copies are the live POSSales regions', () => {
     expect(PAYMENT_PHASE).toContain(`          <div className="fixed inset-0 z-[60] flex flex-col lg:flex-row bg-[#1a1f2e]">\n\n${LIVE_PREVIEW()}\n\n            {/* ══ RIGHT: Payment & Settlement ═══════════════════════ */}\n`);
   });
 
-  it('R5 scroll body: byte for byte (40 lines; 42 before R6 moved to CheckoutRemarks), between the header call and the footer call', () => {
-    expect(SCROLL().split('\n')).toHaveLength(40);
+  it('R5 scroll body: byte for byte (42 lines; 40 before P3 added the panel\'s quick-cash props, 42 before R6 moved to CheckoutRemarks), between the header call and the footer call', () => {
+    expect(SCROLL().split('\n')).toHaveLength(42);
     expect(count(POS_SALES, SCROLL())).toBe(1);
     expect(PAYMENT_PHASE).toContain(`                onClose={() => setShowPaymentDialog(false)}\n              />\n\n${SCROLL()}\n\n              {/* ── Settlement footer ── */}\n              <CheckoutPaymentFooter\n`);
   });

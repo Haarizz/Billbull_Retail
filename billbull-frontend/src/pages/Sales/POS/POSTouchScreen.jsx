@@ -10,12 +10,14 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath
 import { ScanLine } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
 import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
+import AlterItemModal from './features/cart/AlterItemModal';
 import {
   createBurstTracker, isPosInputHandled, isPosScreenBlocked, markScanHandled, wasScanHandled,
 } from './device/scanner/scanGuard';
 import { isEditableTarget } from '../../../utils/editableTarget';
 import { usePosFocusTarget, usePosFocusV2, usePosInputV2, usePosScanSurface } from './input/PosOverlayContext';
 import { POS_FOCUS_TARGETS } from './input/posFocus';
+import { usePosSaleShortcuts } from './input/usePosSaleShortcuts';
 
 /**
  * The Salesperson row that sits directly under the Customer bar in every POS sale layout.
@@ -98,6 +100,8 @@ const POSTouchScreen = React.memo((props) => {
     barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
     barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
     scannerConfig,
+    // the cart line the last add landed on — the keyboard line shortcuts' fallback target
+    lastEnteredLineId = null,
     // customers
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
     customerSearchQuery, setCustomerSearchQuery, showCustomerDropdown, setShowCustomerDropdown,
@@ -172,9 +176,11 @@ const POSTouchScreen = React.memo((props) => {
    * <p>handleCheckout owns the salesperson-verification gate and opens the payment phase. When the
    * gate refuses it returns false and the scan modal is already up, so we return without doing
    * anything further — no settlement state is primed for a sale that has not been authorised.
+   * `quickCash` comes only from the Enter shortcut (posShortcuts.CHECKOUT_QUICK_CASH); a click
+   * passes its event, which is not one, so the button opens a plain checkout.
    */
-  const startCheckout = useCallback(() => {
-    if (handleCheckout?.() === false) return;
+  const startCheckout = useCallback((quickCash) => {
+    if (handleCheckout?.(typeof quickCash === 'string' ? { quickCash } : undefined) === false) return;
     // Nothing else to prime here. The tender pre-fill that used to live in this callback wrote to
     // setTenderedAmount / setCheckoutKeypad* — state that moved into usePaymentManager, which seeds
     // the allocation from the amount due itself. Those four props were never passed again, so every
@@ -211,7 +217,7 @@ const POSTouchScreen = React.memo((props) => {
   ]);
 
   // The item keypad: Cart Focus repurposes the barcode box (posActionMode), Classic opens its
-  // inline numpad (classicNumpadMode). Either way it is the ITEM_ENTRY scope.
+  // Alter Item dialog (classicNumpadMode). Either way it is the ITEM_ENTRY scope.
   const isCartFocus = posTemplate === 'focus';
   const itemEntryMode = (isCartFocus ? posActionMode : classicNumpadMode) || 'none';
 
@@ -248,6 +254,75 @@ const POSTouchScreen = React.memo((props) => {
     targets: POS_FOCUS_TARGETS.CUSTOMER,
     ref: customerSearchInputRef,
     active: Boolean(showCustomerDropdown),
+  });
+
+  // Classic: the item keypad is the Alter Item dialog. It edits the selected cart line, and is on
+  // screen exactly while classicNumpadMode is set and that line is still in the cart.
+  const classicMode = classicNumpadMode || 'none';
+  const alterItem = !isCartFocus && classicMode !== 'none'
+    ? currentInvoice.items.find(i => i.id === selectedFocusItemId && !i.isVoided) || null
+    : null;
+  const closeAlterItem = useCallback(() => {
+    setClassicNumpadMode('none');
+    setClassicNumpadValue('');
+    setSelectedFocusItemId(null);
+  }, [setClassicNumpadMode, setClassicNumpadValue, setSelectedFocusItemId]);
+  // Opens the dialog on `itemId` at `mode`. Moving to another line starts that line's entry fresh.
+  const openAlterItem = useCallback((itemId, mode) => {
+    if (itemId !== selectedFocusItemId || classicMode === 'none') {
+      setClassicNumpadValue('');
+      setClassicDiscountType('percent');
+    }
+    setSelectedFocusItemId(itemId);
+    setClassicNumpadMode(mode);
+  }, [selectedFocusItemId, classicMode, setClassicNumpadValue, setClassicDiscountType, setSelectedFocusItemId, setClassicNumpadMode]);
+  const applyAlterItem = useCallback(({ quantity, price, discount }) => {
+    const id = selectedFocusItemId;
+    if (!id) return;
+    // Price first, then discount, then quantity: each updater composes on the previous one's line.
+    if (price != null) updateItemPrice(id, price);
+    if (discount != null) updateDiscount(id, discount);
+    if (quantity != null) updateQuantity(id, quantity);
+    closeAlterItem();
+  }, [selectedFocusItemId, updateItemPrice, updateDiscount, updateQuantity, closeAlterItem]);
+  // The line went away (removed, voided, bill cleared) under an open dialog: leave ITEM_ENTRY, or
+  // the scope would keep holding the keyboard for a field that is no longer on screen.
+  useEffect(() => {
+    if (!isCartFocus && classicMode !== 'none' && !alterItem) closeAlterItem();
+  }, [isCartFocus, classicMode, alterItem, closeAlterItem]);
+
+  // Keyboard shortcuts (P3). The POS input controller owns the keys; these are this template's
+  // ways of doing each thing. F4/F8/F9 open the same item keypad the Add Qty / Discount / Price
+  // buttons open — Cart Focus repurposes the barcode box, Classic opens the Alter Item dialog — on
+  // the line the shortcut targets (selected, else last entered); the focus controller then puts
+  // the caret in its field.
+  usePosSaleShortcuts({
+    items: currentInvoice.items,
+    selectedId: selectedFocusItemId,
+    lastEnteredId: lastEnteredLineId,
+    onCheckout: startCheckout,
+    onHold: () => {
+      // The Hold buttons are disabled without a session or while a hold is in flight.
+      if (holdBusy) return;
+      if (!sessionId) { showFeedback?.('error', 'Open a POS session to hold a bill'); return; }
+      holdInvoice();
+    },
+    onQuantity: updateQuantity,
+    onRemove: guardedRemoveFromInvoice,
+    onMode: (mode, line) => {
+      if (isCartFocus) {
+        setSelectedFocusItemId(line?.id ?? null);
+        setPosActionMode(mode);
+        setBarcodeInput('');
+        if (mode === 'discount') setDiscountInputType('percent');
+      } else if (line) {
+        openAlterItem(line.id, mode);
+      } else {
+        showFeedback?.('error', 'Add an item to the cart first');
+      }
+    },
+    onCustomer: () => setShowCustomerDropdown(true),
+    onSearch: () => setShowCustomerDropdown(false),
   });
 
   // Legacy keyboard wedge (posInputV2 off, or rendered without the POS input provider).
@@ -1198,7 +1273,7 @@ const POSTouchScreen = React.memo((props) => {
                   currentInvoice.items.map((item, idx) => (
                     <div key={item.id}
                       className={`grid ${CART_GRID_COLS} gap-x-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
-                      onClick={() => !item.isVoided && setSelectedFocusItemId(item.id === selectedFocusItemId ? null : item.id)}>
+                      onClick={() => !item.isVoided && openAlterItem(item.id, classicMode !== 'none' ? classicMode : 'qty')}>
                       <div className="min-w-0 pr-1">
                         {/* Voided line: muted red + [VOID] tag + negative amounts (no
                             strike-through). Excluded from the total; disclosed below. */}
@@ -1583,129 +1658,22 @@ const POSTouchScreen = React.memo((props) => {
               ))}
             </div>
 
-            {/* Functions tab — with inline numpad for Disc%, Add Qty, Price */}
+            {/* Functions tab — Add Qty, Disc %, Price open the Alter Item dialog */}
             {rightPanelTab === 'functions' && (
               <div className="flex-1 overflow-y-auto flex flex-col">
-                {/* ── Inline numpad panel ── */}
-                {classicNumpadMode !== 'none' && (() => {
-                  const selectedItem = currentInvoice.items.find(i => i.id === selectedFocusItemId);
-                  const modeLabel = classicNumpadMode === 'qty' ? 'Set Quantity' : classicNumpadMode === 'discount' ? 'Set Discount' : 'Set Price';
-                  const modeColor = classicNumpadMode === 'qty' ? 'text-blue-600' : classicNumpadMode === 'discount' ? 'text-[#B8942E]' : 'text-purple-600';
-                  const handleNumpadEnter = () => {
-                    if (!selectedFocusItemId) return;
-                    const val = parseFloat(classicNumpadValue) || 0;
-                    if (classicNumpadMode === 'qty') {
-                      if (val > 0) updateQuantity(selectedFocusItemId, Math.round(val));
-                    } else if (classicNumpadMode === 'discount') {
-                      if (classicDiscountType === 'percent') {
-                        updateDiscount(selectedFocusItemId, Math.min(val, 100));
-                      } else {
-                        const it = currentInvoice.items.find(i => i.id === selectedFocusItemId);
-                        if (it) updateDiscount(selectedFocusItemId, Math.min((val / (it.price * it.quantity)) * 100, 100));
-                      }
-                    } else if (classicNumpadMode === 'price') {
-                      updateItemPrice(selectedFocusItemId, val);
-                    }
-                    setClassicNumpadMode('none');
-                    setClassicNumpadValue('');
-                  };
-                  return (
-                    <div key={classicNumpadMode} className="bg-white border-b border-gray-200 p-2.5 shrink-0">
-                      {/* Header */}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className={`text-[10px] font-black uppercase tracking-wide ${modeColor}`}>{modeLabel}</span>
-                        <button type="button" onClick={() => { setClassicNumpadMode('none'); setClassicNumpadValue(''); setSelectedFocusItemId(null); }}
-                          className="text-[10px] text-gray-400 hover:text-red-500 font-bold">✕ Cancel</button>
-                      </div>
-                      {/* Item context */}
-                      {selectedItem ? (
-                        <div className="bg-[#F5C742]/10 border border-[#F5C742]/30 rounded-lg px-2 py-1.5 mb-2">
-                          <p className="text-[10px] font-semibold text-[#1E293B] truncate">{selectedItem.name}</p>
-                          <p className="text-[9px] text-gray-400">
-                            {classicNumpadMode === 'qty' && `Current qty: ${selectedItem.quantity}`}
-                            {classicNumpadMode === 'discount' && `Current disc: ${selectedItem.discount}%`}
-                            {classicNumpadMode === 'price' && `Current price: ${formatCurrency(selectedItem.price)}`}
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-2">
-                          <p className="text-[10px] text-amber-600 font-semibold">← Select a cart row first</p>
-                        </div>
-                      )}
-                      {/* Discount type toggle */}
-                      {classicNumpadMode === 'discount' && (
-                        <div className="flex gap-1 mb-2">
-                          <button type="button" onClick={() => setClassicDiscountType('percent')}
-                            className={`flex-1 py-1 text-[10px] font-bold rounded-lg border transition-colors ${classicDiscountType === 'percent' ? 'bg-[#F5C742] text-[#1E293B] border-[#F5C742]' : 'bg-white text-gray-500 border-gray-200'}`}>
-                            % Percent
-                          </button>
-                          <button type="button" onClick={() => setClassicDiscountType('amount')}
-                            className={`flex-1 py-1 text-[10px] font-bold rounded-lg border transition-colors ${classicDiscountType === 'amount' ? 'bg-[#F5C742] text-[#1E293B] border-[#F5C742]' : 'bg-white text-gray-500 border-gray-200'}`}>
-                            <DirhamSymbol /> Amt
-                          </button>
-                        </div>
-                      )}
-                      {/* Display */}
-                      <div className="mb-2">
-                        <input
-                          ref={classicNumpadInputRef}
-                          type="text"
-                          autoFocus
-                          placeholder="0"
-                          value={classicNumpadValue}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/[^0-9.]/g, '');
-                            setClassicNumpadValue(val);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              if (selectedFocusItemId && classicNumpadValue) {
-                                handleNumpadEnter();
-                              }
-                            }
-                          }}
-                          className="w-full bg-gray-50 border-2 border-[#F5C742]/40 rounded-xl px-3 py-2 text-right font-mono text-lg text-[#1E293B] placeholder:text-gray-300 placeholder:font-sans focus:outline-none focus:ring-2 focus:ring-[#F5C742]"
-                        />
-                      </div>
-                      {/* Number pad */}
-                      <div className="grid grid-cols-3 gap-1 mb-1">
-                        {['7', '8', '9', '4', '5', '6', '1', '2', '3'].map(k => (
-                          <button key={k} type="button" onClick={() => setClassicNumpadValue(v => v + k)}
-                            className="h-9 rounded-lg bg-gray-50 hover:bg-[#F5C742]/20 border border-gray-200 text-sm text-[#1E293B] font-bold transition-colors active:scale-95">
-                            {k}
-                          </button>
-                        ))}
-                        <button type="button" onClick={() => setClassicNumpadValue(v => v + '.')}
-                          className="h-9 rounded-lg bg-gray-50 hover:bg-[#F5C742]/20 border border-gray-200 text-sm text-gray-500 font-bold transition-colors">.</button>
-                        <button type="button" onClick={() => setClassicNumpadValue(v => v + '0')}
-                          className="h-9 rounded-lg bg-gray-50 hover:bg-[#F5C742]/20 border border-gray-200 text-sm text-[#1E293B] font-bold transition-colors active:scale-95">0</button>
-                        <button type="button" onClick={() => setClassicNumpadValue(v => v.slice(0, -1))}
-                          className="h-9 rounded-lg bg-gray-100 hover:bg-gray-200 border border-gray-200 text-sm text-gray-500 font-bold transition-colors">⌫</button>
-                      </div>
-                      <div className="grid grid-cols-2 gap-1">
-                        <button type="button" onClick={() => setClassicNumpadValue('')}
-                          className="h-9 rounded-lg bg-red-50 hover:bg-red-100 border border-red-200 text-xs text-red-600 font-bold transition-colors">
-                          Clear
-                        </button>
-                        <button type="button" onClick={handleNumpadEnter} disabled={!selectedFocusItemId || !classicNumpadValue}
-                          className="h-9 rounded-lg bg-[#F5C742] hover:bg-[#e6b838] disabled:opacity-40 text-[#1E293B] text-xs font-black transition-colors">
-                          Enter ↵
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
-
                 {/* ── Action button grid ── */}
                 <div className="p-2 flex-1 overflow-y-auto">
                   {(() => {
+                    // Edits the selected cart line, else the last one entered (same rule as F4/F8/F9).
                     const openNumpad = (mode) => {
-                      setClassicNumpadMode(m => m === mode ? 'none' : mode);
-                      setClassicNumpadValue('');
-                      if (classicNumpadMode !== mode) setSelectedFocusItemId(null);
+                      const lines = currentInvoice.items.filter(i => !i.isVoided);
+                      const target = lines.find(i => i.id === selectedFocusItemId)
+                        || lines.find(i => i.id === lastEnteredLineId)
+                        || lines[lines.length - 1];
+                      if (!target) { showFeedback?.('error', 'Add an item to the cart first'); return; }
+                      openAlterItem(target.id, mode);
                     };
-                    // Interaction-specific buttons (Classic uses the inline numpad);
+                    // Interaction-specific buttons (Classic uses the Alter Item dialog);
                     // shared buttons come from the single commonActionButtons()
                     // definition so both templates stay in sync.
                     const interactive = [
@@ -1808,6 +1776,25 @@ const POSTouchScreen = React.memo((props) => {
           </div>
 
         </div>
+      )}
+
+      {/* ══ ALTER ITEM (Classic: qty / price / discount of a cart line) ═════════ */}
+      {alterItem && (
+        <AlterItemModal
+          key={alterItem.id}
+          item={alterItem}
+          mode={classicMode}
+          onModeChange={setClassicNumpadMode}
+          value={classicNumpadValue}
+          onValueChange={setClassicNumpadValue}
+          discountType={classicDiscountType}
+          onDiscountTypeChange={setClassicDiscountType}
+          inputRef={classicNumpadInputRef}
+          onApply={applyAlterItem}
+          onClose={closeAlterItem}
+          formatCurrency={formatCurrency}
+          suppressLegacyScan={!posInputV2}
+        />
       )}
 
       {/* ══ QUICK CUSTOMER CREATION MODAL ══════════════════════════════════════ */}

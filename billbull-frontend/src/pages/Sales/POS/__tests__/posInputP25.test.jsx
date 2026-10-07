@@ -8,6 +8,7 @@ import CashPaymentModal from '../payments/modals/CashPaymentModal';
 import { PosOverlayProvider } from '../input/PosOverlayContext';
 import { HOTKEY_SETTLE_MS, usePosInputController } from '../input/usePosInputController';
 import { POS_OVERLAY_IDS } from '../input/posScope';
+import { CASH_DOUBLE_TAP_MS } from '../input/posShortcuts';
 
 /**
  * P2.5 — a payment modal is scanner-safe.
@@ -228,7 +229,9 @@ describe('P2.5 payment: human typing in the Cash modal is unchanged', () => {
 
   it('6. C typed by the cashier clears the amount; the next digits are the new amount', () => {
     const { payment, cash } = openCash();
-    press(cash, 'c', TYPE);
+    // P3: a C within CASH_DOUBLE_TAP_MS of the C that opened this modal is "Cash twice" (exact
+    // allocation, posKeyboardShortcutsP3); any later C clears, as before.
+    press(cash, 'c', CASH_DOUBLE_TAP_MS);
     settle();
     expect(cashShown()).toBe('0');
     pressAll(cash, '75', TYPE);

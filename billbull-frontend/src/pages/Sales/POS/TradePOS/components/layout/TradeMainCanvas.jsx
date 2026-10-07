@@ -4,8 +4,9 @@ import { TradeProductGrid } from '../catalog/TradeProductGrid';
 import { TradeCard, TradeBadge } from '../ui';
 import { getCustomerOutstanding } from '../../../../../../api/salesInvoiceApi';
 import { formatDisplayDate } from '../../../../../../utils/dateUtils';
-import { usePosFocusTarget, usePosFocusV2 } from '../../../input/PosOverlayContext';
+import { usePosFocusTarget, usePosFocusV2, usePosShortcuts } from '../../../input/PosOverlayContext';
 import { POS_FOCUS_TARGETS } from '../../../input/posFocus';
+import { POS_SCOPES } from '../../../input/posScope';
 
 export const TradeMainCanvas = React.memo(({
   // Catalog Props
@@ -57,6 +58,18 @@ export const TradeMainCanvas = React.memo(({
   useEffect(() => {
     if (isSearchingCustomer && !posFocusV2) searchInputRef.current?.focus();
   }, [isSearchingCustomer, posFocusV2]);
+  // F2 opens the customer search (the controller, or the focus controller once it is on screen,
+  // puts the caret in it); F3 closes it so the caret can go back to the product search.
+  usePosShortcuts({
+    scope: POS_SCOPES.SALE,
+    actions: {
+      customer: () => setIsSearchingCustomer(true),
+      search: () => {
+        setIsSearchingCustomer(false);
+        setShowCustomerDropdown?.(false);
+      },
+    },
+  });
 
   const balanceDue = accountSummary?.outstanding ?? selectedCustomerData?.openingBalance ?? 0;
   const lastPurchaseDate = accountSummary?.lastPurchaseDate

@@ -122,13 +122,32 @@ export function usePosFocusTarget({ targets, ref, owner = null, active = true, r
 /**
  * Registers a payment panel's method hotkeys. The controller sends a key to exactly one panel:
  * the newest one whose `owner` is the overlay currently on top.
+ *
+ * @param onQuickCash  allocates the exact remaining amount in Cash (the Cash hotkey pressed
+ *                     twice in checkout)
  */
 export function usePosPaymentHotkeys({
   owner = POS_OVERLAY_IDS.CHECKOUT,
   enabled = true,
   methods = [],
   onSelect,
+  onQuickCash = null,
 }) {
   const autoId = useId();
-  useRegistryEntry('payment', `payment${autoId}`, true, { owner, enabled, methods, onSelect });
+  useRegistryEntry('payment', `payment${autoId}`, true, { owner, enabled, methods, onSelect, onQuickCash });
+}
+
+/**
+ * Registers the actions behind one scope's keyboard shortcuts (posShortcuts.js). The controller
+ * owns the keys; it runs `actions[name]` from the newest entry for the current scope (and, for
+ * an overlay scope, the overlay on top) that has that action. Several components may register
+ * for one scope, each with the actions it owns.
+ *
+ * @param scope    POS_SCOPES value the actions belong to
+ * @param owner    the overlay (POS_OVERLAY_IDS) they belong to; null for the sale screen
+ * @param actions  { [name]: function } — names as in posShortcuts.js
+ */
+export function usePosShortcuts({ scope, owner = null, enabled = true, actions }) {
+  const autoId = useId();
+  useRegistryEntry('shortcut', `shortcut${autoId}`, true, { scope, owner, enabled, actions });
 }

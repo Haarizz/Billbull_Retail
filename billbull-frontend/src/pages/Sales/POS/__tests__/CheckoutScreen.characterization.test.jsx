@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import {
   AlertCircle, ArrowRightCircle, Banknote, CheckCircle, CreditCard, Landmark, Mail, MessageCircle,
@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ReceiptShareModal from '../../../../components/pos/ReceiptShareModal';
 import { CurrencyAmount, DirhamSymbol } from '../POSCurrency';
+import { checkoutQuickCashRequest } from '../input/posShortcuts';
 import { WALK_IN_CUSTOMER } from '../posConstants';
 import { paymentBlockRows } from '../payments/paymentPresentation';
 import PaymentModalShell from '../payments/modals/PaymentModalShell';
@@ -82,6 +83,8 @@ function OriginalCheckoutMarkup({
   loadPosCustomers, selectedCustomer, selectedCustomerData, checkoutOnlineBankAccounts,
   checkoutOnlineBankAccountsLoading, checkoutRemarks, setCheckoutRemarks, checkoutPaymentFields,
   checkoutError, setCheckoutError, cancelCheckoutTenders, processPayment, checkoutLoading,
+  // P3: the double/triple-Enter Cash request handed to the checkout payment panel.
+  checkoutQuickCash = null, clearCheckoutQuickCash = () => {},
 }) {
   return (
     <>
@@ -254,6 +257,8 @@ function OriginalCheckoutMarkup({
                     selectedCustomerName={selectedCustomerData?.name}
                     bankAccounts={checkoutOnlineBankAccounts}
                     bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                    quickCash={checkoutQuickCash}
+                    onQuickCashHandled={clearCheckoutQuickCash}
                   />
 
 
@@ -847,8 +852,14 @@ function CheckoutHarness({ base, log, initial = {} }) {
   }, [lastPaidInvoice, receiptShareChannel]);
   // SHARE-INITIAL-END
 
+  // P3: POSSales' double/triple-Enter Cash request state, read by the verbatim region and
+  // written by the handleCheckout copy below.
+  const [checkoutQuickCash, setCheckoutQuickCash] = useState(null);
+  const clearCheckoutQuickCash = useCallback(() => setCheckoutQuickCash(null), []);
+
   // HANDLE-CHECKOUT-START
-  const handleCheckout = useCallback(() => {
+  const quickCashSeqRef = useRef(0);
+  const handleCheckout = useCallback((opts) => {
     // Verification is asked for HERE, at Checkout, rather than at settlement: the cashier is told
     // to scan a badge while the customer is still at the counter, not after the payment screen is
     // already up. Opening the modal IS the refusal — there is no separate error to dismiss, and
@@ -868,7 +879,10 @@ function CheckoutHarness({ base, log, initial = {} }) {
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     // The Payment Manager starts with no allocations — the cashier picks a method and
-    // enters an amount, so there is nothing to pre-seed here any more.
+    // enters an amount, so there is nothing to pre-seed here any more. A double/triple Enter
+    // (opts.quickCash) asks the payment panel to take Cash once it is up; it never settles.
+    quickCashSeqRef.current += 1;
+    setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
     return true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);
@@ -913,6 +927,7 @@ function CheckoutHarness({ base, log, initial = {} }) {
           checkoutFinalizing={checkoutFinalizing} setCheckoutFinalizing={setCheckoutFinalizing}
           receiptShareChannel={receiptShareChannel} setReceiptShareChannel={setReceiptShareChannel}
           receiptShareInitialValue={receiptShareInitialValue}
+          checkoutQuickCash={checkoutQuickCash} clearCheckoutQuickCash={clearCheckoutQuickCash}
           selectedCustomer={selectedCustomer} setSelectedCustomer={setSelectedCustomer}
           setShowReprintModal={setShowReprintModal}
           checkoutError={checkoutError} setCheckoutError={setCheckoutError}
@@ -1518,11 +1533,13 @@ describe('13. checkout preview column', () => {
 
 // ── 14. payments / nested structure ─────────────────────────────────────────────────────
 describe('14. PaymentAllocationPanel wiring and native <details> state', () => {
-  it('receives exactly the eight props, unchanged', () => {
+  it('receives exactly the ten props, unchanged', () => {
     const props = makeProps({ selectedCustomer: 'c-9', selectedCustomerData: { id: 'c-9', name: 'Jane Doe' }, checkoutOnlineBankAccountsLoading: true });
     renderMarkup(props);
     const panel = lastPanelProps();
-    expect(Object.keys(panel)).toEqual(['payment', 'compatibility', 'customers', 'onCustomerCreated', 'selectedCustomerId', 'selectedCustomerName', 'bankAccounts', 'bankAccountsLoading']);
+    // P3: + quickCash / onQuickCashHandled, the double/triple-Enter Cash request.
+    expect(Object.keys(panel)).toEqual(['payment', 'compatibility', 'customers', 'onCustomerCreated', 'selectedCustomerId', 'selectedCustomerName', 'bankAccounts', 'bankAccountsLoading', 'quickCash', 'onQuickCashHandled']);
+    expect(panel.quickCash).toBeNull();
     expect(panel.payment).toBe(props.checkoutPayment);
     expect(panel.compatibility).toBe(props.checkoutCompatibility);
     expect(panel.customers).toBe(props.customerOptions);
@@ -1748,7 +1765,7 @@ const codeLines = (s) => s.split('\n').map((l) => l.trim()).filter((l) => l && !
 const count = (src, needle) => src.split(needle).length - 1;
 
 describe('18. source anchors — the copy', () => {
-  it('the verbatim copy is the live POSSales checkout region, byte for byte (202 lines)', () => {
+  it('the verbatim copy is the live POSSales checkout region, byte for byte (204 lines)', () => {
     const copy = between(SELF, '{/* VERBATIM-START */}\n', '\n      {/* VERBATIM-END */}');
     expect(copy).toBe(region());
     // 423 before the complete-phase summary body moved to CheckoutCompleteSummary (109 lines → a 6-line call);
@@ -1763,8 +1780,9 @@ describe('18. source anchors — the copy', () => {
     // 217 before the payment-phase Remarks card moved to CheckoutRemarks (6 lines → a 4-line call;
     // the Remarks comment and the surrounding blank lines stay in POSSales);
     // 215 before the preview column's inner content moved to CheckoutPaymentPreview (18 lines → a
-    // 6-line call; the outer column <div> and its class template stay in POSSales).
-    expect(region().split('\n')).toHaveLength(202);
+    // 6-line call; the outer column <div> and its class template stay in POSSales);
+    // 202 before P3 passed the checkout panel its double/triple-Enter Cash request (+2 props).
+    expect(region().split('\n')).toHaveLength(204);
     expect(count(region(), '<CheckoutPaymentPreview\n')).toBe(1);
     expect(region()).toContain("              'lg:w-[280px] xl:w-[340px] 2xl:w-[400px]'\n            }`}>\n              <CheckoutPaymentPreview\n                showA4CheckoutPreview={showA4CheckoutPreview}\n                checkoutA4Html={checkoutA4Html}\n                checkoutA4BlobUrl={checkoutA4BlobUrl}\n                checkoutPreviewBlobUrl={checkoutPreviewBlobUrl}\n              />\n            </div>\n\n            {/* ══ RIGHT: Payment & Settlement");
     expect(region()).not.toMatch(/<A4ScaledPreview|<ThermalScaledPreview|Add items to preview/);
@@ -1790,7 +1808,7 @@ describe('18. source anchors — the copy', () => {
 
   it.each([
     ['SHARE-INITIAL', '  const receiptShareInitialValue = useMemo(() => {', '\n  }, [lastPaidInvoice, receiptShareChannel]);'],
-    ['HANDLE-CHECKOUT', '  const handleCheckout = useCallback(() => {',
+    ['HANDLE-CHECKOUT', '  const quickCashSeqRef = useRef(0);\n  const handleCheckout = useCallback((opts) => {',
       '\n  }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);'],
     ['ORDERS-CHECKOUT', '        const handleOpenOrderAndCheckout = async () => {', '\n        };'],
     ['TICK', '  useEffect(() => {\n    const isActive = currentSession?.status === \'OPEN\'', '\n  }, [currentSession?.id, currentSession?.openedAt, currentSession?.status]);'],

@@ -89,6 +89,30 @@ export function findFocusElement(registry, target, ownerId = null) {
 }
 
 /**
+ * Puts the caret on a POS focus element. A field also has its text selected, so the next
+ * keystroke replaces a leftover search rather than appending to it.
+ */
+export function focusPosElement(el) {
+  el.focus({ preventScroll: true });
+  if (typeof el.select === 'function' && el.tagName === 'INPUT') el.select();
+}
+
+/**
+ * An explicit request for one target (a keyboard shortcut: F2 customer, F3 search). Unlike a
+ * derived target it does not wait for the element to be the active one — the cashier asked for
+ * it. Returns false when no such element is on screen; the caller's state change then brings it
+ * in and the focus controller places the caret on that transition.
+ */
+export function requestFocusTarget(registry, target, ownerId = null) {
+  if (!registry || target === T.NONE) return false;
+  const record = registry.newest('focus', (r) => serves({ ...r, active: true }, target, ownerId));
+  const el = elementOf(record);
+  if (!el) return false;
+  focusPosElement(el);
+  return true;
+}
+
+/**
  * Everything the focus controller needs, read from the registry in one place.
  *
  * @param scopeState  posScope.resolvePosScope result

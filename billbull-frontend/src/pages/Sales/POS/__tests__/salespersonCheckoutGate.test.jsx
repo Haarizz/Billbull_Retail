@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import POSTouchScreen from '../POSTouchScreen';
 import { TradePOSTouchScreen } from '../TradePOS/TradePOSTouchScreen';
+import { checkoutQuickCashRequest } from '../input/posShortcuts';
 
 /**
  * REGRESSION — clicking Checkout with no verified salesperson must open the scan modal and stop.
@@ -29,19 +30,23 @@ const POS_SALES = read('../../POSSales.jsx');
 const TOUCH = read('../POSTouchScreen.jsx');
 
 // POSSales.jsx `handleCheckout`, verbatim (comments dropped; enforced by pinsPosSalesGuard).
+// P3: the quick-cash request (a double/triple Enter) is recorded only after the gate passed.
 const useSharedCheckoutGate = ({
   salespersonRequired, salespersonVerified, openSalespersonScanModal,
   setCheckoutPhase, setShowPaymentDialog,
-}) => useCallback(() => {
+  setCheckoutQuickCash = () => {}, quickCashSeqRef,
+}) => useCallback((opts) => {
   if (salespersonRequired && !salespersonVerified) {
     openSalespersonScanModal();
     return false;
   }
   setCheckoutPhase('payment');
   setShowPaymentDialog(true);
+  quickCashSeqRef.current += 1;
+  setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
   return true;
 }, [salespersonRequired, salespersonVerified, openSalespersonScanModal,
-  setCheckoutPhase, setShowPaymentDialog]);
+  setCheckoutPhase, setShowPaymentDialog, setCheckoutQuickCash, quickCashSeqRef]);
 
 const codeLines = (src) => src
   .split('\n')
@@ -81,10 +86,12 @@ const Harness = ({ Template, salespersonRequired, verifiedSalesperson, spies, po
   // Exactly the useSalesperson derivation: verified when the feature is off, or when a scan
   // succeeded. A merely displayed/preselected employee is NOT a verification.
   const salespersonVerified = !salespersonRequired || !!verifiedSalesperson;
+  const quickCashSeqRef = useRef(0);
   const handleCheckout = useSharedCheckoutGate({
     salespersonRequired, salespersonVerified, openSalespersonScanModal,
     setCheckoutPhase: spies.setCheckoutPhase,
     setShowPaymentDialog: spies.setShowPaymentDialog,
+    quickCashSeqRef,
   });
   return (
     <>
@@ -204,23 +211,26 @@ describe('POSTouchScreen cannot open settlement on its own', () => {
     expect(TOUCH).not.toContain("setCheckoutPhase('payment')");
     // Both Checkout buttons (Classic and Cart Focus) share one helper.
     expect(TOUCH.match(/onClick=\{startCheckout\}/g) || []).toHaveLength(2);
-    expect(TOUCH).toContain('if (handleCheckout?.() === false) return;');
+    // P3: the Enter shortcut passes its quick-cash request; a click passes nothing extra.
+    expect(TOUCH).toContain("if (handleCheckout?.(typeof quickCash === 'string' ? { quickCash } : undefined) === false) return;");
   });
 });
 
 describe('every other checkout trigger delegates to the same gate', () => {
   it('pinsPosSalesGuard — the copy above is still POSSales.handleCheckout', () => {
     const source = POS_SALES.slice(
-      POS_SALES.indexOf('const handleCheckout = useCallback(() => {'),
+      POS_SALES.indexOf('const handleCheckout = useCallback((opts) => {'),
       POS_SALES.indexOf('}, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);'));
     expect(codeLines(source)).toEqual(codeLines([
-      'const handleCheckout = useCallback(() => {',
+      'const handleCheckout = useCallback((opts) => {',
       "if (salespersonRequired && !salespersonVerified) {",
       'openSalespersonScanModal();',
       'return false;',
       '}',
       "setCheckoutPhase('payment');",
       'setShowPaymentDialog(true);',
+      'quickCashSeqRef.current += 1;',
+      'setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));',
       'return true;',
     ].join('\n')));
   });

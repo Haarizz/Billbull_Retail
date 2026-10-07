@@ -3,7 +3,7 @@ import { DECLARED_OVERLAY_SCOPES } from './posScope';
 /**
  * The POS input registry: what is on screen that owns, or may receive, keyboard input.
  *
- * Four kinds of entry:
+ * Five kinds of entry:
  *  - overlay  { scope, open, suppressScan, onEscape?, onKey? } — a dialog, flow or panel over the sale
  *  - surface  { kind: 'wedge'|'redirect', enabled, inputRef, onScan?, setBarcodeInput?,
  *               itemEntryActive?, itemEntryMode? } — the mounted POS template's scan target
@@ -11,6 +11,8 @@ import { DECLARED_OVERLAY_SCOPES } from './posScope';
  *               owned by the overlay it is rendered in
  *  - focus    { targets, ref, owner?, active?, ready? } — the element implementing one or more
  *               POS focus targets (posFocus.js), owned by the overlay it is rendered in, if any
+ *  - shortcut { scope, owner?, enabled, actions } — the actions behind one scope's keyboard
+ *               shortcuts (posShortcuts.js), owned by the overlay they belong to, if any
  *
  * Entries are plain mutable records read synchronously by the input controller when a key
  * arrives; registering never re-renders anything. Every registration gets a sequence number,
@@ -20,7 +22,9 @@ import { DECLARED_OVERLAY_SCOPES } from './posScope';
  */
 export function createPosInputRegistry({ v2 = true, focusV2 = v2 } = {}) {
   let seq = 0;
-  const kinds = { overlay: new Map(), surface: new Map(), payment: new Map(), focus: new Map() };
+  const kinds = {
+    overlay: new Map(), surface: new Map(), payment: new Map(), focus: new Map(), shortcut: new Map(),
+  };
   const listeners = new Set();
 
   /** Tells subscribers the registry changed. They re-read it; nothing is passed. */

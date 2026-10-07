@@ -187,6 +187,7 @@ import { PosOverlayProvider } from './POS/input/PosOverlayContext';
 import { usePosInputController } from './POS/input/usePosInputController';
 import { POS_OVERLAY_IDS } from './POS/input/posScope';
 import { SCANNER_INPUT_MODES, scannerInputProps } from './POS/input/posScannerField';
+import { checkoutQuickCashRequest } from './POS/input/posShortcuts';
 import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
@@ -475,6 +476,9 @@ export default function POSSales() {
   // so the recorded reason survives the X-Report step in between.
   const forceCloseContextRef = useRef(null);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  // A double/triple Enter's Cash request for the checkout panel (posShortcuts), handled once.
+  const [checkoutQuickCash, setCheckoutQuickCash] = useState(null);
+  const clearCheckoutQuickCash = useCallback(() => setCheckoutQuickCash(null), []);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
   // Live Session quick-view — dashboard tile that pops the current session's
@@ -2237,7 +2241,7 @@ export default function POSSales() {
   const {
     addToInvoice,
     handleUnifiedEntry, handleBarcodeScan, handleProductSelection, handleEditItem,
-    lastScannedItem, setLastScannedItem,
+    lastScannedItem, setLastScannedItem, lastEnteredLineId,
     isItemEntryOpen, selectedProductForEntry, itemEntryAction, itemEntryContext,
     itemEntryInitialValues, closeItemEntry, handleItemEntryConfirm,
   } = useProductEntry({
@@ -7090,7 +7094,8 @@ export default function POSSales() {
     }
   }, [loadPosProducts, handleProductSelection, showFeedback]);
 
-  const handleCheckout = useCallback(() => {
+  const quickCashSeqRef = useRef(0);
+  const handleCheckout = useCallback((opts) => {
     // Verification is asked for HERE, at Checkout, rather than at settlement: the cashier is told
     // to scan a badge while the customer is still at the counter, not after the payment screen is
     // already up. Opening the modal IS the refusal — there is no separate error to dismiss, and
@@ -7110,7 +7115,10 @@ export default function POSSales() {
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     // The Payment Manager starts with no allocations — the cashier picks a method and
-    // enters an amount, so there is nothing to pre-seed here any more.
+    // enters an amount, so there is nothing to pre-seed here any more. A double/triple Enter
+    // (opts.quickCash) asks the payment panel to take Cash once it is up; it never settles.
+    quickCashSeqRef.current += 1;
+    setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
     return true;
   }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);
 
@@ -7124,7 +7132,7 @@ export default function POSSales() {
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
-    barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    barcodeScanFeedback, lastScannedItem, lastEnteredLineId, handleBarcodeScan, handleUnifiedEntry,
     barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
     scannerConfig,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
@@ -7604,6 +7612,7 @@ export default function POSSales() {
           mode={itemEntryAction}
           initialValues={itemEntryInitialValues}
           lockQuantity={Boolean(itemEntryContext?.lockQuantity)}
+          initialFocusField={itemEntryContext?.focusField || null}
           lockedBatch={itemEntryContext?.batch || null}
           lockedSerial={itemEntryContext?.serial || null}
           posSettings={posSettings}
@@ -8518,6 +8527,8 @@ export default function POSSales() {
                     selectedCustomerName={selectedCustomerData?.name}
                     bankAccounts={checkoutOnlineBankAccounts}
                     bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                    quickCash={checkoutQuickCash}
+                    onQuickCashHandled={clearCheckoutQuickCash}
                   />
 
 

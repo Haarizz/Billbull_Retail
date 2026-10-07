@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { isEditableTarget } from '../../../../utils/editableTarget';
 import { isPosScreenBlocked } from '../device/scanner/scanGuard';
 import { resolvePosScope } from './posScope';
-import { resolveFocusState, STICKY_FOCUS_TARGETS } from './posFocus';
+import { focusPosElement, resolveFocusState, STICKY_FOCUS_TARGETS } from './posFocus';
 
 const defaultSchedule = (fn) => {
   if (typeof queueMicrotask === 'function') queueMicrotask(fn);
@@ -49,12 +49,7 @@ export function createPosFocusController({
     return resolveFocusState(registry, scopeState, surface);
   };
 
-  const focusElement = (el) => {
-    el.focus({ preventScroll: true });
-    // A field that was focused for the next scan starts empty-looking: select what is there so
-    // the next keystroke replaces a leftover search rather than appending to it.
-    if (typeof el.select === 'function' && el.tagName === 'INPUT') el.select();
-  };
+  const focusElement = focusPosElement;
 
   /** Moves focus if the derived target changed since the last evaluation. */
   const reconcile = () => {
