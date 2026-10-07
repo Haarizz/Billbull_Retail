@@ -8,9 +8,10 @@ import {
   markScanHandled,
   SCANNER_BURST_GAP_MS,
 } from '../device/scanner/scanGuard';
-import { isPosInputV2Enabled } from './posInputFlag';
+import { isPosFocusV2Enabled, isPosInputV2Enabled } from './posInputFlag';
 import { createPosInputRegistry } from './posInputRegistry';
 import { acceptsPaymentHotkeys, acceptsScanner, resolvePosScope } from './posScope';
+import { usePosFocusController } from './usePosFocusController';
 
 /**
  * How long a payment hotkey waits before it acts. Longer than the scanner inter-key gap, so if
@@ -228,17 +229,26 @@ export function createPosKeyHandler({
  * listener the POS uses. With posInputV2 off nothing is attached and the registry reports v2
  * false, so every legacy listener stays live instead.
  *
- * @param overlays  { [POS_OVERLAY_IDS.*]: boolean } — which flag-driven overlays are open
+ * It also runs the P2 focus controller (usePosFocusController) on the same registry when
+ * posFocusV2 is on as well.
+ *
+ * @param overlays      { [POS_OVERLAY_IDS.*]: boolean } — which flag-driven overlays are open
+ * @param enabled       force posInputV2 on/off (tests); null reads the flag
+ * @param focusEnabled  force posFocusV2 on/off (tests); null reads the flag
  * @returns the registry
  */
-export function usePosInputController({ overlays = {}, enabled = null } = {}) {
+export function usePosInputController({ overlays = {}, enabled = null, focusEnabled = null } = {}) {
   const [registry] = useState(() => createPosInputRegistry({
     v2: enabled == null ? isPosInputV2Enabled() : Boolean(enabled),
+    focusV2: focusEnabled == null ? isPosFocusV2Enabled() : Boolean(focusEnabled),
   }));
 
   useLayoutEffect(() => {
     registry.syncDeclared(overlays);
   });
+
+  // P2: the state-driven focus controller reads the same registry (inert with posFocusV2 off).
+  usePosFocusController(registry);
 
   useEffect(() => {
     if (!registry.v2 || typeof window === 'undefined') return undefined;

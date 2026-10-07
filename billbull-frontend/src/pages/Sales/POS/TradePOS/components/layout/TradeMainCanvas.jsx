@@ -4,6 +4,8 @@ import { TradeProductGrid } from '../catalog/TradeProductGrid';
 import { TradeCard, TradeBadge } from '../ui';
 import { getCustomerOutstanding } from '../../../../../../api/salesInvoiceApi';
 import { formatDisplayDate } from '../../../../../../utils/dateUtils';
+import { usePosFocusTarget, usePosFocusV2 } from '../../../input/PosOverlayContext';
+import { POS_FOCUS_TARGETS } from '../../../input/posFocus';
 
 export const TradeMainCanvas = React.memo(({
   // Catalog Props
@@ -48,9 +50,13 @@ export const TradeMainCanvas = React.memo(({
     return () => { cancelled = true; };
   }, [isWalkIn, customerCode]);
 
+  // The customer search is the CUSTOMER focus target while it is open (posFocusV2: the POS
+  // focus controller puts the caret there, and back in the product search once it closes).
+  const posFocusV2 = usePosFocusV2();
+  usePosFocusTarget({ targets: POS_FOCUS_TARGETS.CUSTOMER, ref: searchInputRef, active: isSearchingCustomer });
   useEffect(() => {
-    if (isSearchingCustomer) searchInputRef.current?.focus();
-  }, [isSearchingCustomer]);
+    if (isSearchingCustomer && !posFocusV2) searchInputRef.current?.focus();
+  }, [isSearchingCustomer, posFocusV2]);
 
   const balanceDue = accountSummary?.outstanding ?? selectedCustomerData?.openingBalance ?? 0;
   const lastPurchaseDate = accountSummary?.lastPurchaseDate

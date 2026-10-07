@@ -1326,7 +1326,8 @@ describe('POSSales wiring (SupervisorPinDialog boundary)', () => {
     expect(POS_SALES.match(/<SupervisorPinDialog\b/g)).toHaveLength(1);
     expect(POS_SALES).toContain('    showCashierAuthDialog || showCloseSessionDialog || showSupervisorPin || sessionToClose\n');
     // destructure, businessDayClosureFlowActive, guard — plus one mention in the hook-call comment
-    expect(POS_SALES.match(/\bshowSupervisorPin\b/g)).toHaveLength(4);
+    // — plus the P2 overlay declaration for the POS input/focus controller
+    expect(POS_SALES.match(/\bshowSupervisorPin\b/g)).toHaveLength(5);
     expect(POS_SALES).not.toContain('Supervisor Approval</h2>');
     expect(POS_SALES).not.toContain("'Enter PIN to authorize void'");
     expect(POS_SALES).not.toContain('bg-black/50 z-[300]');

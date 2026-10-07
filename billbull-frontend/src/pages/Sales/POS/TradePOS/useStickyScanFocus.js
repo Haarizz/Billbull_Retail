@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { isPosInputHandled, isPosScreenBlocked } from '../device/scanner/scanGuard';
 import { isEditableTarget } from '../../../../utils/editableTarget';
-import { usePosInputV2, usePosScanSurface } from '../input/PosOverlayContext';
+import { usePosFocusTarget, usePosFocusV2, usePosInputV2, usePosScanSurface } from '../input/PosOverlayContext';
+import { POS_FOCUS_TARGETS } from '../input/posFocus';
 
 /**
  * useStickyScanFocus
@@ -28,6 +29,11 @@ import { usePosInputV2, usePosScanSurface } from '../input/PosOverlayContext';
  * Focus is never taken from another input, textarea, select or contenteditable, and never
  * while an overlay is open — every POS dialog in this codebase is a `fixed inset-0` layer,
  * and modals that must swallow scans additionally carry data-pos-scan-suppress.
+ *
+ * posFocusV2: mechanism 1 is replaced by the POS focus controller (POS/input/
+ * usePosFocusController), which focuses the registered SEARCH target from explicit POS state —
+ * on a transition (sale ready, overlay closed, New Sale) and on a click — with no timer and no
+ * DOM overlay check. The retry loop below runs only with the flag off, as the rollback path.
  */
 
 const RETRY_INTERVAL_MS = 300;
@@ -39,7 +45,10 @@ const isTextEntryTarget = isEditableTarget;
 // Classic/Cart Focus wedge listener so both templates agree on what "blocked" means.
 const isScreenBlocked = isPosScreenBlocked;
 
-export function useStickyScanFocus(barcodeInputRef, { enabled = true, triggers = [] } = {}) {
+export function useStickyScanFocus(barcodeInputRef, { enabled = true, triggers = [], searchFocus = true } = {}) {
+  const posFocusV2 = usePosFocusV2();
+  usePosFocusTarget({ targets: POS_FOCUS_TARGETS.SEARCH, ref: barcodeInputRef, active: enabled && searchFocus });
+  const legacyFocus = enabled && !posFocusV2;
   const retryTimerRef = useRef(null);
   const retriesLeftRef = useRef(0);
 
@@ -66,7 +75,7 @@ export function useStickyScanFocus(barcodeInputRef, { enabled = true, triggers =
 
   /** Ask for focus now; if something is in the way, keep asking until it is not. */
   const requestFocus = useCallback(() => {
-    if (!enabled) return;
+    if (!legacyFocus) return;
     clearRetry();
     retriesLeftRef.current = MAX_RETRIES;
     const attempt = () => {
@@ -77,14 +86,14 @@ export function useStickyScanFocus(barcodeInputRef, { enabled = true, triggers =
     };
     // One frame of slack so the attempt runs after the DOM settles from this render.
     retryTimerRef.current = window.setTimeout(attempt, 0);
-  }, [enabled, focusSearch, clearRetry]);
+  }, [legacyFocus, focusSearch, clearRetry]);
 
   // Mount + every declared trigger (cart changes, completed sale, customer assignment).
   useEffect(() => {
     requestFocus();
     return clearRetry;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, requestFocus, ...triggers]);
+  }, [legacyFocus, requestFocus, ...triggers]);
 
   // Type-anywhere redirect, including keyboard-wedge scanner bursts. With posInputV2 the
   // centralized POS input controller performs it for the registered 'redirect' surface and the

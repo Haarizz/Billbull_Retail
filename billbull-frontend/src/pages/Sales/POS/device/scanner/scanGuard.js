@@ -7,10 +7,14 @@
  * see a scan additionally carry data-pos-scan-suppress. Shared by the Classic/Cart Focus wedge
  * listener (POSTouchScreen) and the compact template's sticky focus (useStickyScanFocus) so the
  * two cannot drift on what "blocked" means.
+ *
+ * With posInputV2 this is only the migration fallback behind the registered overlays. A Radix
+ * dialog that has already closed but is still playing its exit animation (data-state="closed")
+ * is not an open overlay.
  */
 export const isPosScreenBlocked = () => {
   if (typeof document === 'undefined') return true;
-  if (document.querySelector('.fixed.inset-0')) return true;
+  if (document.querySelector('.fixed.inset-0:not([data-state="closed"])')) return true;
   if (document.querySelector('[data-pos-scan-suppress="true"]')) return true;
   return false;
 };

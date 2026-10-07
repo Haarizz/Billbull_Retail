@@ -1331,7 +1331,8 @@ describe('source contract', () => {
     // every read of the state is either the call site or the declarations
     expect(count(PARENT, 'priceCheckResult')).toBe(count(PARENT_CALLSITE, 'priceCheckResult') + 1);
     expect(count(PARENT, 'priceCheckQuery')).toBe(count(PARENT_CALLSITE, 'priceCheckQuery') + 1);
-    expect(count(PARENT, 'showPriceCheck')).toBe(count(PARENT_CALLSITE, 'showPriceCheck') + 1);
+    // + 1 declaration, + 1 P2 overlay declaration for the POS input/focus controller
+    expect(count(PARENT, 'showPriceCheck')).toBe(count(PARENT_CALLSITE, 'showPriceCheck') + 2);
     // TradePOS forwards the setters into TradeFunctionsPanel but mounts no PriceCheck of its own.
     expect(TRADE).not.toMatch(/<PriceCheck|PriceCheck from/);
     expect(TRADE).not.toContain('setShowPriceCheck(true)');

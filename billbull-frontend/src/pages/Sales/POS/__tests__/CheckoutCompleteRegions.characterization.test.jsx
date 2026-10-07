@@ -80,6 +80,7 @@ import CheckoutPaymentFooter from '../features/checkout/CheckoutPaymentFooter';
 import CheckoutRemarks from '../features/checkout/CheckoutRemarks';
 import { isSheetPaper } from '../device/printing/posSheetTemplates';
 import CheckoutPaymentPreview from '../features/checkout/CheckoutPaymentPreview';
+import { undoP2FocusEdits } from './p2FocusSourceEdits';
 
 // ── the verbatim region ─────────────────────────────────────────────────────────────────
 function OriginalCheckoutMarkup({
@@ -1069,8 +1070,12 @@ describe('1. source — the copy and the complete-phase region map', () => {
     expect(POS_SALES).toContain("import CheckoutCompleteSummary from './POS/features/checkout/CheckoutCompleteSummary';\nimport CheckoutCompleteActions from './POS/features/checkout/CheckoutCompleteActions';\n");
     expect(POS_SALES.match(/<CheckoutCompleteSummary\b/g)).toHaveLength(1);
     expect(POS_SALES.match(/<CheckoutCompleteActions\b/g)).toHaveLength(1);
-    for (const rel of ['../features/checkout/CheckoutCompleteSummary.jsx', '../features/checkout/CheckoutCompleteActions.jsx']) {
-      expect(readSource(rel), rel).not.toMatch(/\buse[A-Z]\w*\(|createContext|useContext|\bmemo\(/);
+    // P2: CheckoutCompleteActions registers New Sale as a focus target (undone here, pinned in its own test).
+    for (const [rel, src] of [
+      ['../features/checkout/CheckoutCompleteSummary.jsx', readSource('../features/checkout/CheckoutCompleteSummary.jsx')],
+      ['../features/checkout/CheckoutCompleteActions.jsx', undoP2FocusEdits('CheckoutCompleteActions', readSource('../features/checkout/CheckoutCompleteActions.jsx'))],
+    ]) {
+      expect(src, rel).not.toMatch(/\buse[A-Z]\w*\(|createContext|useContext|\bmemo\(/);
     }
   });
 

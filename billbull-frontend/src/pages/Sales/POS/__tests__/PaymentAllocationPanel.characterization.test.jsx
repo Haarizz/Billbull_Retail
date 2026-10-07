@@ -651,8 +651,10 @@ describe('10. render identity', () => {
   it('the only state is activeModal and the only ref is methodBarRef (source)', () => {
     expect(PANEL.match(/useState\(/g)).toHaveLength(1);
     expect(PANEL).toContain('  const [activeModal, setActiveModal] = useState(null);');
-    expect(PANEL.match(/useRef\(/g)).toHaveLength(1);
+    // P2: the first method tile is the checkout's PAYMENT_METHOD focus target.
+    expect(PANEL.match(/useRef\(/g)).toHaveLength(2);
     expect(PANEL).toContain('  const methodBarRef = useRef(null);');
+    expect(PANEL).toContain('  const firstMethodRef = useRef(null);');
     expect(PANEL.match(/useEffect\(/g)).toHaveLength(1);
     expect(PANEL).toContain("    window.addEventListener('keydown', onKey);\n    return () => window.removeEventListener('keydown', onKey);\n  }, [activeModal, posInputV2, openAdd, offeredMethods]);");
   });
@@ -812,6 +814,8 @@ describe('11. POSSales call sites (source)', () => {
       // P1: the shared editable-field rule, the POS input marker and its registration hooks.
       '../../../../utils/editableTarget', '../device/scanner/scanGuard',
       '../input/PosOverlayContext', '../input/posScope',
+      // P2: the focus-target names.
+      '../input/posFocus',
     ]);
   });
 });

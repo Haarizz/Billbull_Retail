@@ -23,6 +23,9 @@ export const usePosInputRegistry = () => useContext(PosOverlayContext);
 /** True when the centralized controller owns POS keyboard input for this subtree. */
 export const usePosInputV2 = () => Boolean(useContext(PosOverlayContext)?.v2);
 
+/** True when the focus controller owns where the caret goes; legacy focus code stands down. */
+export const usePosFocusV2 = () => Boolean(useContext(PosOverlayContext)?.focusV2);
+
 /**
  * Registers one entry while `active`, keeping its fields (callbacks included) current on every
  * render. Registration happens in a layout effect, so it is in place before any keystroke can
@@ -35,7 +38,10 @@ function useRegistryEntry(kind, id, active, fields) {
 
   useLayoutEffect(() => {
     fieldsRef.current = fields;
-    if (recordRef.current) Object.assign(recordRef.current, fields);
+    if (recordRef.current) {
+      Object.assign(recordRef.current, fields);
+      registry?.touch?.();
+    }
   });
 
   const enabled = Boolean(registry?.v2) && Boolean(active);
@@ -71,8 +77,13 @@ export function usePosOverlay({
 
 /**
  * Registers the mounted POS template's scan surface.
- *  - 'wedge'    Classic/Cart Focus: keystrokes on no field are buffered and Enter scans them.
- *  - 'redirect' compact Trade POS: a printable key on no field moves into the search box.
+ *  - 'wedge'    a configured keyboard-wedge scanner (Classic/Cart Focus): keystrokes on no field
+ *               are buffered and Enter scans them.
+ *  - 'redirect' a printable key on no field moves into the search box (Trade POS always; Classic
+ *               and Cart Focus with no wedge scanner configured, under posFocusV2).
+ *
+ * @param itemEntryMode  'qty' | 'discount' | 'price' | 'none' — the item keypad mode, which the
+ *                       focus controller turns into the QUANTITY/DISCOUNT/PRICE target
  */
 export function usePosScanSurface({
   kind,
@@ -81,11 +92,28 @@ export function usePosScanSurface({
   onScan = null,
   setBarcodeInput = null,
   itemEntryActive = false,
+  itemEntryMode = 'none',
 }) {
   const autoId = useId();
   useRegistryEntry('surface', `surface${autoId}`, true, {
-    kind, enabled, inputRef, onScan, setBarcodeInput, itemEntryActive,
+    kind, enabled, inputRef, onScan, setBarcodeInput, itemEntryActive, itemEntryMode,
   });
+}
+
+/**
+ * Registers the element that implements one or more POS focus targets (posFocus.js). The focus
+ * controller decides when the caret goes there; the component only says where "there" is.
+ *
+ * @param targets  POS_FOCUS_TARGETS value or array of them
+ * @param ref      ref to the element to focus (a field, button or a dialog that owns its keys)
+ * @param owner    the overlay (POS_OVERLAY_IDS) this element belongs to; null for the sale screen
+ * @param active   false while the element is not the right target (e.g. a closed customer search)
+ * @param ready    SETTLE only: settlement is possible, so checkout focuses Settle
+ */
+export function usePosFocusTarget({ targets, ref, owner = null, active = true, ready = false }) {
+  const autoId = useId();
+  const list = Array.isArray(targets) ? targets : [targets];
+  useRegistryEntry('focus', `focus${autoId}`, true, { targets: list, ref, owner, active, ready });
 }
 
 /**

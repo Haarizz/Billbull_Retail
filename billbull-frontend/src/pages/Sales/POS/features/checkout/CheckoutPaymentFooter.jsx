@@ -4,9 +4,12 @@
 // cancelCheckoutTenders) and the zero-argument Settle callback (`() => processPayment()`) are
 // supplied by POSSales; this component must never receive processPayment itself.
 
-import React from 'react';
+import React, { useRef } from 'react';
 import { AlertCircle, CheckCircle } from 'lucide-react';
 import { DirhamSymbol } from '../../POSCurrency';
+import { usePosFocusTarget } from '../../input/PosOverlayContext';
+import { POS_FOCUS_TARGETS } from '../../input/posFocus';
+import { POS_OVERLAY_IDS } from '../../input/posScope';
 
 function CheckoutPaymentFooter({
   changeDue,
@@ -18,6 +21,13 @@ function CheckoutPaymentFooter({
   onCancel,
   onSettle,
 }) {
+  // Settle is the checkout's SETTLE focus target; `ready` is what makes the focus controller
+  // choose it over the method bar (fully allocated, server ready, nothing in flight).
+  const settleRef = useRef(null);
+  const settleReady = canSettle && itemCount > 0 && !checkoutLoading;
+  usePosFocusTarget({
+    targets: POS_FOCUS_TARGETS.SETTLE, ref: settleRef, owner: POS_OVERLAY_IDS.CHECKOUT, ready: settleReady,
+  });
   return (
               <div className="bg-white border-t-2 border-[#F5C742]/30 px-3 sm:px-5 py-4 shrink-0">
                 {/* Change due — the only figure the cashier still needs at this point
@@ -39,7 +49,6 @@ function CheckoutPaymentFooter({
                 )}
                 {/* Action buttons */}
                 {(() => {
-                  const settleReady = canSettle && itemCount > 0 && !checkoutLoading;
                   return (
                     <div className="flex items-stretch gap-3">
                       <button type="button" onClick={onCancel}
@@ -47,7 +56,7 @@ function CheckoutPaymentFooter({
                         className="flex-none w-28 sm:w-36 min-h-[64px] rounded-xl border-2 border-gray-300 bg-white text-gray-600 font-bold text-base transition-all duration-200 ease-out hover:bg-gray-100 hover:border-gray-400 hover:text-gray-800 active:scale-[0.98] focus:outline-none focus-visible:ring-4 focus-visible:ring-gray-300 motion-reduce:transform-none">
                         Cancel
                       </button>
-                      <button type="button" onClick={onSettle} disabled={!settleReady}
+                      <button type="button" ref={settleRef} onClick={onSettle} disabled={!settleReady}
                         aria-label={`Settle payment of ${effectiveDue.toFixed(2)}`}
                         className={`flex-1 min-w-0 min-h-[64px] px-5 rounded-xl font-black flex items-center justify-center gap-3 transition-all duration-200 ease-out focus:outline-none focus-visible:ring-4 focus-visible:ring-[#F5C742]/60 motion-reduce:transform-none ${
                           settleReady

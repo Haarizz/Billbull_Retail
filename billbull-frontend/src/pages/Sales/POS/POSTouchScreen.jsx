@@ -14,7 +14,8 @@ import {
   createBurstTracker, isPosInputHandled, isPosScreenBlocked, markScanHandled, wasScanHandled,
 } from './device/scanner/scanGuard';
 import { isEditableTarget } from '../../../utils/editableTarget';
-import { usePosInputV2, usePosScanSurface } from './input/PosOverlayContext';
+import { usePosFocusTarget, usePosFocusV2, usePosInputV2, usePosScanSurface } from './input/PosOverlayContext';
+import { POS_FOCUS_TARGETS } from './input/posFocus';
 
 /**
  * The Salesperson row that sits directly under the Customer bar in every POS sale layout.
@@ -187,8 +188,12 @@ const POSTouchScreen = React.memo((props) => {
   // Keystroke timing on the barcode box, so a scan can be told apart from a typed price.
   const [barcodeBurst] = useState(() => createBurstTracker());
   const scannerReady = Boolean(scannerConfig?.enabled) && scannerConfig?.status === 'ACTIVE' && scannerConfig?.inputMode === 'KEYBOARD_WEDGE';
+  const posFocusV2 = usePosFocusV2();
 
+  // Legacy refocus (posFocusV2 off): an 80 ms timer after every cart change. With posFocusV2 the
+  // focus controller owns the caret through the targets registered below.
   useEffect(() => {
+    if (posFocusV2) return undefined;
     if (!scannerReady || !scannerConfig?.autoFocusOnPOS) return undefined;
     if (posActionMode === 'qty' || posActionMode === 'discount') return undefined;
     const timer = window.setTimeout(() => {
@@ -196,6 +201,7 @@ const POSTouchScreen = React.memo((props) => {
     }, 80);
     return () => window.clearTimeout(timer);
   }, [
+    posFocusV2,
     barcodeInputRef,
     currentInvoice.items.length,
     lastScannedItem?.barcode,
@@ -204,16 +210,44 @@ const POSTouchScreen = React.memo((props) => {
     scannerReady,
   ]);
 
+  // The item keypad: Cart Focus repurposes the barcode box (posActionMode), Classic opens its
+  // inline numpad (classicNumpadMode). Either way it is the ITEM_ENTRY scope.
+  const isCartFocus = posTemplate === 'focus';
+  const itemEntryMode = (isCartFocus ? posActionMode : classicNumpadMode) || 'none';
+
   // posInputV2: the centralized POS input controller owns the keyboard wedge. This template
-  // only declares its scan surface; the legacy window listener below stands down.
+  // only declares its scan surface; the legacy window listener below stands down. With no
+  // wedge scanner configured, posFocusV2 makes it a type-anywhere surface instead, as in Trade
+  // POS: a printable key on no field goes into the search box.
   const posInputV2 = usePosInputV2();
   usePosScanSurface({
-    kind: 'wedge',
-    enabled: scannerReady,
+    kind: scannerReady ? 'wedge' : 'redirect',
+    enabled: scannerReady || posFocusV2,
     inputRef: barcodeInputRef,
     onScan: handleBarcodeScan,
     setBarcodeInput,
-    itemEntryActive: posActionMode !== 'none',
+    itemEntryActive: itemEntryMode !== 'none',
+    itemEntryMode,
+  });
+
+  // Focus targets (posFocusV2). The barcode box (Cart Focus) or the grid search (Classic) is
+  // SEARCH; the field the item keypad types into is QUANTITY/DISCOUNT/PRICE; the customer
+  // search is CUSTOMER while its dropdown is open. autoFocusOnPOS=false opts out of SEARCH.
+  const classicNumpadInputRef = useRef(null);
+  const customerSearchInputRef = useRef(null);
+  usePosFocusTarget({
+    targets: POS_FOCUS_TARGETS.SEARCH,
+    ref: barcodeInputRef,
+    active: scannerConfig?.autoFocusOnPOS !== false,
+  });
+  usePosFocusTarget({
+    targets: [POS_FOCUS_TARGETS.QUANTITY, POS_FOCUS_TARGETS.DISCOUNT, POS_FOCUS_TARGETS.PRICE],
+    ref: isCartFocus ? barcodeInputRef : classicNumpadInputRef,
+  });
+  usePosFocusTarget({
+    targets: POS_FOCUS_TARGETS.CUSTOMER,
+    ref: customerSearchInputRef,
+    active: Boolean(showCustomerDropdown),
   });
 
   // Legacy keyboard wedge (posInputV2 off, or rendered without the POS input provider).
@@ -418,7 +452,7 @@ const POSTouchScreen = React.memo((props) => {
                   <div className="p-2 border-b border-[#327F74]/10">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                      <input autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
+                      <input ref={customerSearchInputRef} autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
                         onChange={e => setCustomerSearchQuery(e.target.value)}
                         className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-[#327F74]/30 rounded focus:outline-none focus:border-[#327F74]" />
                     </div>
@@ -745,7 +779,8 @@ const POSTouchScreen = React.memo((props) => {
                     }}
                     placeholder="Scan barcode or enter 3*CODE.."
                     className="w-full bg-transparent text-[#1E293B] placeholder-gray-300 px-1 text-sm font-mono focus:outline-none"
-                    autoFocus
+                    // posFocusV2: the focus controller focuses this box as the SEARCH target.
+                    autoFocus={!posFocusV2}
                   />
                   <button type="button" onClick={() => { setBarcodeSuggestions([]); handleBarcodeScan(barcodeInput); }}
                     className="bg-[#F5C742] hover:opacity-90 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors shadow-sm flex-shrink-0 ml-2">
@@ -1078,7 +1113,7 @@ const POSTouchScreen = React.memo((props) => {
                   <div className="p-2 border-b border-gray-100">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-                      <input autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
+                      <input ref={customerSearchInputRef} autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
                         onChange={e => setCustomerSearchQuery(e.target.value)}
                         className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded focus:outline-none focus:border-[#F5C742]" />
                     </div>
@@ -1366,7 +1401,10 @@ const POSTouchScreen = React.memo((props) => {
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="relative flex-1 min-w-[140px]">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                      {/* The Classic SEARCH target: the template's barcodeInputRef, so focus,
+                          the scan surface and every other template share one model. */}
                       <input
+                        ref={barcodeInputRef}
                         type="search"
                         autoComplete="off"
                         placeholder="Scan or search — item, barcode, batch, customer…"
@@ -1610,6 +1648,7 @@ const POSTouchScreen = React.memo((props) => {
                       {/* Display */}
                       <div className="mb-2">
                         <input
+                          ref={classicNumpadInputRef}
                           type="text"
                           autoFocus
                           placeholder="0"

@@ -14,8 +14,9 @@ import VoucherPaymentModal from './modals/VoucherPaymentModal';
 import BnplPaymentModal from './modals/BnplPaymentModal';
 import { isEditableTarget } from '../../../../utils/editableTarget';
 import { isPosInputHandled } from '../device/scanner/scanGuard';
-import { usePosInputV2, usePosPaymentHotkeys } from '../input/PosOverlayContext';
+import { usePosFocusTarget, usePosFocusV2, usePosInputV2, usePosPaymentHotkeys } from '../input/PosOverlayContext';
 import { POS_OVERLAY_IDS } from '../input/posScope';
+import { POS_FOCUS_TARGETS } from '../input/posFocus';
 
 /**
  * Hotkeys are the first letter of each method, which is also what the badge shows.
@@ -88,15 +89,26 @@ export default function PaymentAllocationPanel({
   const openAdd = useCallback((type) => setActiveModal({ type, line: null }), []);
   const openEdit = useCallback((line) => setActiveModal({ type: line.paymentType, line }), []);
 
+  // The method bar is the checkout's PAYMENT_METHOD focus target. With posFocusV2 the POS focus
+  // controller decides where the caret goes when a payment modal closes: Settle once the bill is
+  // fully allocated, otherwise this bar. It owns that only for the till's checkout, where it
+  // derives targets; the layaway deposit and delivery settlement panels keep the refocus below.
+  const firstMethodRef = useRef(null);
+  const posFocusV2 = usePosFocusV2();
+  usePosFocusTarget({ targets: POS_FOCUS_TARGETS.PAYMENT_METHOD, ref: firstMethodRef, owner: hotkeyOwner });
+  const controllerOwnsFocus = posFocusV2 && hotkeyOwner === POS_OVERLAY_IDS.CHECKOUT;
+
   /**
-   * Closing always returns focus to the method bar, so the next tender is one keystroke
-   * away — the cashier never has to reach for the mouse between allocations.
+   * Closing returns focus to the method bar, so the next tender is one keystroke away — the
+   * cashier never has to reach for the mouse between allocations. (posFocusV2 checkout: the
+   * focus controller does this, or focuses Settle when nothing is left to allocate.)
    */
   const closeModal = useCallback(() => {
     setActiveModal(null);
+    if (controllerOwnsFocus) return;
     // Deferred so focus lands after the modal has unmounted and released it.
     requestAnimationFrame(() => methodBarRef.current?.querySelector('button')?.focus());
-  }, []);
+  }, [controllerOwnsFocus]);
 
   const offeredMethods = useMemo(() => {
     const visible = METHODS.filter((m) => !m.hidden);
@@ -201,10 +213,11 @@ export default function PaymentAllocationPanel({
             is the thing that gets mis-pressed under pressure. */}
         <div ref={methodBarRef} className="grid gap-2"
           style={{ gridTemplateColumns: `repeat(${Math.max(1, offeredMethods.length)}, minmax(0, 1fr))` }}>
-          {offeredMethods.map(({ type, label, hotkey, icon: Icon, accent }) => (
+          {offeredMethods.map(({ type, label, hotkey, icon: Icon, accent }, index) => (
             // Hover/press feedback is drawn from the method's own accent so the tile that
             // lifts is unmistakably the one about to be charged. `group` drives the icon.
             <button key={type} type="button" onClick={() => openAdd(type)}
+              ref={index === 0 ? firstMethodRef : undefined}
               className="group relative flex flex-col items-center gap-1.5 rounded-xl border-2 py-3 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 motion-reduce:transform-none motion-reduce:transition-none"
               style={{ borderColor: `${accent}40` }}
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.backgroundColor = `${accent}0F`; }}

@@ -61,6 +61,7 @@ export const TradePOSTouchScreen = React.memo((props) => {
     setSearchQuery,
     barcodeInputRef,
     handleUnifiedEntry,
+    scannerConfig,
     productCategories,
     selectedCategory,
     setSelectedCategory,
@@ -149,12 +150,15 @@ export const TradePOSTouchScreen = React.memo((props) => {
     setActiveProductIndex(-1);
   }
 
-  // Keep the caret in the search box: at session start, after every cart change, once a sale
-  // closes (invoiceCounter bumps) and whenever a customer is assigned — so the next scan or
-  // keystroke always lands somewhere useful without the cashier clicking first.
+  // Keep the caret in the search box so the next scan or keystroke always lands somewhere useful
+  // without the cashier clicking first. posFocusV2: the search box is the registered SEARCH
+  // target and the POS focus controller decides when it gets the caret. Legacy (flag off):
+  // retried at session start, after every cart change, once a sale closes (invoiceCounter
+  // bumps) and whenever a customer is assigned. autoFocusOnPOS=false opts out, as elsewhere.
   const cartLineCount = currentInvoice?.items?.length || 0;
   useStickyScanFocus(barcodeInputRef, {
-    triggers: [invoiceCounter, cartLineCount, selectedCustomerData?.id, showQuickCustomerModal]
+    triggers: [invoiceCounter, cartLineCount, selectedCustomerData?.id, showQuickCustomerModal],
+    searchFocus: scannerConfig?.autoFocusOnPOS !== false,
   });
 
   const moveProductHighlight = useCallback((delta) => {

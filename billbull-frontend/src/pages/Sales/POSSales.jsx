@@ -3226,6 +3226,8 @@ export default function POSSales() {
   // are open/closed by flags owned here, so they are declared by id; dialogs, payment modals,
   // the template scan surface and the payment panels register themselves through
   // PosOverlayProvider. Declared after useCheckout because the complete phase is its state.
+  // The same registry drives the P2 focus controller (POS/input/usePosFocusController): these
+  // flags are also what decides where the caret goes (sale → checkout → complete → new sale).
   const posInputRegistry = usePosInputController({
     overlays: {
       [POS_OVERLAY_IDS.CHECKOUT]: showPaymentDialog && checkoutPhase !== 'complete',
@@ -3234,6 +3236,34 @@ export default function POSSales() {
       [POS_OVERLAY_IDS.DELIVERY]: showDeliveryModal,
       [POS_OVERLAY_IDS.DELIVERY_SETTLEMENT]: showDeliverySettleModal,
       [POS_OVERLAY_IDS.LAYAWAY_DEPOSIT]: showSaveLayaway,
+      // POSSales dialogs (MODAL): each owns the keyboard and the caret while open, by flag.
+      [POS_OVERLAY_IDS.SUPERVISOR_PIN]: showSupervisorPin,
+      [POS_OVERLAY_IDS.ITEM_ENTRY_DIALOG]: Boolean(selectedProductForEntry) && isItemEntryOpen,
+      [POS_OVERLAY_IDS.PROMOTIONS]: showPromotionsDialog,
+      [POS_OVERLAY_IDS.COUPONS]: showCouponsDialog,
+      [POS_OVERLAY_IDS.PRICE_CHECK]: showPriceCheck,
+      [POS_OVERLAY_IDS.PRODUCT_SEARCH]: showProductSearch,
+      [POS_OVERLAY_IDS.CREDIT_BALANCE]: showCreditBalance,
+      [POS_OVERLAY_IDS.CREDIT_CARD_BALANCE]: showCreditCardBalance,
+      [POS_OVERLAY_IDS.SERIAL_BATCH]: showSerialBatch,
+      [POS_OVERLAY_IDS.SERVICE_REPAIR]: showServiceRepair,
+      [POS_OVERLAY_IDS.SAVE_ORDER]: showSaveOrderDialog,
+      [POS_OVERLAY_IDS.ORDERS_LIST]: showOrdersListDialog,
+      [POS_OVERLAY_IDS.LAYAWAYS_LIST]: showLayawaysList || showLayawaysDialog,
+      [POS_OVERLAY_IDS.ADD_SHIPPING]: showAddShippingDialog,
+      [POS_OVERLAY_IDS.ADD_CUSTOMER]: showAddCustomerDialog,
+      [POS_OVERLAY_IDS.CASH_DROP]: showCashDropDialog,
+      [POS_OVERLAY_IDS.LAST_RECEIPT]: showLastReceiptDialog,
+      [POS_OVERLAY_IDS.REPRINT]: showReprintModal || reprintConfirmOpen,
+      [POS_OVERLAY_IDS.LOCK_POS]: showLockPOS,
+      [POS_OVERLAY_IDS.POS_CONFIG]: showPOSConfig,
+      [POS_OVERLAY_IDS.QUICK_PRODUCT]: showQuickProductModal,
+      [POS_OVERLAY_IDS.CUSTOMER_HISTORY]: showCustomerHistoryPreview,
+      [POS_OVERLAY_IDS.TARGET_READINESS]: showTargetReadinessWarning,
+      [POS_OVERLAY_IDS.SESSION_DIALOG]: showStartSessionDialog || showCloseSessionDialog
+        || showSessionOwnerRequiredDialog || showCashierAuthDialog || showLiveSessionDialog
+        || (showTakeoverDialog && Boolean(currentSession?.id)) || showCancelClosureDialog
+        || Boolean(closureRequiredMsg) || Boolean(prevDaySessionOpenMsg),
     },
   });
 

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import CheckoutCompleteActions from '../features/checkout/CheckoutCompleteActions';
 import { isSheetPaper } from '../device/printing/posSheetTemplates';
+import { p2FocusEdits, undoP2FocusEdits } from './p2FocusSourceEdits';
 
 /**
  * Characterization of the POSSales.jsx payment-complete ACTION BLOCK — New Sale, Print Receipt,
@@ -715,7 +716,9 @@ describe.each(VARIANTS)('%s', (_variant, Block) => {
 // EOL-normalised: sources are checked out with CRLF on Windows.
 const readSource = (rel) => fs.readFileSync(path.resolve(__dirname, rel), 'utf8').replace(/\r\n/g, '\n');
 const POS_SALES = readSource('../../POSSales.jsx');
-const COMPONENT = readSource('../features/checkout/CheckoutCompleteActions.jsx');
+// P2 registered New Sale as a focus target; the pins below are against the component with that undone.
+const LIVE_COMPONENT = readSource('../features/checkout/CheckoutCompleteActions.jsx');
+const COMPONENT = undoP2FocusEdits('CheckoutCompleteActions', LIVE_COMPONENT);
 const SELF = fs.readFileSync(__filename, 'utf8').replace(/\r\n/g, '\n');
 const count = (src, needle) => src.split(needle).length - 1;
 const words = (src, word) => (src.match(new RegExp(`(?<![\\w$])${word.replace(/\$/g, '\\$')}(?![\\w$])`, 'g')) || []).length;
@@ -861,6 +864,11 @@ describe('6. source — the copies', () => {
 });
 
 describe('6. source — CheckoutCompleteActions', () => {
+  it('P2: the only change since extraction is the New Sale focus-target registration, each edit once', () => {
+    for (const live of p2FocusEdits('CheckoutCompleteActions')) expect(count(LIVE_COMPONENT, live), live).toBe(1);
+    expect(count(LIVE_COMPONENT, '<button type="button" ref={newSaleRef} onClick={onNewSale}\n')).toBe(1);
+  });
+
   it('props are exactly onNewSale, onPrintReceipt, onReprint, onShare', () => {
     expect(COMPONENT).toContain('function CheckoutCompleteActions({\n  onNewSale,\n  onPrintReceipt,\n  onReprint,\n  onShare,\n}) {');
     expect(count(COMPONENT, 'function ')).toBe(1);
