@@ -12,6 +12,10 @@ import OnlinePaymentModal from './modals/OnlinePaymentModal';
 import CreditPaymentModal from './modals/CreditPaymentModal';
 import VoucherPaymentModal from './modals/VoucherPaymentModal';
 import BnplPaymentModal from './modals/BnplPaymentModal';
+import { isEditableTarget } from '../../../../utils/editableTarget';
+import { isPosInputHandled } from '../device/scanner/scanGuard';
+import { usePosInputV2, usePosPaymentHotkeys } from '../input/PosOverlayContext';
+import { POS_OVERLAY_IDS } from '../input/posScope';
 
 /**
  * Hotkeys are the first letter of each method, which is also what the badge shows.
@@ -53,6 +57,10 @@ const METHODS = [
  *                 by putting it back on account, so CREDIT is excluded there). Defaults to
  *                 every tender.
  * @param compact  denser layout for the smaller settlement dialogs.
+ * @param hotkeyOwner  the POS overlay (POS_OVERLAY_IDS) this panel is rendered in. With the
+ *                 centralized POS input controller, a method hotkey reaches only the panel
+ *                 owned by the overlay on top, so one keypress is one payment action even
+ *                 while several panels are mounted.
  */
 export default function PaymentAllocationPanel({
   payment,
@@ -65,6 +73,7 @@ export default function PaymentAllocationPanel({
   methods = null,
   compact = false,
   onCustomerCreated = null,
+  hotkeyOwner = POS_OVERLAY_IDS.CHECKOUT,
 }) {
   // { type, line } — `line` set when editing an existing allocation, null when adding.
   const [activeModal, setActiveModal] = useState(null);
@@ -141,12 +150,18 @@ export default function PaymentAllocationPanel({
   }, [activeModal, updateLine, addLine, removeLine, closeModal, remainingBalance, offeredTypes]);
 
   // Method hotkeys, live whenever no modal is open and the cashier isn't typing in a field.
+  // posInputV2: the centralized POS input controller dispatches them to this panel only while
+  // its owning overlay is on top, and never from a scanner burst.
+  const posInputV2 = usePosInputV2();
+  usePosPaymentHotkeys({ owner: hotkeyOwner, enabled: !activeModal, methods: offeredMethods, onSelect: openAdd });
+
+  // Legacy per-panel listener (posInputV2 off, or rendered without the POS input provider).
   useEffect(() => {
-    if (activeModal) return undefined;
+    if (activeModal || posInputV2) return undefined;
     const onKey = (event) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const tag = event.target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (isPosInputHandled(event)) return;
+      if (isEditableTarget(event.target)) return;
       const method = offeredMethods.find((m) => m.hotkey === event.key.toLowerCase());
       if (!method) return;
       event.preventDefault();
@@ -154,7 +169,7 @@ export default function PaymentAllocationPanel({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeModal, openAdd, offeredMethods]);
+  }, [activeModal, posInputV2, openAdd, offeredMethods]);
 
   const settled = canSettle && paymentLines.length > 0;
   const progressPct = useMemo(() => (

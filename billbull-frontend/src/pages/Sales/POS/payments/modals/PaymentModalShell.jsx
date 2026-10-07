@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 
 import { DirhamSymbol } from '../../POSCurrency';
-
+import { usePosOverlay } from '../../input/PosOverlayContext';
+import { POS_SCOPES } from '../../input/posScope';
 /**
  * Shared chrome for the five payment-allocation modals: coloured header, amount display,
  * numeric keypad and the confirm/cancel footer.
@@ -165,6 +166,11 @@ export function PaymentModalFrame({
   const fallbackRef = useRef(null);
   const ref = dialogRef || fallbackRef;
 
+  // PAYMENT scope: while any payment modal is open the POS input controller sends nothing to
+  // the sale or the method hotkeys. The modal keeps its own digits/Enter/Escape (onKeyDown
+  // below), and the dialog is marked as the owner of what is typed into it.
+  usePosOverlay({ scope: POS_SCOPES.PAYMENT });
+
   // Focus the dialog on open so the key handler receives input without a click first.
   useEffect(() => {
     if (!dialogRef) ref.current?.focus();
@@ -178,6 +184,7 @@ export function PaymentModalFrame({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
+        data-pos-keyboard-owner="true"
         onKeyDown={onKeyDown || undefined}
         className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-white shadow-2xl outline-none"
       >

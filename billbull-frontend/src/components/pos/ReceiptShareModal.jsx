@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Mail, MessageCircle, Smartphone, X } from 'lucide-react';
 
+import { usePosInputV2, usePosOverlay } from '../../pages/Sales/POS/input/PosOverlayContext';
+import { POS_SCOPES } from '../../pages/Sales/POS/input/posScope';
+
 /**
  * One modal drives all three POS "Share Receipt" channels (SMS, WhatsApp,
  * Email). Everything that differs between them — header colour, icon, title,
@@ -123,14 +126,22 @@ export default function ReceiptShareModal({ channel, initialValue = '', onSend, 
     }
   }, [config, sending, value, onSend, onClose]);
 
+  // Esc closes. posInputV2: delivered by the POS input controller through this registration;
+  // otherwise the legacy window listener below does it.
+  const posInputV2 = usePosInputV2();
+  usePosOverlay({
+    open: Boolean(config),
+    scope: POS_SCOPES.MODAL,
+    onEscape: (e) => { e.preventDefault(); close(); },
+  });
   useEffect(() => {
-    if (!config) return undefined;
+    if (!config || posInputV2) return undefined;
     const onKeyDown = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); close(); }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [config, close]);
+  }, [config, posInputV2, close]);
 
   if (!config) return null;
 

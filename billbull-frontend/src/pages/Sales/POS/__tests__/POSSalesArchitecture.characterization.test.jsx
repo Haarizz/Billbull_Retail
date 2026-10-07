@@ -94,10 +94,12 @@ describe('hook inventory and call order', () => {
     ['useHeldSales', '} = useHeldSales({'],
     ['useCashDrawer', 'const { openCashDrawer } = useCashDrawer(posSettings);'],
     ['useCheckout', '} = useCheckout({'],
+    // P1: the one POS keyboard controller; after useCheckout because checkoutPhase is its state.
+    ['usePosInputController', 'const posInputRegistry = usePosInputController({'],
   ];
 
-  it('has exactly these 22 feature/context hook call sites', () => {
-    expect(CALL_ORDER).toHaveLength(22);
+  it('has exactly these 23 feature/context hook call sites', () => {
+    expect(CALL_ORDER).toHaveLength(23);
     for (const [name, anchor] of CALL_ORDER) {
       expect(SRC.indexOf(anchor), `missing hook call site: ${name}`).toBeGreaterThan(-1);
     }
@@ -117,6 +119,7 @@ describe('hook inventory and call order', () => {
     ['usePosPrinting', 1], ['useLayaway', 1], ['useProductEntry', 1], ['useDelivery', 1],
     ['useHeldSales', 1], ['useCashDrawer', 1], ['useCheckout', 1], ['useCheckoutCapabilities', 1],
     ['useIdleTimeout', 1], ['useCompany', 1], ['useBranch', 1], ['usePermissions', 1],
+    ['usePosInputController', 1],
     // The only deliberately repeated hooks: one Payment Manager per settlement surface
     // (checkout / delivery settle / layaway deposit) and one A4 blob url per preview.
     ['usePaymentManager', 3], ['useA4BlobUrl', 2],
@@ -124,10 +127,11 @@ describe('hook inventory and call order', () => {
     expect(SRC.match(new RegExp(`[^A-Za-z0-9_]${hook}\\(`, 'g')) || []).toHaveLength(times);
   });
 
-  it('creates no context of its own; BusinessDayStatusProvider is the one provider it renders', () => {
+  it('creates no context of its own; renders BusinessDayStatusProvider and PosOverlayProvider once each', () => {
     expect(SRC).not.toContain('createContext');
     expect(SRC).not.toContain('PosWorkspaceContext');
     expect(count('<BusinessDayStatusProvider')).toBe(1);
+    expect(count('<PosOverlayProvider registry={posInputRegistry}>')).toBe(1);
   });
 });
 

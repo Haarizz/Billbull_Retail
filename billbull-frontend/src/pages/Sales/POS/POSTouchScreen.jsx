@@ -10,12 +10,11 @@ import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath
 import { ScanLine } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
 import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
-import { createBurstTracker, isPosScreenBlocked } from './device/scanner/scanGuard';
-
-// Keydown events the window-level wedge listener has already turned into a scan. It runs in
-// the capture phase, before the barcode box's own onKeyDown, which checks this so a single
-// event can never be scanned twice.
-const handledScanEvents = new WeakSet();
+import {
+  createBurstTracker, isPosInputHandled, isPosScreenBlocked, markScanHandled, wasScanHandled,
+} from './device/scanner/scanGuard';
+import { isEditableTarget } from '../../../utils/editableTarget';
+import { usePosInputV2, usePosScanSurface } from './input/PosOverlayContext';
 
 /**
  * The Salesperson row that sits directly under the Customer bar in every POS sale layout.
@@ -205,8 +204,21 @@ const POSTouchScreen = React.memo((props) => {
     scannerReady,
   ]);
 
+  // posInputV2: the centralized POS input controller owns the keyboard wedge. This template
+  // only declares its scan surface; the legacy window listener below stands down.
+  const posInputV2 = usePosInputV2();
+  usePosScanSurface({
+    kind: 'wedge',
+    enabled: scannerReady,
+    inputRef: barcodeInputRef,
+    onScan: handleBarcodeScan,
+    setBarcodeInput,
+    itemEntryActive: posActionMode !== 'none',
+  });
+
+  // Legacy keyboard wedge (posInputV2 off, or rendered without the POS input provider).
   useEffect(() => {
-    if (!scannerReady) return undefined;
+    if (!scannerReady || posInputV2) return undefined;
 
     const resetScannerBuffer = () => {
       scannerBufferRef.current = '';
@@ -226,14 +238,9 @@ const POSTouchScreen = React.memo((props) => {
       }, 250);
     };
 
-    const isTextEntryTarget = (target) => {
-      if (!(target instanceof HTMLElement)) return false;
-      const tag = target.tagName;
-      return target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-    };
-
     const onKeyDown = (event) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isPosInputHandled(event)) return;
       // Qty, discount AND price mode repurpose the keypad for a number. Price was missing here,
       // so a price followed by Enter was applied as a price and then scanned as a barcode too.
       if (posActionMode !== 'none') {
@@ -265,13 +272,13 @@ const POSTouchScreen = React.memo((props) => {
         resetScannerBuffer();
         return;
       }
-      if (isTextEntryTarget(activeTarget)) return;
+      if (isEditableTarget(activeTarget)) return;
 
       if (event.key === 'Enter') {
         const scannedValue = scannerBufferRef.current.trim();
         if (!scannedValue) return;
         event.preventDefault();
-        handledScanEvents.add(event);
+        markScanHandled(event);
         resetScannerBuffer();
         setBarcodeInput(scannedValue);
         handleBarcodeScan(scannedValue);
@@ -288,7 +295,7 @@ const POSTouchScreen = React.memo((props) => {
       window.removeEventListener('keydown', onKeyDown, true);
       resetScannerBuffer();
     };
-  }, [barcodeInputRef, handleBarcodeScan, posActionMode, scannerReady, setBarcodeInput]);
+  }, [barcodeInputRef, handleBarcodeScan, posActionMode, posInputV2, scannerReady, setBarcodeInput]);
 
   const handleHeartClick = useCallback((e, productId) => {
     e.stopPropagation();
@@ -693,8 +700,8 @@ const POSTouchScreen = React.memo((props) => {
                     value={barcodeInput}
                     onChange={e => setBarcodeInput(e.target.value)}
                     onKeyDown={e => {
-                      // Already scanned by the window-level wedge listener — one event, one scan.
-                      if (handledScanEvents.has(e.nativeEvent)) return;
+                      // Already scanned by the window-level wedge — one event, one scan.
+                      if (wasScanHandled(e.nativeEvent)) return;
                       if (e.key.length === 1) barcodeBurst.key();
                       if (e.key === 'Escape') {
                         setBarcodeSuggestions([]);

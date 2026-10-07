@@ -563,8 +563,8 @@ describe('source contract', () => {
   it('finds the region exactly once, at the pinned boundary', () => {
     expect(START).toBeGreaterThan(-1);
     expect(LINES.indexOf(ANCHOR, START + 1)).toBe(-1);
-    expect(START + 1).toBe(9249); // 1-indexed line 9249
-    expect(END + 1).toBe(9287);
+    expect(START + 1).toBe(9269); // 1-indexed line 9269
+    expect(END + 1).toBe(9307);
     expect(LIVE_REGION.split('\n')).toHaveLength(39);
   });
 
@@ -635,7 +635,7 @@ describe('source contract', () => {
 
   it('`Zap` is used ONLY by this region in POSSales — it becomes the child\'s import', () => {
     const zapLines = LINES.map((l, i) => [i + 1, l]).filter(([, l]) => l.includes('Zap'));
-    expect(zapLines.map(([n]) => n)).toEqual([104, 9253, 9277]);
+    expect(zapLines.map(([n]) => n)).toEqual([104, 9273, 9297]);
     expect(LINES[103]).toBe('  Zap,'); // the lucide import entry, line 104
     expect(LIVE_REGION.split('<Zap ').length - 1).toBe(2);
   });

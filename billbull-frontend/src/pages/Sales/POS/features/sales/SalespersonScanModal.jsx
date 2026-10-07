@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ScanLine, User, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
+import { usePosOverlay } from '../../input/PosOverlayContext';
+import { POS_SCOPES } from '../../input/posScope';
+
 /**
  * POS salesperson verification — ONE component, two entry states.
  *
@@ -18,7 +21,9 @@ import { ScanLine, User, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
  * event target is NOT a text input (or IS the barcode input). This modal's field is a plain
  * autofocused <input>, so a scan lands here and never reaches product lookup — provided focus is
  * actually held, which is why focus is re-asserted on every state change. `data-pos-scan-suppress`
- * marks the subtree so the wedge listener can bail out explicitly even if focus is lost.
+ * marks the subtree so the wedge listener can bail out explicitly even if focus is lost. With
+ * posInputV2 the modal is also a registered MODAL overlay, so the POS input controller refuses
+ * scanner input to the sale from explicit state, not only from that DOM marker.
  */
 
 const formatMoney = (value) => {
@@ -58,6 +63,7 @@ export default function SalespersonScanModal({
   // Same state, same action — only the wording follows how the user got here.
   const [justVerified, setJustVerified] = useState(false);
   const inputRef = useRef(null);
+  usePosOverlay({ open: Boolean(open), scope: POS_SCOPES.MODAL });
 
   // Re-assert focus whenever the modal opens or switches into a scanning state. A hardware scanner
   // types into whatever holds focus; if this field ever loses it, the scan becomes a product

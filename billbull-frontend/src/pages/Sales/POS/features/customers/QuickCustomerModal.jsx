@@ -1,6 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { User, X, AlertTriangle, AlertCircle } from 'lucide-react';
 
+import { usePosInputV2, usePosOverlay } from '../../input/PosOverlayContext';
+import { POS_SCOPES } from '../../input/posScope';
+
 /**
  * QuickCustomerModal
  *
@@ -36,12 +39,17 @@ export default function QuickCustomerModal({
     return () => window.clearTimeout(timer);
   }, [show]);
 
+  // Esc closes. posInputV2: delivered by the POS input controller through this registration
+  // (which also keeps scans out of the sale while the dialog is open); otherwise the legacy
+  // window listener below does it.
+  const posInputV2 = usePosInputV2();
+  usePosOverlay({ open: Boolean(show), scope: POS_SCOPES.MODAL, onEscape: () => onClose?.() });
   useEffect(() => {
-    if (!show) return undefined;
+    if (!show || posInputV2) return undefined;
     const onKeyDown = (e) => { if (e.key === 'Escape') onClose?.(); };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [show, onClose]);
+  }, [show, posInputV2, onClose]);
 
   if (!show || !form) return null;
 

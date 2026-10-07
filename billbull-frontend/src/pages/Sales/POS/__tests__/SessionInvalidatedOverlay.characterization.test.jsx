@@ -79,7 +79,7 @@ describe('POSSales wiring (SessionInvalidatedOverlay boundary)', () => {
 
   it('remains the final element before the root closes', () => {
     expect(POS_SALES).toMatch(
-      /<SessionInvalidatedOverlay[\s\S]*?\/>\s*\)\}\s*<\/div>\s*<\/BusinessDayStatusProvider>\s*\);\s*\}\s*$/,
+      /<SessionInvalidatedOverlay[\s\S]*?\/>\s*\)\}\s*<\/div>\s*<\/PosOverlayProvider>\s*<\/BusinessDayStatusProvider>\s*\);\s*\}\s*$/,
     );
   });
 });

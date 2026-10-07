@@ -183,6 +183,9 @@ import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import BusinessDayStatusBanner from '../../components/pos/BusinessDayStatusBanner';
 import { BusinessDayStatusProvider } from '../../components/pos/BusinessDayStatusContext';
+import { PosOverlayProvider } from './POS/input/PosOverlayContext';
+import { usePosInputController } from './POS/input/usePosInputController';
+import { POS_OVERLAY_IDS } from './POS/input/posScope';
 import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
@@ -3215,6 +3218,22 @@ export default function POSSales() {
     posReset: {
       syncPosData, setReceivedAmount, setSelectedCardType,
       setSelectedCreditCustomer, setLastScannedItem,
+    },
+  });
+
+  // ── POS input ownership ────────────────────────────────────────────────────
+  // One capture-phase keyboard controller for the whole POS (POS/input/). The overlays below
+  // are open/closed by flags owned here, so they are declared by id; dialogs, payment modals,
+  // the template scan surface and the payment panels register themselves through
+  // PosOverlayProvider. Declared after useCheckout because the complete phase is its state.
+  const posInputRegistry = usePosInputController({
+    overlays: {
+      [POS_OVERLAY_IDS.CHECKOUT]: showPaymentDialog && checkoutPhase !== 'complete',
+      [POS_OVERLAY_IDS.CHECKOUT_COMPLETE]: showPaymentDialog && checkoutPhase === 'complete',
+      [POS_OVERLAY_IDS.RETURN]: showReturn,
+      [POS_OVERLAY_IDS.DELIVERY]: showDeliveryModal,
+      [POS_OVERLAY_IDS.DELIVERY_SETTLEMENT]: showDeliverySettleModal,
+      [POS_OVERLAY_IDS.LAYAWAY_DEPOSIT]: showSaveLayaway,
     },
   });
 
@@ -7139,6 +7158,7 @@ export default function POSSales() {
 
   return (
     <BusinessDayStatusProvider terminalId={currentTerminal?.terminalId} refreshRef={businessDayRefreshRef}>
+    <PosOverlayProvider registry={posInputRegistry}>
     <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
       {/* ─── TERMINAL REGISTRATION REJECTED (archived / blocked / decommissioned / maintenance) ─── */}
       {terminalRegistrationError && (
@@ -9821,6 +9841,7 @@ export default function POSSales() {
                               and the rest stays as the layaway balance. */}
                           <PaymentAllocationPanel
                             payment={saveLayawayPayment}
+                            hotkeyOwner={POS_OVERLAY_IDS.LAYAWAY_DEPOSIT}
                             compatibility={checkoutCompatibility}
                             bankAccounts={checkoutOnlineBankAccounts}
                             bankAccountsLoading={checkoutOnlineBankAccountsLoading}
@@ -10629,6 +10650,7 @@ export default function POSSales() {
                                   <div className="mb-3">
                                     <PaymentAllocationPanel
                                       payment={deliverySettlePayment}
+                                      hotkeyOwner={POS_OVERLAY_IDS.DELIVERY_SETTLEMENT}
                                       compatibility={checkoutCompatibility}
                                       bankAccounts={checkoutOnlineBankAccounts}
                                       bankAccountsLoading={checkoutOnlineBankAccountsLoading}
@@ -10672,6 +10694,7 @@ export default function POSSales() {
         />
       )}
     </div>
+    </PosOverlayProvider>
     </BusinessDayStatusProvider>
   );
 }

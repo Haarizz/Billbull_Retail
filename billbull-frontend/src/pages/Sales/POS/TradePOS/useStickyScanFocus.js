@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 
-import { isPosScreenBlocked } from '../device/scanner/scanGuard';
+import { isPosInputHandled, isPosScreenBlocked } from '../device/scanner/scanGuard';
+import { isEditableTarget } from '../../../../utils/editableTarget';
+import { usePosInputV2, usePosScanSurface } from '../input/PosOverlayContext';
 
 /**
  * useStickyScanFocus
@@ -31,11 +33,7 @@ import { isPosScreenBlocked } from '../device/scanner/scanGuard';
 const RETRY_INTERVAL_MS = 300;
 const MAX_RETRIES = 60; // ~18s — long enough to outlast a payment/receipt dialog.
 
-const isTextEntryTarget = (el) => {
-  if (!el || typeof el.tagName !== 'string') return false;
-  const tag = el.tagName;
-  return el.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-};
+const isTextEntryTarget = isEditableTarget;
 
 // Any open POS dialog/overlay, or a modal that must never see a scan. Shared with the
 // Classic/Cart Focus wedge listener so both templates agree on what "blocked" means.
@@ -88,12 +86,18 @@ export function useStickyScanFocus(barcodeInputRef, { enabled = true, triggers =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, requestFocus, ...triggers]);
 
-  // Type-anywhere redirect, including keyboard-wedge scanner bursts.
+  // Type-anywhere redirect, including keyboard-wedge scanner bursts. With posInputV2 the
+  // centralized POS input controller performs it for the registered 'redirect' surface and the
+  // legacy window listener below stands down. Focus retries above are unchanged either way.
+  const posInputV2 = usePosInputV2();
+  usePosScanSurface({ kind: 'redirect', enabled, inputRef: barcodeInputRef });
+
   useEffect(() => {
-    if (!enabled || typeof document === 'undefined') return undefined;
+    if (!enabled || posInputV2 || typeof document === 'undefined') return undefined;
 
     const onKeyDown = (event) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (isPosInputHandled(event)) return;
       const el = barcodeInputRef?.current;
       if (!el || document.activeElement === el) return;
       if (isScreenBlocked()) return;
@@ -113,7 +117,7 @@ export function useStickyScanFocus(barcodeInputRef, { enabled = true, triggers =
 
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [enabled, barcodeInputRef]);
+  }, [enabled, posInputV2, barcodeInputRef]);
 
   return { focusSearch, requestFocus };
 }

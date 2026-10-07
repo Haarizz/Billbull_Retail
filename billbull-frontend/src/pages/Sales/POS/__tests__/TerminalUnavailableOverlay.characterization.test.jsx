@@ -584,9 +584,9 @@ describe('POSSales wiring (TerminalUnavailableOverlay boundary)', () => {
     );
   });
 
-  it('sits first inside the root div, after BusinessDayStatusProvider opens and before IdleLockOverlay', () => {
+  it('sits first inside the root div, after BusinessDayStatusProvider and PosOverlayProvider open and before IdleLockOverlay', () => {
     expect(POS_SALES).toMatch(
-      /\n {4}<BusinessDayStatusProvider terminalId=\{currentTerminal\?\.terminalId\} refreshRef=\{businessDayRefreshRef\}>\n {4}<div className=\{currentView === 'touch-screen' \? 'h-screen overflow-hidden bg-\[#F7F7FA\]' : 'min-h-screen bg-\[#F7F7FA\]'\}>\n {6}\{\/\* ─── TERMINAL REGISTRATION REJECTED \(archived \/ blocked \/ decommissioned \/ maintenance\) ─── \*\/\}\n {6}\{terminalRegistrationError && \(\n {8}<TerminalUnavailableOverlay\n[^<]*?\n {8}\/>\n {6}\)\}\n\n {6}\{\/\* ─── IDLE LOCK OVERLAY ─── \*\/\}\n {6}\{isIdleLocked && \(\n {8}<IdleLockOverlay\n[^<]*?\n {6}\{\/\* ─── SUPERVISOR TAKEOVER DIALOG ─── \*\/\}\n {6}\{showTakeoverDialog && currentSession\?\.id && \(\n {8}<SupervisorTakeoverDialog\n/,
+      /\n {4}<BusinessDayStatusProvider terminalId=\{currentTerminal\?\.terminalId\} refreshRef=\{businessDayRefreshRef\}>\n {4}<PosOverlayProvider registry=\{posInputRegistry\}>\n {4}<div className=\{currentView === 'touch-screen' \? 'h-screen overflow-hidden bg-\[#F7F7FA\]' : 'min-h-screen bg-\[#F7F7FA\]'\}>\n {6}\{\/\* ─── TERMINAL REGISTRATION REJECTED \(archived \/ blocked \/ decommissioned \/ maintenance\) ─── \*\/\}\n {6}\{terminalRegistrationError && \(\n {8}<TerminalUnavailableOverlay\n[^<]*?\n {8}\/>\n {6}\)\}\n\n {6}\{\/\* ─── IDLE LOCK OVERLAY ─── \*\/\}\n {6}\{isIdleLocked && \(\n {8}<IdleLockOverlay\n[^<]*?\n {6}\{\/\* ─── SUPERVISOR TAKEOVER DIALOG ─── \*\/\}\n {6}\{showTakeoverDialog && currentSession\?\.id && \(\n {8}<SupervisorTakeoverDialog\n/,
     );
   });
 
