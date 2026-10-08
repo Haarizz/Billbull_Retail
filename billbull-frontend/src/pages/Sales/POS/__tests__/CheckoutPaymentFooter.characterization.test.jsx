@@ -9,6 +9,7 @@ import { DirhamSymbol } from '../POSCurrency';
 import { PAYMENT_TYPES } from '../payments/paymentModel';
 import CheckoutPaymentHeader from '../features/checkout/CheckoutPaymentHeader';
 import CheckoutPaymentFooter from '../features/checkout/CheckoutPaymentFooter';
+import { p2FocusEdits, undoP2FocusEdits } from './p2FocusSourceEdits';
 
 /**
  * Characterization of the payment-phase SETTLEMENT FOOTER of the POSSales.jsx checkout IIFE —
@@ -780,7 +781,9 @@ describe('7. DOM parity and component contract', () => {
 const readSource = (rel) => fs.readFileSync(path.resolve(__dirname, rel), 'utf8').replace(/\r\n/g, '\n');
 const POS_SALES = readSource('../../POSSales.jsx');
 const USE_CHECKOUT = readSource('../features/checkout/useCheckout.js');
-const COMPONENT = readSource('../features/checkout/CheckoutPaymentFooter.jsx');
+// P2 registered Settle as a focus target; the pins below are against the component with that undone.
+const LIVE_COMPONENT = readSource('../features/checkout/CheckoutPaymentFooter.jsx');
+const COMPONENT = undoP2FocusEdits('CheckoutPaymentFooter', LIVE_COMPONENT);
 const SELF = fs.readFileSync(__filename, 'utf8').replace(/\r\n/g, '\n');
 const between = (src, start, end) => {
   const i = src.indexOf(start);
@@ -804,6 +807,11 @@ const OLD_CANCEL_HANDLER = 'onClick={() => { setShowPaymentDialog(false); setChe
 const code = (src) => src.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
 describe('source — CheckoutPaymentFooter', () => {
+  it('P2: the only change since extraction is the Settle focus-target registration, each edit once', () => {
+    for (const live of p2FocusEdits('CheckoutPaymentFooter')) expect(count(LIVE_COMPONENT, live), live).toBe(1);
+    expect(count(LIVE_COMPONENT, '<button type="button" ref={settleRef} onClick={onSettle} disabled={!settleReady}')).toBe(1);
+  });
+
   it('its return body is the verbatim footer except the changeDue / itemCount / onCancel / onSettle substitutions (51 lines)', () => {
     expect(FOOTER().split('\n')).toHaveLength(52);
     const body = FOOTER().slice(FOOTER_COMMENT.length);

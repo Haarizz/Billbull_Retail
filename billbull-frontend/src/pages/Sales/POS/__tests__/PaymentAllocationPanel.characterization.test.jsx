@@ -93,7 +93,7 @@ describe('1. props and defaults', () => {
     expect(screen.queryByText('Cannot take payment on this terminal')).toBeNull();
   });
 
-  it('destructures exactly ten props with the current defaults (source)', () => {
+  it('destructures exactly thirteen props with the current defaults (source)', () => {
     expect(PANEL).toContain([
       'export default function PaymentAllocationPanel({',
       '  payment,',
@@ -106,6 +106,10 @@ describe('1. props and defaults', () => {
       '  methods = null,',
       '  compact = false,',
       '  onCustomerCreated = null,',
+      '  hotkeyOwner = POS_OVERLAY_IDS.CHECKOUT,',
+      // P3: a sale-screen Enter sequence's one-shot Cash request.
+      '  quickCash = null,',
+      '  onQuickCashHandled = null,',
       '}) {',
     ].join('\n'));
   });
@@ -648,12 +652,18 @@ describe('10. render identity', () => {
   });
 
   it('the only state is activeModal and the only ref is methodBarRef (source)', () => {
-    expect(PANEL.match(/useState\(/g)).toHaveLength(1);
+    // P3: quickCashSeen / allocatedQuickCashRef record which Enter-sequence Cash request the
+    // panel already acted on; its one effect commits an ALLOCATE request to the Payment Manager.
+    expect(PANEL.match(/useState\(/g)).toHaveLength(2);
     expect(PANEL).toContain('  const [activeModal, setActiveModal] = useState(null);');
-    expect(PANEL.match(/useRef\(/g)).toHaveLength(1);
+    expect(PANEL).toContain('  const [quickCashSeen, setQuickCashSeen] = useState(null);');
+    // P2: the first method tile is the checkout's PAYMENT_METHOD focus target.
+    expect(PANEL.match(/useRef\(/g)).toHaveLength(3);
     expect(PANEL).toContain('  const methodBarRef = useRef(null);');
-    expect(PANEL.match(/useEffect\(/g)).toHaveLength(1);
-    expect(PANEL).toContain("    window.addEventListener('keydown', onKey);\n    return () => window.removeEventListener('keydown', onKey);\n  }, [activeModal, openAdd, offeredMethods]);");
+    expect(PANEL).toContain('  const firstMethodRef = useRef(null);');
+    expect(PANEL).toContain('  const allocatedQuickCashRef = useRef(null);');
+    expect(PANEL.match(/useEffect\(/g)).toHaveLength(2);
+    expect(PANEL).toContain("    window.addEventListener('keydown', onKey);\n    return () => window.removeEventListener('keydown', onKey);\n  }, [activeModal, posInputV2, openAdd, offeredMethods]);");
   });
 
   it('an open modal survives a parent re-render with a NEW payment object and new arrays', () => {
@@ -718,12 +728,16 @@ const CHECKOUT_CALL = [
   '                    selectedCustomerName={selectedCustomerData?.name}',
   '                    bankAccounts={checkoutOnlineBankAccounts}',
   '                    bankAccountsLoading={checkoutOnlineBankAccountsLoading}',
+  // P3: the double/triple Enter Cash request (checkout only).
+  '                    quickCash={checkoutQuickCash}',
+  '                    onQuickCashHandled={clearCheckoutQuickCash}',
   '                  />',
 ].join('\n');
 
 const LAYAWAY_CALL = [
   '                          <PaymentAllocationPanel',
   '                            payment={saveLayawayPayment}',
+  '                            hotkeyOwner={POS_OVERLAY_IDS.LAYAWAY_DEPOSIT}',
   '                            compatibility={checkoutCompatibility}',
   '                            bankAccounts={checkoutOnlineBankAccounts}',
   '                            bankAccountsLoading={checkoutOnlineBankAccountsLoading}',
@@ -738,6 +752,7 @@ const LAYAWAY_CALL = [
 const DELIVERY_CALL = [
   '                                    <PaymentAllocationPanel',
   '                                      payment={deliverySettlePayment}',
+  '                                      hotkeyOwner={POS_OVERLAY_IDS.DELIVERY_SETTLEMENT}',
   '                                      compatibility={checkoutCompatibility}',
   '                                      bankAccounts={checkoutOnlineBankAccounts}',
   '                                      bankAccountsLoading={checkoutOnlineBankAccountsLoading}',
@@ -776,9 +791,9 @@ describe('11. POSSales call sites (source)', () => {
     expect(POS_SALES.slice(i + CHECKOUT_CALL.length)).toMatch(/^\n\n\n {18}\{\/\* ── Remarks ── \*\/\}\n {18}<CheckoutRemarks\n/);
   });
 
-  it('checkout mount passes the eight props (no methods, no compact)', () => {
+  it('checkout mount passes the ten props (no methods, no compact, default hotkeyOwner)', () => {
     const attrs = CHECKOUT_CALL.split('\n').slice(1, -1).map((l) => l.trim().split('=')[0]);
-    expect(attrs).toEqual(['payment', 'compatibility', 'customers', 'onCustomerCreated', 'selectedCustomerId', 'selectedCustomerName', 'bankAccounts', 'bankAccountsLoading']);
+    expect(attrs).toEqual(['payment', 'compatibility', 'customers', 'onCustomerCreated', 'selectedCustomerId', 'selectedCustomerName', 'bankAccounts', 'bankAccountsLoading', 'quickCash', 'onQuickCashHandled']);
   });
 
   it('no inline wrapper, local alias, memo or lazy around the panel in POSSales', () => {
@@ -799,13 +814,20 @@ describe('11. POSSales call sites (source)', () => {
     }
   });
 
-  it('the panel reads nothing from POSSales scope: its only imports are payments/POSCurrency/lucide/react', () => {
+  it('the panel reads nothing from POSSales scope: its only imports are payments/POSCurrency/lucide/react and the POS input layer', () => {
     const imports = PANEL.match(/^import .* from '([^']+)';$/gm).map((l) => l.match(/from '([^']+)'/)[1]);
     expect(imports).toEqual([
       'react', 'lucide-react', './paymentModel', './paymentFlow', './paymentSelectors', '../POSCurrency',
       './PaymentAllocationList',
       './modals/CashPaymentModal', './modals/CardPaymentModal', './modals/OnlinePaymentModal',
       './modals/CreditPaymentModal', './modals/VoucherPaymentModal', './modals/BnplPaymentModal',
+      // P1: the shared editable-field rule, the POS input marker and its registration hooks.
+      '../../../../utils/editableTarget', '../device/scanner/scanGuard',
+      '../input/PosOverlayContext', '../input/posScope',
+      // P2: the focus-target names.
+      '../input/posFocus',
+      // P3: the Enter-sequence Cash request names.
+      '../input/posShortcuts',
     ]);
   });
 });

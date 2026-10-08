@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -83,6 +84,33 @@ public class EmployeeSalesTargetController {
             @RequestParam(name = "branchId", required = false) Long branchId) {
         modulePermissionService.requireCanView("hr.employee");
         return performanceService.getPerformance(resolveMonth(month), branchId);
+    }
+
+    /**
+     * One employee's target achievement for this month and last — the global search panel's read.
+     *
+     * <p>Same {@code canView("hr.employee")} gate as the grid above, which already returns these
+     * figures for every employee; this is that row for one employee, minus the commission columns.
+     * Consolidated across branches for the same reason {@code /me} is.
+     */
+    @GetMapping("/employee/{employeeId}")
+    public ResponseEntity<EmployeeTargetSummaryResponse> getEmployeeSummary(
+            @PathVariable("employeeId") Long employeeId) {
+        modulePermissionService.requireCanView("hr.employee");
+        LocalDate thisMonth = LocalDate.now().withDayOfMonth(1);
+        LocalDate lastMonth = thisMonth.minusMonths(1);
+        EmployeePerformanceRow current = performanceService.getForEmployeeId(employeeId, thisMonth, null);
+        if (current == null) {
+            return ResponseEntity.notFound().build();
+        }
+        EmployeePerformanceRow previous = performanceService.getForEmployeeId(employeeId, lastMonth, null);
+
+        EmployeeTargetSummaryResponse response = new EmployeeTargetSummaryResponse();
+        response.setCurrentMonth(EmployeeTargetSummaryResponse.Month.of(thisMonth, current));
+        if (previous != null) {
+            response.setPreviousMonth(EmployeeTargetSummaryResponse.Month.of(lastMonth, previous));
+        }
+        return ResponseEntity.ok(response);
     }
 
     @PutMapping

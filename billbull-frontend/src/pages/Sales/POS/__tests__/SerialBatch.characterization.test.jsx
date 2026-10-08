@@ -1573,8 +1573,9 @@ describe('source contract', () => {
     expect(PARENT).not.toContain(OPEN);
     expect(PARENT.match(/<SerialBatch[\s/>]/g)).toHaveLength(1);
     expect(count(PARENT, "import SerialBatch from './POS/features/products/SerialBatch';")).toBe(1);
-    // showSerialBatch is only the declaration + the mount guard in POSSales
-    expect(uses(PARENT, 'showSerialBatch')).toBe(2);
+    // showSerialBatch is only the declaration + the mount guard in POSSales, + the P2 overlay
+    // declaration that tells the POS input/focus controller the dialog is open
+    expect(uses(PARENT, 'showSerialBatch')).toBe(3);
   });
 
   it('child body is the IIFE body verbatim, re-indented from 8 to 2 spaces', () => {
@@ -1792,7 +1793,8 @@ describe('source contract', () => {
     expect(count(PARENT, BAG)).toBe(1);
     expect(count(TOUCH, BAG)).toBe(1);
     const outside = PARENT.replace(PARENT_CALLSITE, '').replace(STATE, '').replace(BAG, '')
-      .replace("import SerialBatch from './POS/features/products/SerialBatch';\n", '');
+      .replace("import SerialBatch from './POS/features/products/SerialBatch';\n", '')
+      .replace('      [POS_OVERLAY_IDS.SERIAL_BATCH]: showSerialBatch,\n', ''); // P2 overlay declaration (a read)
     expect(outside).not.toMatch(/serialBatch|SerialBatch/);
     ['setSerialBatchReturnQty', 'setSerialBatchReturnReason', 'setSerialBatchReturnCondition', 'setSerialBatchRefundMethod']
       .forEach((n) => expect(TOUCH, n).not.toContain(n));

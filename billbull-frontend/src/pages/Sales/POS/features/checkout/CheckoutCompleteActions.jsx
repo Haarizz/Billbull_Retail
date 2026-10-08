@@ -3,8 +3,12 @@
 // Every handler is supplied by POSSales; closeComplete, the Print Receipt async body, the reprint
 // and share-channel state, and ReceiptShareModal all stay there.
 
-import React from 'react';
+import React, { useRef } from 'react';
 import { ArrowRightCircle, Mail, MessageCircle, Printer, RotateCcw, Smartphone } from 'lucide-react';
+import { usePosFocusTarget, usePosShortcuts } from '../../input/PosOverlayContext';
+import { POS_FOCUS_TARGETS } from '../../input/posFocus';
+import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';
+import { useNewSaleEnterFallback } from './useNewSaleEnterFallback';
 
 function CheckoutCompleteActions({
   onNewSale,
@@ -12,10 +16,21 @@ function CheckoutCompleteActions({
   onReprint,
   onShare,
 }) {
+  // New Sale is the COMPLETE screen's focus target: Enter starts the next sale.
+  const newSaleRef = useRef(null);
+  usePosFocusTarget({ targets: POS_FOCUS_TARGETS.NEW_SALE, ref: newSaleRef, owner: POS_OVERLAY_IDS.CHECKOUT_COMPLETE });
+  // The controller sends a person's Enter here (never a scanner's), wherever the caret is on
+  // this screen except another of its buttons.
+  usePosShortcuts({
+    scope: POS_SCOPES.COMPLETE,
+    owner: POS_OVERLAY_IDS.CHECKOUT_COMPLETE,
+    actions: { newSale: onNewSale },
+  });
+  useNewSaleEnterFallback(newSaleRef, onNewSale);
   return (
                 <div className="px-6 pb-6 pt-4 bg-white border-t border-gray-50 shrink-0 shadow-[0_-10px_20px_-10px_rgba(0,0,0,0.02)]">
                   {/* Primary Action */}
-                  <button type="button" onClick={onNewSale}
+                  <button type="button" ref={newSaleRef} onClick={onNewSale}
                     className="w-full py-3.5 mb-3 rounded-xl bg-[#F5C742] hover:bg-[#E5B532] text-white font-black text-sm transition-colors flex items-center justify-center gap-2 shadow-sm">
                     <ArrowRightCircle className="h-5 w-5" />New Sale
                   </button>

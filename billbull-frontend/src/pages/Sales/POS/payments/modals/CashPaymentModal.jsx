@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Banknote } from 'lucide-react';
 
 import { PAYMENT_TYPES, toAmount } from '../paymentModel';
@@ -27,6 +27,26 @@ export default function CashPaymentModal({ remaining, editingLine, offeredTypes,
   const [amount, setAmount] = useState(
     editingLine ? String(editingLine.amount) : (target > 0 ? target.toFixed(2) : ''),
   );
+  // The amount on screen was filled in for the cashier (the exact remaining amount, the line
+  // being edited, or a quick-amount tap) rather than typed. The first digit keyed then starts a
+  // new amount instead of appending to it — 100.00 then "200" is 200, not 100.00200.
+  // Backspace and Clear edit what is shown, so they end the pre-filled state. A ref, not state:
+  // two keys landing before a re-render must not both see "pre-filled".
+  const prefilledRef = useRef(true);
+
+  const handleAmountKey = (k) => {
+    const replace = prefilledRef.current && (/^[0-9]$/.test(k) || k === '.');
+    prefilledRef.current = false;
+    setAmount((cur) => applyAmountKey(replace ? '' : cur, k));
+  };
+  const handleAmountSet = (value) => {
+    prefilledRef.current = false;
+    setAmount(value);
+  };
+  const handleQuickAmount = (value) => {
+    prefilledRef.current = true;
+    setAmount(value);
+  };
 
   const tendered = toAmount(amount);
   const applied = Math.min(tendered, target);
@@ -46,10 +66,10 @@ export default function CashPaymentModal({ remaining, editingLine, offeredTypes,
       accent={ACCENT}
       amount={amount}
       amountLabel="Cash Received"
-      onAmountKey={(k) => setAmount((cur) => applyAmountKey(cur, k))}
-      onAmountSet={setAmount}
+      onAmountKey={handleAmountKey}
+      onAmountSet={handleAmountSet}
       quickAmounts={quickAmounts}
-      onQuickAmount={setAmount}
+      onQuickAmount={handleQuickAmount}
       confirmLabel={confirmActionLabel({
         currentType: PAYMENT_TYPES.CASH,
         remainingAfter: stillDue,

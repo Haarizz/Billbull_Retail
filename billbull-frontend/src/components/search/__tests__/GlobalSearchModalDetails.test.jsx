@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -180,8 +180,8 @@ const LEDGER_SUMMARY_BRANCH_SCOPED = {
 };
 
 const LEDGER_TRANSACTIONS = [
-  { id: 'le-2', transactionDate: '2026-03-02', voucherNo: 'JV-002', description: 'Invoice', debitAmount: 200, creditAmount: 0, runningBalance: 4000 },
-  { id: 'le-1', transactionDate: '2026-03-01', voucherNo: 'JV-001', description: 'Receipt', debitAmount: 0, creditAmount: 50, runningBalance: 3800 },
+  { id: 'le-2', transactionDate: '2026-03-02', voucherNo: 'JV-002', description: 'Invoice', debitAmount: 200, creditAmount: 0, runningBalance: 4000, balanceType: 'Dr', branchName: 'Dubai' },
+  { id: 'le-1', transactionDate: '2026-03-01', voucherNo: 'JV-001', description: 'Receipt', debitAmount: 0, creditAmount: 50, runningBalance: 3800, balanceType: 'Dr', branchName: null },
 ];
 
 // --- Helpers -----------------------------------------------------------------
@@ -303,7 +303,7 @@ describe('GlobalSearchModal details pane', () => {
       expect(table).toHaveTextContent('82');
     });
 
-    it('never shows a Damaged figure', async () => {
+    it('never invents a Damaged figure — the model has none, so the card says so', async () => {
       const user = userEvent.setup();
       route(productRoutes);
       globalSearchMock.mockResolvedValue({ success: true, data: [PRODUCT] });
@@ -312,7 +312,71 @@ describe('GlobalSearchModal details pane', () => {
       await search(user);
       await screen.findByTestId('product-detail-panel');
 
-      expect(screen.queryByText(/damaged/i)).not.toBeInTheDocument();
+      const damaged = screen.getByTestId('product-damaged');
+      expect(damaged).toHaveTextContent('—');
+      expect(damaged).not.toHaveTextContent(/\d/);
+      expect(damaged.parentElement).toHaveTextContent('Not tracked');
+    });
+
+    it('derives the header identifiers, status and per-location status from server data', async () => {
+      const user = userEvent.setup();
+      route({
+        ...productRoutes,
+        '/api/products/': {
+          ...PRODUCT_AGGREGATE,
+          product: { ...PRODUCT_AGGREGATE.product, department: { name: 'Electronics' } },
+          inventory: {
+            reorderLevel: 45,
+            packings: [
+              { conversion: 12, barcode: 'CARTON-1' },
+              { conversion: 1, barcode: '8901234567890' },
+            ],
+          },
+        },
+      });
+      globalSearchMock.mockResolvedValue({ success: true, data: [PRODUCT] });
+      renderModal();
+
+      await search(user);
+      const panel = await screen.findByTestId('product-detail-panel');
+
+      // Base-unit barcode wins over the carton's; category is the department.
+      expect(panel).toHaveTextContent('WKB-2024 · SKU: SKU-WKB · Barcode: 8901234567890 · Electronics');
+      // Available 122 > reorder 45 overall → In stock; Dubai Store's 40 ≤ 45 → Low stock.
+      expect(panel).toHaveTextContent('In stock');
+      const table = screen.getByTestId('product-location-table');
+      expect(table).toHaveTextContent('OK');
+      expect(table).toHaveTextContent('Low stock');
+      expect(screen.getByTestId('product-active-locations')).toHaveTextContent('2');
+    });
+
+    it('measures stock level against max stock only when the product has one', async () => {
+      const user = userEvent.setup();
+      route({
+        ...productRoutes,
+        '/api/products/': { ...PRODUCT_AGGREGATE, inventory: { reorderLevel: 25, maxStock: 284 } },
+      });
+      globalSearchMock.mockResolvedValue({ success: true, data: [PRODUCT] });
+      renderModal();
+
+      await search(user);
+      const level = await screen.findByTestId('product-stock-level');
+
+      expect(level).toHaveTextContent('284 pcs max stock');
+      expect(level).toHaveTextContent('50% of max stock');
+    });
+
+    it('falls back to available-of-on-hand when no max stock is set', async () => {
+      const user = userEvent.setup();
+      route(productRoutes);
+      globalSearchMock.mockResolvedValue({ success: true, data: [PRODUCT] });
+      renderModal();
+
+      await search(user);
+      const level = await screen.findByTestId('product-stock-level');
+
+      expect(level).not.toHaveTextContent(/max stock/i);
+      expect(level).toHaveTextContent('86% available');
     });
 
     it('shows an inline permission state on 403, not an empty panel', async () => {
@@ -392,7 +456,7 @@ describe('GlobalSearchModal details pane', () => {
       const branches = screen.getByTestId('ledger-branch-list');
       expect(branches).toHaveTextContent('Deira');
       expect(branches).not.toHaveTextContent('Dubai');
-      expect(branches.querySelectorAll('li')).toHaveLength(1);
+      expect(branches.querySelectorAll('tbody tr')).toHaveLength(1);
     });
 
     it('renders the bounded recent-transaction list newest first', async () => {
@@ -407,7 +471,7 @@ describe('GlobalSearchModal details pane', () => {
       expect(table).toHaveTextContent('JV-002');
       expect(table).toHaveTextContent('JV-001');
       const rows = table.querySelectorAll('tbody tr');
-      expect(rows[0]).toHaveTextContent('2026-03-02');
+      expect(rows[0]).toHaveTextContent('02 Mar 2026');
     });
 
     it('never calls the whole-ledger transactions endpoint', async () => {
@@ -450,6 +514,77 @@ describe('GlobalSearchModal details pane', () => {
       await screen.findByTestId('ledger-detail-panel');
 
       expect(screen.getByText(/no transactions posted/i)).toBeInTheDocument();
+    });
+
+    it('keeps the sign of the net balance and names its side', async () => {
+      const user = userEvent.setup();
+      route({
+        ...ledgerRoutes,
+        '/api/ledger/accounts/1100/summary': {
+          ...LEDGER_SUMMARY, debitTotal: 100, creditTotal: 350, closingBalance: -250,
+        },
+      });
+      globalSearchMock.mockResolvedValue({ success: true, data: [LEDGER] });
+      renderModal();
+
+      await search(user);
+      await screen.findByTestId('ledger-detail-panel');
+
+      expect(screen.getByTestId('ledger-net-balance')).toHaveTextContent('-250.00');
+      expect(screen.getByTestId('ledger-net-balance-side')).toHaveTextContent('Credit balance');
+    });
+
+    it('renders each branch row with its own debit, credit and share', async () => {
+      const user = userEvent.setup();
+      route(ledgerRoutes);
+      globalSearchMock.mockResolvedValue({ success: true, data: [LEDGER] });
+      renderModal();
+
+      await search(user);
+      const rows = (await screen.findByTestId('ledger-branch-list')).querySelectorAll('tbody tr');
+
+      expect(rows).toHaveLength(2);
+      // Dubai: 3,000 of |3,000| + |1,000| → 75%.
+      expect(rows[0]).toHaveTextContent('Dubai');
+      expect(rows[0]).toHaveTextContent('3,000.00');
+      expect(rows[0]).toHaveTextContent('4,000.00');
+      expect(rows[0]).toHaveTextContent('1,000.00');
+      expect(rows[0]).toHaveTextContent('75%');
+      expect(rows[1]).toHaveTextContent('25%');
+    });
+
+    it('shows branch, sides and the stored running balance for each transaction', async () => {
+      const user = userEvent.setup();
+      route(ledgerRoutes);
+      globalSearchMock.mockResolvedValue({ success: true, data: [LEDGER] });
+      renderModal();
+
+      await search(user);
+      const rows = (await screen.findByTestId('ledger-transaction-table')).querySelectorAll('tbody tr');
+      const cells = (row) => [...row.querySelectorAll('td')].map((td) => td.textContent);
+
+      // Date, description, branch, debit, credit, balance — debit stays on the debit side.
+      expect(cells(rows[0])).toEqual([
+        '02 Mar 2026', 'InvoiceJV-002', 'Dubai', 'AED 200.00', '—', 'AED 4,000.00 Dr',
+      ]);
+      expect(cells(rows[1])).toEqual([
+        '01 Mar 2026', 'ReceiptJV-001', '—', '—', 'AED 50.00', 'AED 3,800.00 Dr',
+      ]);
+    });
+
+    it('leaves the balance blank when the entry has no stored running balance', async () => {
+      const user = userEvent.setup();
+      route({
+        ...ledgerRoutes,
+        '/api/ledger/accounts/1100/transactions': [{ ...LEDGER_TRANSACTIONS[0], runningBalance: null }],
+      });
+      globalSearchMock.mockResolvedValue({ success: true, data: [LEDGER] });
+      renderModal();
+
+      await search(user);
+      const row = (await screen.findByTestId('ledger-transaction-table')).querySelector('tbody tr');
+
+      expect(row.querySelectorAll('td')[5]).toHaveTextContent('—');
     });
   });
 
@@ -584,12 +719,62 @@ describe('GlobalSearchModal details pane', () => {
 
       await search(user);
 
+      // In the application's display format, in the section heading and in its card.
       const lastInvoice = await screen.findByTestId('customer-last-invoice');
-      expect(lastInvoice).toHaveTextContent('2026-09-20');
+      expect(lastInvoice).toHaveTextContent('20 Sep 2026');
       expect(lastInvoice).toHaveTextContent('INV-0091');
+      expect(screen.getByTestId('customer-last-invoice-date')).toHaveTextContent('20 Sep 2026');
     });
 
-    it('shows no due amount, generic last transaction or branch breakdown', async () => {
+    it('builds the header from the summary and the selected search row', async () => {
+      const user = userEvent.setup();
+      route(customerRoutes);
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [
+          {
+            ...CUSTOMER,
+            meta: {
+              badge: 'Retail',
+              code: 'CUST-003',
+              mobile: '0501234567',
+              email: 'accounts@acme.test',
+              status: 'Active',
+              creditLimitAmount: 25000,
+              creditLimitDays: 30,
+              blockCredit: false,
+            },
+          },
+        ],
+      });
+      renderModal();
+
+      await search(user);
+      const panel = await screen.findByTestId('customer-detail-panel');
+
+      expect(panel).toHaveTextContent('CUST-003 · 0501234567 · accounts@acme.test · Dubai');
+      // Overdue comes from the server's overdue count (2 in the summary fixture).
+      expect(panel).toHaveTextContent('Overdue');
+      expect(panel).toHaveTextContent('Credit limit: AED 25,000.00');
+      expect(panel).toHaveTextContent('Credit days: 30');
+      expect(panel).toHaveTextContent('Financial summary — consolidated');
+    });
+
+    it('leaves out contact and credit chips the search row did not carry', async () => {
+      const user = userEvent.setup();
+      route(customerRoutes);
+      globalSearchMock.mockResolvedValue({ success: true, data: [CUSTOMER] });
+      renderModal();
+
+      await search(user);
+      const panel = await screen.findByTestId('customer-detail-panel');
+
+      expect(panel).not.toHaveTextContent(/credit limit/i);
+      expect(panel).not.toHaveTextContent(/credit days/i);
+      expect(panel).not.toHaveTextContent(/since/i);
+    });
+
+    it('shows no due amount, generic last transaction or invented branch figures', async () => {
       const user = userEvent.setup();
       route(customerRoutes);
       globalSearchMock.mockResolvedValue({ success: true, data: [CUSTOMER] });
@@ -599,17 +784,19 @@ describe('GlobalSearchModal details pane', () => {
       const panel = await screen.findByTestId('customer-detail-panel');
 
       // Due Amount would be Outstanding under a second label; Last Transaction is
-      // replaced by the precisely-named Last Invoice; party branch breakdowns stay
-      // deferred.
+      // replaced by the precisely-named Last Invoice. There is no per-branch receivables
+      // read, so the branch section says so rather than drawing a table.
       //
       // Anchored on the whole label: "Overdue amount" contains "due amount", and that
-      // card is supposed to be here.
+      // strip is supposed to be here.
       expect(screen.queryByText(/^due amount$/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/^overdue amount$/i)).toBeInTheDocument();
       expect(panel).not.toHaveTextContent(/last transaction/i);
-      expect(panel).not.toHaveTextContent(/activity by branch/i);
+      expect(screen.getByTestId('customer-branch-activity-unavailable')).toBeInTheDocument();
       expect(panel).not.toHaveTextContent(/outstanding by branch/i);
       expect(panel).not.toHaveTextContent(/paid by branch/i);
+      // The only tables are the invoice list; no branch table of guesses.
+      expect(panel.querySelectorAll('table')).toHaveLength(1);
     });
 
     it('renders the bounded recent-invoice list with each invoice balance', async () => {
@@ -759,7 +946,7 @@ describe('GlobalSearchModal details pane', () => {
       await search(user);
 
       const lastLpo = await screen.findByTestId('vendor-last-lpo');
-      expect(lastLpo).toHaveTextContent('2026-09-18');
+      expect(lastLpo).toHaveTextContent('18 Sep 2026');
       expect(lastLpo).toHaveTextContent('LPO-0007');
       expect(screen.getByTestId('vendor-detail-panel'))
         .not.toHaveTextContent(/last transaction/i);
@@ -775,8 +962,63 @@ describe('GlobalSearchModal details pane', () => {
       const table = await screen.findByTestId('vendor-lpo-table');
 
       expect(table).toHaveTextContent('LPO-0007');
-      expect(table).toHaveTextContent('APPROVED');
+      expect(table).toHaveTextContent('Approved');
       expect(table).toHaveTextContent('3,200.00');
+      expect(table).toHaveTextContent('Sharjah');
+    });
+
+    it('shows the LPO expected delivery as ETA, and a dash when it is unset', async () => {
+      const user = userEvent.setup();
+      route({
+        ...vendorRoutes,
+        '/api/lpos/recent': [
+          { ...VENDOR_LPOS[0], expectedDeliveryDate: '2026-10-02' },
+          { id: 8, lpoNumber: 'LPO-0008', lpoDate: '2026-09-01', grandTotal: 10, status: 'PARTIALLY_RECEIVED' },
+        ],
+      });
+      globalSearchMock.mockResolvedValue({ success: true, data: [VENDOR] });
+      renderModal();
+
+      await search(user);
+      const table = await screen.findByTestId('vendor-lpo-table');
+      const [first, second] = within(table).getAllByRole('row').slice(1);
+
+      expect(first).toHaveTextContent('02 Oct 2026');
+      expect(second).toHaveTextContent('—');
+      // A part-received order is still open, so it must not read as finished (green).
+      const partial = within(second).getByText('Partially Received');
+      expect(partial.className).not.toMatch(/emerald/);
+    });
+
+    it('states that per-branch figures are not recorded rather than drawing a table', async () => {
+      const user = userEvent.setup();
+      route(vendorRoutes);
+      globalSearchMock.mockResolvedValue({ success: true, data: [VENDOR] });
+      renderModal();
+
+      await search(user);
+
+      expect(await screen.findByTestId('vendor-branch-activity-unavailable'))
+        .toHaveTextContent(/not recorded for vendors/i);
+    });
+
+    it('builds the header from real identity, with Overdue only when the server counts some', async () => {
+      const user = userEvent.setup();
+      route(vendorRoutes);
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [{ ...VENDOR, meta: { badge: 'Active', phone: '+971 4 234 5678', email: 'sales@techsupply.ae' } }],
+      });
+      renderModal();
+
+      await search(user);
+      const panel = await screen.findByTestId('vendor-detail-panel');
+
+      expect(panel).toHaveTextContent('VEN-021 · +971 4 234 5678 · sales@techsupply.ae · Sharjah');
+      expect(within(panel).getByText('Overdue')).toBeInTheDocument();
+      // Neither the summary nor the search row carries these; none may be drawn.
+      expect(panel).not.toHaveTextContent(/credit limit/i);
+      expect(panel).not.toHaveTextContent(/since/i);
     });
 
     it('resolves the vendor by id and never aggregates every vendor', async () => {
@@ -870,64 +1112,168 @@ describe('GlobalSearchModal details pane', () => {
 
   // --- Employee --------------------------------------------------------------
 
-  describe('employee (identity only)', () => {
-    const renderEmployee = async (user) => {
+  describe('employee', () => {
+    const TARGETS = {
+      currentMonth: {
+        month: '2026-10-01', targetAmount: 50000, sales: 36000, bills: 12,
+        achievementPercent: 72, targetStatus: 'On Track',
+      },
+      previousMonth: {
+        month: '2026-09-01', targetAmount: null, sales: 8000, bills: 3,
+        achievementPercent: null, targetStatus: 'No Target',
+      },
+    };
+
+    const PAYROLL = {
+      currentMonth: {
+        month: 10, year: 2026, baseSalary: 8000, allowances: 1500,
+        deductions: 250, netPayable: 9250, status: 'Pending',
+      },
+      ytdYear: 2026,
+      salaryYtd: 83250,
+      latestPayslip: { month: 9, year: 2026, paymentDate: '2026-09-30' },
+    };
+
+    const employeeRoutes = {
+      '/api/hr/targets/employee/': TARGETS,
+      '/api/payroll/employee/': PAYROLL,
+    };
+
+    const renderEmployee = async (user, routes = employeeRoutes) => {
+      route(routes);
       globalSearchMock.mockResolvedValue({ success: true, data: [EMPLOYEE] });
       renderModal();
       await search(user);
       return screen.findByTestId('employee-detail-panel');
     };
 
-    it('renders the identity fields', async () => {
-      const user = userEvent.setup();
-      const panel = await renderEmployee(user);
-
-      expect(panel).toBeInTheDocument();
-      expect(screen.getByTestId('employee-code')).toHaveTextContent('EMP-234');
-      expect(screen.getByTestId('employee-role')).toHaveTextContent('Senior Sales Executive');
-      expect(screen.getByTestId('employee-department')).toHaveTextContent('Sales');
-      expect(screen.getByTestId('employee-branch')).toHaveTextContent('Dubai');
-      expect(screen.getByTestId('employee-status')).toHaveTextContent('Active');
-    });
-
-    /**
-     * The load-bearing test for the whole panel. GET /api/employees/{id} returns the
-     * full Employee including salary columns; the panel must never cause that request.
-     */
-    it('reaches the network not at all', async () => {
+    it('renders identity in the header and uses the rich result row', async () => {
       const user = userEvent.setup();
       await renderEmployee(user);
 
-      expect(apiGetMock).not.toHaveBeenCalled();
-      expect(urlsCalled().some((u) => u.includes('/api/employees/'))).toBe(false);
+      expect(screen.getByTestId('employee-identity')).toHaveTextContent(
+        'EMP-234 · Senior Sales Executive · Sales'
+      );
+      expect(screen.getByTestId('employee-branch')).toHaveTextContent('Dubai');
+      expect(screen.getByTestId('employee-status')).toHaveTextContent('Active');
+
+      const row = screen.getByRole('option', { name: /Ahmed Hassan/ });
+      expect(row).toHaveAttribute('aria-selected', 'true');
+      expect(row).toHaveTextContent('EMP-234 · Senior Sales Executive');
+      expect(row).toHaveTextContent('Dubai · Sales');
+      expect(row.className).toContain('bg-blue-50');
     });
 
-    it('shows no salary, payroll, attendance, leave or performance data', async () => {
+    it('renders this month and last month from the targets service', async () => {
+      const user = userEvent.setup();
+      await renderEmployee(user);
+
+      const current = await screen.findByTestId('employee-target-current');
+      expect(current).toHaveTextContent('72%');
+      expect(within(current).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '72');
+      expect(current).toHaveTextContent('12 bills');
+
+      // No target is "—", never 0%.
+      const previous = screen.getByTestId('employee-target-previous');
+      expect(previous).toHaveTextContent('—');
+      expect(previous).toHaveTextContent('No target set');
+      expect(within(previous).getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
+    });
+
+    /**
+     * The load-bearing test. GET /api/employees/{id} returns the full Employee
+     * including salary columns, and payroll must never load just because a row was
+     * selected.
+     */
+    it('reads targets only — never the employee record, never payroll on selection', async () => {
+      const user = userEvent.setup();
+      const panel = await renderEmployee(user);
+      await screen.findByTestId('employee-target-current');
+
+      expect(urlsCalled()).toEqual(['/api/hr/targets/employee/234']);
+      for (const pattern of [/basic salary/i, /net pay/i, /salary ytd/i, /9,250/]) {
+        expect(panel).not.toHaveTextContent(pattern);
+      }
+    });
+
+    it('shows payroll only after an explicit reveal, and hides it again', async () => {
+      const user = userEvent.setup();
+      await renderEmployee(user);
+
+      await user.click(await screen.findByTestId('employee-payroll-reveal'));
+
+      expect(await screen.findByTestId('employee-payroll')).toBeInTheDocument();
+      expect(urlsCalled()).toContain('/api/payroll/employee/EMP-234/summary');
+      expect(screen.getByTestId('employee-payroll-basic')).toHaveTextContent('8,000.00');
+      expect(screen.getByTestId('employee-payroll-allowances')).toHaveTextContent('1,500.00');
+      expect(screen.getByTestId('employee-payroll-deductions')).toHaveTextContent('250.00');
+      expect(screen.getByTestId('employee-payroll-net')).toHaveTextContent('9,250.00');
+      expect(screen.getByTestId('employee-payroll-ytd')).toHaveTextContent('83,250.00');
+
+      await user.click(screen.getByTestId('employee-payroll-hide'));
+      expect(screen.queryByTestId('employee-payroll')).not.toBeInTheDocument();
+      expect(screen.getByTestId('employee-payroll-reveal')).toBeInTheDocument();
+    });
+
+    it('offers no payroll at all without hr.payroll', async () => {
+      canViewMock.mockImplementation((mod) => mod !== 'hr.payroll');
+      const user = userEvent.setup();
+      const panel = await renderEmployee(user);
+      await screen.findByTestId('employee-target-current');
+
+      expect(screen.queryByTestId('employee-payroll-reveal')).not.toBeInTheDocument();
+      expect(panel).toHaveTextContent(/permission to view payroll/i);
+      expect(urlsCalled().some((u) => u.startsWith('/api/payroll'))).toBe(false);
+    });
+
+    it('says when the server refuses payroll', async () => {
+      const user = userEvent.setup();
+      await renderEmployee(user, {
+        ...employeeRoutes,
+        '/api/payroll/employee/': () => Promise.reject({ response: { status: 403 } }),
+      });
+
+      await user.click(await screen.findByTestId('employee-payroll-reveal'));
+
+      expect(await screen.findByText(/permission to view payroll/i)).toBeInTheDocument();
+      expect(screen.queryByTestId('employee-payroll')).not.toBeInTheDocument();
+    });
+
+    it('never presents employment status as attendance, and names what is not recorded', async () => {
       const user = userEvent.setup();
       const panel = await renderEmployee(user);
 
-      for (const pattern of [
-        /basic salary/i, /\ballowances\b/i, /\bdeductions\b/i, /net pay/i,
-        /salary ytd/i, /payslip/i, /performance/i,
-        /\bpresent\b/i, /\babsent\b/i, /check-?in/i,
-        /annual leave/i, /sick leave/i, /leave balance/i, /pending leave/i,
-      ]) {
+      for (const pattern of [/\bpresent\b/i, /\babsent\b/i, /late arrivals/i, /annual remaining/i]) {
         expect(panel).not.toHaveTextContent(pattern);
       }
+      const notRecorded = screen.getByTestId('employee-not-recorded');
+      expect(notRecorded).toHaveTextContent(/attendance/i);
+      expect(notRecorded).toHaveTextContent(/leave/i);
+      expect(notRecorded).toHaveTextContent(/sales by branch/i);
+    });
+
+    it('keeps the identity card when targets are denied', async () => {
+      const user = userEvent.setup();
+      const panel = await renderEmployee(user, {
+        ...employeeRoutes,
+        '/api/hr/targets/employee/': () => Promise.reject({ response: { status: 403 } }),
+      });
+
+      expect(await screen.findByText(/permission to view targets/i)).toBeInTheDocument();
+      expect(panel).toHaveTextContent('Ahmed Hassan');
     });
 
     it('offers a way into the HR record without opening one itself', async () => {
       const user = userEvent.setup();
       await renderEmployee(user);
 
-      // The action exists — the panel is a pointer to the record, not the record.
       expect(screen.getByTestId('employee-open-record')).toBeInTheDocument();
-      // And it still has not fetched anything.
-      expect(apiGetMock).not.toHaveBeenCalled();
+      expect(urlsCalled().some((u) => u.startsWith('/api/employees/'))).toBe(false);
     });
 
     it('renders without a code rather than blanking when the projection is thin', async () => {
       const user = userEvent.setup();
+      route(employeeRoutes);
       globalSearchMock.mockResolvedValue({
         success: true,
         data: [{ id: '234', type: 'employee', title: 'Ahmed Hassan' }],
@@ -935,8 +1281,10 @@ describe('GlobalSearchModal details pane', () => {
       renderModal();
       await search(user);
 
-      expect(await screen.findByTestId('employee-detail-panel')).toHaveTextContent('Ahmed Hassan');
-      expect(apiGetMock).not.toHaveBeenCalled();
+      const panel = await screen.findByTestId('employee-detail-panel');
+      expect(panel).toHaveTextContent('Ahmed Hassan');
+      // No code, nothing to match payroll lines on.
+      expect(panel).toHaveTextContent(/no employee code/i);
     });
   });
 });

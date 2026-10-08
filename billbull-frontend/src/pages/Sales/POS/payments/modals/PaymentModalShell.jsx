@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { X } from 'lucide-react';
 
 import { DirhamSymbol } from '../../POSCurrency';
-
+import { usePosFocusTarget, usePosOverlay } from '../../input/PosOverlayContext';
+import { POS_SCOPES } from '../../input/posScope';
+import { POS_FOCUS_TARGETS } from '../../input/posFocus';
 /**
  * Shared chrome for the five payment-allocation modals: coloured header, amount display,
  * numeric keypad and the confirm/cancel footer.
@@ -165,6 +168,27 @@ export function PaymentModalFrame({
   const fallbackRef = useRef(null);
   const ref = dialogRef || fallbackRef;
 
+  // PAYMENT scope: while any payment modal is open the POS input controller sends nothing to
+  // the sale or the method hotkeys. The modal keeps its own digits/Enter/Escape (onKeyDown
+  // below), and the dialog is marked as the owner of what is typed into it. A printable key on
+  // the dialog reaches onKeyDown through onKey, after the controller has ruled out a scanner
+  // burst; flushSync commits it at once, so an Enter right behind it confirms the new amount.
+  usePosOverlay({
+    scope: POS_SCOPES.PAYMENT,
+    onKey: onKeyDown
+      ? (key) => {
+        const dialog = ref.current;
+        if (!dialog) return;
+        flushSync(() => onKeyDown({
+          key, target: dialog, currentTarget: dialog, preventDefault() {}, stopPropagation() {},
+        }));
+      }
+      : null,
+  });
+  // The dialog is the PAYMENT_AMOUNT focus target: it keys digits into the amount itself, and a
+  // field inside it (credit/BNPL customer, reference) keeps the caret it already has.
+  usePosFocusTarget({ targets: POS_FOCUS_TARGETS.PAYMENT_AMOUNT, ref });
+
   // Focus the dialog on open so the key handler receives input without a click first.
   useEffect(() => {
     if (!dialogRef) ref.current?.focus();
@@ -178,6 +202,7 @@ export function PaymentModalFrame({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
+        data-pos-keyboard-owner="true"
         onKeyDown={onKeyDown || undefined}
         className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-2xl bg-white shadow-2xl outline-none"
       >

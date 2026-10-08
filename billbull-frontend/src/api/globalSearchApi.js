@@ -98,6 +98,12 @@ const SEARCH_SOURCES = [
           rightTag: productSellingPrice(raw) != null
             ? `AED ${Number(productSellingPrice(raw)).toLocaleString()}`
             : undefined,
+          // Structured copies of what the row shows, so the product row can lay them out
+          // itself instead of parsing the strings above. All straight off the aggregate.
+          sku: p?.sku ? String(p.sku) : undefined,
+          category: p?.department?.name ?? p?.category ?? undefined,
+          stock: raw?.stock ?? p?.quantity ?? null,
+          reorderLevel: raw?.inventory?.reorderLevel ?? null,
         },
       };
     },
@@ -118,7 +124,22 @@ const SEARCH_SOURCES = [
       type: "customer",
       title: String(c.name ?? c.customerName ?? ""),
       subtitle: joinParts(c.code, c.mobile ?? c.phone ?? c.email, c.branchEntity?.name ?? c.branch),
-      meta: { badge: c.groupType ?? "Customer" },
+      meta: {
+        badge: c.groupType ?? "Customer",
+        // Structured copies for the customer row and the header of the customer panel,
+        // straight off the entity the search already returned. The search payload carries
+        // no balance or overdue figure, so none is added here; those come from the
+        // summary read when the row is selected.
+        code: c.code ? String(c.code) : undefined,
+        mobile: c.mobile ?? c.phone ?? undefined,
+        email: c.email ?? undefined,
+        branch: c.branchEntity?.name ?? c.branch ?? undefined,
+        groupType: c.groupType ?? undefined,
+        status: c.status ?? undefined,
+        creditLimitAmount: c.creditLimitAmount ?? null,
+        creditLimitDays: c.creditLimitDays ?? null,
+        blockCredit: c.blockCredit === true,
+      },
     }),
   },
   {
@@ -136,7 +157,18 @@ const SEARCH_SOURCES = [
       type: "vendor",
       title: String(v.name ?? ""),
       subtitle: joinParts(v.code, v.contact ?? v.mobile ?? v.email, v.branch),
-      meta: { badge: v.status || undefined },
+      meta: {
+        badge: v.status || undefined,
+        // Structured copies for the vendor row and the header of the vendor panel,
+        // straight off VendorSearchResponse. `contact` is the vendor's primary contact
+        // number, so it wins over mobile exactly as in the subtitle. No balance or branch
+        // count is carried — the projection has none, and the row does not guess them.
+        code: v.code ? String(v.code) : undefined,
+        phone: v.contact ?? v.mobile ?? undefined,
+        email: v.email ?? undefined,
+        branch: v.branch ?? undefined,
+        status: v.status ?? undefined,
+      },
     }),
   },
   {
@@ -148,7 +180,8 @@ const SEARCH_SOURCES = [
     preview: (size, signal) =>
       api.get("/api/ledger/accounts/search", { params: { preview: true, size }, signal }),
     // Backed by AccountSearchResponse: id, code, name, accountType,
-    // accountGroup, status, isGroup. Balances are a Phase 2B concern.
+    // accountGroup, status, isGroup. It carries no balance or branch count — those are
+    // read for the selected account only, by the detail panel.
     map: (a) => ({
       id: String(a.id ?? a.code ?? ""),
       type: "ledger",
@@ -157,7 +190,15 @@ const SEARCH_SOURCES = [
       code: a.code ? String(a.code) : undefined,
       title: String(a.name ?? ""),
       subtitle: joinParts(a.code ? `Acc ${a.code}` : null, a.accountGroup),
-      meta: { badge: a.accountType || undefined },
+      meta: {
+        badge: a.accountType || undefined,
+        // Structured copies for the ledger row, straight off AccountSearchResponse.
+        accountCode: a.code ? String(a.code) : undefined,
+        accountType: a.accountType ?? undefined,
+        accountGroup: a.accountGroup ?? undefined,
+        status: a.status ?? undefined,
+        isGroup: a.isGroup === true,
+      },
     }),
   },
   {

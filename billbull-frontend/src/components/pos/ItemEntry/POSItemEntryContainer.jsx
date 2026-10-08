@@ -35,6 +35,8 @@ const POSItemEntryContainer = ({
     lockQuantity = false,
     lockedBatch = null,
     lockedSerial = null,
+    // 'quantity' | 'discount' | 'price' — the field the dialog opens on (Price by default).
+    initialFocusField = null,
     showContextPanel = true,
     showStock = true,
     showPriceHistory = true,
@@ -243,6 +245,7 @@ const POSItemEntryContainer = ({
             editablePrice={editablePrice}
             editableDiscount={editableDiscount}
             lockQuantity={lockQuantity}
+            initialFocusField={initialFocusField}
             lockedBatch={lockedBatch || (mode === 'edit' ? activeEntity.pinnedBatchNumber : null)}
             lockedSerial={lockedSerial || (mode === 'edit' ? activeEntity.serialNumber : null)}
             showContextPanel={showContextPanel}

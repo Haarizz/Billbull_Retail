@@ -35,8 +35,15 @@ import {
    Box,
    RefreshCw,
    Mail,
-   Download
+   Download,
+   Gift,
+   Loader2
 } from 'lucide-react';
+import { toast } from 'sonner';
+import CreditVoucherModal from './components/CreditVoucherModal';
+import { getCreditVoucherByReturn } from '../../../api/creditVoucherApi';
+import { getPosPrinters } from '../../../api/posPrinterApi';
+import { printCreditVoucher } from '../../../utils/salesReturnPrint';
 import ExportDropdown from '../../../components/common/ExportDropdown';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import DateFilter from '../../../components/common/DateFilter';
@@ -70,7 +77,25 @@ import TableSkeleton from '../../../components/common/TableSkeleton';
 // §24/§26 — the shared Sales Return workflow. This page hosts it for the
 // Customer & Sales entry point; POS → Actions → Return renders the very same component.
 import SalesReturnScreen from './SalesReturnScreen';
-import { ENTRY_POINT } from './constants';
+import { ENTRY_POINT, FALLBACK_CONDITIONS, FALLBACK_REASONS, FALLBACK_REFUND_METHODS } from './constants';
+
+/** Enum code → display label, falling back to the raw value for codes that predate the vocabulary. */
+const labelFor = (options, code) =>
+   options.find(o => o.value === String(code || '').toUpperCase())?.label || code || '—';
+
+const formatDateTime = (value) => {
+   if (!value) return '—';
+   const d = new Date(value);
+   return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString();
+};
+
+const VOUCHER_STATUS_STYLE = {
+   ACTIVE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+   PARTIALLY_REDEEMED: 'bg-amber-50 text-amber-700 border-amber-200',
+   FULLY_REDEEMED:'bg-slate-100 text-slate-600 border-slate-200',
+   EXPIRED: 'bg-red-50 text-red-700 border-red-200',
+   CANCELLED: 'bg-red-50 text-red-700 border-red-200',
+};
 
 // ==========================================
 // 1. CONFIGURATION
@@ -142,6 +167,14 @@ const SalesReturn = () => {
    // Drawer State
    const [isDrawerOpen, setIsDrawerOpen] = useState(false);
    const [selectedReturn, setSelectedReturn] = useState(null);
+
+   // The voucher a CREDIT_VOUCHER return issued. Read back by return number — the return
+   // record itself only embeds it on the approval response, never on later reads.
+   const [drawerVoucher, setDrawerVoucher] = useState(null);
+   const [drawerVoucherLoading, setDrawerVoucherLoading] = useState(false);
+   const [drawerVoucherError, setDrawerVoucherError] = useState(null);
+   const [isVoucherModalOpen, setIsVoucherModalOpen] = useState(false);
+   const [voucherPrinting, setVoucherPrinting] = useState(false);
 
    // Reversal of an approved return. Held here rather than in the row so the dialog survives a
    // list refresh, and so the detail drawer and the row action drive the same one.
@@ -391,14 +424,74 @@ const SalesReturn = () => {
 
    const { sub: subTotal, tax: taxAmtTotal, total: grandTotal } = calculateTotals();
 
+   const loadDrawerVoucher = async (ret) => {
+      setDrawerVoucher(null);
+      setDrawerVoucherError(null);
+      if (!ret?.returnNumber || String(ret.refundMethod || '').toUpperCase() !== 'CREDIT_VOUCHER') return;
+      setDrawerVoucherLoading(true);
+      try {
+         setDrawerVoucher(await getCreditVoucherByReturn(ret.returnNumber));
+      } catch (err) {
+         setDrawerVoucherError({
+            returnNumber: ret.returnNumber,
+            message: err?.response?.data?.message || err?.message || 'The voucher details could not be loaded.',
+         });
+      } finally {
+         setDrawerVoucherLoading(false);
+      }
+   };
+
    const handleViewReturn = (ret) => {
       setSelectedReturn(ret);
       setIsDrawerOpen(true);
+      loadDrawerVoucher(ret);
    };
 
    const handleCloseDrawer = () => {
       setIsDrawerOpen(false);
-      setTimeout(() => setSelectedReturn(null), 300);
+      setIsVoucherModalOpen(false);
+      setTimeout(() => {
+         setSelectedReturn(null);
+         setDrawerVoucher(null);
+         setDrawerVoucherError(null);
+      }, 300);
+   };
+
+   /**
+    * Reprints the voucher from the register, on the return's branch receipt printer — the same
+    * thermal path the POS uses, so the copy carries the scannable barcode.
+    */
+   const handlePrintVoucher = async (voucher, { reprint = false } = {}) => {
+      if (!voucher) return;
+      const branchId = selectedReturn?.branch?.id ?? voucher.branchId ?? activeBranch?.id;
+      const label = `Voucher ${voucher.voucherNumber}`;
+      setVoucherPrinting(true);
+      try {
+         const printers = await getPosPrinters({ branchId: branchId ?? undefined, deviceType: 'RECEIPT_PRINTER' });
+         const result = await printCreditVoucher(voucher, {
+            printers: printers || [],
+            branchId: branchId ?? null,
+            header: {
+               companyName: company?.companyName || '',
+               header: selectedReturn?.branch?.name || voucher.branchName || '',
+               trn: company?.trn || '',
+               showTrn: Boolean(company?.trn),
+               outletAddress: company?.address || '',
+               outletPhone: company?.phone || '',
+               logoDataUrl: company?.logoUrl || null,
+               showLogo: Boolean(company?.logoUrl),
+            },
+            isReprint: reprint,
+         });
+         toast.success(`${label} sent to ${result?.printer?.deviceName || 'printer'}.`);
+         if (result?.fallbackUsed && result.barcodePrinted === false) {
+            toast.warning(`${label} printed in text compatibility mode — the barcode is NOT on this copy.`);
+         }
+      } catch (err) {
+         toast.error(`${label} could not be printed: ${err?.message || 'printer error'}.`);
+      } finally {
+         setVoucherPrinting(false);
+      }
    };
 
    /**
@@ -1144,10 +1237,158 @@ const SalesReturn = () => {
                            </div>
                            <div>
                               <p className="text-slate-400 mb-0.5">Reason</p>
-                              <p className="font-bold text-slate-800">{selectedReturn.reason}</p>
+                              <p className="font-bold text-slate-800">{labelFor(FALLBACK_REASONS, selectedReturn.reason)}</p>
                            </div>
+                           {selectedReturn.linkedReceiptNumber && (
+                              <div>
+                                 <p className="text-slate-400 mb-0.5">Source Receipt</p>
+                                 <p className="font-bold text-slate-800">{selectedReturn.linkedReceiptNumber}</p>
+                              </div>
+                           )}
+                           {selectedReturn.customerMobile && (
+                              <div>
+                                 <p className="text-slate-400 mb-0.5">Customer Mobile</p>
+                                 <p className="font-bold text-slate-800">{selectedReturn.customerMobile}</p>
+                              </div>
+                           )}
                         </div>
                      </div>
+
+                     {/* Refund & Settlement */}
+                     <div className="bg-white rounded-lg border border-slate-100 p-4 space-y-4">
+                        <h4 className="text-xs font-bold text-slate-700 flex items-center gap-2 border-b border-slate-50 pb-2 mb-3 uppercase tracking-wider">
+                           <CreditCard size={14} className="text-slate-400" /> Refund &amp; Settlement
+                        </h4>
+                        <div className="grid grid-cols-2 gap-y-4 text-xs">
+                           <div>
+                              <p className="text-slate-400 mb-0.5">Refund Mode</p>
+                              <p className="font-bold text-slate-800">
+                                 {selectedReturn.refundMethod
+                                    ? labelFor(FALLBACK_REFUND_METHODS, selectedReturn.refundMethod)
+                                    : (selectedReturn.returnAction || '—')}
+                              </p>
+                           </div>
+                           <div>
+                              <p className="text-slate-400 mb-0.5">Refund Amount</p>
+                              <CurrencyAmount value={selectedReturn.refundAmount ?? selectedReturn.totalAmount} currency={currency} className="font-bold text-slate-800" />
+                           </div>
+                           <div>
+                              <p className="text-slate-400 mb-0.5">Entry Point</p>
+                              <p className="font-bold text-slate-800">
+                                 {String(selectedReturn.entryPoint || '').toUpperCase() === 'POS' ? 'POS' : 'Back Office'}
+                              </p>
+                           </div>
+                           {selectedReturn.branch?.name && (
+                              <div>
+                                 <p className="text-slate-400 mb-0.5">Branch</p>
+                                 <p className="font-bold text-slate-800">{selectedReturn.branch.name}</p>
+                              </div>
+                           )}
+                           {(selectedReturn.posCounterName || selectedReturn.posSessionId) && (
+                              <div>
+                                 <p className="text-slate-400 mb-0.5">POS Counter / Session</p>
+                                 <p className="font-bold text-slate-800">
+                                    {[selectedReturn.posCounterName, selectedReturn.posSessionId && `Session ${selectedReturn.posSessionId}`].filter(Boolean).join(' · ')}
+                                 </p>
+                              </div>
+                           )}
+                           {selectedReturn.tradingDate && (
+                              <div>
+                                 <p className="text-slate-400 mb-0.5">Trading Date</p>
+                                 <p className="font-bold text-slate-800">{formatDisplayDate(selectedReturn.tradingDate)}</p>
+                              </div>
+                           )}
+                           {selectedReturn.authorizedByUsername && (
+                              <div className="col-span-2">
+                                 <p className="text-slate-400 mb-0.5">Authorized By</p>
+                                 <p className="font-bold text-slate-800">
+                                    {selectedReturn.authorizedByUsername}
+                                    <span className="font-normal text-slate-500"> · {formatDateTime(selectedReturn.authorizedAt)}</span>
+                                 </p>
+                                 {selectedReturn.authorizationReason && (
+                                    <p className="text-slate-500 italic">{selectedReturn.authorizationReason}</p>
+                                 )}
+                              </div>
+                           )}
+                           {selectedReturn.reversedAt && (
+                              <div className="col-span-2">
+                                 <p className="text-slate-400 mb-0.5">Reversed</p>
+                                 <p className="font-bold text-red-700">
+                                    {selectedReturn.reversedBy || '—'}
+                                    <span className="font-normal text-slate-500"> · {formatDateTime(selectedReturn.reversedAt)}</span>
+                                 </p>
+                                 {selectedReturn.reversalReason && (
+                                    <p className="text-slate-500 italic">{selectedReturn.reversalReason}</p>
+                                 )}
+                              </div>
+                           )}
+                        </div>
+                     </div>
+
+                     {/* Credit Voucher issued by this return */}
+                     {String(selectedReturn.refundMethod || '').toUpperCase() === 'CREDIT_VOUCHER' && (
+                        <div className="rounded-lg border border-[#FDE6A9] bg-[#FFF8E7] p-4 space-y-3">
+                           <h4 className="text-xs font-bold text-slate-700 flex items-center gap-2 uppercase tracking-wider">
+                              <Gift size={14} className="text-amber-600" /> Credit Voucher
+                           </h4>
+                           {drawerVoucherLoading && (
+                              <p className="text-xs text-slate-500 flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading voucher…</p>
+                           )}
+                           {drawerVoucherError && !drawerVoucherLoading && (
+                              <div className="text-xs">
+                                 <p className="text-red-600 font-semibold">{drawerVoucherError.message}</p>
+                                 <button onClick={() => loadDrawerVoucher(selectedReturn)} className="mt-2 text-amber-700 font-bold hover:underline">Retry</button>
+                              </div>
+                           )}
+                           {drawerVoucher && (
+                              <>
+                                 <div className="grid grid-cols-2 gap-y-3 text-xs">
+                                    <div>
+                                       <p className="text-slate-500 mb-0.5">Voucher No.</p>
+                                       <p className="font-bold text-slate-800">{drawerVoucher.voucherNumber}</p>
+                                    </div>
+                                    <div>
+                                       <p className="text-slate-500 mb-0.5">Code</p>
+                                       <p className="font-bold font-mono tracking-wider text-slate-800">{drawerVoucher.voucherCode}</p>
+                                    </div>
+                                    <div>
+                                       <p className="text-slate-500 mb-0.5">Status</p>
+                                       <span className={`inline-block px-2 py-0.5 rounded border text-[10px] font-bold ${VOUCHER_STATUS_STYLE[drawerVoucher.status] || 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                          {String(drawerVoucher.status || '').replace(/_/g, ' ')}
+                                       </span>
+                                    </div>
+                                    <div>
+                                       <p className="text-slate-500 mb-0.5">Issue / Expiry</p>
+                                       <p className="font-bold text-slate-800">
+                                          {formatDisplayDate(drawerVoucher.issueDate)} → {drawerVoucher.expiryDate ? formatDisplayDate(drawerVoucher.expiryDate) : 'No expiry'}
+                                       </p>
+                                    </div>
+                                    <div>
+                                       <p className="text-slate-500 mb-0.5">Issued</p>
+                                       <CurrencyAmount value={drawerVoucher.originalAmount} currency={currency} className="font-bold text-slate-800" />
+                                    </div>
+                                    <div>
+                                       <p className="text-slate-500 mb-0.5">Used / Remaining</p>
+                                       <p className="font-bold text-slate-800 flex items-center gap-1">
+                                          <CurrencyAmount value={drawerVoucher.usedAmount} currency={currency} />
+                                          <span className="text-slate-400">/</span>
+                                          <CurrencyAmount value={drawerVoucher.remainingAmount} currency={currency} className="text-emerald-700" />
+                                       </p>
+                                    </div>
+                                 </div>
+                                 {drawerVoucher.notRedeemableReason && (
+                                    <p className="text-[11px] text-red-600">{drawerVoucher.notRedeemableReason}</p>
+                                 )}
+                                 <button
+                                    onClick={() => setIsVoucherModalOpen(true)}
+                                    className="w-full px-4 py-2 bg-[#F5C742] rounded-md text-xs font-bold text-slate-900 hover:bg-yellow-400 shadow-sm flex items-center justify-center gap-2 transition-colors"
+                                 >
+                                    <Printer size={14} /> View / Reprint Voucher
+                                 </button>
+                              </>
+                           )}
+                        </div>
+                     )}
 
                      {/* Item Table */}
                      <div className="bg-white rounded-lg border border-slate-100 overflow-hidden">
@@ -1165,7 +1406,22 @@ const SalesReturn = () => {
                                  <tr key={idx}>
                                     <td className="px-4 py-3">
                                        <div className="font-bold text-slate-700">{item.itemName}</div>
-                                       <div className="text-[10px] text-slate-400">{item.itemStatus}</div>
+                                       <div className="text-[10px] text-slate-400 flex flex-wrap gap-x-2">
+                                          {item.itemCode && <span>{item.itemCode}</span>}
+                                          <span>
+                                             Condition: <span className="font-semibold text-slate-600">
+                                                {labelFor(FALLBACK_CONDITIONS, item.effectiveCondition || item.condition || item.itemStatus)}
+                                             </span>
+                                          </span>
+                                          {item.returnReason && (
+                                             <span>
+                                                Reason: <span className="font-semibold text-slate-600">{labelFor(FALLBACK_REASONS, item.returnReason)}</span>
+                                             </span>
+                                          )}
+                                       </div>
+                                       {item.returnReasonNotes && (
+                                          <div className="text-[10px] text-slate-500 italic">{item.returnReasonNotes}</div>
+                                       )}
                                     </td>
                                     <td className="px-4 py-3 text-center">{item.returnQty}</td>
                                     <td className="px-4 py-3 text-right font-bold"><CurrencyAmount value={item.total} currency={currency} /></td>
@@ -1216,6 +1472,17 @@ const SalesReturn = () => {
                </div>
             )}
          </div>
+
+         {isVoucherModalOpen && drawerVoucher && (
+            <CreditVoucherModal
+               voucher={drawerVoucher}
+               branchName={selectedReturn?.branch?.name || drawerVoucher.branchName}
+               companyName={company?.companyName}
+               onClose={() => setIsVoucherModalOpen(false)}
+               onPrint={handlePrintVoucher}
+               printing={voucherPrinting}
+            />
+         )}
 
          {/* Rendered only while open, so closing unmounts it and the next reversal starts with
              empty credentials — see the note in ReversalModal. */}

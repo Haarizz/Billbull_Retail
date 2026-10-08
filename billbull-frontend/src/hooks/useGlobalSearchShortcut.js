@@ -1,30 +1,16 @@
 import { useEffect, useRef } from 'react';
 
+import { isEditableTarget } from '../utils/editableTarget';
+
 /**
  * Returns true when the event target is somewhere the user is editing text, so
  * Ctrl/Cmd+X must keep its native "cut" meaning.
  *
- * Same shape as the POS barcode-wedge guard in POSTouchScreen.jsx, plus a
- * `closest('[contenteditable]')` walk: `isContentEditable` is inherited in a
- * real browser but is not implemented by jsdom, and a caret can sit on a text
- * node inside a contenteditable rather than on the editable element itself.
+ * The definition lives in utils/editableTarget.js and is shared with every POS
+ * keyboard path, so the app has one notion of "a field owns this keystroke".
+ * This name is kept for existing importers.
  */
-export const isTextEntryTarget = (target) => {
-  if (!target || typeof target !== 'object') return false;
-  const el = target.nodeType === 3 ? target.parentElement : target;
-  if (!el || typeof el.tagName !== 'string') return false;
-
-  const tag = el.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-  if (el.isContentEditable) return true;
-
-  if (typeof el.closest === 'function') {
-    if (el.closest('[contenteditable=""], [contenteditable="true"]')) return true;
-    // Rich-text/code editors render a focusable textbox rather than a form control.
-    if (el.closest('[role="textbox"]')) return true;
-  }
-  return false;
-};
+export const isTextEntryTarget = isEditableTarget;
 
 /**
  * Global Ctrl+X (Windows/Linux) / Cmd+X (macOS) shortcut that opens BillBull's

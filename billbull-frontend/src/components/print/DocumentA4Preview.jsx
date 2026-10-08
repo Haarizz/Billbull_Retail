@@ -28,16 +28,18 @@ export const useA4BlobUrl = (html) => {
   return url;
 };
 
-export const A4PreviewFrame = ({ html, scale }) => {
+// pageWidth/pageHeight (CSS px) let a non-A4 sheet such as A5 preview at its own
+// proportions; they default to the A4 frame every existing caller relies on.
+export const A4PreviewFrame = ({ html, scale, pageWidth = 794, pageHeight = 1055 }) => {
   const url = useA4BlobUrl(html);
   const s = scale ?? 0.455;
   return (
     <div
       className="relative overflow-hidden rounded-xl border border-gray-200 bg-white w-full"
-      style={{ height: Math.round(1055 * s) }}
+      style={{ height: Math.round(pageHeight * s) }}
     >
-      <div style={{ width: 794, transformOrigin: 'top left', transform: `scale(${s})`, position: 'absolute', top: 0, left: 0 }}>
-        {url && <iframe src={url} style={{ width: 794, height: 1055, border: 'none', display: 'block' }} title="A4 preview" />}
+      <div style={{ width: pageWidth, transformOrigin: 'top left', transform: `scale(${s})`, position: 'absolute', top: 0, left: 0 }}>
+        {url && <iframe src={url} style={{ width: pageWidth, height: pageHeight, border: 'none', display: 'block' }} title="A4 preview" />}
       </div>
     </div>
   );

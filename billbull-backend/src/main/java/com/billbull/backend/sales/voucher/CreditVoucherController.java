@@ -75,8 +75,7 @@ public class CreditVoucherController {
     @GetMapping("/by-return/{returnNumber}")
     public CreditVoucherResponse byReturn(@PathVariable String returnNumber) {
         modulePermissionService.requireCanView(MODULE);
-        return voucherService.findBySalesReturnNumber(returnNumber)
-                .map(CreditVoucherResponse::from)
+        return voucherService.findResponseBySalesReturnNumber(returnNumber)
                 .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
                         org.springframework.http.HttpStatus.NOT_FOUND,
                         "No credit voucher was issued for return " + returnNumber + "."));
@@ -90,8 +89,7 @@ public class CreditVoucherController {
     @PreAuthorize("hasRole('ADMIN')")
     public CreditVoucherResponse cancel(@PathVariable Long id, @RequestBody CancelRequest request) {
         modulePermissionService.requireCanEdit(MODULE);
-        return CreditVoucherResponse.from(
-                voucherService.cancel(id, request != null ? request.reason : null));
+        return voucherService.cancelToResponse(id, request != null ? request.reason : null);
     }
 
     public static class CancelRequest {

@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
 import { buildPosFunctionButtons } from '../../../lib/posFunctionButtons';
+import { usePosInputV2, usePosOverlay } from '../../../input/PosOverlayContext';
+import { POS_SCOPES } from '../../../input/posScope';
 
 /**
  * TradeFunctionsPanel
@@ -15,13 +17,16 @@ import { buildPosFunctionButtons } from '../../../lib/posFunctionButtons';
  * component adds is the grouping (`group`) and the drawer chrome.
  */
 export const TradeFunctionsPanel = React.memo(({ open, onClose, hiddenPanelButtons, ...ctx }) => {
-  // Esc closes, same as the other POS overlays.
+  // Esc closes, same as the other POS overlays. posInputV2: the POS input controller delivers
+  // it through this registration; otherwise the legacy window listener below does.
+  const posInputV2 = usePosInputV2();
+  usePosOverlay({ open, scope: POS_SCOPES.MODAL, onEscape: onClose });
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open || posInputV2) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, posInputV2, onClose]);
 
   const groups = useMemo(() => {
     const buttons = buildPosFunctionButtons(ctx, 'h-5 w-5')

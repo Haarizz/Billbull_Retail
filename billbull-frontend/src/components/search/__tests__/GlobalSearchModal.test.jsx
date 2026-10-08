@@ -795,6 +795,203 @@ describe('GlobalSearchModal', () => {
   describe('layout', () => {
     const LONG = 'ABDULLA ALI AL SHARHAN AND SONS GENERAL TRADING ESTABLISHMENT LLC BRANCH';
 
+    it('lays a product row out from its own fields, with a stock status from the reorder rule', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [
+          {
+            ...PRODUCT,
+            code: 'HUB-7',
+            meta: { badge: 'Stock: 5', sku: 'HUB7-WHT', category: 'Electronics', stock: 5, reorderLevel: 20 },
+          },
+        ],
+      });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'hub');
+      const row = await resultRow('Wireless Keyboard Pro');
+
+      expect(row).toHaveTextContent('HUB-7 · HUB7-WHT');
+      expect(row).toHaveTextContent('Electronics · 5 on hand');
+      expect(row).toHaveTextContent('Low stock');
+      expect(row).toHaveAttribute('aria-selected', 'true');
+    });
+
+    it('lays a customer row out from its own fields, with the record standing as its status', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [
+          {
+            ...CUSTOMER,
+            meta: {
+              badge: 'Corporate',
+              code: 'CUS-0042',
+              mobile: '+971 50 234 5678',
+              branch: 'Dubai',
+              groupType: 'Corporate',
+              status: 'Active',
+            },
+          },
+        ],
+      });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'acme');
+      const row = await resultRow('Acme Corp Ltd');
+
+      expect(row).toHaveTextContent('CUS-0042 · +971 50 234 5678');
+      expect(row).toHaveTextContent('Dubai · Corporate');
+      expect(row).toHaveTextContent('Active');
+      expect(row).toHaveAttribute('aria-selected', 'true');
+      // Same selected treatment as the product row.
+      expect(row.className).toMatch(/bg-blue-50/);
+      // The search payload carries no balance or overdue figure, so the row invents none.
+      expect(row).not.toHaveTextContent(/bal/i);
+      expect(row).not.toHaveTextContent(/overdue/i);
+    });
+
+    it('marks a credit-blocked customer ahead of its plain status', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [{ ...CUSTOMER, meta: { code: 'CUS-0042', status: 'Active', blockCredit: true } }],
+      });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'acme');
+      const row = await resultRow('Acme Corp Ltd');
+
+      expect(row).toHaveTextContent('Credit blocked');
+      expect(row).not.toHaveTextContent('Active');
+    });
+
+    it('falls back to the subtitle and badge for a customer row without structured fields', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({ success: true, data: [CUSTOMER] });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'acme');
+      const row = await resultRow('Acme Corp Ltd');
+
+      expect(row).toHaveTextContent('CUS-0042 • +971 50 234 5678');
+      expect(row).toHaveTextContent('Corporate');
+    });
+
+    it('renders a vendor row from its structured fields, with the shared selected treatment', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [
+          {
+            ...VENDOR,
+            meta: {
+              badge: 'On Hold',
+              code: 'VEN-0021',
+              phone: '+971 4 234 5678',
+              branch: 'Dubai',
+              status: 'On Hold',
+            },
+          },
+        ],
+      });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'tech');
+      const row = await resultRow('TechSupply FZCO');
+
+      expect(row).toHaveTextContent('VEN-0021 · +971 4 234 5678');
+      expect(row).toHaveTextContent('Dubai');
+      expect(row).toHaveTextContent('On Hold');
+      expect(row).toHaveAttribute('aria-selected', 'true');
+      expect(row.className).toMatch(/bg-blue-50/);
+      // VendorSearchResponse has no balance, branch count or overdue state to show.
+      expect(row).not.toHaveTextContent(/bal/i);
+      expect(row).not.toHaveTextContent(/branches/i);
+      expect(row).not.toHaveTextContent(/overdue/i);
+    });
+
+    it('falls back to the subtitle and badge for a vendor row without structured fields', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({ success: true, data: [VENDOR] });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'tech');
+      const row = await resultRow('TechSupply FZCO');
+
+      expect(row).toHaveTextContent('VEN-0021 • +971 4 234 5678 • Dubai');
+      expect(row).toHaveTextContent('Active');
+    });
+
+    it('renders a ledger row from its structured fields, with the shared selected treatment', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [
+          {
+            ...LEDGER,
+            code: '1100',
+            meta: {
+              badge: 'Asset',
+              accountCode: '1100',
+              accountType: 'Asset',
+              accountGroup: 'Assets',
+              status: 'active',
+              isGroup: false,
+            },
+          },
+        ],
+      });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'recv');
+      const row = await resultRow('Accounts Receivable');
+
+      expect(row).toHaveTextContent('Acc 1100 · Asset');
+      expect(row).toHaveAttribute('aria-selected', 'true');
+      expect(row.className).toMatch(/bg-blue-50/);
+      expect(row.className).not.toMatch(/FFF8E7/);
+      // An active account needs no chip, and AccountSearchResponse has no balance or
+      // branch count to show.
+      expect(row).not.toHaveTextContent(/active/i);
+      expect(row).not.toHaveTextContent(/bal/i);
+      expect(row).not.toHaveTextContent(/branches/i);
+    });
+
+    it('flags an archived or group ledger account on its row', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({
+        success: true,
+        data: [
+          {
+            ...LEDGER,
+            code: '1000',
+            meta: { accountCode: '1000', accountType: 'Asset', status: 'archived', isGroup: true },
+          },
+        ],
+      });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'recv');
+      const row = await resultRow('Accounts Receivable');
+
+      expect(row).toHaveTextContent('Group account');
+      expect(row).toHaveTextContent('Archived');
+    });
+
+    it('falls back to the subtitle and badge for a ledger row without structured fields', async () => {
+      const user = userEvent.setup();
+      globalSearchMock.mockResolvedValue({ success: true, data: [LEDGER] });
+      renderApp({ open: true, onOpenChange: vi.fn() });
+
+      await user.type(searchBox(), 'recv');
+      const row = await resultRow('Accounts Receivable');
+
+      expect(row).toHaveTextContent('Acc 1100 • Assets');
+      expect(row).toHaveTextContent('Asset');
+    });
+
     it('truncates a long result title instead of widening the row', async () => {
       const user = userEvent.setup();
       globalSearchMock.mockResolvedValue({

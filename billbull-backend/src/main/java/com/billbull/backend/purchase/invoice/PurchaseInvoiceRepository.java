@@ -123,4 +123,24 @@ public interface PurchaseInvoiceRepository
         /** Global AP sub-ledger total: sum of grandTotal for all non-cancelled, unpaid invoices. */
         @org.springframework.data.jpa.repository.Query("SELECT COALESCE(SUM(i.grandTotal), 0) FROM PurchaseInvoice i WHERE i.status NOT IN ('CANCELLED', 'PAID')")
         java.math.BigDecimal sumGlobalOutstandingAP();
+
+        /**
+         * Vendor ids, most purchased-from first — the primary ranking behind the global
+         * search modal's empty-query vendor preview.
+         *
+         * <p>Counts POSTED invoices: invoices inside the activity window first, then the
+         * all-time count, ties broken on the most recent invoice. The all-time tier keeps
+         * the biggest suppliers on top through a quiet stretch instead of letting the
+         * preview fall back to alphabetical. Returns ids only; the caller re-reads the
+         * vendors through its own branch-scoped query.
+         */
+        @org.springframework.data.jpa.repository.Query("SELECT i.vendorId FROM PurchaseInvoice i "
+                + "WHERE i.vendorId IS NOT NULL "
+                + "AND i.status = com.billbull.backend.purchase.invoice.InvoiceStatus.POSTED "
+                + "GROUP BY i.vendorId "
+                + "ORDER BY SUM(CASE WHEN i.invoiceDate >= :since THEN 1 ELSE 0 END) DESC, "
+                + "COUNT(i.id) DESC, MAX(i.invoiceDate) DESC")
+        List<Long> findMostPurchasedVendorIds(
+                @org.springframework.data.repository.query.Param("since") java.time.LocalDate since,
+                org.springframework.data.domain.Pageable pageable);
 }

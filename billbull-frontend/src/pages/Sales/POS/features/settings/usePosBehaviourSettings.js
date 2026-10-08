@@ -51,6 +51,13 @@ export function usePosBehaviourSettings({ posSettings, setPosSettings, businessD
       operatingStartTime: posSettings?.operatingStartTime || '',
       operatingEndTime: posSettings?.operatingEndTime || '',
       businessDayExtensionMinutes: posSettings?.businessDayExtensionMinutes ?? 0,
+      // Seeded for the same reason as posFunctionAccessMode. Opening the Behavior tab calls
+      // this, so without these the expiry cards render with nothing selected, the months/date
+      // inputs come up blank, and a stored policy looks as if it was never saved.
+      // '' = no branch policy (system default).
+      creditVoucherExpiryMode: posSettings?.creditVoucherExpiryMode || '',
+      creditVoucherExpiryMonths: posSettings?.creditVoucherExpiryMonths ?? 12,
+      creditVoucherExpiryDate: posSettings?.creditVoucherExpiryDate || '',
     });
     // Refresh the stored settings alongside opening the editor, so the server-computed
     // Business Day schedule lock (businessDayScheduleLocked — sessions opened or closed since

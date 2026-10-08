@@ -43,14 +43,15 @@ import { saveSalesReturn, updateSalesReturnStatus, getReturnableBatches, getSale
 import SalesReturnScreen from './SalesReturn/SalesReturnScreen';
 import { ENTRY_POINT } from './SalesReturn/constants';
 import { getSalesAnalytics } from '../../api/salesReportsApi';
-import { resolvePrintTemplate } from '../../api/printTemplateApi';
+import { getTemplateFamily, resolvePrintTemplate } from '../../api/printTemplateApi';
+import { isSheetPaper, POS_SHEET_FORMATS, sheetFormatLabel } from './POS/device/printing/posSheetTemplates';
 import { generateDocumentPrintHtml } from '../../utils/documentTemplateRenderer';
 import { computeLineTaxTotals } from '../../utils/vatMath';
 import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
 import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from '../../utils/posReportViewModel';
 import { CASH_NOTE_KEYS, CASH_COIN_KEYS, DENOM_KEYS, DENOM_LABELS, emptyDenominations, setDenominationLadder } from '../../utils/cashDenominations';
 import { calculateDenominationTotal } from '../../utils/posReportViewModel';
-import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent, generatePrintHtmlAsync } from '../../utils/printGenerator';
+import { printHtml, generateReportA4Html, generateReportThermalHtml, generateReportThermalText, downloadPdfViaServer, buildQrContent } from '../../utils/printGenerator';
 import QRCode from 'qrcode';
 import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
 import { isSessionUsableForSelling, resolveSessionBusinessDate, sessionBusinessDay } from '../../utils/posSessionBusinessDay';
@@ -182,6 +183,11 @@ import TerminalStatusBadge from '../../components/pos/TerminalStatusBadge';
 import SupervisorTakeoverDialog from '../../components/pos/SupervisorTakeoverDialog';
 import BusinessDayStatusBanner from '../../components/pos/BusinessDayStatusBanner';
 import { BusinessDayStatusProvider } from '../../components/pos/BusinessDayStatusContext';
+import { PosOverlayProvider } from './POS/input/PosOverlayContext';
+import { usePosInputController } from './POS/input/usePosInputController';
+import { POS_OVERLAY_IDS } from './POS/input/posScope';
+import { SCANNER_INPUT_MODES, scannerInputProps } from './POS/input/posScannerField';
+import { checkoutQuickCashRequest } from './POS/input/posShortcuts';
 import ReceiptShareModal from '../../components/pos/ReceiptShareModal';
 import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter, warmPrintAgent } from '../../utils/localPrintAgent';
 import { startPrintTimer } from '../../utils/printTiming';
@@ -470,6 +476,9 @@ export default function POSSales() {
   // so the recorded reason survives the X-Report step in between.
   const forceCloseContextRef = useRef(null);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
+  // A double/triple Enter's Cash request for the checkout panel (posShortcuts), handled once.
+  const [checkoutQuickCash, setCheckoutQuickCash] = useState(null);
+  const clearCheckoutQuickCash = useCallback(() => setCheckoutQuickCash(null), []);
   const [showCashDropDialog, setShowCashDropDialog] = useState(false);
   const [closeDayVariance, setCloseDayVariance] = useState(null);
   // Live Session quick-view — dashboard tile that pops the current session's
@@ -905,6 +914,13 @@ export default function POSSales() {
   // resolvedPosInvoiceTemplate below, which every print call site now goes through.
   const [resolvedPosInvoiceTemplate, setResolvedPosInvoiceTemplate] = useState(null);
   const [resolvedPosCreditNoteTemplate, setResolvedPosCreditNoteTemplate] = useState(null);
+  // Every "Sales Invoice*" template (A4, A5 portrait/landscape, pre-printed). The A5
+  // and Pre-printed sheet formats print a member of this family; A4 keeps using the
+  // resolved default above.
+  const [posInvoiceTemplateFamily, setPosInvoiceTemplateFamily] = useState(null);
+  // Sheet format the Reprint dialog's A4/PDF actions print on. Seeded from the
+  // configured invoice paper whenever the dialog opens.
+  const [reprintSheetFormat, setReprintSheetFormat] = useState('A4');
 
   // The tplInvoice* designer flags an A4 print applies. Assembled here because these
   // flags are general POS configuration (each is also read by the designer JSX and the
@@ -940,11 +956,14 @@ export default function POSSales() {
     printThermalReceiptWithConfiguredPrinter,
     resolveInvoiceA4Template,
     resolveCreditNoteA4Template,
-    resolveInvoiceA4TemplateFor,
+    buildInvoiceSheetHtml,
+    paperForSale,
   } = usePosPrinting({
     printerConfigs, currentTerminal,
     resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
     invoiceTemplateOptions, tplInvoiceFooter,
+    tplInvoicePaper, tplReceiptPaper, posInvoiceTemplateFamily,
+    branchId: currentTerminal?.branchId || currentSession?.branchId || null,
   });
 
   const [hiddenPanelButtons, setHiddenPanelButtons] = useState(new Set());
@@ -1823,6 +1842,18 @@ export default function POSSales() {
     return () => { cancelled = true; };
   }, [currentTerminal?.branchId, currentSession?.branchId]);
 
+  // The A5 / Pre-printed sheet formats print a member of the Back Office "Sales
+  // Invoice" family, so load the family once. Not gated on the cutover flag: those
+  // formats have no fabricated fallback design, only the real templates. A failed
+  // load leaves it null and buildInvoiceSheetHtml falls back to the default.
+  useEffect(() => {
+    let cancelled = false;
+    getTemplateFamily('Sales Invoice')
+      .then((family) => { if (!cancelled && Array.isArray(family)) setPosInvoiceTemplateFamily(family); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   // Auto-load report data when entering report views
   useEffect(() => {
     // Opening the dedicated X-Report view is the deliberate "Generate X Report"
@@ -2204,10 +2235,13 @@ export default function POSSales() {
   // supervisor-approval queue is owned by useSupervisorApproval — entry only enqueues an
   // ADD_ITEM request through requestApproval, and the dispatcher below sends it back
   // through the addToInvoice returned here.
+  // True while an overlay owns the screen; assigned below useDelivery, where every flag it
+  // reads is in scope. Entry refuses all values then, so a scan never lands behind it.
+  const productEntryBlockedRef = useRef(false);
   const {
     addToInvoice,
     handleUnifiedEntry, handleBarcodeScan, handleProductSelection, handleEditItem,
-    lastScannedItem, setLastScannedItem,
+    lastScannedItem, setLastScannedItem, lastEnteredLineId,
     isItemEntryOpen, selectedProductForEntry, itemEntryAction, itemEntryContext,
     itemEntryInitialValues, closeItemEntry, handleItemEntryConfirm,
   } = useProductEntry({
@@ -2215,6 +2249,7 @@ export default function POSSales() {
     setCurrentInvoice, currentInvoiceRef, recalculateInvoice,
     requestApproval,
     productCacheRef, setBarcodeInput, setSearchQuery, setSelectedCustomer,
+    entryBlockedRef: productEntryBlockedRef,
     applyScannedVoucher, showFeedback,
   });
 
@@ -2683,6 +2718,11 @@ export default function POSSales() {
   // excludeCash drops Cash in Hand / Petty Cash: money arriving by bank transfer must not
   // land on a cash account, or the session's drawer count expects notes that were never taken.
   const needsBankAccounts = showPaymentDialog || showSaveLayaway || showDeliverySettleModal;
+  // Checkout/payment, return, both delivery dialogs and the layaway deposit each sit over the
+  // live sale. A scanner burst or keyed digits behind any of them must not reach the cart.
+  productEntryBlockedRef.current = Boolean(
+    showPaymentDialog || showReturn || showDeliveryModal || showDeliverySettleModal || showSaveLayaway,
+  );
   useEffect(() => {
     if (!needsBankAccounts) return;
     if (checkoutOnlineBankAccounts.length > 0 || checkoutOnlineBankAccountsLoading) return;
@@ -2756,11 +2796,10 @@ export default function POSSales() {
       const savedInvoice = await posCheckout(payload);
 
       try {
-        if (tplInvoicePaper === 'A4') {
-          const template = resolveInvoiceA4TemplateFor(savedInvoice);
+        if (isSheetPaper(paperForSale(savedInvoice))) {
           const data = buildPosPrintData(savedInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(savedInvoice) ? tplInvoiceHeader : tplReceiptHeader);
           const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-          printHtml(await generatePrintHtmlAsync(template, data, options));
+          printHtml(await buildInvoiceSheetHtml(savedInvoice, data, options));
         } else {
           const deliveryDueAmt = parseFloat(savedInvoice?.invoiceTotal || 0);
           const creditInvoiceCreditAuto = creditPrevBalAuto != null ? deliveryDueAmt : null;
@@ -2828,7 +2867,7 @@ export default function POSSales() {
   }, [currentInvoice, deliveryAddress, deliveryCustomerId, deliveryDriver, deliveryDate, deliveryTimeSlot, deliveryInstructions,
     deliveryNotes, deliveryCharge, deliveryNewName, customerOptions, currentSession,
     currentTerminal, cartItemsToPayload, clearInvoice, selectedDeliveryPerson, validateDeliveryOrder,
-    tplInvoiceShowBankDetails, tplInvoicePaper]);
+    tplInvoiceShowBankDetails, paperForSale, buildInvoiceSheetHtml]);
 
 
   // ── Hold (persisted, session-scoped) ───────────────────────────────────────
@@ -2869,7 +2908,11 @@ export default function POSSales() {
 
   // Fetch real POS invoices when the reprint modal opens.
   useEffect(() => {
-    if (showReprintModal) fetchReprintInvoices();
+    if (showReprintModal) {
+      fetchReprintInvoices();
+      // Start from the till's configured sheet; a thermal till starts on A4.
+      setReprintSheetFormat([tplInvoicePaper, tplReceiptPaper].find(isSheetPaper) || 'A4');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showReprintModal]);
 
@@ -2934,7 +2977,7 @@ export default function POSSales() {
             footer: tplReceiptFooter,
             showTrn: tplReceiptShowTrn,
           };
-          if (tplReceiptPaper === 'A4') {
+          if (isSheetPaper(tplReceiptPaper)) { // any sheet till prints the slip via the browser
             printHtml(buildLayawayReceiptHtml(tplReceiptPaper, saved, layawayHtmlOpts), { fast: true });
           } else {
             const printer = resolvePrinterForContext(printerConfigs, {
@@ -3165,7 +3208,7 @@ export default function POSSales() {
       targetRequired, targetReady, refreshReadiness, openTargetReadinessWarning,
     },
     printing: {
-      resolveInvoiceA4TemplateFor, printThermalReceiptWithConfiguredPrinter,
+      buildInvoiceSheetHtml, paperForSale, printThermalReceiptWithConfiguredPrinter,
       buildThermalReceiptArtifacts, openCashDrawer,
     },
     a4Template: {
@@ -3180,6 +3223,52 @@ export default function POSSales() {
     posReset: {
       syncPosData, setReceivedAmount, setSelectedCardType,
       setSelectedCreditCustomer, setLastScannedItem,
+    },
+  });
+
+  // ── POS input ownership ────────────────────────────────────────────────────
+  // One capture-phase keyboard controller for the whole POS (POS/input/). The overlays below
+  // are open/closed by flags owned here, so they are declared by id; dialogs, payment modals,
+  // the template scan surface and the payment panels register themselves through
+  // PosOverlayProvider. Declared after useCheckout because the complete phase is its state.
+  // The same registry drives the P2 focus controller (POS/input/usePosFocusController): these
+  // flags are also what decides where the caret goes (sale → checkout → complete → new sale).
+  const posInputRegistry = usePosInputController({
+    overlays: {
+      [POS_OVERLAY_IDS.CHECKOUT]: showPaymentDialog && checkoutPhase !== 'complete',
+      [POS_OVERLAY_IDS.CHECKOUT_COMPLETE]: showPaymentDialog && checkoutPhase === 'complete',
+      [POS_OVERLAY_IDS.RETURN]: showReturn,
+      [POS_OVERLAY_IDS.DELIVERY]: showDeliveryModal,
+      [POS_OVERLAY_IDS.DELIVERY_SETTLEMENT]: showDeliverySettleModal,
+      [POS_OVERLAY_IDS.LAYAWAY_DEPOSIT]: showSaveLayaway,
+      // POSSales dialogs (MODAL): each owns the keyboard and the caret while open, by flag.
+      [POS_OVERLAY_IDS.SUPERVISOR_PIN]: showSupervisorPin,
+      [POS_OVERLAY_IDS.ITEM_ENTRY_DIALOG]: Boolean(selectedProductForEntry) && isItemEntryOpen,
+      [POS_OVERLAY_IDS.PROMOTIONS]: showPromotionsDialog,
+      [POS_OVERLAY_IDS.COUPONS]: showCouponsDialog,
+      [POS_OVERLAY_IDS.PRICE_CHECK]: showPriceCheck,
+      [POS_OVERLAY_IDS.PRODUCT_SEARCH]: showProductSearch,
+      [POS_OVERLAY_IDS.CREDIT_BALANCE]: showCreditBalance,
+      [POS_OVERLAY_IDS.CREDIT_CARD_BALANCE]: showCreditCardBalance,
+      [POS_OVERLAY_IDS.SERIAL_BATCH]: showSerialBatch,
+      [POS_OVERLAY_IDS.SERVICE_REPAIR]: showServiceRepair,
+      [POS_OVERLAY_IDS.SAVE_ORDER]: showSaveOrderDialog,
+      [POS_OVERLAY_IDS.ORDERS_LIST]: showOrdersListDialog,
+      [POS_OVERLAY_IDS.LAYAWAYS_LIST]: showLayawaysList || showLayawaysDialog,
+      [POS_OVERLAY_IDS.ADD_SHIPPING]: showAddShippingDialog,
+      [POS_OVERLAY_IDS.ADD_CUSTOMER]: showAddCustomerDialog,
+      [POS_OVERLAY_IDS.CASH_DROP]: showCashDropDialog,
+      [POS_OVERLAY_IDS.LAST_RECEIPT]: showLastReceiptDialog,
+      [POS_OVERLAY_IDS.REPRINT]: showReprintModal || reprintConfirmOpen,
+      [POS_OVERLAY_IDS.LOCK_POS]: showLockPOS,
+      [POS_OVERLAY_IDS.POS_CONFIG]: showPOSConfig,
+      [POS_OVERLAY_IDS.QUICK_PRODUCT]: showQuickProductModal,
+      [POS_OVERLAY_IDS.CUSTOMER_HISTORY]: showCustomerHistoryPreview,
+      [POS_OVERLAY_IDS.TARGET_READINESS]: showTargetReadinessWarning,
+      [POS_OVERLAY_IDS.SESSION_DIALOG]: showStartSessionDialog || showCloseSessionDialog
+        || showSessionOwnerRequiredDialog || showCashierAuthDialog || showLiveSessionDialog
+        || (showTakeoverDialog && Boolean(currentSession?.id)) || showCancelClosureDialog
+        || Boolean(closureRequiredMsg) || Boolean(prevDaySessionOpenMsg),
     },
   });
 
@@ -3385,9 +3474,8 @@ export default function POSSales() {
           : i));
         const companyOptions = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
         if (reprintPrintMode === 'a4' || reprintPrintMode === 'pdf') {
-          const template = resolveInvoiceA4TemplateFor(full);
           const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
-          const html = await generatePrintHtmlAsync(template, data, companyOptions);
+          const html = await buildInvoiceSheetHtml(full, data, companyOptions, reprintSheetFormat);
           if (reprintPrintMode === 'pdf') {
             const filename = `${full.invoiceNumber || reprintSelectedInvoice}.pdf`;
             try { await downloadPdfViaServer(html, filename); } catch {
@@ -6866,7 +6954,7 @@ export default function POSSales() {
     printerConfigs, setPrinterConfigs, printersLoading, loadPrinterConfigs,
     scannerConfig, setScannerConfig, saveScannerConfig, scannerConfigSavedFlash,
     getAllPosTerminals, renamePosTerminal, setTerminalStatus, setMainPosTerminal, savePosSettings, templateSubTab, setTemplateSubTab,
-    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate,
+    resolvedPosInvoiceTemplate, resolvedPosCreditNoteTemplate, posInvoiceTemplateFamily,
     setTplReceiptShowLogo, setTplReceiptShowCompanyDetails, setTplReceiptShowTrn, setTplReceiptShowCustomerDetails, setTplReceiptShowTerms, setTplReceiptShowNotes, setTplReceiptShowBankDetails, setTplReceiptShowQRCode, setTplReceiptShowStamp, setTplReceiptShowSignature, setTplReceiptShowGrandTotalBanner, setTplReceiptColItemCode, setTplReceiptColItemImage, setTplReceiptShowBarcode, setTplReceiptColBatchNo, setTplReceiptColDiscount, setTplReceiptColVatPct, setTplReceiptColVatAmt,
     setTplInvoiceShowLogo, setTplInvoiceShowCompanyDetails, setTplInvoiceShowTrn, setTplInvoiceShowCustomerDetails, setTplInvoiceShowTerms, setTplInvoiceShowNotes, setTplInvoiceShowBankDetails, setTplInvoiceShowQRCode, setTplInvoiceShowStamp, setTplInvoiceShowSignature, setTplInvoiceShowGrandTotalBanner, setTplInvoiceColItemCode, setTplInvoiceColItemImage, setTplInvoiceColBatchNo, setTplInvoiceColDiscount, setTplInvoiceColVatPct, setTplInvoiceColVatAmt,
     setTplReturnShowLogo, setTplReturnShowCompanyDetails, setTplReturnShowTrn, setTplReturnShowCustomerDetails, setTplReturnShowTerms, setTplReturnShowNotes, setTplReturnShowQRCode, setTplReturnShowStamp, setTplReturnShowSignature, setTplReturnShowGrandTotalBanner, setTplReturnColItemCode, setTplReturnColBatchNo, setTplReturnColDiscount, setTplReturnColVatPct, setTplReturnColVatAmt, setTplReturnShowCreditBalance,
@@ -7006,7 +7094,8 @@ export default function POSSales() {
     }
   }, [loadPosProducts, handleProductSelection, showFeedback]);
 
-  const handleCheckout = useCallback(() => {
+  const quickCashSeqRef = useRef(0);
+  const handleCheckout = useCallback((opts) => {
     // Verification is asked for HERE, at Checkout, rather than at settlement: the cashier is told
     // to scan a badge while the customer is still at the counter, not after the payment screen is
     // already up. Opening the modal IS the refusal — there is no separate error to dismiss, and
@@ -7026,7 +7115,10 @@ export default function POSSales() {
     setCheckoutPhase('payment');
     setShowPaymentDialog(true);
     // The Payment Manager starts with no allocations — the cashier picks a method and
-    // enters an amount, so there is nothing to pre-seed here any more.
+    // enters an amount, so there is nothing to pre-seed here any more. A double/triple Enter
+    // (opts.quickCash) asks the payment panel to take Cash once it is up; it never settles.
+    quickCashSeqRef.current += 1;
+    setCheckoutQuickCash(checkoutQuickCashRequest(opts, quickCashSeqRef.current));
     return true;
   }, [salespersonRequired, salespersonVerified, openSalespersonScanModal]);
 
@@ -7040,7 +7132,7 @@ export default function POSSales() {
     posProductPage, posProductTotalPages, posProductTotalElements, loadMorePosProducts,
     productCategories, horizontalCategories, selectedCategory, setSelectedCategory,
     searchQuery, setSearchQuery, barcodeInput, setBarcodeInput, barcodeInputRef,
-    barcodeScanFeedback, lastScannedItem, handleBarcodeScan, handleUnifiedEntry,
+    barcodeScanFeedback, lastScannedItem, lastEnteredLineId, handleBarcodeScan, handleUnifiedEntry,
     barcodeSuggestions, barcodeSuggestionsLoading, setBarcodeSuggestions,
     scannerConfig,
     customerOptions, selectedCustomer, setSelectedCustomer, selectedCustomerData,
@@ -7105,6 +7197,7 @@ export default function POSSales() {
 
   return (
     <BusinessDayStatusProvider terminalId={currentTerminal?.terminalId} refreshRef={businessDayRefreshRef}>
+    <PosOverlayProvider registry={posInputRegistry}>
     <div className={currentView === 'touch-screen' ? 'h-screen overflow-hidden bg-[#F7F7FA]' : 'min-h-screen bg-[#F7F7FA]'}>
       {/* ─── TERMINAL REGISTRATION REJECTED (archived / blocked / decommissioned / maintenance) ─── */}
       {terminalRegistrationError && (
@@ -7519,6 +7612,7 @@ export default function POSSales() {
           mode={itemEntryAction}
           initialValues={itemEntryInitialValues}
           lockQuantity={Boolean(itemEntryContext?.lockQuantity)}
+          initialFocusField={itemEntryContext?.focusField || null}
           lockedBatch={itemEntryContext?.batch || null}
           lockedSerial={itemEntryContext?.serial || null}
           posSettings={posSettings}
@@ -8326,11 +8420,10 @@ export default function POSSales() {
                     if (!lastPaidInvoice?.invoice?.id) return;
                     try {
                       const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                      if (tplInvoicePaper === 'A4') {
-                        const template = resolveInvoiceA4TemplateFor(full);
+                      if (isSheetPaper(paperForSale(full))) {
                         const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                         const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                        printHtml(generateDocumentPrintHtml(template, data, options));
+                        printHtml(await buildInvoiceSheetHtml(full, data, options));
                       } else {
                         const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                           full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
@@ -8434,6 +8527,8 @@ export default function POSSales() {
                     selectedCustomerName={selectedCustomerData?.name}
                     bankAccounts={checkoutOnlineBankAccounts}
                     bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                    quickCash={checkoutQuickCash}
+                    onQuickCashHandled={clearCheckoutQuickCash}
                   />
 
 
@@ -8651,11 +8746,10 @@ export default function POSSales() {
                 });
                 const full = reprintResult.invoice;
                 openCashDrawer('RECEIPT_PRINT');
-                if (tplInvoicePaper === 'A4') {
-                  const template = resolveInvoiceA4TemplateFor(full);
+                if (isSheetPaper(paperForSale(full))) {
                   const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                   const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                  printHtml(await generatePrintHtmlAsync(template, data, options));
+                  printHtml(await buildInvoiceSheetHtml(full, data, options));
                 } else {
                   // Reuse the credit-account figures snapshotted at checkout (lastPaidInvoice)
                   // rather than re-querying posCreditBalance — by now it already reflects
@@ -9122,9 +9216,19 @@ export default function POSSales() {
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]'}`}>
                         <Printer className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'thermal' ? 'Printing…' : 'Print Thermal Receipt'}
                       </button>
+                      {/* Sheet format for the invoice print and the PDF: A4, the A5 variants or the pre-printed form. */}
+                      <select
+                        aria-label="Invoice sheet format"
+                        value={reprintSheetFormat}
+                        onChange={(e) => setReprintSheetFormat(e.target.value)}
+                        disabled={selected.status === 'Cancelled' || reprintPrinting}
+                        className="text-xs px-2 py-1.5 rounded border border-[#F5C742]/40 bg-white text-[#1E293B] disabled:opacity-50"
+                      >
+                        {POS_SHEET_FORMATS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+                      </select>
                       <button onClick={() => { setReprintPrintMode('a4'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-[#F5C742]/40 text-[#F5C742] hover:bg-[#F5C742]/5'}`}>
-                        <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'a4' ? 'Printing…' : 'Print A4 Invoice'}
+                        <FileText className="h-3.5 w-3.5" />{reprintPrinting && reprintPrintMode === 'a4' ? 'Printing…' : `Print ${sheetFormatLabel(reprintSheetFormat)} Invoice`}
                       </button>
                       <button onClick={() => { setReprintPrintMode('pdf'); setReprintConfirmOpen(true); }} disabled={selected.status === 'Cancelled' || reprintPrinting}
                         className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded ${selected.status === 'Cancelled' ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
@@ -9181,7 +9285,7 @@ export default function POSSales() {
             <Button variant="outline" onClick={() => setReprintConfirmOpen(false)}>Cancel</Button>
             <Button className="bg-[#F5C742] hover:bg-[#e6b838] text-[#1E293B]" onClick={handleReprintConfirm} disabled={reprintPrinting}>
               {reprintPrintMode === 'pdf' ? <Download className="h-4 w-4 mr-1" /> : <Printer className="h-4 w-4 mr-1" />}
-              {reprintPrinting ? (reprintPrintMode === 'pdf' ? 'Downloading…' : 'Printing…') : (reprintPrintMode === 'thermal' ? 'Confirm & Print Thermal' : reprintPrintMode === 'a4' ? 'Confirm & Print A4' : 'Confirm & Download PDF')}
+              {reprintPrinting ? (reprintPrintMode === 'pdf' ? 'Downloading…' : 'Printing…') : (reprintPrintMode === 'thermal' ? 'Confirm & Print Thermal' : reprintPrintMode === 'a4' ? `Confirm & Print ${sheetFormatLabel(reprintSheetFormat)}` : 'Confirm & Download PDF')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -9779,6 +9883,7 @@ export default function POSSales() {
                               and the rest stays as the layaway balance. */}
                           <PaymentAllocationPanel
                             payment={saveLayawayPayment}
+                            hotkeyOwner={POS_OVERLAY_IDS.LAYAWAY_DEPOSIT}
                             compatibility={checkoutCompatibility}
                             bankAccounts={checkoutOnlineBankAccounts}
                             bankAccountsLoading={checkoutOnlineBankAccountsLoading}
@@ -10376,11 +10481,10 @@ export default function POSSales() {
               // mode actually selected here rather than trusting that stamp.
               const custRec = customerOptions.find(c => c.code === settledInvoice?.customerCode);
               const receiptInvoice = { ...settledInvoice, paymentMode: displayPaymentMode };
-              if (tplInvoicePaper === 'A4') {
-                const template = resolveInvoiceA4TemplateFor(receiptInvoice);
+              if (isSheetPaper(paperForSale(receiptInvoice))) {
                 const data = buildPosPrintData(receiptInvoice, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(receiptInvoice) ? tplInvoiceHeader : tplReceiptHeader);
                 const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                printHtml(await generatePrintHtmlAsync(template, data, options));
+                printHtml(await buildInvoiceSheetHtml(receiptInvoice, data, options));
               } else {
                 // Delivery Settlement receipt: unlike the Out-for-Delivery slip, this
                 // one MUST carry the CREDIT ACCOUNT block. Snapshot the customer's
@@ -10475,7 +10579,9 @@ export default function POSSales() {
               <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap gap-3">
                 <div className="flex-1 min-w-[160px] relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  {/* Scanner opt-in (posScannerField.js): the receipt's Code 128 barcode is the invoice number. */}
                   <input type="text" value={deliverySettleSearch} onChange={e => setDeliverySettleSearch(e.target.value)}
+                    {...scannerInputProps(SCANNER_INPUT_MODES.SCANNER_ALLOWED)}
                     placeholder="Search by invoice, customer, or mobile..."
                     className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#327F74]" />
                 </div>
@@ -10588,6 +10694,7 @@ export default function POSSales() {
                                   <div className="mb-3">
                                     <PaymentAllocationPanel
                                       payment={deliverySettlePayment}
+                                      hotkeyOwner={POS_OVERLAY_IDS.DELIVERY_SETTLEMENT}
                                       compatibility={checkoutCompatibility}
                                       bankAccounts={checkoutOnlineBankAccounts}
                                       bankAccountsLoading={checkoutOnlineBankAccountsLoading}
@@ -10631,6 +10738,7 @@ export default function POSSales() {
         />
       )}
     </div>
+    </PosOverlayProvider>
     </BusinessDayStatusProvider>
   );
 }

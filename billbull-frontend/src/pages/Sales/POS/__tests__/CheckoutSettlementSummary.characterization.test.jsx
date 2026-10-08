@@ -312,6 +312,9 @@ describe('source — POSSales wiring (CheckoutSettlementSummary boundary)', () =
       '                    selectedCustomerName={selectedCustomerData?.name}',
       '                    bankAccounts={checkoutOnlineBankAccounts}',
       '                    bankAccountsLoading={checkoutOnlineBankAccountsLoading}',
+      // P3: the double/triple-Enter Cash request.
+      '                    quickCash={checkoutQuickCash}',
+      '                    onQuickCashHandled={clearCheckoutQuickCash}',
       '                  />',
     ].join('\n'));
   });

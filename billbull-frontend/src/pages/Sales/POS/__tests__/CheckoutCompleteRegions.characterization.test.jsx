@@ -78,17 +78,19 @@ import CheckoutSettlementSummary from '../features/checkout/CheckoutSettlementSu
 import CheckoutPaymentHeader from '../features/checkout/CheckoutPaymentHeader';
 import CheckoutPaymentFooter from '../features/checkout/CheckoutPaymentFooter';
 import CheckoutRemarks from '../features/checkout/CheckoutRemarks';
+import { isSheetPaper } from '../device/printing/posSheetTemplates';
 import CheckoutPaymentPreview from '../features/checkout/CheckoutPaymentPreview';
+import { undoP2FocusEdits } from './p2FocusSourceEdits';
 
 // ── the verbatim region ─────────────────────────────────────────────────────────────────
 function OriginalCheckoutMarkup({
   showPaymentDialog, checkoutPhase, lastPaidInvoice,
   setShowPaymentDialog, setCheckoutPhase, setCheckoutSettling, setCheckoutFinalizing,
   setReceiptShareChannel, setSelectedCustomer, checkoutFinalizing, formatCurrencyStr,
-  getSalesInvoiceById, tplInvoicePaper, resolveInvoiceA4TemplateFor, buildPosPrintData,
+  getSalesInvoiceById, paperForSale, isSheetPaper, buildPosPrintData,
   tplInvoiceFooter, customerOptions, isTaxInvoiceDocument, tplInvoiceHeader, tplReceiptHeader,
   tplOutletName, effectiveOutletTrn, tplOutletAddress, tplOutletPhone, tplLogoDataUrl, company,
-  tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, generateDocumentPrintHtml,
+  tplStampDataUrl, USE_NEW_POS_PRINT_TEMPLATE, tplInvoiceShowStamp, printHtml, buildInvoiceSheetHtml,
   buildThermalReceiptArtifacts, printThermalReceiptWithConfiguredPrinter, setShowReprintModal,
   receiptShareChannel, receiptShareInitialValue, handleReceiptShareSend,
   shippingCharge, currentInvoice, activeLayawayDeposit, checkoutEffectiveDue, previewInvoiceNo,
@@ -97,6 +99,8 @@ function OriginalCheckoutMarkup({
   loadPosCustomers, selectedCustomer, selectedCustomerData, checkoutOnlineBankAccounts,
   checkoutOnlineBankAccountsLoading, checkoutRemarks, setCheckoutRemarks, checkoutPaymentFields,
   checkoutError, setCheckoutError, cancelCheckoutTenders, processPayment, checkoutLoading,
+  // P3: the double/triple-Enter Cash request handed to the checkout payment panel.
+  checkoutQuickCash = null, clearCheckoutQuickCash = () => {},
 }) {
   return (
     <>
@@ -162,11 +166,10 @@ function OriginalCheckoutMarkup({
                     if (!lastPaidInvoice?.invoice?.id) return;
                     try {
                       const full = await getSalesInvoiceById(lastPaidInvoice.invoice.id);
-                      if (tplInvoicePaper === 'A4') {
-                        const template = resolveInvoiceA4TemplateFor(full);
+                      if (isSheetPaper(paperForSale(full))) {
                         const data = buildPosPrintData(full, tplInvoiceFooter, customerOptions, isTaxInvoiceDocument(full) ? tplInvoiceHeader : tplReceiptHeader);
                         const options = { companyProfile: { companyName: tplOutletName, trn: effectiveOutletTrn, address: tplOutletAddress, phone: tplOutletPhone, currency: 'AED', logoUrl: tplLogoDataUrl || company?.logoUrl || undefined, stampUrl: tplStampDataUrl || undefined, showStampInPrint: USE_NEW_POS_PRINT_TEMPLATE ? !!tplStampDataUrl : tplInvoiceShowStamp } };
-                        printHtml(generateDocumentPrintHtml(template, data, options));
+                        printHtml(await buildInvoiceSheetHtml(full, data, options));
                       } else {
                         const { text, escPosBase64 } = await buildThermalReceiptArtifacts({
                           full, cashGiven: lastPaidInvoice?.paidAmount, changeAmount: lastPaidInvoice?.changeAmount, customerNameOverride: (lastPaidInvoice?.customer && lastPaidInvoice.customer.id !== 'walk-in') ? lastPaidInvoice.customer.name : null, customerPhone: lastPaidInvoice?.customer?.phone, customerEmail: lastPaidInvoice?.customer?.email, customerTrn: lastPaidInvoice?.customer?.trn, customerAddress: lastPaidInvoice?.customer?.address, creditPreviousBalance: lastPaidInvoice?.creditPreviousBalance ?? null, creditInvoiceCredit: lastPaidInvoice?.creditInvoiceCredit ?? null, creditAmountPaid: lastPaidInvoice?.creditAmountPaid ?? null, creditUpdatedBalance: lastPaidInvoice?.creditUpdatedBalance ?? null,
@@ -270,6 +273,8 @@ function OriginalCheckoutMarkup({
                     selectedCustomerName={selectedCustomerData?.name}
                     bankAccounts={checkoutOnlineBankAccounts}
                     bankAccountsLoading={checkoutOnlineBankAccountsLoading}
+                    quickCash={checkoutQuickCash}
+                    onQuickCashHandled={clearCheckoutQuickCash}
                   />
 
 
@@ -349,8 +354,8 @@ function makeProps(overrides = {}) {
     checkoutFinalizing: false,
     formatCurrencyStr,
     getSalesInvoiceById: vi.fn(async () => FULL),
-    tplInvoicePaper: '80mm',
-    resolveInvoiceA4TemplateFor: vi.fn(() => ({ id: 'tpl-a4' })),
+    paperForSale: vi.fn(() => overrides.tplInvoicePaper ?? '80mm'),
+    isSheetPaper: vi.fn(isSheetPaper),
     buildPosPrintData: vi.fn(() => ({ printData: true })),
     tplInvoiceFooter: { footerText: 'Thanks' },
     customerOptions: [{ id: 'c-1' }],
@@ -367,7 +372,7 @@ function makeProps(overrides = {}) {
     USE_NEW_POS_PRINT_TEMPLATE: true,
     tplInvoiceShowStamp: true,
     printHtml: vi.fn(),
-    generateDocumentPrintHtml: vi.fn(() => '<html>a4</html>'),
+    buildInvoiceSheetHtml: vi.fn(async () => '<html>a4</html>'),
     buildThermalReceiptArtifacts: vi.fn(async () => ({ text: 'RECEIPT TEXT', escPosBase64: 'RVNDUE9T' })),
     printThermalReceiptWithConfiguredPrinter: vi.fn(async () => {}),
     setShowReprintModal: vi.fn(),
@@ -992,20 +997,21 @@ const PARENT_LOCALS = [
   'receiptShareInitialValue', 'handleReceiptShareSend', 'formatCurrencyStr', 'processPayment',
   'setShowPaymentDialog', 'setCheckoutPhase', 'setCheckoutSettling', 'setCheckoutFinalizing',
   'setReceiptShareChannel', 'setSelectedCustomer', 'setShowReprintModal', 'getSalesInvoiceById',
-  'tplInvoicePaper', 'currentInvoice', 'checkoutPayment', 'checkoutEffectiveDue', 'checkoutRemarks',
+  'paperForSale', 'currentInvoice', 'checkoutPayment', 'checkoutEffectiveDue', 'checkoutRemarks',
 ];
 const readsOf = (src) => PARENT_LOCALS.filter((id) => new RegExp(`\\b${id}\\b`).test(src));
 
 describe('1. source — the copy and the complete-phase region map', () => {
-  it('the verbatim copy in this file is the live POSSales checkout region, byte for byte (203 lines)', () => {
+  it('the verbatim copy in this file is the live POSSales checkout region, byte for byte (204 lines)', () => {
     const copy = between(SELF, '{/* VERBATIM-START */}\n', '\n      {/* VERBATIM-END */}');
     expect(copy).toBe(REGION);
-    expect(REGION.split('\n')).toHaveLength(203);
+    // 202 before P3 passed the checkout panel its double/triple-Enter Cash request (+2 props).
+    expect(REGION.split('\n')).toHaveLength(204);
     expect(count(POS_SALES, REGION_START)).toBe(1);
   });
 
-  it('the complete branch is 96 lines: guard, closeComplete, derivation, return, root, card, C3–C8', () => {
-    expect(COMPLETE_BRANCH.split('\n')).toHaveLength(96);
+  it('the complete branch is 95 lines: guard, closeComplete, derivation, return, root, card, C3–C8', () => {
+    expect(COMPLETE_BRANCH.split('\n')).toHaveLength(95);
     expect(COMPLETE_BRANCH.startsWith("        if (checkoutPhase === 'complete' && lastPaidInvoice) {\n")).toBe(true);
     const order = [
       C0_CLOSE, C0_ROWS, '          return (', C1_ROOT, C2_CARD, C3_HEADER, C4_AMOUNT, C5_INDICATOR, C6_SUMMARY,
@@ -1069,8 +1075,12 @@ describe('1. source — the copy and the complete-phase region map', () => {
     expect(POS_SALES).toContain("import CheckoutCompleteSummary from './POS/features/checkout/CheckoutCompleteSummary';\nimport CheckoutCompleteActions from './POS/features/checkout/CheckoutCompleteActions';\n");
     expect(POS_SALES.match(/<CheckoutCompleteSummary\b/g)).toHaveLength(1);
     expect(POS_SALES.match(/<CheckoutCompleteActions\b/g)).toHaveLength(1);
-    for (const rel of ['../features/checkout/CheckoutCompleteSummary.jsx', '../features/checkout/CheckoutCompleteActions.jsx']) {
-      expect(readSource(rel), rel).not.toMatch(/\buse[A-Z]\w*\(|createContext|useContext|\bmemo\(/);
+    // P2: CheckoutCompleteActions registers New Sale as a focus target (undone here, pinned in its own test).
+    for (const [rel, src] of [
+      ['../features/checkout/CheckoutCompleteSummary.jsx', readSource('../features/checkout/CheckoutCompleteSummary.jsx')],
+      ['../features/checkout/CheckoutCompleteActions.jsx', undoP2FocusEdits('CheckoutCompleteActions', readSource('../features/checkout/CheckoutCompleteActions.jsx'))],
+    ]) {
+      expect(src, rel).not.toMatch(/\buse[A-Z]\w*\(|createContext|useContext|\bmemo\(/);
     }
   });
 

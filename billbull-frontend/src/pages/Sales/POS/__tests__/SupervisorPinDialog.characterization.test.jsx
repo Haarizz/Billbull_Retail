@@ -131,7 +131,10 @@ function OriginalSupervisorPinMarkup({
                 </div>
               )}
 
-              <div className="space-y-3">
+              {/* Own <form> + explicit autocomplete hints keep Chrome's password manager out:
+                  without them it autofilled the saved login password into the PIN field and
+                  paired the nearest text input — the POS product search — as the "username". */}
+              <form className="space-y-3" autoComplete="off" onSubmit={e => e.preventDefault()}>
                 {supervisorApprovalMode === 'PASSWORD' && (
                   <div>
                     <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1 block">
@@ -143,6 +146,7 @@ function OriginalSupervisorPinMarkup({
                       onChange={e => { setSupervisorPinEmail(e.target.value); setSupervisorPinError(''); }}
                       onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
                       autoFocus
+                      autoComplete="off"
                       className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
                     />
                   </div>
@@ -158,6 +162,8 @@ function OriginalSupervisorPinMarkup({
                     onKeyDown={e => { if (e.key === 'Enter') handleSupervisorPinSubmit(); }}
                     autoFocus={supervisorApprovalMode !== 'PASSWORD'}
                     maxLength={supervisorApprovalMode === 'PASSWORD' ? 64 : 8}
+                    autoComplete={supervisorApprovalMode === 'PASSWORD' ? 'new-password' : 'one-time-code'}
+                    inputMode={supervisorApprovalMode === 'PASSWORD' ? undefined : 'numeric'}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 ${supervisorApprovalMode === 'PASSWORD' ? 'text-sm' : 'text-center text-lg tracking-[0.5em]'}`}
                     placeholder={supervisorApprovalMode === 'PASSWORD' ? '' : '····'}
                   />
@@ -167,7 +173,7 @@ function OriginalSupervisorPinMarkup({
                     </p>
                   )}
                 </div>
-              </div>
+              </form>
 
               {supervisorApprovalMode !== 'PASSWORD' && (
                 <div className="grid grid-cols-3 gap-2">
@@ -592,8 +598,12 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       expect(input.value).toBe('12');
       expect(input.disabled).toBe(false);
       expect(input.hasAttribute('name')).toBe(false);
-      expect(input.hasAttribute('autocomplete')).toBe(false);
-      expect(input.closest('form')).toBeNull();
+      // Kept out of Chrome's password manager: an OTP-hinted field inside its own form, so a
+      // saved login is neither filled here nor paired with the POS search as its "username".
+      expect(input.getAttribute('autocomplete')).toBe('one-time-code');
+      expect(input.getAttribute('inputmode')).toBe('numeric');
+      expect(input.closest('form')).not.toBeNull();
+      expect(input.closest('form').getAttribute('autocomplete')).toBe('off');
     });
 
     it('PASSWORD mode: email text input before the password input, 64-char limit, empty placeholder, text-sm', () => {
@@ -609,6 +619,9 @@ describe.each(SUBJECTS)('%s', (_label, Subject) => {
       expect(pinInput().getAttribute('placeholder')).toBe('');
       expect(pinInput().className).toBe('w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 text-sm');
       expect(pinInput().value).toBe('pw');
+      expect(emailInput().getAttribute('autocomplete')).toBe('off');
+      expect(pinInput().getAttribute('autocomplete')).toBe('new-password');
+      expect(emailInput().closest('form')).toBe(pinInput().closest('form'));
       expect(keypad()).toBeNull();
     });
 
@@ -1227,7 +1240,7 @@ describe('SupervisorPinDialog source', () => {
     expect(counts).toEqual([3, 1, 1]);
     const live = between(COMPONENT, '  return (\n', '\n  );\n}');
     expect(trimmedLines(live)).toEqual(expected);
-    expect(trimmedLines(live)).toHaveLength(158);
+    expect(trimmedLines(live)).toHaveLength(164);
   });
 
   it('has exactly the 17-prop surface and imports only React and the two existing icons', () => {
@@ -1267,7 +1280,9 @@ describe('SupervisorPinDialog source', () => {
     expect(body).toContain("else if (k === '✓') onSubmit();");
     expect(body.match(/onClick=\{onSubmit\}/g)).toHaveLength(1);
     expect(body.match(/onClick=\{onCancel\}/g)).toHaveLength(1);
-    expect(body.match(/\bon(?:Submit|Cancel)\b/g)).toHaveLength(5);
+    // + the <form>'s own onSubmit, which only blocks native submission.
+    expect(body.match(/\bon(?:Submit|Cancel)\b/g)).toHaveLength(6);
+    expect(body).toContain('<form className="space-y-3" autoComplete="off" onSubmit={e => e.preventDefault()}>');
     // Code only: the header comment explains the rename and names the POSSales handlers.
     const code = COMPONENT.replace(/^\s*\/\/.*$/gm, '');
     expect(code).not.toMatch(/=>\s*on(?:Submit|Cancel)\b|on(?:Submit|Cancel)\([^)]/);
@@ -1311,7 +1326,8 @@ describe('POSSales wiring (SupervisorPinDialog boundary)', () => {
     expect(POS_SALES.match(/<SupervisorPinDialog\b/g)).toHaveLength(1);
     expect(POS_SALES).toContain('    showCashierAuthDialog || showCloseSessionDialog || showSupervisorPin || sessionToClose\n');
     // destructure, businessDayClosureFlowActive, guard — plus one mention in the hook-call comment
-    expect(POS_SALES.match(/\bshowSupervisorPin\b/g)).toHaveLength(4);
+    // — plus the P2 overlay declaration for the POS input/focus controller
+    expect(POS_SALES.match(/\bshowSupervisorPin\b/g)).toHaveLength(5);
     expect(POS_SALES).not.toContain('Supervisor Approval</h2>');
     expect(POS_SALES).not.toContain("'Enter PIN to authorize void'");
     expect(POS_SALES).not.toContain('bg-black/50 z-[300]');

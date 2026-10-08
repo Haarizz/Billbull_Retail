@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Banknote, CalendarClock, CreditCard, Gift, Landmark, Loader2, RefreshCw, Users } from 'lucide-react';
 
-import { PAYMENT_TYPES } from './paymentModel';
+import { PAYMENT_TYPES, toAmount } from './paymentModel';
 import { remainingAfterAllocation, suggestedNextMethod } from './paymentFlow';
 import { allocationTarget } from './paymentSelectors';
 import { CurrencyAmount, DirhamSymbol } from '../POSCurrency';
@@ -12,6 +12,12 @@ import OnlinePaymentModal from './modals/OnlinePaymentModal';
 import CreditPaymentModal from './modals/CreditPaymentModal';
 import VoucherPaymentModal from './modals/VoucherPaymentModal';
 import BnplPaymentModal from './modals/BnplPaymentModal';
+import { isEditableTarget } from '../../../../utils/editableTarget';
+import { isPosInputHandled } from '../device/scanner/scanGuard';
+import { usePosFocusTarget, usePosFocusV2, usePosInputV2, usePosPaymentHotkeys } from '../input/PosOverlayContext';
+import { POS_OVERLAY_IDS } from '../input/posScope';
+import { POS_FOCUS_TARGETS } from '../input/posFocus';
+import { CHECKOUT_QUICK_CASH } from '../input/posShortcuts';
 
 /**
  * Hotkeys are the first letter of each method, which is also what the badge shows.
@@ -53,6 +59,14 @@ const METHODS = [
  *                 by putting it back on account, so CREDIT is excluded there). Defaults to
  *                 every tender.
  * @param compact  denser layout for the smaller settlement dialogs.
+ * @param hotkeyOwner  the POS overlay (POS_OVERLAY_IDS) this panel is rendered in. With the
+ *                 centralized POS input controller, a method hotkey reaches only the panel
+ *                 owned by the overlay on top, so one keypress is one payment action even
+ *                 while several panels are mounted.
+ * @param quickCash  { mode, seq } from a sale-screen Enter sequence (posShortcuts
+ *                 CHECKOUT_QUICK_CASH), acted on once when it arrives: MODAL opens the Cash
+ *                 modal (it keys the exact remaining amount itself), ALLOCATE commits the exact
+ *                 remaining amount in Cash. Neither settles. onQuickCashHandled clears it.
  */
 export default function PaymentAllocationPanel({
   payment,
@@ -65,6 +79,9 @@ export default function PaymentAllocationPanel({
   methods = null,
   compact = false,
   onCustomerCreated = null,
+  hotkeyOwner = POS_OVERLAY_IDS.CHECKOUT,
+  quickCash = null,
+  onQuickCashHandled = null,
 }) {
   // { type, line } — `line` set when editing an existing allocation, null when adding.
   const [activeModal, setActiveModal] = useState(null);
@@ -79,15 +96,26 @@ export default function PaymentAllocationPanel({
   const openAdd = useCallback((type) => setActiveModal({ type, line: null }), []);
   const openEdit = useCallback((line) => setActiveModal({ type: line.paymentType, line }), []);
 
+  // The method bar is the checkout's PAYMENT_METHOD focus target. With posFocusV2 the POS focus
+  // controller decides where the caret goes when a payment modal closes: Settle once the bill is
+  // fully allocated, otherwise this bar. It owns that only for the till's checkout, where it
+  // derives targets; the layaway deposit and delivery settlement panels keep the refocus below.
+  const firstMethodRef = useRef(null);
+  const posFocusV2 = usePosFocusV2();
+  usePosFocusTarget({ targets: POS_FOCUS_TARGETS.PAYMENT_METHOD, ref: firstMethodRef, owner: hotkeyOwner });
+  const controllerOwnsFocus = posFocusV2 && hotkeyOwner === POS_OVERLAY_IDS.CHECKOUT;
+
   /**
-   * Closing always returns focus to the method bar, so the next tender is one keystroke
-   * away — the cashier never has to reach for the mouse between allocations.
+   * Closing returns focus to the method bar, so the next tender is one keystroke away — the
+   * cashier never has to reach for the mouse between allocations. (posFocusV2 checkout: the
+   * focus controller does this, or focuses Settle when nothing is left to allocate.)
    */
   const closeModal = useCallback(() => {
     setActiveModal(null);
+    if (controllerOwnsFocus) return;
     // Deferred so focus lands after the modal has unmounted and released it.
     requestAnimationFrame(() => methodBarRef.current?.querySelector('button')?.focus());
-  }, []);
+  }, [controllerOwnsFocus]);
 
   const offeredMethods = useMemo(() => {
     const visible = METHODS.filter((m) => !m.hidden);
@@ -140,13 +168,68 @@ export default function PaymentAllocationPanel({
     else closeModal();
   }, [activeModal, updateLine, addLine, removeLine, closeModal, remainingBalance, offeredTypes]);
 
-  // Method hotkeys, live whenever no modal is open and the cashier isn't typing in a field.
+  /**
+   * The draft the Cash modal confirms when its pre-filled exact amount is accepted: the whole
+   * remaining balance, in Cash. Null when Cash is not offered or nothing is left to allocate.
+   */
+  const exactCashDraft = useCallback(() => {
+    if (!offeredTypes.includes(PAYMENT_TYPES.CASH)) return null;
+    const target = allocationTarget(remainingBalance, null);
+    return target > 0 ? { paymentType: PAYMENT_TYPES.CASH, amount: toAmount(target.toFixed(2)) } : null;
+  }, [offeredTypes, remainingBalance]);
+
+  /**
+   * Cash pressed twice: commits the exact remaining amount through handleConfirm, as the Cash
+   * modal's confirm does. Never settles. Allowed with nothing open or with a new (not edited)
+   * Cash modal open, which it replaces.
+   */
+  const allocateExactCash = useCallback(() => {
+    if (activeModal && (activeModal.type !== PAYMENT_TYPES.CASH || activeModal.line)) return;
+    const draft = exactCashDraft();
+    if (draft) handleConfirm(draft);
+    else if (activeModal) closeModal();
+  }, [activeModal, exactCashDraft, closeModal, handleConfirm]);
+
+  // A sale-screen Enter sequence's request, acted on once per request (seq). MODAL is this
+  // panel's own state, so it is set while rendering, before the first paint; ALLOCATE commits
+  // to the Payment Manager, which belongs to the parent, so it runs after the commit.
+  const [quickCashSeen, setQuickCashSeen] = useState(null);
+  if (quickCash && quickCash.seq !== quickCashSeen) {
+    setQuickCashSeen(quickCash.seq);
+    if (quickCash.mode === CHECKOUT_QUICK_CASH.MODAL && offeredTypes.includes(PAYMENT_TYPES.CASH)) {
+      setActiveModal({ type: PAYMENT_TYPES.CASH, line: null });
+    }
+  }
+  // ALLOCATE arrives with the panel, before any modal can be open, so the draft goes straight to
+  // the Payment Manager — what handleConfirm would do with it, a fully covered bill chaining
+  // into no further modal.
+  const allocatedQuickCashRef = useRef(null);
   useEffect(() => {
-    if (activeModal) return undefined;
+    if (!quickCash || allocatedQuickCashRef.current === quickCash.seq) return;
+    allocatedQuickCashRef.current = quickCash.seq;
+    onQuickCashHandled?.();
+    if (quickCash.mode !== CHECKOUT_QUICK_CASH.ALLOCATE) return;
+    const draft = exactCashDraft();
+    if (draft) addLine(draft);
+  }, [quickCash, onQuickCashHandled, exactCashDraft, addLine]);
+
+  // Method hotkeys, live whenever no modal is open and the cashier isn't typing in a field.
+  // posInputV2: the centralized POS input controller dispatches them to this panel only while
+  // its owning overlay is on top, and never from a scanner burst. Cash pressed twice in
+  // checkout allocates the exact remaining amount (onQuickCash).
+  const posInputV2 = usePosInputV2();
+  usePosPaymentHotkeys({
+    owner: hotkeyOwner, enabled: !activeModal, methods: offeredMethods, onSelect: openAdd,
+    onQuickCash: allocateExactCash,
+  });
+
+  // Legacy per-panel listener (posInputV2 off, or rendered without the POS input provider).
+  useEffect(() => {
+    if (activeModal || posInputV2) return undefined;
     const onKey = (event) => {
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      const tag = event.target.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (isPosInputHandled(event)) return;
+      if (isEditableTarget(event.target)) return;
       const method = offeredMethods.find((m) => m.hotkey === event.key.toLowerCase());
       if (!method) return;
       event.preventDefault();
@@ -154,7 +237,7 @@ export default function PaymentAllocationPanel({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeModal, openAdd, offeredMethods]);
+  }, [activeModal, posInputV2, openAdd, offeredMethods]);
 
   const settled = canSettle && paymentLines.length > 0;
   const progressPct = useMemo(() => (
@@ -186,10 +269,11 @@ export default function PaymentAllocationPanel({
             is the thing that gets mis-pressed under pressure. */}
         <div ref={methodBarRef} className="grid gap-2"
           style={{ gridTemplateColumns: `repeat(${Math.max(1, offeredMethods.length)}, minmax(0, 1fr))` }}>
-          {offeredMethods.map(({ type, label, hotkey, icon: Icon, accent }) => (
+          {offeredMethods.map(({ type, label, hotkey, icon: Icon, accent }, index) => (
             // Hover/press feedback is drawn from the method's own accent so the tile that
             // lifts is unmistakably the one about to be charged. `group` drives the icon.
             <button key={type} type="button" onClick={() => openAdd(type)}
+              ref={index === 0 ? firstMethodRef : undefined}
               className="group relative flex flex-col items-center gap-1.5 rounded-xl border-2 py-3 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 motion-reduce:transform-none motion-reduce:transition-none"
               style={{ borderColor: `${accent}40` }}
               onMouseEnter={(e) => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.backgroundColor = `${accent}0F`; }}

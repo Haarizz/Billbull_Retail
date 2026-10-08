@@ -86,7 +86,23 @@ describe('beginEditSettings — draft seeding', () => {
       operatingStartTime: '',
       operatingEndTime: '',
       businessDayExtensionMinutes: 0,
+      // Credit voucher expiry — '' = system default.
+      creditVoucherExpiryMode: '',
+      creditVoucherExpiryMonths: 12,
+      creditVoucherExpiryDate: '',
     });
+  });
+
+  it('seeds the stored credit voucher expiry policy so the tab shows what was saved', () => {
+    const { view } = setup({
+      creditVoucherExpiryMode: 'AUTO', creditVoucherExpiryMonths: 6, creditVoucherExpiryDate: null,
+    });
+    act(() => view.result.current.beginEditSettings());
+    const d = view.result.current.settingsDraft;
+
+    expect(d.creditVoucherExpiryMode).toBe('AUTO');
+    expect(d.creditVoucherExpiryMonths).toBe(6);
+    expect(d.creditVoucherExpiryDate).toBe('');
   });
 
   it('seeds from the stored settings when they exist', () => {

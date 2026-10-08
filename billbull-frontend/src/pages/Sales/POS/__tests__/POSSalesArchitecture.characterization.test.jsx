@@ -94,10 +94,12 @@ describe('hook inventory and call order', () => {
     ['useHeldSales', '} = useHeldSales({'],
     ['useCashDrawer', 'const { openCashDrawer } = useCashDrawer(posSettings);'],
     ['useCheckout', '} = useCheckout({'],
+    // P1: the one POS keyboard controller; after useCheckout because checkoutPhase is its state.
+    ['usePosInputController', 'const posInputRegistry = usePosInputController({'],
   ];
 
-  it('has exactly these 22 feature/context hook call sites', () => {
-    expect(CALL_ORDER).toHaveLength(22);
+  it('has exactly these 23 feature/context hook call sites', () => {
+    expect(CALL_ORDER).toHaveLength(23);
     for (const [name, anchor] of CALL_ORDER) {
       expect(SRC.indexOf(anchor), `missing hook call site: ${name}`).toBeGreaterThan(-1);
     }
@@ -117,6 +119,7 @@ describe('hook inventory and call order', () => {
     ['usePosPrinting', 1], ['useLayaway', 1], ['useProductEntry', 1], ['useDelivery', 1],
     ['useHeldSales', 1], ['useCashDrawer', 1], ['useCheckout', 1], ['useCheckoutCapabilities', 1],
     ['useIdleTimeout', 1], ['useCompany', 1], ['useBranch', 1], ['usePermissions', 1],
+    ['usePosInputController', 1],
     // The only deliberately repeated hooks: one Payment Manager per settlement surface
     // (checkout / delivery settle / layaway deposit) and one A4 blob url per preview.
     ['usePaymentManager', 3], ['useA4BlobUrl', 2],
@@ -124,10 +127,11 @@ describe('hook inventory and call order', () => {
     expect(SRC.match(new RegExp(`[^A-Za-z0-9_]${hook}\\(`, 'g')) || []).toHaveLength(times);
   });
 
-  it('creates no context of its own; BusinessDayStatusProvider is the one provider it renders', () => {
+  it('creates no context of its own; renders BusinessDayStatusProvider and PosOverlayProvider once each', () => {
     expect(SRC).not.toContain('createContext');
     expect(SRC).not.toContain('PosWorkspaceContext');
     expect(count('<BusinessDayStatusProvider')).toBe(1);
+    expect(count('<PosOverlayProvider registry={posInputRegistry}>')).toBe(1);
   });
 });
 
@@ -436,7 +440,8 @@ describe('cross-feature orchestration handlers', () => {
     ['saveCurrentLayaway', 'const saveCurrentLayaway = async (print = false) => {'],
     ['syncPosData', 'const syncPosData = useCallback(async () => {'],
     ['handleSupervisorPinSubmit', 'const handleSupervisorPinSubmit = () => submitSupervisorApproval({'],
-    ['handleCheckout', 'const handleCheckout = useCallback(() => {'],
+    // P3: takes the optional { quickCash } of a double/triple Enter.
+    ['handleCheckout', 'const handleCheckout = useCallback((opts) => {'],
     ['handleCashDrop', 'const handleCashDrop = async () => {'],
     ['handleStartSession', 'const handleStartSession = async () => {'],
     ['handleSessionTransfer', 'const handleSessionTransfer = async () => {'],
@@ -469,7 +474,7 @@ describe('cross-feature orchestration handlers', () => {
   it('useCheckout owns the post-payment device sequence: printing then drawer', () => {
     const start = at('    printing: {');
     const group = SRC.slice(start, SRC.indexOf('},', start));
-    for (const dep of ['resolveInvoiceA4TemplateFor', 'printThermalReceiptWithConfiguredPrinter',
+    for (const dep of ['buildInvoiceSheetHtml', 'printThermalReceiptWithConfiguredPrinter',
       'buildThermalReceiptArtifacts', 'openCashDrawer']) {
       expect(group, dep).toContain(dep);
     }
@@ -554,22 +559,23 @@ describe('cross-feature orchestration handlers', () => {
  * the commit message.
  */
 describe('shape counters (update deliberately)', () => {
-  it('declares 229 top-level useState pairs', () => {
-    expect(topLevel(/^ {2}const \[/)).toHaveLength(229);
+  it('declares 232 top-level useState pairs (+2: the invoice template family and the reprint sheet format; +1 P3: checkoutQuickCash)', () => {
+    expect(topLevel(/^ {2}const \[/)).toHaveLength(232);
   });
 
-  it('declares 16 top-level refs', () => {
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(16);
+  it('declares 18 top-level refs (+1: productEntryBlockedRef, the overlay gate on product entry; +1 P3: quickCashSeqRef)', () => {
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = (React\.)?useRef\(/)).toHaveLength(18);
   });
 
-  it('declares 33 top-level effects', () => {
-    expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(33);
+  it('declares 34 top-level effects (+1: the Sales Invoice template family load)', () => {
+    expect(topLevel(/^ {2}(React\.)?useEffect\(/)).toHaveLength(34);
   });
 
-  it('declares 19 top-level memos and 25 top-level callbacks', () => {
+  it('declares 19 top-level memos and 26 top-level callbacks', () => {
     expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useMemo\(/)).toHaveLength(19);
-    // 25 since Action Button Access: requestFunctionApproval and notifyPosFunctionDenied.
-    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(25);
+    // 25 since Action Button Access: requestFunctionApproval and notifyPosFunctionDenied;
+    // 26 since P3: clearCheckoutQuickCash.
+    expect(topLevel(/^ {2}const [A-Za-z0-9_]+ = useCallback\(/)).toHaveLength(26);
   });
 
   it('all state is declared in the first 1,300 lines — the render tree below owns none', () => {
@@ -998,7 +1004,7 @@ describe('candidate boundary coupling budget', () => {
     // It spans payment allocation, printing, approval, session and template settings at once.
     for (const crossing of ['deliverySettlePayment', 'deliverySettleFields', 'checkoutCompatibility',
       'checkoutOnlineBankAccounts', 'buildThermalReceiptArtifacts', 'printThermalReceiptWithConfiguredPrinter',
-      'resolveInvoiceA4TemplateFor', 'requestApproval', 'syncPosData', 'sessionId', 'tplInvoicePaper']) {
+      'buildInvoiceSheetHtml', 'requestApproval', 'syncPosData', 'sessionId', 'paperForSale']) {
       expect(body, crossing).toContain(crossing);
     }
   });

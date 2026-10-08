@@ -90,13 +90,14 @@ public class VendorService {
     /**
      * The first few vendors, for the global search modal's empty-query preview.
      *
-     * <p>The rows are the vendors <em>most ordered from</em> in the last
-     * {@link com.billbull.backend.util.PreviewActivity#WINDOW_DAYS} days, not the first
+     * <p>The rows are the vendors <em>most purchased from</em> — posted purchase invoices,
+     * those in the last {@link com.billbull.backend.util.PreviewActivity#WINDOW_DAYS} days
+     * first, then all-time volume — followed by vendors with recent LPOs, not the first
      * few alphabetically. Name order tops the list up when activity does not fill it, so
-     * a quiet period still shows something rather than nothing.
+     * a new tenant still shows something rather than nothing.
      *
      * <p>Branch-scoped exactly as {@link #search} is — the ranking itself runs unscoped
-     * over the LPO table and is re-read through the scoped query, so a ranked vendor the
+     * over the invoice and LPO tables and is re-read through the scoped query, so a ranked vendor the
      * caller may not see is dropped rather than revealed — and bounded in the database
      * throughout.
      */
@@ -105,9 +106,16 @@ public class VendorService {
         com.billbull.backend.settings.branch.BranchAccessService.ListScope scope =
                 branchAccessService.currentSearchScope();
 
-        List<Long> ranked = lpoRepo.findMostActiveVendorIds(
+        // Posted purchase invoices decide the head of the list — they are what was
+        // actually bought. Recent LPOs come next, for vendors only ordered from so far.
+        java.util.LinkedHashSet<Long> rankedIds = new java.util.LinkedHashSet<>(
+                invRepo.findMostPurchasedVendorIds(
+                        com.billbull.backend.util.PreviewActivity.since().toLocalDate(),
+                        com.billbull.backend.util.PreviewActivity.ranking(limit)));
+        rankedIds.addAll(lpoRepo.findMostActiveVendorIds(
                 com.billbull.backend.util.PreviewActivity.since(),
-                com.billbull.backend.util.PreviewActivity.ranking(limit));
+                com.billbull.backend.util.PreviewActivity.ranking(limit)));
+        List<Long> ranked = new java.util.ArrayList<>(rankedIds);
 
         java.util.LinkedHashMap<Long, VendorSearchResponse> picked = new java.util.LinkedHashMap<>();
         if (!ranked.isEmpty()) {

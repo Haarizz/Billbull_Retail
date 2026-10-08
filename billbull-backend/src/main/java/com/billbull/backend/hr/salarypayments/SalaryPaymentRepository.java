@@ -4,6 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface SalaryPaymentRepository extends JpaRepository<SalaryPayment, Long> {
@@ -27,6 +28,12 @@ public interface SalaryPaymentRepository extends JpaRepository<SalaryPayment, Lo
 
     boolean existsByEmployeeIdAndSalaryMonthAndSalaryYearAndStatus(
             String employeeId, int salaryMonth, int salaryYear, String status);
+
+    // One employee's lines for a year — backs the global search payroll summary.
+    List<SalaryPayment> findByEmployeeIdAndSalaryYear(String employeeId, int salaryYear);
+
+    Optional<SalaryPayment> findFirstByEmployeeIdAndStatusOrderBySalaryYearDescSalaryMonthDesc(
+            String employeeId, String status);
 
     // Bulk payment must stay inside the period it was launched for.
     List<SalaryPayment> findByEmployeeIdInAndStatusAndSalaryMonthAndSalaryYear(

@@ -6,7 +6,8 @@ import java.time.LocalDate;
 /**
  * One row of the "recent purchase orders" list in the vendor details panel.
  *
- * <p>A narrow projection of {@link Lpo}: number, date, total, status, branch. The entity
+ * <p>A narrow projection of {@link Lpo}: number, date, expected delivery, total, status,
+ * branch. The entity
  * carries line items, delivery terms, approval state and pricing detail — procurement
  * data that a search preview has no business exposing.
  */
@@ -15,6 +16,8 @@ public class VendorRecentLpoResponse {
     private Long id;
     private String lpoNumber;
     private LocalDate lpoDate;
+    /** The LPO's own expected delivery date, echoed as the panel's ETA. Null when unset. */
+    private LocalDate expectedDeliveryDate;
     private BigDecimal grandTotal;
     private String status;
     private String branchName;
@@ -26,6 +29,7 @@ public class VendorRecentLpoResponse {
         r.id = lpo.getId();
         r.lpoNumber = lpo.getLpoNumber();
         r.lpoDate = lpo.getLpoDate();
+        r.expectedDeliveryDate = lpo.getExpectedDeliveryDate();
         r.grandTotal = lpo.getGrandTotal();
         r.status = lpo.getStatus() != null ? lpo.getStatus().name() : null;
         r.branchName = lpo.getBranchName();
@@ -40,6 +44,9 @@ public class VendorRecentLpoResponse {
 
     public LocalDate getLpoDate() { return lpoDate; }
     public void setLpoDate(LocalDate lpoDate) { this.lpoDate = lpoDate; }
+
+    public LocalDate getExpectedDeliveryDate() { return expectedDeliveryDate; }
+    public void setExpectedDeliveryDate(LocalDate expectedDeliveryDate) { this.expectedDeliveryDate = expectedDeliveryDate; }
 
     public BigDecimal getGrandTotal() { return grandTotal; }
     public void setGrandTotal(BigDecimal grandTotal) { this.grandTotal = grandTotal; }

@@ -108,6 +108,50 @@ class EmployeeSalesTargetControllerTest {
         verify(performanceService).getPerformance(LocalDate.now().withDayOfMonth(1), null);
     }
 
+    // ── per-employee summary (global search) ────────────────────────────────
+
+    @Test
+    void employeeSummaryRequiresViewPermissionAndNeverReachesTheServiceWhenDenied() {
+        doThrow(new AccessDeniedException("denied"))
+                .when(modulePermissionService).requireCanView("hr.employee");
+
+        assertThrows(AccessDeniedException.class, () -> controller.getEmployeeSummary(7L));
+        verifyNoInteractions(performanceService);
+    }
+
+    @Test
+    void employeeSummaryIsThisMonthAndLastConsolidatedWithoutCommission() {
+        LocalDate thisMonth = LocalDate.now().withDayOfMonth(1);
+        EmployeePerformanceRow current = new EmployeePerformanceRow();
+        current.setTargetAmount(new BigDecimal("50000.00"));
+        current.setSales(new BigDecimal("36000.00"));
+        current.setBills(12);
+        current.setAchievementPercent(new BigDecimal("72.00"));
+        current.setTargetStatus("On Track");
+        current.setCommission(new BigDecimal("999.00"));
+        when(performanceService.getForEmployeeId(7L, thisMonth, null)).thenReturn(current);
+        when(performanceService.getForEmployeeId(7L, thisMonth.minusMonths(1), null))
+                .thenReturn(new EmployeePerformanceRow());
+
+        var response = controller.getEmployeeSummary(7L);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        EmployeeTargetSummaryResponse body = response.getBody();
+        assertEquals(thisMonth, body.getCurrentMonth().getMonth());
+        assertEquals(new BigDecimal("72.00"), body.getCurrentMonth().getAchievementPercent());
+        assertEquals(12, body.getCurrentMonth().getBills());
+        assertEquals(thisMonth.minusMonths(1), body.getPreviousMonth().getMonth());
+        // Branch filter is always null: the target is company-wide.
+        verify(performanceService).getForEmployeeId(7L, thisMonth, null);
+    }
+
+    @Test
+    void employeeSummaryIsNotFoundForAnUnknownEmployee() {
+        when(performanceService.getForEmployeeId(eq(7L), any(), isNull())).thenReturn(null);
+
+        assertEquals(HttpStatus.NOT_FOUND, controller.getEmployeeSummary(7L).getStatusCode());
+    }
+
     // ── write permission ────────────────────────────────────────────────────
 
     @Test
