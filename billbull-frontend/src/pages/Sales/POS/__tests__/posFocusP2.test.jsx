@@ -702,18 +702,40 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     expectFocus(searchBox('classic'));
   });
 
-  it('Cart Focus: Add Qty repurposes the barcode box, which keeps the caret through row clicks', async () => {
+  it.each([['Add Qty', T.QUANTITY], ['Discount', T.DISCOUNT], ['Price', T.PRICE]])(
+    'Cart Focus %s: opens Alter Item, whose field owns the caret; a scan is a number, never a product',
+    async (label, target) => {
+      const { api } = setup('focus');
+      await flush();
+      await scan(WIDGET);
+      await click(screen.getByRole('button', { name: label }));
+      const field = alterField();
+      expectFocus(field);
+      expect(derivedTarget(api)).toBe(target);
+      await type('3');
+      await click(within(screen.getByRole('dialog')).getByRole('button', { name: '5' }));
+      act(() => api.rerender());
+      await flush();
+      expectFocus(field);
+      expect(field.value).toBe('35');
+      await scan(GADGET);
+      expect(api.added.mock.calls).toEqual([[WIDGET]]);
+    },
+  );
+
+  it('Cart Focus: a row click selects the line; clicking it again opens Alter Item, and Enter applies and hands the caret back to search', async () => {
     const { api } = setup('focus');
     await flush();
     await scan(WIDGET);
-    await click(screen.getByRole('button', { name: 'Add Qty' }));
-    expectFocus(searchBox('focus'));
-    expect(derivedTarget(api)).toBe(T.QUANTITY);
     await click(screen.getAllByText('Widget')[0]);
-    expectFocus(searchBox('focus'));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await click(screen.getAllByText('Widget')[0]);
+    expect(screen.getByRole('tab', { name: 'Quantity' }).getAttribute('aria-selected')).toBe('true');
+    expectFocus(alterField());
     await type('3');
     await press('Enter');
     expect(api.items()[0].quantity).toBe(3);
+    expect(screen.queryByRole('dialog')).toBeNull();
     expectFocus(searchBox('focus'));
     expect(derivedTarget(api)).toBe(T.SEARCH);
   });

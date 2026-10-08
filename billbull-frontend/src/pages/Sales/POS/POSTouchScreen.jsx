@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle, Eye, Gift } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import BusinessDayStatusChip from '../../../components/pos/BusinessDayStatusChip';
-import { DirhamSymbol, CurrencyAmount, formatCurrencyStr } from './POSCurrency';
+import { CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
 import { buildPosFunctionButtons } from './lib/posFunctionButtons';
@@ -12,7 +12,7 @@ import QuickCustomerModal from './features/customers/QuickCustomerModal';
 import QuickAddProductModal from '../../../components/inventory/QuickAddProductModal';
 import AlterItemModal from './features/cart/AlterItemModal';
 import {
-  createBurstTracker, isPosInputHandled, isPosScreenBlocked, markScanHandled, wasScanHandled,
+  isPosInputHandled, isPosScreenBlocked, markScanHandled, wasScanHandled,
 } from './device/scanner/scanGuard';
 import { isEditableTarget } from '../../../utils/editableTarget';
 import { usePosFocusTarget, usePosFocusV2, usePosInputV2, usePosScanSurface } from './input/PosOverlayContext';
@@ -131,10 +131,9 @@ const POSTouchScreen = React.memo((props) => {
     // shipping (order-level flat charge, not a cart line)
     shippingCharge = 0,
     // focus / numpad
-    posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
+    selectedFocusItemId, setSelectedFocusItemId,
     classicNumpadMode, setClassicNumpadMode, classicNumpadValue, setClassicNumpadValue,
-    classicDiscountType, setClassicDiscountType, discountInputType, setDiscountInputType,
-    resetFocusMode,
+    classicDiscountType, setClassicDiscountType,
     // right panel
     rightPanelTab, setRightPanelTab, hiddenPanelButtons, hideCategoriesPanel, hideItemsPanel,
     // layout
@@ -191,17 +190,19 @@ const POSTouchScreen = React.memo((props) => {
 
   const scannerBufferRef = useRef('');
   const scannerTimerRef = useRef(null);
-  // Keystroke timing on the barcode box, so a scan can be told apart from a typed price.
-  const [barcodeBurst] = useState(() => createBurstTracker());
   const scannerReady = Boolean(scannerConfig?.enabled) && scannerConfig?.status === 'ACTIVE' && scannerConfig?.inputMode === 'KEYBOARD_WEDGE';
   const posFocusV2 = usePosFocusV2();
+
+  // The item keypad: both Cart Focus and Classic open the Alter Item dialog (classicNumpadMode).
+  // While it is open the POS is in the ITEM_ENTRY scope.
+  const itemEntryMode = classicNumpadMode || 'none';
 
   // Legacy refocus (posFocusV2 off): an 80 ms timer after every cart change. With posFocusV2 the
   // focus controller owns the caret through the targets registered below.
   useEffect(() => {
     if (posFocusV2) return undefined;
     if (!scannerReady || !scannerConfig?.autoFocusOnPOS) return undefined;
-    if (posActionMode === 'qty' || posActionMode === 'discount') return undefined;
+    if (itemEntryMode !== 'none') return undefined;
     const timer = window.setTimeout(() => {
       barcodeInputRef?.current?.focus?.();
     }, 80);
@@ -211,15 +212,10 @@ const POSTouchScreen = React.memo((props) => {
     barcodeInputRef,
     currentInvoice.items.length,
     lastScannedItem?.barcode,
-    posActionMode,
+    itemEntryMode,
     scannerConfig?.autoFocusOnPOS,
     scannerReady,
   ]);
-
-  // The item keypad: Cart Focus repurposes the barcode box (posActionMode), Classic opens its
-  // Alter Item dialog (classicNumpadMode). Either way it is the ITEM_ENTRY scope.
-  const isCartFocus = posTemplate === 'focus';
-  const itemEntryMode = (isCartFocus ? posActionMode : classicNumpadMode) || 'none';
 
   // posInputV2: the centralized POS input controller owns the keyboard wedge. This template
   // only declares its scan surface; the legacy window listener below stands down. With no
@@ -248,7 +244,7 @@ const POSTouchScreen = React.memo((props) => {
   });
   usePosFocusTarget({
     targets: [POS_FOCUS_TARGETS.QUANTITY, POS_FOCUS_TARGETS.DISCOUNT, POS_FOCUS_TARGETS.PRICE],
-    ref: isCartFocus ? barcodeInputRef : classicNumpadInputRef,
+    ref: classicNumpadInputRef,
   });
   usePosFocusTarget({
     targets: POS_FOCUS_TARGETS.CUSTOMER,
@@ -291,10 +287,10 @@ const POSTouchScreen = React.memo((props) => {
     else createCustomerFromSearch();
   };
 
-  // Classic: the item keypad is the Alter Item dialog. It edits the selected cart line, and is on
-  // screen exactly while classicNumpadMode is set and that line is still in the cart.
-  const classicMode = classicNumpadMode || 'none';
-  const alterItem = !isCartFocus && classicMode !== 'none'
+  // The item keypad is the Alter Item dialog (Cart Focus and Classic). It edits the selected cart
+  // line, and is on screen exactly while classicNumpadMode is set and that line is still in the cart.
+  const classicMode = itemEntryMode;
+  const alterItem = classicMode !== 'none'
     ? currentInvoice.items.find(i => i.id === selectedFocusItemId && !i.isVoided) || null
     : null;
   const closeAlterItem = useCallback(() => {
@@ -311,6 +307,24 @@ const POSTouchScreen = React.memo((props) => {
     setSelectedFocusItemId(itemId);
     setClassicNumpadMode(mode);
   }, [selectedFocusItemId, classicMode, setClassicNumpadValue, setClassicDiscountType, setSelectedFocusItemId, setClassicNumpadMode]);
+  // Add Qty / Discount / Price buttons: the selected cart line, else the last one entered (same
+  // rule as F4/F8/F9).
+  const openAlterItemOnTarget = (mode) => {
+    const lines = currentInvoice.items.filter(i => !i.isVoided);
+    const target = lines.find(i => i.id === selectedFocusItemId)
+      || lines.find(i => i.id === lastEnteredLineId)
+      || lines[lines.length - 1];
+    if (!target) { showFeedback?.('error', 'Add an item to the cart first'); return; }
+    openAlterItem(target.id, mode);
+  };
+  // Cart row click: the first click selects the line (the +, − and Delete shortcuts' target);
+  // clicking the selected line opens Alter Item on it.
+  const onCartRowClick = (item) => {
+    if (item.isVoided) return;
+    if (classicMode !== 'none') openAlterItem(item.id, classicMode);
+    else if (item.id === selectedFocusItemId) openAlterItem(item.id, 'qty');
+    else setSelectedFocusItemId(item.id);
+  };
   const applyAlterItem = useCallback(({ quantity, price, discount }) => {
     const id = selectedFocusItemId;
     if (!id) return;
@@ -323,14 +337,13 @@ const POSTouchScreen = React.memo((props) => {
   // The line went away (removed, voided, bill cleared) under an open dialog: leave ITEM_ENTRY, or
   // the scope would keep holding the keyboard for a field that is no longer on screen.
   useEffect(() => {
-    if (!isCartFocus && classicMode !== 'none' && !alterItem) closeAlterItem();
-  }, [isCartFocus, classicMode, alterItem, closeAlterItem]);
+    if (classicMode !== 'none' && !alterItem) closeAlterItem();
+  }, [classicMode, alterItem, closeAlterItem]);
 
   // Keyboard shortcuts (P3). The POS input controller owns the keys; these are this template's
-  // ways of doing each thing. F4/F8/F9 open the same item keypad the Add Qty / Discount / Price
-  // buttons open — Cart Focus repurposes the barcode box, Classic opens the Alter Item dialog — on
-  // the line the shortcut targets (selected, else last entered); the focus controller then puts
-  // the caret in its field.
+  // ways of doing each thing. F4/F8/F9 open the same Alter Item dialog the Add Qty / Discount /
+  // Price buttons open, on the line the shortcut targets (selected, else last entered); the focus
+  // controller then puts the caret in its field.
   usePosSaleShortcuts({
     items: currentInvoice.items,
     selectedId: selectedFocusItemId,
@@ -345,12 +358,7 @@ const POSTouchScreen = React.memo((props) => {
     onQuantity: updateQuantity,
     onRemove: guardedRemoveFromInvoice,
     onMode: (mode, line) => {
-      if (isCartFocus) {
-        setSelectedFocusItemId(line?.id ?? null);
-        setPosActionMode(mode);
-        setBarcodeInput('');
-        if (mode === 'discount') setDiscountInputType('percent');
-      } else if (line) {
+      if (line) {
         openAlterItem(line.id, mode);
       } else {
         showFeedback?.('error', 'Add an item to the cart first');
@@ -385,9 +393,9 @@ const POSTouchScreen = React.memo((props) => {
     const onKeyDown = (event) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
       if (isPosInputHandled(event)) return;
-      // Qty, discount AND price mode repurpose the keypad for a number. Price was missing here,
-      // so a price followed by Enter was applied as a price and then scanned as a barcode too.
-      if (posActionMode !== 'none') {
+      // The Alter Item dialog (qty, discount AND price) keys a number, never a barcode: a price
+      // followed by Enter must not be applied as a price and then scanned as a barcode too.
+      if (itemEntryMode !== 'none') {
         resetScannerBuffer();
         return;
       }
@@ -402,7 +410,7 @@ const POSTouchScreen = React.memo((props) => {
       // Focus normally keeps it out (the check below skips text inputs), but focus can be lost —
       // a click on the dialog chrome, a re-render — and a scan landing in the cart as a phantom
       // product is a real sale defect, not a cosmetic one. The marker attribute closes that gap
-      // regardless of where focus sits. Same suppression idea as posActionMode above.
+      // regardless of where focus sits. Same suppression idea as itemEntryMode above.
       if (typeof document !== 'undefined'
           && document.querySelector('[data-pos-scan-suppress="true"]')) {
         return;
@@ -439,7 +447,7 @@ const POSTouchScreen = React.memo((props) => {
       window.removeEventListener('keydown', onKeyDown, true);
       resetScannerBuffer();
     };
-  }, [barcodeInputRef, handleBarcodeScan, posActionMode, posInputV2, scannerReady, setBarcodeInput]);
+  }, [barcodeInputRef, handleBarcodeScan, itemEntryMode, posInputV2, scannerReady, setBarcodeInput]);
 
   const handleHeartClick = useCallback((e, productId) => {
     e.stopPropagation();
@@ -628,8 +636,8 @@ const POSTouchScreen = React.memo((props) => {
                 ) : (
                   currentInvoice.items.map((item, idx) => {
                     return (
-                      <div key={item.id} onClick={() => { if (posActionMode !== 'none' && !item.isVoided) setSelectedFocusItemId(item.id); }}
-                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${posActionMode !== 'none' && !item.isVoided ? 'cursor-pointer' : ''}`}>
+                      <div key={item.id} onClick={() => onCartRowClick(item)}
+                        className={`grid grid-cols-12 gap-1 px-3 py-2 border-b border-[#327F74]/20 items-start ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/10' : idx % 2 === 1 ? 'bg-[#F5C742]/10' : 'bg-white'} ${!item.isVoided ? 'cursor-pointer' : ''}`}>
                         <div className="col-span-6 min-w-0">
                           {/* Voided line: muted red + [VOID] tag + negative amounts (no
                               strike-through). Excluded from the total; disclosed below. */}
@@ -803,32 +811,6 @@ const POSTouchScreen = React.memo((props) => {
 
             {/* Numpad + Barcode Input */}
             <div className="flex-1 flex flex-col justify-between p-4 bg-white min-h-0 overflow-y-auto">
-              {posActionMode !== 'none' && (
-                <div className="mb-3 rounded-xl bg-[#F5C742]/10 border border-[#327F74]/30 px-3 py-2">
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#F5C742] mb-1">
-                    {posActionMode === 'qty' ? 'Qty Mode' : posActionMode === 'price' ? 'Price Mode' : 'Discount Mode'}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {selectedFocusItemId
-                      ? `Item: ${currentInvoice.items.find(i => i.id === selectedFocusItemId)?.name}`
-                      : 'Click a cart item to select it'}
-                  </p>
-                  {posActionMode === 'discount' && selectedFocusItemId && (
-                    <div className="flex gap-1.5 mt-2">
-                      <button type="button" onClick={() => setDiscountInputType('percent')}
-                        className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors ${discountInputType === 'percent' ? 'bg-[#F5C742] text-white border-[#F5C742]' : 'bg-white text-gray-500 border-gray-200'}`}>
-                        % Percent
-                      </button>
-                      <button type="button" onClick={() => setDiscountInputType('amount')}
-                        className={`flex-1 py-1 rounded-lg text-xs font-bold border transition-colors ${discountInputType === 'amount' ? 'bg-[#F5C742] text-white border-[#F5C742]' : 'bg-white text-gray-500 border-gray-200'}`}>
-                        <DirhamSymbol /> Amount
-                      </button>
-                    </div>
-                  )}
-                  <button type="button" onClick={resetFocusMode} className="mt-1.5 text-[10px] text-gray-400 hover:text-red-400 underline">Cancel</button>
-                </div>
-              )}
-
               {/* Input Box & Scanner Status */}
               <div className="mb-3 relative">
                 {scannerReady && (
@@ -846,45 +828,13 @@ const POSTouchScreen = React.memo((props) => {
                     onKeyDown={e => {
                       // Already scanned by the window-level wedge — one event, one scan.
                       if (wasScanHandled(e.nativeEvent)) return;
-                      if (e.key.length === 1) barcodeBurst.key();
                       if (e.key === 'Escape') {
                         setBarcodeSuggestions([]);
                         return;
                       }
                       if (e.key === 'Enter') {
-                        const scanEnter = barcodeBurst.isScanEnter();
-                        barcodeBurst.reset();
-                        if (posActionMode === 'price' && selectedFocusItemId && scanEnter) {
-                          // A barcode scanned while the box is a price field would become the
-                          // price (a 13-digit EAN as a unit price). Refuse it; stay in price mode.
-                          setBarcodeInput('');
-                          showFeedback('error', 'Scan ignored while changing the price. Key the price, then press Enter.');
-                          return;
-                        }
-                        if (posActionMode === 'qty' && selectedFocusItemId) {
-                          const qty = parseInt(barcodeInput, 10);
-                          if (qty > 0) updateQuantity(selectedFocusItemId, qty);
-                          resetFocusMode();
-                        } else if (posActionMode === 'discount' && selectedFocusItemId) {
-                          const val = parseFloat(barcodeInput) || 0;
-                          if (discountInputType === 'percent') {
-                            updateDiscount(selectedFocusItemId, Math.min(val, 100));
-                          } else {
-                            const item = currentInvoice.items.find(i => i.id === selectedFocusItemId);
-                            if (item) {
-                              const pct = Math.min((val / (item.price * item.quantity)) * 100, 100);
-                              updateDiscount(selectedFocusItemId, pct);
-                            }
-                          }
-                          resetFocusMode();
-                        } else if (posActionMode === 'price' && selectedFocusItemId) {
-                          const val = parseFloat(barcodeInput) || 0;
-                          updateItemPrice(selectedFocusItemId, val);
-                          resetFocusMode();
-                        } else {
-                          setBarcodeSuggestions([]);
-                          handleBarcodeScan(barcodeInput);
-                        }
+                        setBarcodeSuggestions([]);
+                        handleBarcodeScan(barcodeInput);
                       }
                     }}
                     placeholder="Scan barcode or enter 3*CODE.."
@@ -899,9 +849,8 @@ const POSTouchScreen = React.memo((props) => {
                 </div>
 
                 {/* Live "select item" suggestions — item code, barcode, or product name,
-                    matched anywhere in the string. Hidden while the field is repurposed
-                    as a qty/discount/price numpad. */}
-                {posActionMode === 'none' && barcodeInput.trim() && (barcodeSuggestionsLoading || barcodeSuggestions.length > 0) && (
+                    matched anywhere in the string. */}
+                {barcodeInput?.trim() && (barcodeSuggestionsLoading || barcodeSuggestions.length > 0) && (
                   <div className="absolute left-0 right-0 top-full mt-1 z-20 bg-white rounded-xl border border-gray-200 shadow-lg max-h-72 overflow-y-auto">
                     {barcodeSuggestionsLoading && barcodeSuggestions.length === 0 ? (
                       <div className="flex items-center justify-center gap-2 py-4 text-xs text-gray-400">
@@ -964,35 +913,11 @@ const POSTouchScreen = React.memo((props) => {
                 </button>
               </div>
               <div className="grid grid-cols-2 gap-2 mt-2">
-                <button type="button" onClick={() => { setBarcodeInput(''); if (posActionMode !== 'none') resetFocusMode(); }}
+                <button type="button" onClick={() => setBarcodeInput('')}
                   className="h-12 text-sm font-bold text-red-500 bg-red-50 hover:bg-red-100 rounded-xl border border-red-200 transition-colors">
                   Clear
                 </button>
-                <button type="button" onClick={() => {
-                  if (posActionMode === 'qty' && selectedFocusItemId) {
-                    const qty = parseInt(barcodeInput, 10);
-                    if (qty > 0) updateQuantity(selectedFocusItemId, qty);
-                    resetFocusMode();
-                  } else if (posActionMode === 'discount' && selectedFocusItemId) {
-                    const val = parseFloat(barcodeInput) || 0;
-                    if (discountInputType === 'percent') {
-                      updateDiscount(selectedFocusItemId, Math.min(val, 100));
-                    } else {
-                      const item = currentInvoice.items.find(i => i.id === selectedFocusItemId);
-                      if (item) {
-                        const pct = Math.min((val / (item.price * item.quantity)) * 100, 100);
-                        updateDiscount(selectedFocusItemId, pct);
-                      }
-                    }
-                    resetFocusMode();
-                  } else if (posActionMode === 'price' && selectedFocusItemId) {
-                    const val = parseFloat(barcodeInput) || 0;
-                    updateItemPrice(selectedFocusItemId, val);
-                    resetFocusMode();
-                  } else {
-                    handleBarcodeScan(barcodeInput);
-                  }
-                }}
+                <button type="button" onClick={() => handleBarcodeScan(barcodeInput)}
                   className="h-12 text-sm font-bold text-white bg-[#F5C742] hover:opacity-90 rounded-xl transition-all shadow-sm">
                   Enter ↵
                 </button>
@@ -1065,13 +990,13 @@ const POSTouchScreen = React.memo((props) => {
             {rightPanelTab === 'functions' && (
               <div className="flex-1 overflow-y-auto p-3">
                 {(() => {
-                  // Interaction-specific buttons (Cart Focus uses the middle-column
-                  // keypad via posActionMode); shared buttons come from the single
+                  // Interaction-specific buttons (Add Qty, Discount, Price open the Alter
+                  // Item dialog); shared buttons come from the single
                   // commonActionButtons() definition so both templates stay in sync.
                   const interactive = [
-                    { id: 'add-qty', label: 'Add Qty', icon: <Plus className="h-5 w-5" />, color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${posActionMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`, action: () => { setPosActionMode(m => m === 'qty' ? 'none' : 'qty'); setBarcodeInput(''); setSelectedFocusItemId(null); } },
-                    { id: 'discount', label: 'Discount', icon: <Percent className="h-5 w-5" />, color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${posActionMode === 'discount' ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/20' : ''}`, action: () => { setPosActionMode(m => m === 'discount' ? 'none' : 'discount'); setBarcodeInput(''); setSelectedFocusItemId(null); setDiscountInputType('percent'); } },
-                    { id: 'price', label: 'Price', icon: <Tag className="h-5 w-5" />, color: `bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${posActionMode === 'price' ? 'ring-2 ring-[#F5C742] bg-purple-100' : ''}`, action: () => { setPosActionMode(m => m === 'price' ? 'none' : 'price'); setBarcodeInput(''); setSelectedFocusItemId(null); } },
+                    { id: 'add-qty', label: 'Add Qty', icon: <Plus className="h-5 w-5" />, color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`, action: () => openAlterItemOnTarget('qty') },
+                    { id: 'discount', label: 'Discount', icon: <Percent className="h-5 w-5" />, color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode === 'discount' ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/20' : ''}`, action: () => openAlterItemOnTarget('discount') },
+                    { id: 'price', label: 'Price', icon: <Tag className="h-5 w-5" />, color: `bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode === 'price' ? 'ring-2 ring-[#F5C742] bg-purple-100' : ''}`, action: () => openAlterItemOnTarget('price') },
                     { id: 'remove', label: 'Remove Item', icon: <Trash2 className="h-5 w-5" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action: () => { const last = currentInvoice.items[0]; if (last) guardedRemoveFromInvoice(last.id); } },
                   ];
                   const allBtns = [...interactive, ...commonActionButtons('h-5 w-5')];
@@ -1308,14 +1233,7 @@ const POSTouchScreen = React.memo((props) => {
                   currentInvoice.items.map((item, idx) => (
                     <div key={item.id}
                       className={`grid ${CART_GRID_COLS} gap-x-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
-                      onClick={() => {
-                        if (item.isVoided) return;
-                        // First click selects the line (the +, − and Delete shortcuts' target);
-                        // clicking the selected line opens Alter Item on it.
-                        if (classicMode !== 'none') openAlterItem(item.id, classicMode);
-                        else if (item.id === selectedFocusItemId) openAlterItem(item.id, 'qty');
-                        else setSelectedFocusItemId(item.id);
-                      }}>
+                      onClick={() => onCartRowClick(item)}>
                       <div className="min-w-0 pr-1">
                         {/* Voided line: muted red + [VOID] tag + negative amounts (no
                             strike-through). Excluded from the total; disclosed below. */}
@@ -1706,22 +1624,13 @@ const POSTouchScreen = React.memo((props) => {
                 {/* ── Action button grid ── */}
                 <div className="p-2 flex-1 overflow-y-auto">
                   {(() => {
-                    // Edits the selected cart line, else the last one entered (same rule as F4/F8/F9).
-                    const openNumpad = (mode) => {
-                      const lines = currentInvoice.items.filter(i => !i.isVoided);
-                      const target = lines.find(i => i.id === selectedFocusItemId)
-                        || lines.find(i => i.id === lastEnteredLineId)
-                        || lines[lines.length - 1];
-                      if (!target) { showFeedback?.('error', 'Add an item to the cart first'); return; }
-                      openAlterItem(target.id, mode);
-                    };
                     // Interaction-specific buttons (Classic uses the Alter Item dialog);
                     // shared buttons come from the single commonActionButtons()
                     // definition so both templates stay in sync.
                     const interactive = [
-                      { id: 'add-qty', label: 'Add Qty', icon: <Plus className="h-4 w-4" />, color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`, action: () => openNumpad('qty') },
-                      { id: 'discount', label: 'Disc %', icon: <Percent className="h-4 w-4" />, color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode === 'discount' ? 'ring-2 ring-[#F5C742]' : ''}`, action: () => openNumpad('discount') },
-                      { id: 'price', label: 'Price', icon: <Tag className="h-4 w-4" />, color: `bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode === 'price' ? 'ring-2 ring-[#F5C742] bg-purple-100' : ''}`, action: () => openNumpad('price') },
+                      { id: 'add-qty', label: 'Add Qty', icon: <Plus className="h-4 w-4" />, color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`, action: () => openAlterItemOnTarget('qty') },
+                      { id: 'discount', label: 'Disc %', icon: <Percent className="h-4 w-4" />, color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode === 'discount' ? 'ring-2 ring-[#F5C742]' : ''}`, action: () => openAlterItemOnTarget('discount') },
+                      { id: 'price', label: 'Price', icon: <Tag className="h-4 w-4" />, color: `bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode === 'price' ? 'ring-2 ring-[#F5C742] bg-purple-100' : ''}`, action: () => openAlterItemOnTarget('price') },
                       { id: 'remove', label: 'Remove', icon: <Trash2 className="h-4 w-4" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action: () => { const l = currentInvoice.items[0]; if (l) guardedRemoveFromInvoice(l.id); } },
                     ];
                     const allBtns = [...interactive, ...commonActionButtons('h-4 w-4')];
@@ -1820,7 +1729,7 @@ const POSTouchScreen = React.memo((props) => {
         </div>
       )}
 
-      {/* ══ ALTER ITEM (Classic: qty / price / discount of a cart line) ═════════ */}
+      {/* ══ ALTER ITEM (Cart Focus + Classic: qty / price / discount of a cart line) ══ */}
       {alterItem && (
         <AlterItemModal
           key={alterItem.id}
@@ -1836,6 +1745,7 @@ const POSTouchScreen = React.memo((props) => {
           onClose={closeAlterItem}
           formatCurrency={formatCurrency}
           suppressLegacyScan={!posInputV2}
+          onScanRefused={() => showFeedback?.('error', 'Scan ignored while altering the item. Key the value, then press Enter.')}
         />
       )}
 

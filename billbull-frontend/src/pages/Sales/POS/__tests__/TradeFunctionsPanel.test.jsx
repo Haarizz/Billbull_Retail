@@ -147,4 +147,12 @@ describe('source contract', () => {
     // showFunctions is this template's own presentation state and the only setShow* it calls.
     expect(TRADE.match(/setShow\w+\(true\)/g)).toEqual(['setShowFunctions(true)']);
   });
+
+  it('renders the Quick Add Product dialog its Functions button opens (it used to open nothing)', () => {
+    // The button only sets POSSales' showQuickProductModal; with no renderer in this template the
+    // flag flipped and nothing appeared. The dialog is driven by that same POSSales-owned state.
+    expect(TRADE.match(/<QuickAddProductModal/g)).toHaveLength(1);
+    expect(TRADE).toContain('isOpen={Boolean(showQuickProductModal)}');
+    expect(TRADE).toContain('onCreated={handleQuickProductCreated}');
+  });
 });

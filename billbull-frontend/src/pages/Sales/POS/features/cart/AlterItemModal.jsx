@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { Hash, Tag, Percent, X, Delete, CornerDownLeft, ArrowUp, ArrowDown, Lock } from 'lucide-react';
 import { DirhamSymbol } from '../../POSCurrency';
+import { createBurstTracker } from '../../device/scanner/scanGuard';
 
 /**
- * Alter Item — one dialog for a cart line's Quantity, Unit Price and Discount (Classic layout).
+ * Alter Item — one dialog for a cart line's Quantity, Unit Price and Discount (Classic and Cart
+ * Focus layouts).
  *
  * <p>Opened by clicking a cart row, the Add Qty / Price / Disc % action buttons, or the F4 / F9 /
  * F8 sale shortcuts. The three sections hold independent drafts, so the cashier can change qty,
  * price and discount in one pass and confirm once. An empty draft means "leave as is".
  *
- * <p>Input-scope contract: this dialog is the Classic item keypad (classicNumpadMode), so it stays
+ * <p>Input-scope contract: this dialog is the item keypad (classicNumpadMode), so it stays
  * in the ITEM_ENTRY scope rather than registering as a MODAL overlay. The focus controller then
  * keeps the caret on `inputRef` (the QUANTITY / DISCOUNT / PRICE target), the scanner is held off
  * the sale, and the SALE shortcuts (Enter-to-checkout, +/−, Delete) stand down. For that reason the
@@ -17,6 +19,10 @@ import { DirhamSymbol } from '../../POSCurrency';
  * unregistered overlay, which would flip the scope to MODAL and leave the field without an owner.
  * Under the legacy input path (posInputV2 off) there is no scope, so `suppressLegacyScan` marks the
  * dialog for the legacy wedge listener instead.
+ *
+ * <p>A barcode scanned into the field (a scanner-speed burst ended by Enter) is refused rather than
+ * applied: a 13-digit EAN must never become a unit price or a quantity. The draft is cleared and
+ * `onScanRefused` tells the cashier.
  *
  * <p>Every button cancels its mousedown, so the caret never leaves the field and the keyboard
  * keeps working after a pointer tap: digits type, ↑/↓ or Tab move between sections, ←/→ switch
@@ -73,7 +79,10 @@ const AlterItemModal = ({
   onClose,
   formatCurrency,
   suppressLegacyScan = false,
+  onScanRefused,
 }) => {
+  // Keystroke timing on the field, so a scan can be told apart from a typed value.
+  const [burst] = useState(() => createBurstTracker());
   // Drafts for the sections that are not on screen. The visible section's draft is `value`, which
   // POSSales owns (classicNumpadValue) so the keypad state survives a re-render of the template.
   const [drafts, setDrafts] = useState({ qty: '', price: '', discount: '' });
@@ -135,7 +144,15 @@ const AlterItemModal = ({
     const { key } = e;
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
     if (key === 'Escape') { handled(); onClose(); return; }
-    if (key === 'Enter') { handled(); apply(); return; }
+    if (key === 'Enter') {
+      handled();
+      const scanEnter = burst.isScanEnter();
+      burst.reset();
+      if (scanEnter) { onValueChange(''); onScanRefused?.(); return; }
+      apply();
+      return;
+    }
+    if (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) burst.key();
     if (FUNCTION_KEY_MODES[key]) { handled(); switchMode(FUNCTION_KEY_MODES[key]); return; }
     if (key === 'ArrowDown' || (key === 'Tab' && !e.shiftKey)) { handled(); step(1); return; }
     if (key === 'ArrowUp' || (key === 'Tab' && e.shiftKey)) { handled(); step(-1); return; }
