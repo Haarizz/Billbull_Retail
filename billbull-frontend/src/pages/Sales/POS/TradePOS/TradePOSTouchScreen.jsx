@@ -5,6 +5,7 @@ import { TradeFunctionsPanel } from './components/layout/TradeFunctionsPanel';
 import { TradeCartPanel } from './components/cart/TradeCartPanel';
 import { TradeSearchBar } from './components/catalog/TradeSearchBar';
 import QuickCustomerModal from '../features/customers/QuickCustomerModal';
+import QuickAddProductModal from '../../../../components/inventory/QuickAddProductModal';
 import { useStickyScanFocus } from './useStickyScanFocus';
 import { usePosSaleShortcuts } from '../input/usePosSaleShortcuts';
 
@@ -96,7 +97,11 @@ export const TradePOSTouchScreen = React.memo((props) => {
     // user through the header's Functions button and TradeFunctionsPanel. Every one of
     // them is POSSales-owned state — this template only opens the dialogs, never owns them.
     hiddenPanelButtons,
+    // Quick product creation: like the quick customer dialog, it used to be rendered only by
+    // POSTouchScreen, so the Functions panel's "Quick Add Product" opened nothing here.
+    showQuickProductModal,
     setShowQuickProductModal,
+    handleQuickProductCreated,
     setShowLayawaysList,
     setShowSaveLayaway,
     setShowSaveOrderDialog,
@@ -436,6 +441,25 @@ export const TradePOSTouchScreen = React.memo((props) => {
         onSave={handleSaveQuickCustomer}
         setSelectedCustomer={setSelectedCustomer}
         showFeedback={showFeedback}
+      />
+
+      {/* Quick product creation — the Functions panel's "Quick Add Product". Same props as
+          POSTouchScreen's instance, so both templates create and auto-add alike. */}
+      <QuickAddProductModal
+        isOpen={Boolean(showQuickProductModal)}
+        source="pos"
+        zIndexClass="z-[250]"
+        title="Quick Create & Auto-Add Product"
+        subtitle="Instantly add product to inventory and current cart"
+        submitLabel="Save & Add to Cart"
+        useExistingLabel="Add Existing to Cart"
+        onClose={() => setShowQuickProductModal && setShowQuickProductModal(false)}
+        onCreated={handleQuickProductCreated}
+        onUseExisting={(dup) => {
+          handleProductSelection(dup);
+          setShowQuickProductModal(false);
+          if (showFeedback) showFeedback('success', 'Added existing product to cart!');
+        }}
       />
 
     </div>
