@@ -355,7 +355,8 @@ const cashShown = () => screen.getByText('Cash Received').nextElementSibling.tex
 /** A cart row (not the product tile of the same name), for a click that selects it. */
 const cartRow = (t, product) => {
   if (t === 'compact') return within(screen.getByRole('region', { name: 'Shopping Cart' })).getByText(product.name);
-  return screen.getAllByText(product.name).map((n) => n.closest('div.grid.group')).find(Boolean);
+  const row = t === 'focus' ? 'div.grid.grid-cols-12.border-b' : 'div.grid.group';
+  return screen.getAllByText(product.name).map((n) => n.closest(row)).find(Boolean);
 };
 const qtyOf = (api, id) => api.items().find((i) => i.id === id)?.quantity;
 
@@ -613,19 +614,7 @@ describe.each(TEMPLATES)('%s — sale shortcuts', (_, t) => {
     expect(api.items()).toHaveLength(2);
   });
 
-  if (t === 'focus') {
-    it('15. Cart Focus has no line selection outside an item mode: + / Delete use the last entered line', async () => {
-      const api = await setup(t);
-      await scan(WIDGET);
-      await scan(GADGET);
-      await click(screen.getAllByText('Widget')[0]);
-      expect(api.selected()).toBeNull();
-      await press('+');
-      await settleHotkey();
-      expect(qtyOf(api, 'p2')).toBe(2);
-      expect(qtyOf(api, 'p1')).toBe(1);
-    });
-  } else {
+  {
     it('15. a selected line overrides the last-entered fallback', async () => {
       const api = await setup(t);
       await scan(WIDGET);
@@ -700,9 +689,10 @@ describe.each(TEMPLATES)('%s — sale shortcuts', (_, t) => {
       return;
     }
     expect(api.selected()).toBe('p1');
-    expect(t === 'focus' ? api.posActionMode() : api.classicNumpadMode()).toBe(mode);
+    // Cart Focus and Classic both open the Alter Item dialog on the requested field.
+    expect(api.classicNumpadMode()).toBe(mode);
     expect(derivedTarget(api)).toBe(target);
-    expectFocus(t === 'focus' ? searchBox(t) : screen.getByRole('dialog').querySelector('input'));
+    expectFocus(screen.getByRole('dialog').querySelector('input'));
   });
 
   it('22. F10 holds the bill through the existing Hold action, and search has the caret again', async () => {

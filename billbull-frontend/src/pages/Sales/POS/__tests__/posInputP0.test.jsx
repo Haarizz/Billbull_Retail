@@ -40,7 +40,6 @@ const makeSpies = () => ({
   updateItemPrice: vi.fn(),
   updateQuantity: vi.fn(),
   updateDiscount: vi.fn(),
-  resetFocusMode: vi.fn(),
   showFeedback: vi.fn(),
 });
 
@@ -51,6 +50,8 @@ const Harness = ({ spies, mode = 'none', children = null }) => {
   // Stable, like the useState setter POSSales passes. An unstable one re-runs the wedge effect
   // on every keystroke, whose cleanup empties the scan buffer — which would hide the C1 defect.
   const setBarcodeInput = useCallback((v) => { spies.setBarcodeInput(v); setBarcodeInputState(v); }, [spies]);
+  // The Alter Item dialog's field value, owned by POSSales (classicNumpadValue).
+  const [numpadValue, setNumpadValue] = useState('');
   return (
     <>
       <POSTouchScreen
@@ -68,16 +69,17 @@ const Harness = ({ spies, mode = 'none', children = null }) => {
         setBarcodeSuggestions={() => {}}
         handleBarcodeScan={spies.scan}
         handleUnifiedEntry={spies.scan}
-        posActionMode={mode}
-        setPosActionMode={() => {}}
+        classicNumpadMode={mode}
+        setClassicNumpadMode={() => {}}
+        classicNumpadValue={numpadValue}
+        setClassicNumpadValue={setNumpadValue}
+        classicDiscountType="percent"
+        setClassicDiscountType={() => {}}
         selectedFocusItemId={mode === 'none' ? null : 'p1'}
         setSelectedFocusItemId={() => {}}
         updateItemPrice={spies.updateItemPrice}
         updateQuantity={spies.updateQuantity}
         updateDiscount={spies.updateDiscount}
-        resetFocusMode={spies.resetFocusMode}
-        discountInputType="percent"
-        setDiscountInputType={() => {}}
         showFeedback={spies.showFeedback}
         handleCheckout={() => true}
       />
@@ -87,6 +89,8 @@ const Harness = ({ spies, mode = 'none', children = null }) => {
 };
 
 const barcodeBox = () => screen.getByPlaceholderText('Scan barcode or enter 3*CODE..');
+/** The Alter Item dialog's field — Cart Focus's qty / price / discount entry. */
+const alterField = () => screen.getByRole('dialog').querySelector('input');
 
 /** Keystrokes into the focused barcode box: keydown, then the browser's own value update. */
 const typeInto = (input, text, gap) => {
@@ -171,7 +175,7 @@ describe('C1 — one scanner event, one scan', () => {
 describe('C2 — price mode is scanner-safe', () => {
   it('a typed price + Enter sets the price and never reaches barcode processing', () => {
     render(<Harness spies={spies} mode="price" />);
-    const box = barcodeBox();
+    const box = alterField();
     box.focus();
     typeInto(box, '25', TYPE_GAP);
     enter(box, TYPE_GAP);
@@ -188,7 +192,7 @@ describe('C2 — price mode is scanner-safe', () => {
 
   it('a barcode scanned in price mode is refused — it neither becomes the price nor a cart line', () => {
     render(<Harness spies={spies} mode="price" />);
-    const box = barcodeBox();
+    const box = alterField();
     box.focus();
     typeInto(box, '6291041500213', SCAN_GAP);
     enter(box);
@@ -199,7 +203,7 @@ describe('C2 — price mode is scanner-safe', () => {
 
   it('quantity and discount modes behave as before', () => {
     const { unmount } = render(<Harness spies={spies} mode="qty" />);
-    let box = barcodeBox();
+    let box = alterField();
     box.focus();
     typeInto(box, '3', TYPE_GAP);
     enter(box, TYPE_GAP);
@@ -207,7 +211,7 @@ describe('C2 — price mode is scanner-safe', () => {
     unmount();
 
     render(<Harness spies={spies} mode="discount" />);
-    box = barcodeBox();
+    box = alterField();
     box.focus();
     typeInto(box, '10', TYPE_GAP);
     enter(box, TYPE_GAP);

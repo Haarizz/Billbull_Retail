@@ -72,13 +72,15 @@ const CartFocus = ({ scan, mode = 'none' }) => {
       setBarcodeSuggestions={() => {}}
       handleBarcodeScan={scan}
       handleUnifiedEntry={scan}
-      posActionMode={mode}
-      setPosActionMode={() => {}}
+      classicNumpadMode={mode}
+      setClassicNumpadMode={() => {}}
+      classicNumpadValue=""
+      setClassicNumpadValue={() => {}}
+      classicDiscountType="percent"
+      setClassicDiscountType={() => {}}
       selectedFocusItemId={mode === 'none' ? null : 'p1'}
       setSelectedFocusItemId={() => {}}
-      updateItemPrice={vi.fn()} updateQuantity={vi.fn()} updateDiscount={vi.fn()} resetFocusMode={vi.fn()}
-      discountInputType="percent"
-      setDiscountInputType={() => {}}
+      updateItemPrice={vi.fn()} updateQuantity={vi.fn()} updateDiscount={vi.fn()}
       showFeedback={vi.fn()}
       handleCheckout={() => true}
     />
