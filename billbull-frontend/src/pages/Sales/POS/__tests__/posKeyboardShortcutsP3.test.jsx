@@ -702,7 +702,7 @@ describe.each(TEMPLATES)('%s — sale shortcuts', (_, t) => {
     expect(api.selected()).toBe('p1');
     expect(t === 'focus' ? api.posActionMode() : api.classicNumpadMode()).toBe(mode);
     expect(derivedTarget(api)).toBe(target);
-    expectFocus(t === 'focus' ? searchBox(t) : screen.getByPlaceholderText('0'));
+    expectFocus(t === 'focus' ? searchBox(t) : screen.getByRole('dialog').querySelector('input'));
   });
 
   it('22. F10 holds the bill through the existing Hold action, and search has the caret again', async () => {

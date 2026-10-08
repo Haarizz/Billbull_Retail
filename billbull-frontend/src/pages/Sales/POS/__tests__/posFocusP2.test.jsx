@@ -184,7 +184,7 @@ function PosHarness({ template, scannerConfig = WEDGE, focusEnabled = true, api 
     barcodeSuggestions: barcodeInput.trim() ? [PRODUCTS[1]] : [], setBarcodeSuggestions: noop,
     searchQuery, setSearchQuery,
     handleBarcodeScan, handleUnifiedEntry, handleProductSelection, handleEditItem: noop,
-    updateQuantity, updateDiscount: noop, updateItemPrice: noop,
+    updateQuantity, updateDiscount: api.discounted, updateItemPrice: api.priced,
     voidFromInvoice: removeItem, guardedRemoveFromInvoice: removeItem, guardedClearInvoice: () => setItems([]),
     holdInvoice, holdBusy: false,
     posActionMode, setPosActionMode, selectedFocusItemId, setSelectedFocusItemId,
@@ -353,7 +353,7 @@ const watchAppTimers = () => {
 };
 
 const setup = (template, opts = {}) => {
-  const api = { added: vi.fn(), held: vi.fn() };
+  const api = { added: vi.fn(), held: vi.fn(), priced: vi.fn(), discounted: vi.fn() };
   api.expose = (handles) => Object.assign(api, handles);
   const utils = render(<PosHarness template={template} api={api} {...opts} />);
   return { api, ...utils };
@@ -361,6 +361,8 @@ const setup = (template, opts = {}) => {
 /** What the focus controller derives right now, from the same registry. */
 const derivedTarget = (api) => createPosFocusController({ registry: api.registry }).evaluate().target;
 const expectFocus = (node) => expect(document.activeElement).toBe(node);
+/** The Classic Alter Item dialog's entry field (its label follows the active section). */
+const alterField = () => screen.getByRole('dialog').querySelector('input');
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -622,7 +624,7 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
       await flush();
       await scan(WIDGET);
       await click(screen.getByRole('button', { name: label }));
-      const field = screen.getByPlaceholderText('0');
+      const field = alterField();
       expectFocus(field);
       expect(derivedTarget(api)).toBe(target);
       await click(screen.getAllByText('Widget')[0]); // select the cart row
@@ -647,6 +649,56 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     await type('4');
     await press('Enter');
     expect(api.items()[0].quantity).toBe(4);
+    expectFocus(searchBox('classic'));
+  });
+
+  it('Classic: a row click selects the line; clicking the selected line opens Alter Item on Quantity', async () => {
+    const { api } = setup('classic');
+    await flush();
+    await scan(WIDGET);
+    await click(screen.getAllByText('Widget')[0]);
+    expect(screen.queryByRole('dialog')).toBeNull(); // selected only: +, − and Delete target it
+    await click(screen.getAllByText('Widget')[0]);
+    expect(screen.getByRole('tab', { name: 'Quantity' }).getAttribute('aria-selected')).toBe('true');
+    expectFocus(alterField());
+    expect(derivedTarget(api)).toBe(T.QUANTITY);
+  });
+
+  it('Classic Alter Item: arrows move between fields and one Enter applies qty, price and discount together', async () => {
+    const { api } = setup('classic');
+    await flush();
+    await scan(WIDGET);
+    await click(screen.getAllByText('Widget')[0]); // select
+    await click(screen.getAllByText('Widget')[0]); // open
+    await type('3');
+    await press('ArrowDown'); // → Unit Price
+    expect(screen.getByRole('tab', { name: 'Unit Price' }).getAttribute('aria-selected')).toBe('true');
+    expectFocus(alterField());
+    expect(derivedTarget(api)).toBe(T.PRICE);
+    await type('20');
+    await press('ArrowDown'); // → Discount
+    expect(derivedTarget(api)).toBe(T.DISCOUNT);
+    await type('10');
+    await press('ArrowUp'); // back to Unit Price: its draft is kept
+    expect(alterField().value).toBe('20');
+    await press('Enter');
+    const line = api.items()[0];
+    expect(line.quantity).toBe(3);
+    expect(api.priced).toHaveBeenCalledWith(line.id, 20);
+    expect(api.discounted).toHaveBeenCalledWith(line.id, 10);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expectFocus(searchBox('classic'));
+  });
+
+  it('Classic Alter Item: Escape cancels without touching the line and hands the caret back to search', async () => {
+    const { api } = setup('classic');
+    await flush();
+    await scan(WIDGET);
+    await click(screen.getByRole('button', { name: 'Price' }));
+    await type('99');
+    await press('Escape');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(api.priced).not.toHaveBeenCalled();
     expectFocus(searchBox('classic'));
   });
 
@@ -749,6 +801,37 @@ describe.each(TEMPLATES)('P2.5 popups — %s customer dropdown', (_, t) => {
     expect(api.added).not.toHaveBeenCalled();
     expect(customerSearch().value).toBe(WIDGET);
     expectFocus(customerSearch());
+  });
+});
+
+// The customer search's arrow keys (Cart Focus and Classic): ↑/↓ move a highlight, Enter picks it.
+describe.each(TEMPLATES.filter(([, t]) => t !== 'compact'))('%s customer search arrow keys', (_, t) => {
+  const open = async () => {
+    await flush();
+    await click(customerOpener());
+    expectFocus(customerSearch());
+  };
+  const popupOpen = () => screen.queryByPlaceholderText(/Search (Name|Customer)/) !== null;
+
+  it('Enter picks nothing until an arrow highlights a row; ↓ then Enter selects it', async () => {
+    const { api } = setup(t);
+    await open();
+    await press('Enter');
+    expect(popupOpen()).toBe(true);
+    await press('ArrowDown');
+    await press('Enter');
+    expect(popupOpen()).toBe(false);
+    expect(screen.getAllByRole('button', { name: /Alice Buyer/ }).length).toBeGreaterThan(0);
+    expect(api.added).not.toHaveBeenCalled();
+  });
+
+  it('Escape closes the dropdown without selecting', async () => {
+    setup(t);
+    await open();
+    await press('ArrowDown');
+    await press('Escape');
+    expect(popupOpen()).toBe(false);
+    expect(screen.queryByRole('button', { name: /Alice Buyer/ })).toBeNull();
   });
 });
 

@@ -19,14 +19,16 @@ const EDITS = {
       + '    scope: POS_SCOPES.COMPLETE,\n'
       + '    owner: POS_OVERLAY_IDS.CHECKOUT_COMPLETE,\n'
       + '    actions: { newSale: onNewSale },\n'
-      + '  });\n',
+      + '  });\n'
+      + '  useNewSaleEnterFallback(newSaleRef, onNewSale);\n',
       '',
     ],
     ["import React, { useRef } from 'react';\n", "import React from 'react';\n"],
     [
       "import { usePosFocusTarget, usePosShortcuts } from '../../input/PosOverlayContext';\n"
       + "import { POS_FOCUS_TARGETS } from '../../input/posFocus';\n"
-      + "import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';\n",
+      + "import { POS_OVERLAY_IDS, POS_SCOPES } from '../../input/posScope';\n"
+      + "import { useNewSaleEnterFallback } from './useNewSaleEnterFallback';\n",
       '',
     ],
     [

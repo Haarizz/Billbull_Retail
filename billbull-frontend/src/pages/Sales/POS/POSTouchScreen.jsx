@@ -256,6 +256,41 @@ const POSTouchScreen = React.memo((props) => {
     active: Boolean(showCustomerDropdown),
   });
 
+  // Customer search keyboard: ↑/↓ move the highlight through the results (the last stop is
+  // "Create New Customer"), Enter picks the highlighted row, Escape closes the dropdown. Nothing
+  // is highlighted until an arrow is pressed, so a scanner burst's trailing Enter picks no one.
+  const [customerHighlight, setCustomerHighlight] = useState(-1);
+  const customerListRef = useRef(null);
+  const customerOptionCount = posCustomersLoading ? 0 : filteredCustomerOptions.length;
+  useEffect(() => { setCustomerHighlight(-1); }, [customerSearchQuery, showCustomerDropdown]);
+  useEffect(() => {
+    if (!showCustomerDropdown || customerHighlight < 0) return;
+    const row = customerListRef.current?.querySelector(`[data-customer-index="${customerHighlight}"]`);
+    row?.scrollIntoView?.({ block: 'nearest' });
+  }, [customerHighlight, showCustomerDropdown]);
+  const pickCustomer = (id) => {
+    setSelectedCustomer(id);
+    setShowCustomerDropdown(false);
+    setCustomerSearchQuery('');
+  };
+  const createCustomerFromSearch = () => {
+    setShowCustomerDropdown(false);
+    openQuickCustomerModal(customerSearchQuery);
+  };
+  const onCustomerSearchKeyDown = (e) => {
+    const { key } = e;
+    if (key !== 'ArrowDown' && key !== 'ArrowUp' && key !== 'Enter' && key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (key === 'Escape') { setShowCustomerDropdown(false); return; }
+    const last = customerOptionCount; // index of "Create New Customer"
+    if (key === 'ArrowDown') { setCustomerHighlight(i => (i >= last ? 0 : i + 1)); return; }
+    if (key === 'ArrowUp') { setCustomerHighlight(i => (i <= 0 ? last : i - 1)); return; }
+    if (e.repeat || customerHighlight < 0) return;
+    if (customerHighlight < customerOptionCount) pickCustomer(filteredCustomerOptions[customerHighlight].id);
+    else createCustomerFromSearch();
+  };
+
   // Classic: the item keypad is the Alter Item dialog. It edits the selected cart line, and is on
   // screen exactly while classicNumpadMode is set and that line is still in the cart.
   const classicMode = classicNumpadMode || 'none';
@@ -528,18 +563,18 @@ const POSTouchScreen = React.memo((props) => {
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                       <input ref={customerSearchInputRef} autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
-                        onChange={e => setCustomerSearchQuery(e.target.value)}
+                        onChange={e => setCustomerSearchQuery(e.target.value)} onKeyDown={onCustomerSearchKeyDown}
                         className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-[#327F74]/30 rounded focus:outline-none focus:border-[#327F74]" />
                     </div>
                   </div>
-                  <div className="max-h-48 overflow-y-auto">
+                  <div ref={customerListRef} className="max-h-48 overflow-y-auto">
                     {posCustomersLoading && (
                       <div className="px-3 py-3 text-xs text-gray-400">Loading customers...</div>
                     )}
-                    {!posCustomersLoading && filteredCustomerOptions.map(customer => (
-                      <button key={customer.id} type="button"
-                        onClick={() => { setSelectedCustomer(customer.id); setShowCustomerDropdown(false); setCustomerSearchQuery(''); }}
-                        className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-[#F5C742]/10 transition-colors text-left border-b border-[#327F74]/10 ${selectedCustomer === customer.id ? 'bg-[#F5C742]/10' : ''}`}>
+                    {!posCustomersLoading && filteredCustomerOptions.map((customer, idx) => (
+                      <button key={customer.id} type="button" data-customer-index={idx}
+                        onClick={() => pickCustomer(customer.id)} onMouseMove={() => setCustomerHighlight(idx)}
+                        className={`w-full flex items-center gap-2 px-3 py-2.5 hover:bg-[#F5C742]/10 transition-colors text-left border-b border-[#327F74]/10 ${customerHighlight === idx ? 'bg-[#F5C742]/25' : selectedCustomer === customer.id ? 'bg-[#F5C742]/10' : ''}`}>
                         <div className="w-7 h-7 rounded-full bg-[#F5C742] flex items-center justify-center flex-shrink-0 text-white text-xs font-bold">{customer.name.charAt(0)}</div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-[#1E293B] truncate">{customer.name}</p>
@@ -553,8 +588,8 @@ const POSTouchScreen = React.memo((props) => {
                       </div>
                     )}
                     <div className="p-2 bg-slate-50 border-t border-[#327F74]/10">
-                      <button type="button" onClick={() => { setShowCustomerDropdown(false); openQuickCustomerModal(customerSearchQuery); }}
-                        className="w-full py-2 px-3 bg-white hover:bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+                      <button type="button" data-customer-index={customerOptionCount} onClick={createCustomerFromSearch}
+                        className={`w-full py-2 px-3 hover:bg-emerald-50 border rounded-lg text-emerald-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors ${customerHighlight === customerOptionCount ? 'bg-emerald-50 border-emerald-400' : 'bg-white border-emerald-200'}`}>
                         <Plus className="h-3.5 w-3.5 text-emerald-600" />
                         Create New Customer: "{customerSearchQuery || 'Enter details'}"
                       </button>
@@ -1189,18 +1224,18 @@ const POSTouchScreen = React.memo((props) => {
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                       <input ref={customerSearchInputRef} autoFocus type="text" placeholder="Search Name, Mobile, Email, TRN..." value={customerSearchQuery}
-                        onChange={e => setCustomerSearchQuery(e.target.value)}
+                        onChange={e => setCustomerSearchQuery(e.target.value)} onKeyDown={onCustomerSearchKeyDown}
                         className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded focus:outline-none focus:border-[#F5C742]" />
                     </div>
                   </div>
-                  <div className="max-h-48 overflow-y-auto">
+                  <div ref={customerListRef} className="max-h-48 overflow-y-auto">
                     {posCustomersLoading && (
                       <div className="px-3 py-3 text-xs text-gray-400">Loading customers...</div>
                     )}
-                    {!posCustomersLoading && filteredCustomerOptions.map(customer => (
-                      <button key={customer.id} type="button"
-                        onClick={() => { setSelectedCustomer(customer.id); setShowCustomerDropdown(false); setCustomerSearchQuery(''); }}
-                        className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5C742]/10 text-left border-b border-gray-50 ${selectedCustomer === customer.id ? 'bg-[#F5C742]/10' : ''}`}>
+                    {!posCustomersLoading && filteredCustomerOptions.map((customer, idx) => (
+                      <button key={customer.id} type="button" data-customer-index={idx}
+                        onClick={() => pickCustomer(customer.id)} onMouseMove={() => setCustomerHighlight(idx)}
+                        className={`w-full flex items-center gap-2 px-3 py-2 hover:bg-[#F5C742]/10 text-left border-b border-gray-50 ${customerHighlight === idx ? 'bg-[#F5C742]/25' : selectedCustomer === customer.id ? 'bg-[#F5C742]/10' : ''}`}>
                         <div className="w-7 h-7 rounded-full bg-[#F5C742] flex items-center justify-center shrink-0 text-white text-xs font-bold">{customer.name.charAt(0)}</div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-[#1E293B] truncate">{customer.name}</p>
@@ -1214,8 +1249,8 @@ const POSTouchScreen = React.memo((props) => {
                       </div>
                     )}
                     <div className="p-2 bg-slate-50 border-t border-gray-100">
-                      <button type="button" onClick={() => { setShowCustomerDropdown(false); openQuickCustomerModal(customerSearchQuery); }}
-                        className="w-full py-2 px-3 bg-white hover:bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors">
+                      <button type="button" data-customer-index={customerOptionCount} onClick={createCustomerFromSearch}
+                        className={`w-full py-2 px-3 hover:bg-emerald-50 border rounded-lg text-emerald-700 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-colors ${customerHighlight === customerOptionCount ? 'bg-emerald-50 border-emerald-400' : 'bg-white border-emerald-200'}`}>
                         <Plus className="h-3.5 w-3.5 text-emerald-600" />
                         Create New Customer: "{customerSearchQuery || 'Enter details'}"
                       </button>
@@ -1273,7 +1308,14 @@ const POSTouchScreen = React.memo((props) => {
                   currentInvoice.items.map((item, idx) => (
                     <div key={item.id}
                       className={`grid ${CART_GRID_COLS} gap-x-1 items-center px-3 py-2 border-b border-gray-50 transition-colors cursor-pointer group ${item.isVoided ? 'bg-red-50/70' : selectedFocusItemId === item.id ? 'bg-[#F5C742]/10 border-l-2 border-l-[#F5C742]' : idx % 2 === 0 ? 'bg-white hover:bg-[#F5C742]/5' : 'bg-gray-50/60 hover:bg-[#F5C742]/5'}`}
-                      onClick={() => !item.isVoided && openAlterItem(item.id, classicMode !== 'none' ? classicMode : 'qty')}>
+                      onClick={() => {
+                        if (item.isVoided) return;
+                        // First click selects the line (the +, − and Delete shortcuts' target);
+                        // clicking the selected line opens Alter Item on it.
+                        if (classicMode !== 'none') openAlterItem(item.id, classicMode);
+                        else if (item.id === selectedFocusItemId) openAlterItem(item.id, 'qty');
+                        else setSelectedFocusItemId(item.id);
+                      }}>
                       <div className="min-w-0 pr-1">
                         {/* Voided line: muted red + [VOID] tag + negative amounts (no
                             strike-through). Excluded from the total; disclosed below. */}
