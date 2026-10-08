@@ -37,7 +37,8 @@ public class CorsConfig {
                 "https://leroyalflowers.billbull.app",
                 "https://leroyalgifts.billbull.app",
                 "https://demo.billbull.app",
-                "https://alfahad.billbull.app"
+                "https://alfahad.billbull.app",
+                "https://bikevillage.billbull.app"
                 ));
                 config.setAllowedMethods(List.of(
                                 "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
