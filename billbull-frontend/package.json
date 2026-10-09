@@ -14,7 +14,10 @@
     "preview": "vite preview",
     "test": "vitest run",
     "shared:exports": "node scripts/workspaceBoundaries.mjs --write",
-    "check:boundaries": "node scripts/workspaceBoundaries.mjs"
+    "check:boundaries": "node scripts/workspaceBoundaries.mjs",
+    "dev:pos": "vite --config apps/pos/vite.config.js",
+    "build:pos": "vite build --config apps/pos/vite.config.js",
+    "preview:pos": "vite preview --config apps/pos/vite.config.js"
   },
   "dependencies": {
     "@billbull/shared": "0.0.0",

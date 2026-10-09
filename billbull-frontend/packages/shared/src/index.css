@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Class sources for every app that imports this stylesheet: the shared package itself. Each app's
+   own files are found by Tailwind's automatic detection from that app's Vite root. */
+@source ".";
 
 /* ── shadcn/ui design tokens (required for bg-background, bg-card, etc.) ── */
 :root {

@@ -20,6 +20,22 @@ export const persistLoginSession = (data) => {
   sessionStorage.setItem("fullName", data.fullName || data.username);
 };
 
+// 🚫 The message a login screen shows for a failed attempt. A 429 is the brute-force lockout / rate
+// limit: surface the advised wait (Retry-After header or retryAfterSeconds in the body). The text
+// stays generic otherwise — the backend never reveals whether the username exists.
+export const describeLoginError = (err) => {
+  if (err?.response?.status === 429) {
+    const waitSeconds =
+      Number(err.response.headers?.["retry-after"]) ||
+      Number(err.response.data?.retryAfterSeconds) ||
+      0;
+    return waitSeconds > 0
+      ? `Too many login attempts. Please wait ${waitSeconds} seconds before trying again.`
+      : "Too many login attempts. Please wait a moment before trying again.";
+  }
+  return "Invalid username or password";
+};
+
 // 🔍 Decode JWT
 export const getDecodedToken = () => {
   const token = sessionStorage.getItem("token");

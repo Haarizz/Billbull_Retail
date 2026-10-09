@@ -30,6 +30,7 @@ billbull-backend/.settings/
 billbull-frontend/node_modules/
 billbull-frontend/dist/
 billbull-frontend/dist_check/
+billbull-frontend/apps/*/dist/
 
 # Local env files
 billbull-frontend/.env

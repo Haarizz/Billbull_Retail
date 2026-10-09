@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login, persistLoginSession } from "@billbull/shared/api/auth";
+import { describeLoginError, login, persistLoginSession } from "@billbull/shared/api/auth";
 import { useCompany } from "@billbull/shared/context/CompanyContext";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import billBullLogo from "@billbull/shared/assets/billBullLogo.png";
@@ -64,22 +64,7 @@ const Login = () => {
       navigate(clientConfig.landing.defaultRoute || roleRedirects[primaryRole] || "/");
     } catch (err) {
       console.error(err);
-      if (err.response?.status === 429) {
-        // Brute-force lockout / rate limit. Surface the advised wait time so the user knows how
-        // long to hold off (Retry-After header or retryAfterSeconds in the body). Message stays
-        // generic — the backend never reveals whether the username exists.
-        const waitSeconds =
-          Number(err.response.headers?.["retry-after"]) ||
-          Number(err.response.data?.retryAfterSeconds) ||
-          0;
-        setError(
-          waitSeconds > 0
-            ? `Too many login attempts. Please wait ${waitSeconds} seconds before trying again.`
-            : "Too many login attempts. Please wait a moment before trying again."
-        );
-      } else {
-        setError("Invalid username or password");
-      }
+      setError(describeLoginError(err));
     } finally {
       setIsLoading(false);
     }

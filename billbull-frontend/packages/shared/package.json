@@ -74,6 +74,7 @@
     "./pages/Sales/POS/payments/PaymentAllocationPanel": "./src/pages/Sales/POS/payments/PaymentAllocationPanel.jsx",
     "./pages/Sales/POS/payments/modals/CashPaymentModal": "./src/pages/Sales/POS/payments/modals/CashPaymentModal.jsx",
     "./pages/Sales/POS/payments/paymentPresentation": "./src/pages/Sales/POS/payments/paymentPresentation.js",
+    "./pages/Sales/POS/posHost": "./src/pages/Sales/POS/posHost.js",
     "./pages/Sales/POS/posPrintUtils": "./src/pages/Sales/POS/posPrintUtils.js",
     "./pages/Sales/POS/posUtils": "./src/pages/Sales/POS/posUtils.js",
     "./pages/Sales/POSSales": "./src/pages/Sales/POSSales.jsx",
