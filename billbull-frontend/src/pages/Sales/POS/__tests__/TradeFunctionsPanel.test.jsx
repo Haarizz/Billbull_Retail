@@ -127,7 +127,7 @@ describe('source contract', () => {
   const TRADE = read('../TradePOS/TradePOSTouchScreen.jsx');
 
   it('the panel defines no buttons of its own — it only renders the shared builder', () => {
-    expect(PANEL).toContain("import { buildPosFunctionButtons } from '../../../lib/posFunctionButtons';");
+    expect(PANEL).toContain("import { buildPosFunctionButtons, groupPosFunctionButtons } from '../../../lib/posFunctionButtons';");
     // A second copy of the list is the failure mode this whole module exists to prevent.
     expect(PANEL).not.toMatch(/\bid: '(price-chk|coupons|cash-drop|layaways)'/);
     expect(PANEL).not.toMatch(/setShow\w+\(true\)/);

@@ -149,6 +149,7 @@ import {
 import { DirhamSymbol, DenominationLabel, CurrencyAmount, DenominationAmount, renderAED, setActiveCurrency } from './POS/POSCurrency';
 import { WALK_IN_CUSTOMER, STATUS_ENUM_TO_LABEL } from './POS/posConstants';
 import { toNumber, mapPosProductAggregateItem, mapPosCustomer, getPriceFloor, mergeSavedPosSettings } from './POS/posUtils';
+import InvoicePreviewItems from './POS/features/customers/InvoicePreviewItems';
 import {
   buildZatcaTlvBase64, buildThermalReceiptHtml, buildLayawayReceiptHtml, buildLayawayReceiptText,
   buildPosPrintData,
@@ -8859,61 +8860,8 @@ export default function POSSales() {
                           <div className="flex flex-col gap-0.5"><span className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Items</span><span className="text-[#1E293B] font-semibold">{items.length} item{items.length !== 1 ? 's' : ''}</span></div>
                         </div>
 
-                        {/* Line items — internally scrollable so a long invoice doesn't push
-                            the totals/footer off screen; header stays pinned while scrolling. */}
-                        <div className="border border-gray-100 rounded-xl overflow-hidden">
-                          <div className="overflow-x-auto">
-                            <div className="max-h-64 overflow-y-auto">
-                              <table className="w-full text-xs min-w-[420px]">
-                                <thead className="bg-gray-50 sticky top-0 z-10">
-                                  <tr className="text-gray-500">
-                                    <th className="px-3 py-2 text-left font-semibold uppercase tracking-wide text-[10px]">Item</th>
-                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Qty</th>
-                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Price</th>
-                                    <th className="px-3 py-2 text-right font-semibold uppercase tracking-wide text-[10px]">Total</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-50">
-                                  {items.length === 0 ? (
-                                    <tr><td colSpan={4} className="px-3 py-4 text-center text-gray-400">No line items on this invoice.</td></tr>
-                                  ) : items.map((it, i) => {
-                                    const imgSrc = it.image
-                                      ? (it.image.startsWith('data:') || it.image.startsWith('http') ? it.image : `data:image/jpeg;base64,${it.image}`)
-                                      : null;
-                                    return (
-                                      <tr key={i} className={i % 2 === 1 ? 'bg-gray-50/60' : ''}>
-                                        <td className="px-3 py-2.5 text-[#1E293B] align-top">
-                                          <div className="flex items-start gap-2.5">
-                                            <div className="w-9 h-9 shrink-0 rounded-lg overflow-hidden border border-gray-100 bg-gray-50 flex items-center justify-center">
-                                              {imgSrc
-                                                ? <img src={imgSrc} alt="" className="w-full h-full object-cover" />
-                                                : <Package className="w-4 h-4 text-gray-300" />}
-                                            </div>
-                                            <div className="min-w-0">
-                                              <p className="font-medium leading-tight">{it.itemName || it.itemCode}</p>
-                                              <p className="text-[10px] font-mono text-gray-400 mt-0.5 flex items-center gap-1 flex-wrap">
-                                                {it.itemCode && <span>{it.itemCode}</span>}
-                                                {(it.pinnedBatchNumber || it.batchNumber) && (
-                                                  <span className="text-amber-600 font-sans font-semibold">⛓ {it.pinnedBatchNumber || it.batchNumber}</span>
-                                                )}
-                                                {(it.discountPercent > 0) && (
-                                                  <span className="text-orange-500 font-sans font-semibold">−{it.discountPercent}%</span>
-                                                )}
-                                              </p>
-                                            </div>
-                                          </div>
-                                        </td>
-                                        <td className="px-3 py-2.5 text-right text-[#1E293B] align-top">{it.quantity}</td>
-                                        <td className="px-3 py-2.5 text-right text-[#1E293B] align-top">{formatCurrency(it.unitPrice ?? it.price ?? 0)}</td>
-                                        <td className="px-3 py-2.5 text-right font-semibold text-[#1E293B] align-top">{formatCurrency(it.netAmount ?? it.lineTotal ?? 0)}</td>
-                                      </tr>
-                                    );
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        </div>
+                        {/* Line items — thumbnails open a zoom view; click a row for discount/VAT/batch detail. */}
+                        <InvoicePreviewItems items={items} formatCurrency={formatCurrency} />
 
                         {/* Totals */}
                         <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-1.5 text-xs">
@@ -10254,9 +10202,6 @@ export default function POSSales() {
                   <div className="space-y-1.5">
                     {[
                       { id: 'hold', label: 'Hold Bill' },
-                      { id: 'add-qty', label: 'Add Qty' },
-                      { id: 'remove', label: 'Remove Item' },
-                      { id: 'discount', label: 'Discount' },
                       { id: 'layaways', label: 'Layaways' },
                       { id: 'save-layaway', label: 'Save Layaway' },
                       { id: 'save-order', label: 'Save ' },

@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Hash, Tag, Percent, X, Delete, CornerDownLeft, ArrowUp, ArrowDown, Lock } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Hash, Tag, Percent, X, Delete, CornerDownLeft, ArrowUp, ArrowDown, Lock, Package } from 'lucide-react';
 import { DirhamSymbol } from '../../POSCurrency';
 import { createBurstTracker } from '../../device/scanner/scanGuard';
 
@@ -27,22 +27,26 @@ import { createBurstTracker } from '../../device/scanner/scanGuard';
  * <p>Every button cancels its mousedown, so the caret never leaves the field and the keyboard
  * keeps working after a pointer tap: digits type, ↑/↓ or Tab move between sections, ←/→ switch
  * % / amount on Discount, Q / P / D (or F4 / F9 / F8) jump to a section, Enter applies, Esc cancels.
+ *
+ * <p>`variant="panel"` renders the same editor inline (Cart Focus puts it in place of the last-item
+ * card and scan keypad in its middle column) instead of as a centred overlay. Behaviour is shared;
+ * only the layout differs.
  */
 const MODES = ['qty', 'price', 'discount'];
 
 const SECTIONS = {
   qty: {
-    label: 'Quantity', key: 'Q', Icon: Hash, fieldLabel: 'New quantity',
+    label: 'Quantity', short: 'Qty', key: 'Q', Icon: Hash, fieldLabel: 'New quantity',
     active: 'border-blue-400 bg-blue-50/70 ring-4 ring-blue-100',
     icon: 'bg-blue-600 text-white', text: 'text-blue-700',
   },
   price: {
-    label: 'Unit Price', key: 'P', Icon: Tag, fieldLabel: 'New unit price',
+    label: 'Unit Price', short: 'Price', key: 'P', Icon: Tag, fieldLabel: 'New unit price',
     active: 'border-purple-400 bg-purple-50/70 ring-4 ring-purple-100',
     icon: 'bg-purple-600 text-white', text: 'text-purple-700',
   },
   discount: {
-    label: 'Discount', key: 'D', Icon: Percent, fieldLabel: 'Discount',
+    label: 'Discount', short: 'Disc', key: 'D', Icon: Percent, fieldLabel: 'Discount',
     active: 'border-[#F5C742] bg-[#FFF8E7] ring-4 ring-[#F5C742]/25',
     icon: 'bg-[#F5C742] text-[#1E293B]', text: 'text-[#B8942E]',
   },
@@ -66,6 +70,10 @@ const sanitize = (raw) => {
 // where the next Enter would press it again instead of confirming the value.
 const keepFocus = (e) => e.preventDefault();
 
+// The dialog opens over the cart row that was tapped, so the trailing tap of a fast double/triple
+// tap lands on the backdrop. Backdrop taps inside this window after opening are ignored.
+const BACKDROP_GRACE_MS = 450;
+
 const AlterItemModal = ({
   item,
   mode,
@@ -80,6 +88,7 @@ const AlterItemModal = ({
   formatCurrency,
   suppressLegacyScan = false,
   onScanRefused,
+  variant = 'dialog',
 }) => {
   // Keystroke timing on the field, so a scan can be told apart from a typed value.
   const [burst] = useState(() => createBurstTracker());
@@ -88,6 +97,20 @@ const AlterItemModal = ({
   const [drafts, setDrafts] = useState({ qty: '', price: '', discount: '' });
   const draftOf = (m) => (m === mode ? value : drafts[m]);
   const qtyLocked = Boolean(item.batchControlled);
+  // Backdrop dismissal needs a press that both starts and ends on the backdrop, after the grace
+  // window — so a tap that began on the cart row (before the dialog existed) can never close it.
+  const openedAtRef = useRef(0);
+  const backdropPressRef = useRef(false);
+  useEffect(() => { openedAtRef.current = Date.now(); }, []);
+  const onBackdropPointerDown = (e) => {
+    backdropPressRef.current = e.target === e.currentTarget
+      && Date.now() - openedAtRef.current >= BACKDROP_GRACE_MS;
+  };
+  const onBackdropClick = (e) => {
+    const pressed = backdropPressRef.current;
+    backdropPressRef.current = false;
+    if (pressed && e.target === e.currentTarget) onClose();
+  };
 
   useEffect(() => {
     // A batch/serial line is one unit by definition — never open on a field it cannot change.
@@ -191,12 +214,182 @@ const AlterItemModal = ({
     ? (discountType === 'percent' ? 'Discount %' : 'Discount amount')
     : active.fieldLabel;
 
+  const field = (className) => (
+    <input
+      ref={inputRef}
+      type="text"
+      inputMode="decimal"
+      autoFocus
+      autoComplete="off"
+      aria-label={fieldLabel}
+      placeholder={mode === 'qty' ? String(item.quantity) : mode === 'price' ? Number(item.price).toFixed(2) : String(Number(item.discount) || 0)}
+      value={value}
+      onChange={(e) => onValueChange(sanitize(e.target.value))}
+      className={className}
+    />
+  );
+
+  const discountToggle = (track, on, off) => mode === 'discount' && (
+    <div role="radiogroup" aria-label="Discount type" className={`grid grid-cols-2 gap-1 rounded-xl p-1 ${track}`}>
+      {[['percent', <><Percent className="h-3.5 w-3.5" /> Percent</>], ['amount', <><DirhamSymbol /> Amount</>]].map(([t, label]) => (
+        <button
+          key={t}
+          type="button"
+          role="radio"
+          aria-checked={discountType === t}
+          onMouseDown={keepFocus}
+          onClick={() => onDiscountTypeChange(t)}
+          className={`flex items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-bold transition-colors ${discountType === t ? on : off}`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (variant === 'panel') {
+    // Inline editor (Cart Focus middle column): dark header with the line and its three fields,
+    // keypad below. role="dialog" without aria-modal — a non-modal editor; the cart stays usable.
+    return (
+      <div
+        role="dialog"
+        aria-labelledby="alter-item-title"
+        onKeyDown={onKeyDown}
+        data-pos-scan-suppress={suppressLegacyScan ? 'true' : undefined}
+        className="flex-1 flex flex-col min-h-0 overflow-y-auto bg-white"
+      >
+        <div className="bg-linear-to-br from-[#FFF8E7] to-white border-l-4 border-[#F5C742] border-b border-b-[#327F74]/20 px-5 pt-4 pb-5 text-[#1E293B] shrink-0">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[#B8942E]">Alter Item</p>
+            <button
+              type="button"
+              aria-label="Close alter item"
+              onMouseDown={keepFocus}
+              onClick={onClose}
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" /> Cancel
+            </button>
+          </div>
+
+          <div className="mb-4 flex items-center gap-3">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-[#F5C742]/40 bg-[#F5C742]/15 text-[#B8942E]">
+              <Package className="h-6 w-6" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h2 id="alter-item-title" className="truncate text-base font-bold">{item.name}</h2>
+              <p className="truncate text-[11px] tabular-nums text-gray-500">
+                ×{item.quantity} · {formatCurrency(item.price)} each{code ? ` · ${code}` : ''}
+              </p>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-gray-500">{preview.changed ? 'New total' : 'Total'}</p>
+              <p className="text-xl font-black tabular-nums text-[#B8942E]">{formatCurrency(preview.total)}</p>
+            </div>
+          </div>
+
+          <div role="tablist" aria-label="Field to alter" className="grid grid-cols-3 gap-2">
+            {MODES.map((m) => {
+              const s = SECTIONS[m];
+              const isActive = m === mode;
+              const locked = m === 'qty' && qtyLocked;
+              const draft = draftLabel(m);
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-label={s.label}
+                  disabled={locked}
+                  onMouseDown={keepFocus}
+                  onClick={() => switchMode(m)}
+                  className={`flex flex-col items-center justify-center rounded-xl border-2 px-2 py-2.5 transition-colors ${
+                    isActive
+                      ? 'border-[#F5C742] bg-[#F5C742]/15 text-[#1E293B] shadow-sm'
+                      : 'border-[#327F74]/15 bg-white text-[#1E293B] shadow-sm hover:border-[#F5C742]/60 hover:bg-[#FFF8E7]'
+                  } ${locked ? 'cursor-not-allowed opacity-40' : ''}`}
+                >
+                  <span className="flex items-center gap-1 text-base font-bold">
+                    {locked && <Lock className="h-3.5 w-3.5" />}{s.short}
+                  </span>
+                  <span className={`mt-0.5 truncate text-[11px] tabular-nums ${isActive ? 'text-[#B8942E]' : 'text-gray-500'}`}>
+                    {draft ? `→ ${draft}` : (m === 'discount' && !(Number(item.discount) > 0) ? '—' : currentLabel(m))}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {mode === 'discount' && (
+            <div className="mt-3">
+              {discountToggle('bg-[#327F74]/10', 'bg-[#F5C742] text-[#1E293B] shadow-sm', 'text-gray-500 hover:text-gray-700')}
+            </div>
+          )}
+
+          <label className="mt-3 flex items-center gap-3 rounded-xl border-2 border-[#F5C742] bg-white px-4 py-3 shadow-sm">
+            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-[#B8942E]">{fieldLabel}</span>
+            {field('min-w-0 flex-1 bg-transparent text-right font-mono text-2xl font-bold text-[#1E293B] placeholder:text-gray-300 focus:outline-none')}
+          </label>
+        </div>
+
+        <div className="flex flex-1 flex-col gap-2 p-4">
+          <div className="grid grid-cols-3 gap-2">
+            {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0'].map((k) => (
+              <button
+                key={k}
+                type="button"
+                onMouseDown={keepFocus}
+                onClick={() => press(k)}
+                className={`h-12 rounded-xl border border-gray-200 text-xl font-bold shadow-sm transition-all hover:border-[#F5C742] hover:bg-[#FFF8E7] active:scale-95 ${
+                  k === '.' ? 'bg-[#FFF8E7] text-[#B8942E]' : 'bg-gray-50 text-[#1E293B]'
+                }`}
+              >
+                {k}
+              </button>
+            ))}
+            <button
+              type="button"
+              aria-label="Backspace"
+              onMouseDown={keepFocus}
+              onClick={() => onValueChange(value.slice(0, -1))}
+              className="flex h-12 items-center justify-center rounded-xl border border-gray-200 bg-gray-100 text-gray-600 transition-all hover:bg-gray-200 active:scale-95"
+            >
+              <Delete className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onMouseDown={keepFocus}
+              onClick={() => onValueChange('')}
+              className="h-12 rounded-xl border border-red-200 bg-red-50 text-sm font-bold text-red-500 transition-colors hover:bg-red-100"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              aria-label="Apply changes"
+              onMouseDown={keepFocus}
+              onClick={apply}
+              disabled={!preview.changed}
+              className="flex h-12 items-center justify-center gap-1.5 rounded-xl bg-[#327F74] text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#2a6b62] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Alter <CornerDownLeft className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="fixed top-0 right-0 bottom-0 left-0 z-50 flex items-center justify-center bg-[#0F172A]/55 backdrop-blur-[2px] p-4"
       data-pos-scan-suppress={suppressLegacyScan ? 'true' : undefined}
+      onPointerDown={onBackdropPointerDown}
       onMouseDown={(e) => { if (e.target === e.currentTarget) e.preventDefault(); }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={onBackdropClick}
     >
       <div
         role="dialog"
@@ -280,40 +473,11 @@ const AlterItemModal = ({
 
           {/* Entry */}
           <div className="flex flex-col gap-2">
-            {mode === 'discount' && (
-              <div role="radiogroup" aria-label="Discount type" className="grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1">
-                {[['percent', <><Percent className="h-3.5 w-3.5" /> Percent</>], ['amount', <><DirhamSymbol /> Amount</>]].map(([t, label]) => (
-                  <button
-                    key={t}
-                    type="button"
-                    role="radio"
-                    aria-checked={discountType === t}
-                    onMouseDown={keepFocus}
-                    onClick={() => onDiscountTypeChange(t)}
-                    className={`flex items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-bold transition-colors ${
-                      discountType === t ? 'bg-white text-[#1E293B] shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
+            {discountToggle('bg-gray-100', 'bg-white text-[#1E293B] shadow-sm', 'text-gray-500 hover:text-gray-700')}
 
             <label className={`flex items-center gap-2 rounded-xl border-2 bg-gray-50 px-3 py-2 focus-within:bg-white ${active.active.split(' ')[0]}`}>
               <span className={`shrink-0 text-[10px] font-black uppercase tracking-wide ${active.text}`}>{fieldLabel}</span>
-              <input
-                ref={inputRef}
-                type="text"
-                inputMode="decimal"
-                autoFocus
-                autoComplete="off"
-                aria-label={fieldLabel}
-                placeholder={mode === 'qty' ? String(item.quantity) : mode === 'price' ? Number(item.price).toFixed(2) : String(Number(item.discount) || 0)}
-                value={value}
-                onChange={(e) => onValueChange(sanitize(e.target.value))}
-                className="min-w-0 flex-1 bg-transparent text-right font-mono text-2xl font-bold text-[#1E293B] placeholder:text-gray-300 focus:outline-none"
-              />
+              {field('min-w-0 flex-1 bg-transparent text-right font-mono text-2xl font-bold text-[#1E293B] placeholder:text-gray-300 focus:outline-none')}
             </label>
 
             <div className="grid grid-cols-3 gap-1.5">

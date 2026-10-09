@@ -97,4 +97,19 @@ export const buildPosFunctionButtons = (ctx, iconCls = 'h-4 w-4') => {
   });
 };
 
+/**
+ * Sections a button list by `group`, preserving first-seen group order so every template
+ * follows the shared list's ordering. Ungrouped buttons fall into 'Other'.
+ */
+export const groupPosFunctionButtons = (buttons) => {
+  const ordered = [];
+  const byName = new Map();
+  buttons.forEach(btn => {
+    const name = btn.group || 'Other';
+    if (!byName.has(name)) { byName.set(name, []); ordered.push(name); }
+    byName.get(name).push(btn);
+  });
+  return ordered.map(name => ({ name, buttons: byName.get(name) }));
+};
+
 export default buildPosFunctionButtons;

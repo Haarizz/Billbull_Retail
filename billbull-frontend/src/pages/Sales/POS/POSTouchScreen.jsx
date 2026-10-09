@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Percent, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Trash2, Heart, AlertTriangle, AlertCircle, Eye, Gift } from 'lucide-react';
+import { Search, ChevronRight, Calculator, RefreshCw, X, CreditCard, Banknote, ShoppingCart, Tag, Monitor, Settings, LayoutGrid, CheckCircle, ChevronDown, User, XCircle, Clock, Plus, Minus, Pause, Archive, FileText, TrendingUp, Zap, RotateCcw, DollarSign, Receipt, Hash, Printer, Lock, Truck, PackageCheck, Package, Heart, AlertTriangle, AlertCircle, Eye, Gift } from 'lucide-react';
 import { Button } from '../../../components/ui/button';
 import BusinessDayStatusChip from '../../../components/pos/BusinessDayStatusChip';
 import { CurrencyAmount, formatCurrencyStr } from './POSCurrency';
 import { WALK_IN_CUSTOMER } from './posConstants';
 import { toNumber, getCartPriceWarning, getPosVatLabel } from './posUtils';
-import { buildPosFunctionButtons } from './lib/posFunctionButtons';
+import { buildPosFunctionButtons, groupPosFunctionButtons } from './lib/posFunctionButtons';
 import { computeLineTaxTotals, resolveLineTaxRate } from '../../../utils/vatMath';
 import { ScanLine } from 'lucide-react';
 import QuickCustomerModal from './features/customers/QuickCustomerModal';
@@ -298,6 +298,12 @@ const POSTouchScreen = React.memo((props) => {
     setClassicNumpadValue('');
     setSelectedFocusItemId(null);
   }, [setClassicNumpadMode, setClassicNumpadValue, setSelectedFocusItemId]);
+  // Esc / ✕ / backdrop: close but keep the line selected, so a row tap still picks the target of
+  // the +, − and Delete shortcuts (tap, Esc, Delete).
+  const cancelAlterItem = useCallback(() => {
+    setClassicNumpadMode('none');
+    setClassicNumpadValue('');
+  }, [setClassicNumpadMode, setClassicNumpadValue]);
   // Opens the dialog on `itemId` at `mode`. Moving to another line starts that line's entry fresh.
   const openAlterItem = useCallback((itemId, mode) => {
     if (itemId !== selectedFocusItemId || classicMode === 'none') {
@@ -307,23 +313,11 @@ const POSTouchScreen = React.memo((props) => {
     setSelectedFocusItemId(itemId);
     setClassicNumpadMode(mode);
   }, [selectedFocusItemId, classicMode, setClassicNumpadValue, setClassicDiscountType, setSelectedFocusItemId, setClassicNumpadMode]);
-  // Add Qty / Discount / Price buttons: the selected cart line, else the last one entered (same
-  // rule as F4/F8/F9).
-  const openAlterItemOnTarget = (mode) => {
-    const lines = currentInvoice.items.filter(i => !i.isVoided);
-    const target = lines.find(i => i.id === selectedFocusItemId)
-      || lines.find(i => i.id === lastEnteredLineId)
-      || lines[lines.length - 1];
-    if (!target) { showFeedback?.('error', 'Add an item to the cart first'); return; }
-    openAlterItem(target.id, mode);
-  };
-  // Cart row click: the first click selects the line (the +, − and Delete shortcuts' target);
-  // clicking the selected line opens Alter Item on it.
+  // Cart row click: a single tap opens Alter Item on the line (Quantity first, or the section
+  // already open). The row's −, + and void buttons stop propagation, so they never open it.
   const onCartRowClick = (item) => {
     if (item.isVoided) return;
-    if (classicMode !== 'none') openAlterItem(item.id, classicMode);
-    else if (item.id === selectedFocusItemId) openAlterItem(item.id, 'qty');
-    else setSelectedFocusItemId(item.id);
+    openAlterItem(item.id, classicMode !== 'none' ? classicMode : 'qty');
   };
   const applyAlterItem = useCallback(({ quantity, price, discount }) => {
     const id = selectedFocusItemId;
@@ -341,8 +335,7 @@ const POSTouchScreen = React.memo((props) => {
   }, [classicMode, alterItem, closeAlterItem]);
 
   // Keyboard shortcuts (P3). The POS input controller owns the keys; these are this template's
-  // ways of doing each thing. F4/F8/F9 open the same Alter Item dialog the Add Qty / Discount /
-  // Price buttons open, on the line the shortcut targets (selected, else last entered); the focus
+  // ways of doing each thing. F4/F8/F9 open the same Alter Item dialog a cart row tap opens, on the line the shortcut targets (selected, else last entered); the focus
   // controller then puts the caret in its field.
   usePosSaleShortcuts({
     items: currentInvoice.items,
@@ -501,6 +494,23 @@ const POSTouchScreen = React.memo((props) => {
     setShowLockPOS, currentSession, setCurrentView,
     posFunctionAccessMode, isPosSupervisorUser, requestFunctionApproval, onFunctionDenied,
   }, iconCls);
+
+  // Alter Item: inline in the Cart Focus middle column, a dialog in Classic.
+  const alterItemProps = alterItem && {
+    item: alterItem,
+    mode: classicMode,
+    onModeChange: setClassicNumpadMode,
+    value: classicNumpadValue,
+    onValueChange: setClassicNumpadValue,
+    discountType: classicDiscountType,
+    onDiscountTypeChange: setClassicDiscountType,
+    inputRef: classicNumpadInputRef,
+    onApply: applyAlterItem,
+    onClose: cancelAlterItem,
+    formatCurrency,
+    suppressLegacyScan: !posInputV2,
+    onScanRefused: () => showFeedback?.('error', 'Scan ignored while altering the item. Key the value, then press Enter.'),
+  };
 
   return (
     <div className="h-screen flex flex-col bg-[#F7F7FA]">
@@ -680,7 +690,7 @@ const POSTouchScreen = React.memo((props) => {
                           {item.isVoided ? <CurrencyAmount amount={item.price} prefix="- " /> : formatCurrency(item.price)}
                         </span>
                         <span className={`col-span-1 text-xs font-bold text-right pt-1 whitespace-nowrap ${item.isVoided ? 'text-red-500' : 'text-[#F5C742]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
-                        <button type="button" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
+                        <button type="button" aria-label="Remove item" onClick={(e) => { e.stopPropagation(); voidFromInvoice(item.id); }}
                           className={`col-span-1 flex justify-center pt-1 transition-colors ${item.isVoided ? 'text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
                           <XCircle className="h-3.5 w-3.5" />
                         </button>
@@ -724,6 +734,8 @@ const POSTouchScreen = React.memo((props) => {
           {/* ══ COL 2: Last Item + Barcode Scan + Keypad + Total ═ */}
           <div className="flex-1 flex flex-col lg:border-r-2 border-b-2 lg:border-b-0 border-[#327F74]/30 min-w-0 min-h-0 bg-white overflow-hidden">
 
+            {/* Alter Item takes over the last-item card and scan keypad while a line is edited. */}
+            {alterItemProps ? <AlterItemModal key={alterItem.id} variant="panel" {...alterItemProps} /> : (<>
             {/* Last scanned item panel */}
             <div className="border-b border-[#327F74]/20 flex-shrink min-h-0 max-h-[30vh] flex flex-col justify-center bg-white overflow-y-auto">
               {lastScannedItem ? (
@@ -923,6 +935,7 @@ const POSTouchScreen = React.memo((props) => {
                 </button>
               </div>
             </div>
+            </>)}
 
             {/* Cart Focus totals */}
             <div className="border-t border-[#327F74]/20 bg-white shrink-0">
@@ -990,31 +1003,32 @@ const POSTouchScreen = React.memo((props) => {
             {rightPanelTab === 'functions' && (
               <div className="flex-1 overflow-y-auto p-3">
                 {(() => {
-                  // Interaction-specific buttons (Add Qty, Discount, Price open the Alter
-                  // Item dialog); shared buttons come from the single
-                  // commonActionButtons() definition so both templates stay in sync.
-                  const interactive = [
-                    { id: 'add-qty', label: 'Add Qty', icon: <Plus className="h-5 w-5" />, color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`, action: () => openAlterItemOnTarget('qty') },
-                    { id: 'discount', label: 'Discount', icon: <Percent className="h-5 w-5" />, color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode === 'discount' ? 'ring-2 ring-[#F5C742] bg-[#F5C742]/20' : ''}`, action: () => openAlterItemOnTarget('discount') },
-                    { id: 'price', label: 'Price', icon: <Tag className="h-5 w-5" />, color: `bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode === 'price' ? 'ring-2 ring-[#F5C742] bg-purple-100' : ''}`, action: () => openAlterItemOnTarget('price') },
-                    { id: 'remove', label: 'Remove Item', icon: <Trash2 className="h-5 w-5" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action: () => { const last = currentInvoice.items[0]; if (last) guardedRemoveFromInvoice(last.id); } },
-                  ];
-                  const allBtns = [...interactive, ...commonActionButtons('h-5 w-5')];
-                  const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
+                  // Shared buttons only, from the single commonActionButtons() definition so
+                  // every template stays in sync. Line editing (qty / price / discount /
+                  // remove) lives in the Alter Item dialog a cart row tap opens.
+                  const visible = commonActionButtons('h-5 w-5').filter(b => !hiddenPanelButtons.has(b.id));
                   // Held bills are managed from the Layaways list (Save Layaway /
                   // Layaways action) — not duplicated here as a separate notifier.
                   return (
                     // Action Button Access: a SUPERVISOR_ONLY-locked button stays visible and
                     // clickable so the click can explain itself (see posFunctionAccess.js), but
                     // reads as unavailable to both sighted and assistive users.
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2">
-                      {visible.map(btn => (
-                        <button key={btn.id} type="button" onClick={btn.action}
-                          aria-disabled={btn.locked || undefined} title={btn.lockReason || undefined}
-                          className={`flex flex-col items-center justify-center gap-1.5 min-h-[72px] py-2 rounded-xl border transition-colors ${btn.color}`}>
-                          {btn.icon}
-                          <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
-                        </button>
+                    // Sectioned by `group`, the same arrangement as the Compact Functions panel.
+                    <div className="space-y-4">
+                      {groupPosFunctionButtons(visible).map(group => (
+                        <section key={group.name}>
+                          <h3 className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">{group.name}</h3>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-2 gap-2">
+                            {group.buttons.map(btn => (
+                              <button key={btn.id} type="button" onClick={btn.action}
+                                aria-disabled={btn.locked || undefined} title={btn.lockReason || undefined}
+                                className={`flex flex-col items-center justify-center gap-1.5 min-h-[72px] py-2 rounded-xl border transition-colors ${btn.color}`}>
+                                {btn.icon}
+                                <span className="text-[10px] font-semibold leading-tight text-center px-1">{btn.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </section>
                       ))}
                     </div>
                   );
@@ -1277,7 +1291,7 @@ const POSTouchScreen = React.memo((props) => {
                         {item.isVoided ? `- ${item.price.toFixed(0)}` : item.price.toFixed(0)}
                       </span>
                       <span className={`text-[11px] font-bold text-right pr-0.5 truncate tabular-nums ${item.isVoided ? 'text-red-500' : 'text-[#1E293B]'}`}>{item.isVoided ? <CurrencyAmount amount={item.total} prefix="- " /> : formatCurrency(item.total)}</span>
-                      <button type="button" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
+                      <button type="button" aria-label="Remove item" onClick={e => { e.stopPropagation(); voidFromInvoice(item.id); }}
                         className={`flex items-center justify-center justify-self-center opacity-0 group-hover:opacity-100 transition-all ${item.isVoided ? 'opacity-100 text-red-400' : 'text-gray-300 hover:text-red-400'}`}>
                         <XCircle className="h-3 w-3" />
                       </button>
@@ -1618,32 +1632,33 @@ const POSTouchScreen = React.memo((props) => {
               ))}
             </div>
 
-            {/* Functions tab — Add Qty, Disc %, Price open the Alter Item dialog */}
+            {/* Functions tab — line edits live in the Alter Item dialog a cart row tap opens */}
             {rightPanelTab === 'functions' && (
               <div className="flex-1 overflow-y-auto flex flex-col">
                 {/* ── Action button grid ── */}
                 <div className="p-2 flex-1 overflow-y-auto">
                   {(() => {
-                    // Interaction-specific buttons (Classic uses the Alter Item dialog);
-                    // shared buttons come from the single commonActionButtons()
-                    // definition so both templates stay in sync.
-                    const interactive = [
-                      { id: 'add-qty', label: 'Add Qty', icon: <Plus className="h-4 w-4" />, color: `bg-blue-50 hover:bg-blue-100 border-blue-200 text-blue-700 ${classicNumpadMode === 'qty' ? 'ring-2 ring-[#F5C742] bg-blue-100' : ''}`, action: () => openAlterItemOnTarget('qty') },
-                      { id: 'discount', label: 'Disc %', icon: <Percent className="h-4 w-4" />, color: `bg-[#FEF9E7] hover:bg-[#F5C742]/20 border-[#F5C742]/40 text-[#B8942E] ${classicNumpadMode === 'discount' ? 'ring-2 ring-[#F5C742]' : ''}`, action: () => openAlterItemOnTarget('discount') },
-                      { id: 'price', label: 'Price', icon: <Tag className="h-4 w-4" />, color: `bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700 ${classicNumpadMode === 'price' ? 'ring-2 ring-[#F5C742] bg-purple-100' : ''}`, action: () => openAlterItemOnTarget('price') },
-                      { id: 'remove', label: 'Remove', icon: <Trash2 className="h-4 w-4" />, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-600', action: () => { const l = currentInvoice.items[0]; if (l) guardedRemoveFromInvoice(l.id); } },
-                    ];
-                    const allBtns = [...interactive, ...commonActionButtons('h-4 w-4')];
-                    const visible = allBtns.filter(b => !hiddenPanelButtons.has(b.id));
+                    // Shared buttons only, from the single commonActionButtons() definition so
+                    // every template stays in sync. Line editing (qty / price / discount /
+                    // remove) lives in the Alter Item dialog a cart row tap opens.
+                    const visible = commonActionButtons('h-4 w-4').filter(b => !hiddenPanelButtons.has(b.id));
                     return (
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-2 gap-1.5">
-                        {visible.map(btn => (
-                          <button key={btn.id} type="button" onClick={btn.action}
-                            aria-disabled={btn.locked || undefined} title={btn.lockReason || undefined}
-                            className={`flex flex-col items-center justify-center gap-1 min-h-[60px] py-1.5 rounded-xl border transition-colors ${btn.color}`}>
-                            {btn.icon}
-                            <span className="text-[9px] font-bold leading-tight text-center px-0.5">{btn.label}</span>
-                          </button>
+                      // Sectioned by `group`, the same arrangement as the Compact Functions panel.
+                      <div className="space-y-3">
+                        {groupPosFunctionButtons(visible).map(group => (
+                          <section key={group.name}>
+                            <h3 className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mb-1.5 px-0.5">{group.name}</h3>
+                            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-2 gap-1.5">
+                              {group.buttons.map(btn => (
+                                <button key={btn.id} type="button" onClick={btn.action}
+                                  aria-disabled={btn.locked || undefined} title={btn.lockReason || undefined}
+                                  className={`flex flex-col items-center justify-center gap-1 min-h-[60px] py-1.5 rounded-xl border transition-colors ${btn.color}`}>
+                                  {btn.icon}
+                                  <span className="text-[9px] font-bold leading-tight text-center px-0.5">{btn.label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </section>
                         ))}
                       </div>
                     );
@@ -1730,24 +1745,7 @@ const POSTouchScreen = React.memo((props) => {
       )}
 
       {/* ══ ALTER ITEM (Cart Focus + Classic: qty / price / discount of a cart line) ══ */}
-      {alterItem && (
-        <AlterItemModal
-          key={alterItem.id}
-          item={alterItem}
-          mode={classicMode}
-          onModeChange={setClassicNumpadMode}
-          value={classicNumpadValue}
-          onValueChange={setClassicNumpadValue}
-          discountType={classicDiscountType}
-          onDiscountTypeChange={setClassicDiscountType}
-          inputRef={classicNumpadInputRef}
-          onApply={applyAlterItem}
-          onClose={closeAlterItem}
-          formatCurrency={formatCurrency}
-          suppressLegacyScan={!posInputV2}
-          onScanRefused={() => showFeedback?.('error', 'Scan ignored while altering the item. Key the value, then press Enter.')}
-        />
-      )}
+      {alterItemProps && posTemplate !== 'focus' && <AlterItemModal key={alterItem.id} {...alterItemProps} />}
 
       {/* ══ QUICK CUSTOMER CREATION MODAL ══════════════════════════════════════ */}
       {/* Shared with the compact TradePOS template, which could open this dialog but had no
