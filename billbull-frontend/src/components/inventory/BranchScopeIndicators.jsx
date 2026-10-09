@@ -1,5 +1,5 @@
 import React from 'react';
-import { useBranch } from '../../context/BranchContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 
 /**
  * Branch-Level Inventory Phase 11 — small, reusable UI indicators for branch scoping.

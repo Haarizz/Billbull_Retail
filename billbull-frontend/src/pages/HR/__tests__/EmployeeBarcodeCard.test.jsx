@@ -28,8 +28,8 @@ vi.mock('../../../utils/labelPrinterTransport', async (importOriginal) => ({
   resolveLabelPrinter: (...a) => resolveLabelPrinter(...a),
   sendZplToLabelPrinter: (...a) => sendZplToLabelPrinter(...a),
 }));
-vi.mock('../../../context/BranchContext', () => ({ useBranch: () => useBranch() }));
-vi.mock('../../../context/CompanyContext', () => ({ useCompany: () => useCompany() }));
+vi.mock('@billbull/shared/context/BranchContext', () => ({ useBranch: () => useBranch() }));
+vi.mock('@billbull/shared/context/CompanyContext', () => ({ useCompany: () => useCompany() }));
 
 import { LabelPrinterError } from '../../../utils/labelPrinterTransport';
 import EmployeeBarcodeCard, {

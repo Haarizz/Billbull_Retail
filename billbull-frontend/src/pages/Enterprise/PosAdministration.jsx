@@ -4,7 +4,7 @@ import {
   CheckCircle2, XCircle, Ban, Loader2, AlertCircle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import {
   getCorrectionRequests, approveCorrectionRequest, rejectCorrectionRequest, cancelCorrectionRequest,
 } from '../../api/posAdminApi';

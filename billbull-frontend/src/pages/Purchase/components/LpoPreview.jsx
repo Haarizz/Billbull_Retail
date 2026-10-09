@@ -13,8 +13,8 @@ import { getLpoStatusBadge, resolveLpoSourceType } from '../utils/lpoStatusBadge
 import { getAvailableLpoActions } from '../utils/lpoActionRules';
 import { buildLpoTimeline } from '../utils/buildLpoTimeline';
 import { findVendorRecord } from '../../../utils/purchasePrintUtils';
-import { formatDisplayDate } from '../../../utils/dateUtils';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { usePermission } from '../../../hooks/usePermission';
 
 const num = (v) => Number(v ?? 0);

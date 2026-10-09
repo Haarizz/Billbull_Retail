@@ -2,9 +2,9 @@ import React, { useState } from "react";
 import {
     ArrowLeft, Save, Palette, AlignLeft, Mail, ChevronDown, Layout,
 } from "lucide-react";
-import { useCompany } from '../../context/CompanyContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
 import toast from "react-hot-toast";
-import { resolveCurrencyDisplayConfig, UAE_DIRHAM_SYMBOL_IMAGE } from '../../utils/countryCurrencyOptions';
+import { resolveCurrencyDisplayConfig, UAE_DIRHAM_SYMBOL_IMAGE } from '@billbull/shared/utils/countryCurrencyOptions';
 import { formatAmountInWords } from '../../utils/amountInWords';
 
 function CurrencySymbol({ currency }) {

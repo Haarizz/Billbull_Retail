@@ -1,4 +1,4 @@
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // Builds an LPO timeline from data already on the fetched entity: creation, the
 // approval-history steps the backend records, and any advance payments. No

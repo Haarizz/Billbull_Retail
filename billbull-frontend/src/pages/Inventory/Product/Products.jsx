@@ -13,7 +13,7 @@ import {
 
 // Import API Methods
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getImageUrl } from "../../../utils/urlUtils";
+import { getImageUrl } from "@billbull/shared/utils/urlUtils";
 import {
   getProductsList,
   getProductById,
@@ -22,29 +22,29 @@ import {
   deleteProduct,
   startProductImport,
   getProductImportProgress
-} from "../../../api/productsApi";
-import { getBrands, createBrand } from "../../../api/brandsApi";
-import { usePermissions } from "../../../context/PermissionContext";
-import { getDepartments, getSubDepartmentsByDepartment } from "../../../api/departmentsApi";
-import { createDepartment } from "../../../api/departmentsApi";
-import { createSubDepartment } from "../../../api/subDepartmentsApi";
-import { getUnits, createUnit } from "../../../api/unitsApi";
-import { getProductCategories, createProductCategory } from "../../../api/productCategoriesApi";
+} from "@billbull/shared/api/productsApi";
+import { getBrands, createBrand } from "@billbull/shared/api/brandsApi";
+import { usePermissions } from "@billbull/shared/context/PermissionContext";
+import { getDepartments, getSubDepartmentsByDepartment } from "@billbull/shared/api/departmentsApi";
+import { createDepartment } from "@billbull/shared/api/departmentsApi";
+import { createSubDepartment } from "@billbull/shared/api/subDepartmentsApi";
+import { getUnits, createUnit } from "@billbull/shared/api/unitsApi";
+import { getProductCategories, createProductCategory } from "@billbull/shared/api/productCategoriesApi";
 import { getWarehouses } from "../../../api/warehouseApi";
-import ClassificationDropdown from "../../../components/ClassificationDropdown";
+import ClassificationDropdown from "@billbull/shared/components/ClassificationDropdown";
 import { getZones, getLocators, getBins } from "../../../api/warehouseLocationApi";
 import { getVendors } from "../../../api/vendorsApi";
-import { getBranches } from "../../../api/branchApi";
+import { getBranches } from "@billbull/shared/api/branchApi";
 import { getUnitConversionFactor } from "../../../utils/unitPricing";
 import ExportDropdown from '../../../components/common/ExportDropdown';
-import { exportToExcel, exportToPDF } from '../../../utils/exportUtils';
-import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
 import { GlobalBadge, BranchStockLabel } from '../../../components/inventory/BranchScopeIndicators';
 import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../../utils/serialNumbering';
-import { useBranch } from '../../../context/BranchContext';
-import { getCompanyProfile } from '../../../api/companyProfileApi';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import { getCompanyProfile } from '@billbull/shared/api/companyProfileApi';
 import { getBranchTaxSummary } from '../../../api/taxApi';
-import { resolveLineTaxRate, computeLineTaxTotals, VAT_MODES } from '../../../utils/vatMath';
+import { resolveLineTaxRate, computeLineTaxTotals, VAT_MODES } from '@billbull/shared/utils/vatMath';
 
 // ==========================================
 // 1. CONFIGURATION

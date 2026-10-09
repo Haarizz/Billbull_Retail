@@ -3,14 +3,21 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "shared:exports": "node scripts/workspaceBoundaries.mjs --write",
+    "check:boundaries": "node scripts/workspaceBoundaries.mjs"
   },
   "dependencies": {
+    "@billbull/shared": "0.0.0",
     "@radix-ui/react-accordion": "^1.2.13",
     "@radix-ui/react-alert-dialog": "^1.1.16",
     "@radix-ui/react-aspect-ratio": "^1.1.9",

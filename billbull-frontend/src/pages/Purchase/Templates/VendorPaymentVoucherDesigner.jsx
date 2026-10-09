@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { ArrowLeft, Save, Printer, Info } from "lucide-react";
 import { Badge, Button } from "./PurchaseTemplateUI";
 import toast from "react-hot-toast";
-import { UAE_DIRHAM_SYMBOL_IMAGE } from "../../../utils/countryCurrencyOptions";
+import { UAE_DIRHAM_SYMBOL_IMAGE } from "@billbull/shared/utils/countryCurrencyOptions";
 
 const MOCK = {
   company: {

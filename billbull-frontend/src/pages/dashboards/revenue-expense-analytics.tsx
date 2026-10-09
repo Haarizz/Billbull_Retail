@@ -5,10 +5,10 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+} from "@billbull/shared/components/ui/card";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Badge } from "@billbull/shared/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
 import {
   Table,
   TableBody,
@@ -16,14 +16,14 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "../../components/ui/table";
+} from "@billbull/shared/components/ui/table";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
+} from "@billbull/shared/components/ui/select";
 import {
   LineChart,
   Line,

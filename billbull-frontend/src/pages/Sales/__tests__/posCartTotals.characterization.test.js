@@ -7,8 +7,8 @@ import {
   getPriceFloor,
   mergeSavedPosSettings,
   toNumber,
-} from '../POS/posUtils';
-import { computeLineTaxTotals, resolveLineTaxRate, VAT_MODES } from '../../../utils/vatMath';
+} from '@billbull/shared/pages/Sales/POS/posUtils';
+import { computeLineTaxTotals, resolveLineTaxRate, VAT_MODES } from '@billbull/shared/utils/vatMath';
 import { resolveUnitAmount, getBaseUnitName, getUnitConversionFactor } from '../../../utils/unitPricing';
 import {
   EXCLUSIVE_5,
@@ -27,7 +27,7 @@ import {
   SCENARIO_J_CHECKOUT,
   UNIT_PRICING_PRODUCT,
   line,
-} from './fixtures/posCartFixtures';
+} from '@billbull/shared/pages/Sales/__tests__/fixtures/posCartFixtures';
 
 /**
  * CHARACTERIZATION SUITE — POS cart arithmetic.

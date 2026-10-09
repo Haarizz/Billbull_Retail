@@ -10,39 +10,39 @@ import SearchableDropdown from '../../components/SearchableDropdown'; // ✅ Imp
 import CustomerAdvancesView from './components/CustomerAdvancesView';
 
 import StatementPrintPreview from '../../components/StatementPrintPreview';
-import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 // --- API IMPORTS ---
-import { getAllCustomers, getCustomerById, createCustomer, importCustomers, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '../../api/customerledgerApi';
-import { fetchStatementOfAccount, fetchARAgingReport } from '../../api/financialsApi';
+import { getAllCustomers, getCustomerById, createCustomer, importCustomers, deleteCustomer, getOpeningInvoicesByCustomerCode, getNextCustomerCode } from '@billbull/shared/api/customerledgerApi';
+import { fetchStatementOfAccount, fetchARAgingReport } from '@billbull/shared/api/financialsApi';
 // ✅ Import Warehouse & Employee API
 import { getWarehouses } from '../../api/warehouseApi';
-import { getEmployees } from '../../api/employeeApi';
+import { getEmployees } from '@billbull/shared/api/employeeApi';
 // ✅ Import Sales Payment & Invoice API
-import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '../../api/salesPaymentApi';
-import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
-import { getBankAccounts } from '../../api/ledgerApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import { useBranch } from '../../context/BranchContext';
-import { useCompany } from '../../context/CompanyContext';
-import { usePermissions } from '../../context/PermissionContext';
+import { getAllSalesPayments, saveSalesPayment, getNextSalesPaymentNumber, getSalesPaymentStats } from '@billbull/shared/api/salesPaymentApi';
+import { getAllSalesInvoices } from '@billbull/shared/api/salesInvoiceApi';
+import { getBankAccounts } from '@billbull/shared/api/ledgerApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import {
     getCountryOptions,
     getCurrencyOptions,
     normalizeCountryValue,
     normalizeCurrencyValue,
     withFallbackOption
-} from '../../utils/countryCurrencyOptions';
-import { formatDisplayDate } from '../../utils/dateUtils';
+} from '@billbull/shared/utils/countryCurrencyOptions';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import ExportDropdown from '../../components/common/ExportDropdown';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import { generateSOAFilename } from '../../utils/filenameUtils';
-import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '../../utils/statementUtils';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { generateSOAFilename } from '@billbull/shared/utils/filenameUtils';
+import { STATEMENT_EXPORT_COLUMNS, formatStatementEntryType, mapStatementEntriesForExport } from '@billbull/shared/utils/statementUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { getListSerialNumber, withListSerialNumbers, withExportSerialNumbers } from '../../utils/serialNumbering';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generateReportA4Html, printHtml } from '../../utils/printGenerator';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generateReportA4Html, printHtml } from '@billbull/shared/utils/printGenerator';
 import {
     buildReceiptVoucherPrintData,
     buildCustomerSoaPrintData,
@@ -50,10 +50,10 @@ import {
     resolveReceiptVoucherPrintTemplate
 } from '../../utils/purchasePrintUtils';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import billBullLogo from '../../assets/billBullLogo.png';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
+import { sendReceiptVoucherEmail } from '@billbull/shared/api/receiptVoucherApi';
 import TableSkeleton from '../../components/common/TableSkeleton';
 
 // ==========================================

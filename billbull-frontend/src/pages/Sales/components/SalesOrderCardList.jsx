@@ -1,7 +1,7 @@
 import React from 'react';
 import { Search, FileX } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { getSalesOrderStatusBadge } from '../utils/salesOrderStatusBadge';
 
 // Compact sales-order card for the Transaction Preview's left column. Mirrors

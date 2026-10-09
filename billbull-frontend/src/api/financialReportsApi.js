@@ -1,6 +1,6 @@
 // src/api/financialReportsApi.js
-import { getAccounts, getCostCenters, getTransactions } from './ledgerApi';
-import { receiptVoucherApi } from './receiptVoucherApi';
+import { getAccounts, getCostCenters, getTransactions } from '@billbull/shared/api/ledgerApi';
+import { receiptVoucherApi } from '@billbull/shared/api/receiptVoucherApi';
 import { journalVoucherApi } from './journalVoucherApi';
 import { fetchExpenses } from './expensesApi';
 import { getTaxConfigs, getTaxFilings } from './taxApi';

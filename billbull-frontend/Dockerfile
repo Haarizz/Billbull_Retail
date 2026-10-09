@@ -1,6 +1,8 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
+# npm workspaces: every workspace manifest must exist before `npm ci`.
+COPY packages/shared/package.json packages/shared/
 RUN npm ci
 COPY . .
 RUN npm run build

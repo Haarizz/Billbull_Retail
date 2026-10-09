@@ -1,4 +1,4 @@
-import api from './axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 
 /**
  * Typeahead source for the Vendors & Purchases "Item / SKU Search" filter.

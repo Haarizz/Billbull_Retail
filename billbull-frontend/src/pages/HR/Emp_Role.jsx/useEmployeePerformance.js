@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { getEmployeePerformance } from '../../../api/employeeTargetsApi';
+import { getEmployeePerformance } from '@billbull/shared/api/employeeTargetsApi';
 
 /** ISO first-day-of-month string for a Date, e.g. "2026-09-01". */
 export const monthKey = (date = new Date()) =>

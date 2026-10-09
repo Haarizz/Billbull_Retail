@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Package, Box } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { getImageUrl } from '../../../utils/urlUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 // Items table for the GRN Transaction Preview. A GRN is a goods-receipt document
 // with a QC gate, so the columns are receipt-centric (Ordered / Received /

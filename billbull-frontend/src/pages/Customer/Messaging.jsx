@@ -11,7 +11,7 @@ import {
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart as ReBarChart, Bar, Cell } from 'recharts';
 
 // --- MOCK DATA ---
-import { getAllCustomers } from '../../api/customerledgerApi';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
 import { getInquiries } from '../../api/customerApi';
 import { getTemplates, createTemplate, markTemplateUsed, getMessageLogs, logMessage, updateTemplate, deleteTemplate } from '../../api/messagingApi';
 

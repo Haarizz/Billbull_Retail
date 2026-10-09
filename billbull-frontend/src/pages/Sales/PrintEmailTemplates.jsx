@@ -25,13 +25,13 @@ import {
     deletePrintTemplate,
     getPrintTemplates,
     updatePrintTemplate
-} from "../../api/printTemplateApi";
+} from "@billbull/shared/api/printTemplateApi";
 import {
     DEFAULT_TEMPLATE_COLUMNS,
     DEFAULT_TEMPLATE_DISPLAY_OPTIONS,
     sanitizeTemplateColumns,
     sanitizeTemplateDisplayOptions
-} from "../../utils/printTemplateConfig";
+} from "@billbull/shared/utils/printTemplateConfig";
 import { DocumentTemplateDesigner } from "../Purchase/Templates/DocumentTemplateDesigner";
 import { GRVTemplateDesigner } from "../Purchase/Templates/GRVTemplateDesigner";
 import { PaymentReceiptDesigner } from "../Purchase/Templates/PaymentReceiptDesigner";
@@ -43,7 +43,7 @@ import {
 } from "../Purchase/Templates/PurchaseTemplateUI";
 import { InvoiceOverlayDesigner } from "./Templates/InvoiceOverlayDesigner";
 import { PickListDesigner } from "./Templates/PickListDesigner";
-import { defaultPickListSettings } from "../../utils/pickListDefaults";
+import { defaultPickListSettings } from "@billbull/shared/utils/pickListDefaults";
 import {
     CustomerSoATemplateDesigner,
     defaultCustomerSoaTemplateSettings

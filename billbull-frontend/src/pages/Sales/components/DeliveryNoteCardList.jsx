@@ -1,6 +1,6 @@
 import React from 'react';
 import { Search, FileX, Truck, Package } from 'lucide-react';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { getDeliveryNoteStatusBadge, getPodBadge } from '../utils/deliveryNoteStatusBadge';
 
 // Compact delivery-note card for the Transaction Preview's left column. A DN is

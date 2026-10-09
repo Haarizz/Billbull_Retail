@@ -1,6 +1,6 @@
 import React from 'react';
 import { FileDown, FileSpreadsheet, FileText } from 'lucide-react';
-import { exportToPDF, exportToExcel } from '../../utils/exportUtils';
+import { exportToPDF, exportToExcel } from '@billbull/shared/utils/exportUtils';
 import { exportToCSV } from '../../utils/csvExport';
 
 /** Shared CSV/Excel/PDF export trio — reused by the Dashboard, History, and Approval Queue

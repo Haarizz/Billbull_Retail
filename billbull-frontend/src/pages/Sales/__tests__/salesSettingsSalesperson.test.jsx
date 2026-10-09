@@ -13,7 +13,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 const getSalesSettings = vi.fn();
 const saveSalesSettings = vi.fn();
 
-vi.mock('../../../api/salesSettingsApi', () => ({
+vi.mock('@billbull/shared/api/salesSettingsApi', () => ({
   getSalesSettings: (...args) => getSalesSettings(...args),
   saveSalesSettings: (...args) => saveSalesSettings(...args),
 }));

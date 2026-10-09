@@ -19,7 +19,7 @@ import {
     deletePrintTemplate,
     getPrintTemplates,
     updatePrintTemplate
-} from "../../api/printTemplateApi";
+} from "@billbull/shared/api/printTemplateApi";
 import ChequePrintingDesigner, {
     defaultChequePrintSettings
 } from "../Financials/ChequePrintingDesigner";

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { X, Plus, Printer, Download, Mail, MessageCircle, CheckCircle2, Banknote, AlertCircle } from 'lucide-react';
-import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
-import { getNextSalesPaymentNumber } from '../../../api/salesPaymentApi';
+import { formatCurrencyDisplay } from '@billbull/shared/utils/countryCurrencyOptions';
+import { getNextSalesPaymentNumber } from '@billbull/shared/api/salesPaymentApi';
 
 // Post-confirm Sales Payment settlement. Opened right after a Sales Invoice is
 // confirmed so the user can record payment received against it.

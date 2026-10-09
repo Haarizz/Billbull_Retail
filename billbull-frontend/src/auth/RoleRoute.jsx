@@ -1,6 +1,6 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
-import { isAuthenticated, hasRole } from "../api/auth";
+import { isAuthenticated, hasRole } from "@billbull/shared/api/auth";
 
 const RoleRoute = ({ role, children }) => {
 

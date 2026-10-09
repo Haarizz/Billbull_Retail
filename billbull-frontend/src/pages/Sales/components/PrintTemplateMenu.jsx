@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ChevronDown, Printer } from 'lucide-react';
-import { getTemplateFamily } from '../../../api/printTemplateApi';
+import { getTemplateFamily } from '@billbull/shared/api/printTemplateApi';
 
 // Print-template picker for the Transaction Preview.
 //

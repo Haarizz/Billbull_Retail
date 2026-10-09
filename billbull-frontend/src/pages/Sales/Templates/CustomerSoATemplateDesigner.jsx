@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import DocumentPreviewCanvas from "../../../components/DocumentPreviewCanvas";
-import { generateEmailHtml, generatePrintHtml } from "../../../utils/printGenerator";
+import { generateEmailHtml, generatePrintHtml } from "@billbull/shared/utils/printGenerator";
 import {
   buildCustomerSoaPrintData,
   normalizePurchaseTemplate

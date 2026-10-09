@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { getPosPrinters } from '../api/posPrinterApi';
-import { buildEscPosReceiptBase64 } from '../utils/escPosReceipt';
-import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '../utils/localPrintAgent';
-import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../utils/documentTaxType';
+import { getPosPrinters } from '@billbull/shared/api/posPrinterApi';
+import { buildEscPosReceiptBase64 } from '@billbull/shared/utils/escPosReceipt';
+import { resolvePrinterForContext, sendEscPosReceiptToConfiguredPrinter } from '@billbull/shared/utils/localPrintAgent';
+import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '@billbull/shared/utils/documentTaxType';
 
 // Thermal (58mm/80mm) printing of a back-office Sales Invoice.
 //

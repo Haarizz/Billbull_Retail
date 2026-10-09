@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Package, Box } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { getImageUrl } from '../../../utils/urlUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 // Items table for the Proforma Invoice Transaction Preview. Parallels
 // SalesOrderItemsTable; a proforma may carry an advance, so the totals footer

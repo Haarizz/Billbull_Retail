@@ -3,7 +3,7 @@ import {
   Plus, Search, Loader2, Coins, X, CheckCircle2, XCircle, Send, PlayCircle, Ban, Clock, Eye, AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import SearchSelect from '../../components/common/SearchSelect';
 import {
@@ -11,7 +11,7 @@ import {
   submitDenominationCorrection, approveDenominationCorrection, rejectDenominationCorrection,
   applyDenominationCorrection, cancelDenominationCorrection, searchCorrectableSessions,
 } from '../../api/posSessionDenominationCorrectionApi';
-import { DENOM_KEYS } from '../../utils/cashDenominations';
+import { DENOM_KEYS } from '@billbull/shared/utils/cashDenominations';
 
 const PAGE_SIZE = 20;
 const DENOMINATIONS = DENOM_KEYS;

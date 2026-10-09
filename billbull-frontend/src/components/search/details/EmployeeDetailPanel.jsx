@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ArrowUpRightIcon, EyeIcon, EyeOffIcon, InfoIcon } from "lucide-react";
 
-import { ScrollArea } from "../../ui/scroll-area";
+import { ScrollArea } from "@billbull/shared/components/ui/scroll-area";
 import { Skeleton } from "../../ui/skeleton";
 import { fetchEmployeePayrollSummary } from "../../../api/entityDetailApi";
 import {

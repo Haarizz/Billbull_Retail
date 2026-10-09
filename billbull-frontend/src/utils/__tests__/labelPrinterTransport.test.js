@@ -18,11 +18,11 @@ const printPosPrinterEscPos = vi.fn();
 const resolvePrinterForContext = vi.fn();
 const printEscPosThroughAgent = vi.fn();
 
-vi.mock('../../api/posPrinterApi', () => ({
+vi.mock('@billbull/shared/api/posPrinterApi', () => ({
   getPosPrinters: (...a) => getPosPrinters(...a),
   printPosPrinterEscPos: (...a) => printPosPrinterEscPos(...a),
 }));
-vi.mock('../localPrintAgent', () => ({
+vi.mock('@billbull/shared/utils/localPrintAgent', () => ({
   resolvePrinterForContext: (...a) => resolvePrinterForContext(...a),
   printEscPosThroughAgent: (...a) => printEscPosThroughAgent(...a),
 }));

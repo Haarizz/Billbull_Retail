@@ -5,12 +5,12 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+} from "@billbull/shared/components/ui/card";
+import { Badge } from "@billbull/shared/components/ui/badge";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@billbull/shared/components/ui/select";
 import { Skeleton } from "../../components/ui/skeleton";
-import { cn } from "../../components/ui/utils";
+import { cn } from "@billbull/shared/components/ui/utils";
 import { toast } from "sonner";
 
 import {

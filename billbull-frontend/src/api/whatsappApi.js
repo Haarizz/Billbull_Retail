@@ -1,4 +1,4 @@
-import api from './axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 
 const CONFIG_BASE = '/api/settings/whatsapp-config';
 

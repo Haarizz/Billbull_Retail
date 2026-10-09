@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Package, Box } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { getImageUrl } from '../../../utils/urlUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 // Items table for the Sales Order Transaction Preview. Deliberately parallels
 // InvoiceItemsTable (same column tiers, same field fallbacks), but the totals

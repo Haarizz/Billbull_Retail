@@ -6,24 +6,24 @@ import {
     Printer as PrintIcon, Ban, User, Clock,
     TrendingUp, DollarSign, ChevronDown, Check
 } from 'lucide-react';
-import * as ledgerApi from '../../api/ledgerApi';
+import * as ledgerApi from '@billbull/shared/api/ledgerApi';
 import { employeesApi } from '../../api/employeesApi';
 import { journalVoucherApi } from '../../api/journalVoucherApi';
 import { getAuditTrail } from '../../api/auditApi';
-import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import { printHtml } from '../../utils/printGenerator';
-import { getUsernameFromToken } from '../../api/auth';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { printHtml } from '@billbull/shared/utils/printGenerator';
+import { getUsernameFromToken } from '@billbull/shared/api/auth';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { createRoot } from 'react-dom/client';
 import { flushSync, createPortal } from 'react-dom';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
 import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
 import { JournalPreview } from './FinancialVoucherDesigner';
 import LedgerAccountCreateModal from '../../components/common/LedgerAccountCreateModal';
-import { formatUserDisplayName } from '../../utils/displayName';
+import { formatUserDisplayName } from '@billbull/shared/utils/displayName';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import TableSkeleton from '../../components/common/TableSkeleton';
 

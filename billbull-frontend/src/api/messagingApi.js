@@ -1,4 +1,4 @@
-import axios from './axiosConfig';
+import axios from '@billbull/shared/api/axiosConfig';
 
 export const getTemplates = async () => {
     try {

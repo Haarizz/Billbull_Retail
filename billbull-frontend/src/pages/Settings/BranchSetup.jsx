@@ -3,9 +3,9 @@ import { Building2, Plus, Pencil, Trash2, Star, StarOff, Check, X } from 'lucide
 import toast from 'react-hot-toast';
 import {
     getBranches, createBranch, updateBranch, setDefaultBranch, deleteBranch,
-} from '../../api/branchApi';
+} from '@billbull/shared/api/branchApi';
 import { getWarehouses } from '../../api/warehouseApi';
-import { useBranch } from '../../context/BranchContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 const EMPTY_FORM = { name: '', code: '', address: '', phone: '', defaultWarehouseId: '' };

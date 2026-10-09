@@ -25,23 +25,23 @@ import {
     Printer
 } from 'lucide-react';
 import SearchableDropdown from '../../../components/SearchableDropdown';
-import { useCompany } from '../../../context/CompanyContext';
-import { useBranch } from '../../../context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../../utils/branchPrintProfile';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // Printing Utilities
-import { getTemplatesByCategory } from '../../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '../../../utils/printGenerator';
-import billBullLogo from '../../../assets/billBullLogo.png';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 import {
     buildPaymentVoucherPrintData,
     findVendorRecord,
     resolvePurchasePrintTemplate
 } from '../../../utils/purchasePrintUtils';
-import { formatCurrencyDisplay } from '../../../utils/countryCurrencyOptions';
-import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import { formatCurrencyDisplay } from '@billbull/shared/utils/countryCurrencyOptions';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { getListSerialNumber } from '../../../utils/serialNumbering';
 
@@ -57,7 +57,7 @@ import {
     updateVoucherStatus
 } from '../../../api/paymentApi';
 import { getVendors } from '../../../api/vendorsApi';
-import { getBankAccounts } from '../../../api/ledgerApi';
+import { getBankAccounts } from '@billbull/shared/api/ledgerApi';
 import PaymentVoucherPreviewSplitView from '../components/PaymentVoucherPreviewSplitView';
 
 // ==========================================

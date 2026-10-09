@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Calendar, ChevronDown, X } from 'lucide-react';
-import { toLocalInputDate } from '../../utils/dateUtils';
+import { toLocalInputDate } from '@billbull/shared/utils/dateUtils';
 
 // Local calendar day, never toISOString() — that converts to UTC and shifts the
 // day backwards in UTC+ zones, so "This Month" would start on the last day of

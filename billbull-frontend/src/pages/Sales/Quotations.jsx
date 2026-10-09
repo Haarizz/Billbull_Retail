@@ -40,7 +40,7 @@ import {
 } from 'lucide-react';
 
 // ✅ API IMPORTS
-import { getAllCustomers } from '../../api/customerledgerApi';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
 
 // ✅ NEW QUOTATION API IMPORTS
 import {
@@ -58,17 +58,17 @@ import {
     sendQuotationEmail
 } from '../../api/quotationApi';
 import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
-import { getStockAvailability } from '../../api/stockAvailabilityApi';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
-import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { computeLineTaxTotals, resolveLineTaxRate } from '@billbull/shared/utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
 
 // Ensure you have an axios instance or use fetch
-import api from "../../api/axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 
 // ✅ DYNAMIC UI COMPONENTS
 
@@ -83,7 +83,7 @@ import ProductSelector from '../../components/ProductSelector';
 // ✅ CUSTOMER SELECTOR — search modal + new customer
 import CustomerSelector from '../../components/CustomerSelector';
 import CustomerShippingPanel from '../../components/CustomerShippingPanel';
-import CurrencyAmount from '../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { resolveCustomer } from '../../utils/customerResolution';
 
 // ✅ SHARED Item Add-Ons modal (BB-026)
@@ -96,25 +96,25 @@ import StockAvailabilityModal from '../../components/StockAvailabilityModal';
 import useShortcuts from '../../hooks/useShortcuts';
 
 // ✅ LOGO IMPORTS FOR PRINT
-import billBullLogo from '../../assets/billBullLogo.png';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { buildEmailBody } from '../../utils/emailImageInliner';
-import { getImageUrl } from '../../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
 import {
     resolveCurrencyDisplayConfig,
     resolveCurrencyDisplayCode,
     UAE_DIRHAM_SYMBOL_IMAGE
-} from '../../utils/countryCurrencyOptions';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
+} from '@billbull/shared/utils/countryCurrencyOptions';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import { generateDocFilename } from '../../utils/filenameUtils';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { generateDocFilename } from '@billbull/shared/utils/filenameUtils';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';

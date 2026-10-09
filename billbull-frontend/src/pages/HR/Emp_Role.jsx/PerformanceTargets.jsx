@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, Info, AlertTriangle, X } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { getTargetReadiness } from '../../../api/employeeTargetsApi';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getTargetReadiness } from '@billbull/shared/api/employeeTargetsApi';
 import { isSalespersonRole } from '../../../utils/salespersonRoles';
 import { monthLabel, recentMonths } from './useEmployeePerformance';
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
-import api from '../../api/axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 import {
     ShoppingCart,
     Search,
@@ -41,11 +41,11 @@ import {
 
 
 
-import { getAllCustomers } from '../../api/customerledgerApi';
-import { getAllSalesOrders } from '../../api/salesorderApi';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
+import { getAllSalesOrders } from '@billbull/shared/api/salesorderApi';
 import { getAllProformas } from '../../api/proformaApi';
 import { getDeliveryNotes, getPickingNotes, getUninvoicedDNsForCustomer } from '../../api/deliveryNoteApi';
-import { getEmployeeNames, getSalespersons } from '../../api/employeeApi';
+import { getEmployeeNames, getSalespersons } from '@billbull/shared/api/employeeApi';
 import {
     getAllSalesInvoices,
     getSalesInvoicesPage,
@@ -58,39 +58,39 @@ import {
     getCustomerOutstanding,
     getSalesInvoiceById,
     sendSalesInvoiceEmail
-} from '../../api/salesInvoiceApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import { getSalesPaymentsByInvoice } from '../../api/salesPaymentApi';
-import { receiptVoucherApi } from '../../api/receiptVoucherApi';
-import { getStockAvailability } from '../../api/stockAvailabilityApi';
-import { formatDisplayDate } from '../../utils/dateUtils';
+} from '@billbull/shared/api/salesInvoiceApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import { getSalesPaymentsByInvoice } from '@billbull/shared/api/salesPaymentApi';
+import { receiptVoucherApi } from '@billbull/shared/api/receiptVoucherApi';
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
-import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { computeLineTaxTotals, resolveLineTaxRate } from '@billbull/shared/utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
 import { getWarehouses } from '../../api/warehouseApi';
-import { getTemplatesByCategory, getTemplateFamily } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '../../utils/printGenerator';
-import { generateOverlayInvoiceHtml } from '../../utils/overlayInvoiceRenderer';
-import { applyTaxAwareDisplayOptions } from './POS/posPrintUtils';
-import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '../../utils/documentTaxType';
+import { getTemplatesByCategory, getTemplateFamily } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, generatePdfHtmlAsync, generateEmailHtml, printHtml, downloadPdf, downloadPdfViaServer } from '@billbull/shared/utils/printGenerator';
+import { generateOverlayInvoiceHtml } from '@billbull/shared/utils/overlayInvoiceRenderer';
+import { applyTaxAwareDisplayOptions } from '@billbull/shared/pages/Sales/POS/posPrintUtils';
+import { isTaxInvoiceDocument, getInvoiceDocumentTitle } from '@billbull/shared/utils/documentTaxType';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import InvoicePreviewModal from './components/InvoicePreviewModal';
 import InvoiceSettlementModal from './components/InvoiceSettlementModal';
-import { getImageUrl } from '../../utils/urlUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
-import billBullLogo from '../../assets/billBullLogo.png';
-import { generateDocFilename } from '../../utils/filenameUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { generateDocFilename } from '@billbull/shared/utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
 import KpiCards from '../../components/common/KpiCards';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import CurrencyAmount, { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
+import { formatCurrencyDisplay } from '@billbull/shared/utils/countryCurrencyOptions';
 import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 import { compareDocumentValues } from '../../utils/documentOrdering';
@@ -140,9 +140,9 @@ import {
     paymentDetailsForExport,
     summaryLabelForModes,
     PAYMENT_FILTERS,
-} from './POS/payments/paymentPresentation';
+} from '@billbull/shared/pages/Sales/POS/payments/paymentPresentation';
 import PaymentDetailsPanel from './POS/payments/PaymentDetailsPanel';
-import { getInvoicePaymentSummaries } from '../../api/salesPaymentApi';
+import { getInvoicePaymentSummaries } from '@billbull/shared/api/salesPaymentApi';
 
 const SALES_INVOICE_COLUMNS = [
     { header: 'S.No.', key: 'sNo', width: 8 },
@@ -203,7 +203,7 @@ import ItemAddOnsModal from '../../components/ItemAddOnsModal';
 
 // ✅ SHORTCUTS HOOK
 import useShortcuts from '../../hooks/useShortcuts';
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import { OwnershipIndicator } from '../../components/common/OwnershipIndicator';
 
 // ==========================================

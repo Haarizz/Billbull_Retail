@@ -29,9 +29,9 @@ import {
   updateSubDepartment,
   deleteSubDepartment,
   exportSubDepartments
-} from "../../../api/subDepartmentsApi";
+} from "@billbull/shared/api/subDepartmentsApi";
 
-import { getDepartments } from "../../../api/departmentsApi";
+import { getDepartments } from "@billbull/shared/api/departmentsApi";
 
 const SubDepartments = () => {
   // --- STATE MANAGEMENT ---

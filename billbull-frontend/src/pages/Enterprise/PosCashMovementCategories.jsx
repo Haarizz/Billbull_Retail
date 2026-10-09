@@ -3,14 +3,14 @@ import {
   Plus, Pencil, CheckCircle2, XCircle, Loader2, Tags, Search, ToggleLeft, ToggleRight, X,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { usePermissions } from '../../context/PermissionContext';
-import { getAccounts } from '../../api/ledgerApi';
-import { getPosSettings, savePosSettings } from '../../api/posApi';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
+import { getAccounts } from '@billbull/shared/api/ledgerApi';
+import { getPosSettings, savePosSettings } from '@billbull/shared/api/posApi';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import {
   getCashMovementCategories, createCashMovementCategory, updateCashMovementCategory,
   activateCashMovementCategory, deactivateCashMovementCategory,
-} from '../../api/posCashMovementCategoryApi';
+} from '@billbull/shared/api/posCashMovementCategoryApi';
 
 const PAGE_SIZE = 20;
 const MOVEMENT_TYPES = ['DROP_IN', 'DROP_OUT', 'BOTH'];

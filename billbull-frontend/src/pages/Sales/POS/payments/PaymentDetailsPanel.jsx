@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 
-import { paymentBlockRows } from './paymentPresentation';
+import { paymentBlockRows } from '@billbull/shared/pages/Sales/POS/payments/paymentPresentation';
 
 /**
  * The payment breakdown for a recorded sale, shared by every back-office screen that shows

@@ -17,7 +17,7 @@ import {
     EyeOff,
     Save
 } from 'lucide-react';
-import api from '../../api/axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 import { getWhatsAppConfig, saveWhatsAppConfig, testWhatsAppConnection } from '../../api/whatsappApi';
 
 const MASK = '••••••••••••••••';

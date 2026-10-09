@@ -1,11 +1,11 @@
 ﻿import React, { useState, useMemo } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { Badge } from "../../components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@billbull/shared/components/ui/card";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@billbull/shared/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
+import { Badge } from "@billbull/shared/components/ui/badge";
 import { Progress } from "../../components/ui/progress";
-import { Separator } from "../../components/ui/separator";
+import { Separator } from "@billbull/shared/components/ui/separator";
 import {
   BarChart3,
   TrendingUp,

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { isEditableTarget } from '../utils/editableTarget';
+import { isEditableTarget } from '@billbull/shared/utils/editableTarget';
 
 /**
  * Returns true when the event target is somewhere the user is editing text, so

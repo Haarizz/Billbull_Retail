@@ -2,14 +2,14 @@ import React, { useCallback, useRef, useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import POSTouchScreen from '../POSTouchScreen';
-import PaymentAllocationPanel from '../payments/PaymentAllocationPanel';
-import CashPaymentModal from '../payments/modals/CashPaymentModal';
-import { TradeFunctionsPanel } from '../TradePOS/components/layout/TradeFunctionsPanel';
-import { useStickyScanFocus } from '../TradePOS/useStickyScanFocus';
-import { PosOverlayProvider } from '../input/PosOverlayContext';
-import { HOTKEY_SETTLE_MS, usePosInputController } from '../input/usePosInputController';
-import { POS_OVERLAY_IDS } from '../input/posScope';
+import POSTouchScreen from '@billbull/shared/pages/Sales/POS/POSTouchScreen';
+import PaymentAllocationPanel from '@billbull/shared/pages/Sales/POS/payments/PaymentAllocationPanel';
+import CashPaymentModal from '@billbull/shared/pages/Sales/POS/payments/modals/CashPaymentModal';
+import { TradeFunctionsPanel } from '@billbull/shared/pages/Sales/POS/TradePOS/components/layout/TradeFunctionsPanel';
+import { useStickyScanFocus } from '@billbull/shared/pages/Sales/POS/TradePOS/useStickyScanFocus';
+import { PosOverlayProvider } from '@billbull/shared/pages/Sales/POS/input/PosOverlayContext';
+import { HOTKEY_SETTLE_MS, usePosInputController } from '@billbull/shared/pages/Sales/POS/input/usePosInputController';
+import { POS_OVERLAY_IDS } from '@billbull/shared/pages/Sales/POS/input/posScope';
 import useGlobalSearchShortcut from '../../../../hooks/useGlobalSearchShortcut';
 
 /**

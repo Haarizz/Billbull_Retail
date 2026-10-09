@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../axiosConfig', () => ({
+vi.mock('@billbull/shared/api/axiosConfig', () => ({
   default: { get: vi.fn() },
 }));
 
-import api from '../axiosConfig';
+import api from '@billbull/shared/api/axiosConfig';
 import {
   DASHBOARD_SEARCH_SOURCE_KEYS,
   GLOBAL_SEARCH_CATEGORIES,

@@ -7,6 +7,6 @@
  * it now delegates to, rather than owning a second copy of it.
  */
 export { default } from './SalesReturnPage';
-export { default as SalesReturnScreen } from './SalesReturnScreen';
-export { ENTRY_POINT } from './constants';
-export { useSalesReturn } from './useSalesReturn';
+export { default as SalesReturnScreen } from '@billbull/shared/pages/Sales/SalesReturn/SalesReturnScreen';
+export { ENTRY_POINT } from '@billbull/shared/pages/Sales/SalesReturn/constants';
+export { useSalesReturn } from '@billbull/shared/pages/Sales/SalesReturn/useSalesReturn';

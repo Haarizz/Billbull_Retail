@@ -1,6 +1,6 @@
 import React from "react";
 
-import { ScrollArea } from "../../ui/scroll-area";
+import { ScrollArea } from "@billbull/shared/components/ui/scroll-area";
 import { DetailSection, EmptyRow, StatusChip, initialsOf } from "./DetailPanelShell";
 import { locationStockStatus, productStockStatus } from "./productStockStatus";
 

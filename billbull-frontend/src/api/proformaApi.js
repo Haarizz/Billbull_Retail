@@ -1,4 +1,4 @@
-import api from "./axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 
 // QA-040: send the designed-template Proforma email.
 export const sendProformaEmail = async (

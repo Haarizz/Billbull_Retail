@@ -20,7 +20,7 @@ const ACCOUNTS = [
 
 const getAccountsMock = vi.fn(() => Promise.resolve(ACCOUNTS));
 
-vi.mock('../../../api/ledgerApi', () => ({
+vi.mock('@billbull/shared/api/ledgerApi', () => ({
   getAccounts: (...args) => getAccountsMock(...args),
   getCostCenters: vi.fn(() => Promise.resolve([])),
   updateCostCenter: vi.fn(),
@@ -48,7 +48,7 @@ vi.mock('../../../api/employeesApi', () => ({
   employeesApi: { getActiveEmployees: vi.fn(() => Promise.resolve([])) },
 }));
 
-vi.mock('../../../context/BranchContext', () => ({
+vi.mock('@billbull/shared/context/BranchContext', () => ({
   useBranch: () => ({
     branches: [{ id: 1, name: 'Dubai' }],
     defaultBranchName: 'Dubai',
@@ -58,7 +58,7 @@ vi.mock('../../../context/BranchContext', () => ({
   }),
 }));
 
-vi.mock('../../../context/CompanyContext', () => ({
+vi.mock('@billbull/shared/context/CompanyContext', () => ({
   default: React.createContext({ company: { currency: 'AED' } }),
   useCompany: () => ({ company: { currency: 'AED' } }),
 }));

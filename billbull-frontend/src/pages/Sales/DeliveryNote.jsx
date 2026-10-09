@@ -39,27 +39,27 @@ import {
 // ==========================================
 // ASSET IMPORTS
 // ==========================================
-import billBullLogo from '../../assets/billBullLogo.png';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, printHtml } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendDeliveryNoteEmail } from '../../api/deliveryNoteApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { getImageUrl } from '../../utils/urlUtils';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
-import { generateDocFilename } from '../../utils/filenameUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import { generateDocFilename } from '@billbull/shared/utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import { formatDisplayDate, toLocalInputDate } from '../../utils/dateUtils';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { formatDisplayDate, toLocalInputDate } from '@billbull/shared/utils/dateUtils';
 import { pickSalesItemPrice } from '../../utils/salesPricing';
-import { resolveLineTaxRate, computeLineTaxTotals } from '../../utils/vatMath';
+import { resolveLineTaxRate, computeLineTaxTotals } from '@billbull/shared/utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
-import CurrencyAmount from '../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import BatchSelectionModal from '../../components/BatchSelectionModal';
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 
@@ -81,14 +81,14 @@ const DELIVERY_NOTE_COLUMNS = [
 // ==========================================
 // API IMPORTS
 // ==========================================
-import { getAllCustomers } from '../../api/customerledgerApi';
-import { getAllSalesOrders } from '../../api/salesorderApi';
-import { getAllSalesInvoices } from '../../api/salesInvoiceApi';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
+import { getAllSalesOrders } from '@billbull/shared/api/salesorderApi';
+import { getAllSalesInvoices } from '@billbull/shared/api/salesInvoiceApi';
 import { getAllProformas, getProformaById } from '../../api/proformaApi';
 import { getWarehouses, getWarehouseStock, getWarehouseBins } from '../../api/warehouseApi';
 // âœ… IMPORT STOCK API
-import { getStockAvailability } from '../../api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
-import { getItemPriceHistory } from '../../api/salesInvoiceApi'; // âœ… Price history API
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
+import { getItemPriceHistory } from '@billbull/shared/api/salesInvoiceApi'; // âœ… Price history API
 
 // âœ… DELIVERY NOTE API IMPORTS
 import {
@@ -100,7 +100,7 @@ import {
     advanceDeliveryNoteStatus,
     cancelDeliveryNote
 } from "../../api/deliveryNoteApi";
-import { getSalesSettings } from '../../api/salesSettingsApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // âœ… PRODUCT SELECTOR

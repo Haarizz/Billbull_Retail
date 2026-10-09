@@ -19,11 +19,11 @@ import {
 } from "lucide-react";
 import { Badge, Button } from "./PurchaseTemplateUI";
 import toast from "react-hot-toast";
-import CompanyContext from "../../../context/CompanyContext";
+import CompanyContext from "@billbull/shared/context/CompanyContext";
 import {
   resolveCurrencyDisplayConfig,
   UAE_DIRHAM_SYMBOL_IMAGE
-} from "../../../utils/countryCurrencyOptions";
+} from "@billbull/shared/utils/countryCurrencyOptions";
 function docTypeLabel(t) {
   return {
     quotation: "Quotation",

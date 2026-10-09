@@ -10,9 +10,9 @@ import { getQuotationStatusBadge, resolveQuotationSourceType } from '../utils/qu
 import { getAvailableQuotationActions } from '../utils/quotationActionRules';
 import { buildQuotationTimeline } from '../utils/buildQuotationTimeline';
 import { resolveCustomer, resolveDefaultShippingAddress } from '../../../utils/customerResolution';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { copyToClipboard } from '../../../utils/clipboard';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { usePermission } from '../../../hooks/usePermission';
 
 // Small dropdown for secondary header actions (collapses into "More" below xl).

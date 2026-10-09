@@ -16,12 +16,12 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-import { getProductsList } from '../../api/productsApi';
+import { getProductsList } from '@billbull/shared/api/productsApi';
 import { createInquiry } from '../../api/customerApi';
-import { getEmployees } from '../../api/employeeApi';
-import { getBranches } from '../../api/branchApi';
-import CurrencyAmount from '../../components/CurrencyAmount';
-import { getImageUrl } from '../../utils/urlUtils';
+import { getEmployees } from '@billbull/shared/api/employeeApi';
+import { getBranches } from '@billbull/shared/api/branchApi';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 
 const SEARCH_FIELDS = [
   { key: 'all', label: 'All fields' },

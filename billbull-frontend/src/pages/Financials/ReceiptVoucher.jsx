@@ -38,28 +38,28 @@ import {
 } from 'lucide-react';
 
 import { employeesApi } from '../../api/employeesApi';
-import { getAllCustomers } from '../../api/customerledgerApi';
-import { getSalesInvoiceById } from '../../api/salesInvoiceApi';
-import { receiptVoucherApi, sendReceiptVoucherEmail } from '../../api/receiptVoucherApi';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
+import { getSalesInvoiceById } from '@billbull/shared/api/salesInvoiceApi';
+import { receiptVoucherApi, sendReceiptVoucherEmail } from '@billbull/shared/api/receiptVoucherApi';
 // QA-040: shared email modal
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
 import { buildReceiptVoucherPrintData } from '../../utils/purchasePrintUtils';
-import { generateDocFilename, generateReportFilename } from '../../utils/filenameUtils';
+import { generateDocFilename, generateReportFilename } from '@billbull/shared/utils/filenameUtils';
 import { usePrintDocument } from '../../hooks/usePrintDocument';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
 import { resolveVoucherSettings } from '../../utils/financialPrintTemplate';
 import { ReceiptPaymentPreview } from './FinancialVoucherDesigner';
-import { printHtml } from '../../utils/printGenerator';
-import { getImageUrl } from '../../utils/urlUtils';
-import { useBranch } from '../../context/BranchContext';
-import { useCompany } from '../../context/CompanyContext';
+import { printHtml } from '@billbull/shared/utils/printGenerator';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { useBranch } from '@billbull/shared/context/BranchContext';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import { resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
-import { CurrencySymbol } from '../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../utils/dateUtils';
-import { getUsernameFromToken } from '../../api/auth';
-import { formatUserDisplayName } from '../../utils/displayName';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import { resolveCurrencyDisplayCode } from '@billbull/shared/utils/countryCurrencyOptions';
+import { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
+import { getUsernameFromToken } from '@billbull/shared/api/auth';
+import { formatUserDisplayName } from '@billbull/shared/utils/displayName';
 import PaginationFooter from '../../components/common/PaginationFooter';
 import TableSkeleton from '../../components/common/TableSkeleton';
 

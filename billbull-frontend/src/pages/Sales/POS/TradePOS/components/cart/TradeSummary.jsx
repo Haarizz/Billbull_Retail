@@ -1,5 +1,5 @@
 import React from 'react';
-import { TradeSummaryCard, TradeDivider } from '../ui';
+import { TradeSummaryCard, TradeDivider } from '@billbull/shared/pages/Sales/POS/TradePOS/components/ui/index';
 
 export const TradeSummary = React.memo(({
   currentInvoice,

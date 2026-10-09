@@ -30,16 +30,16 @@ import { Separator } from "../../Sales/Reports/ui/separator";
 import { Input } from "../../Sales/Reports/ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { getInventoryReportData } from "../../../api/inventoryReportsApi";
-import { getProductsList } from "../../../api/productsApi";
+import { getProductsList } from "@billbull/shared/api/productsApi";
 import { getWarehouses } from "../../../api/warehouseApi";
-import { getBrands } from "../../../api/brandsApi";
-import { getDepartments } from "../../../api/departmentsApi";
-import { exportToExcel } from "../../../utils/exportUtils";
-import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
-import { getCompanyProfile } from "../../../api/companyProfileApi";
-import { useBranch } from "../../../context/BranchContext";
+import { getBrands } from "@billbull/shared/api/brandsApi";
+import { getDepartments } from "@billbull/shared/api/departmentsApi";
+import { exportToExcel } from "@billbull/shared/utils/exportUtils";
+import { generateReportA4Html, printHtml, downloadPdf } from "@billbull/shared/utils/printGenerator";
+import { getCompanyProfile } from "@billbull/shared/api/companyProfileApi";
+import { useBranch } from "@billbull/shared/context/BranchContext";
 import ExportDropdown from "../../../components/common/ExportDropdown";
-import { CurrencySymbol } from "../../../components/CurrencyAmount";
+import { CurrencySymbol } from "@billbull/shared/components/CurrencyAmount";
 import { BranchContextIndicator, ReportBranchScopeToggle } from "../../../components/inventory/BranchScopeIndicators";
 
 type ReportGroupId =

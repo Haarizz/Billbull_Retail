@@ -1,7 +1,7 @@
 import React from "react";
 
-import { ScrollArea } from "../../ui/scroll-area";
-import { formatDisplayDate } from "../../../utils/dateUtils";
+import { ScrollArea } from "@billbull/shared/components/ui/scroll-area";
+import { formatDisplayDate } from "@billbull/shared/utils/dateUtils";
 import { customerStanding } from "./customerStanding";
 import {
   DetailSection,

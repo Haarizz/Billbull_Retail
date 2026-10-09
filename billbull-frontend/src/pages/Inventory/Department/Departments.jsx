@@ -15,7 +15,7 @@ import {
   updateDepartment,
   deleteDepartment,
   exportDepartments
-} from "../../../api/departmentsApi";
+} from "@billbull/shared/api/departmentsApi";
 
 const Departments = () => {
   // --- STATE MANAGEMENT ---

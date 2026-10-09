@@ -1,5 +1,5 @@
-import { getPosPrinters, printPosPrinterEscPos } from '../api/posPrinterApi';
-import { resolvePrinterForContext, printEscPosThroughAgent } from './localPrintAgent';
+import { getPosPrinters, printPosPrinterEscPos } from '@billbull/shared/api/posPrinterApi';
+import { resolvePrinterForContext, printEscPosThroughAgent } from '@billbull/shared/utils/localPrintAgent';
 
 /**
  * THE way anything in this app spools ZPL to a Zebra label printer.

@@ -18,7 +18,7 @@ import {
   TabsTrigger
 } from "../../Purchase/Templates/PurchaseTemplateUI";
 import toast from "react-hot-toast";
-import { UAE_DIRHAM_SYMBOL_IMAGE } from "../../../utils/countryCurrencyOptions";
+import { UAE_DIRHAM_SYMBOL_IMAGE } from "@billbull/shared/utils/countryCurrencyOptions";
 import {
   ArrowLeft,
   Download,

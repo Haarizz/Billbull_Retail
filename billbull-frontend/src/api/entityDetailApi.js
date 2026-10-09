@@ -12,7 +12,7 @@
 //  * Never fetch a whole table. No product list, no whole ledger, no vendor/customer
 //    roster — a details panel shows one selected row.
 
-import api from "./axiosConfig";
+import api from "@billbull/shared/api/axiosConfig";
 import { productSellingPrice } from "./globalSearchApi";
 
 /** Rows fetched for the "recent transactions" list. Clamped again server-side. */

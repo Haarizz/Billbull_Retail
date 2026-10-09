@@ -14,7 +14,7 @@ import {
   updateUnit,
   deleteUnit,
   exportUnits
-} from "../../../api/unitsApi";
+} from "@billbull/shared/api/unitsApi";
 import HierarchyBuilderModal from './HierarchyBuilderModal';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 

@@ -46,7 +46,7 @@ import {
   Mail,
   Phone
 } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import EmployeeBarcodeCard from './EmployeeBarcodeCard';
 import { isSalespersonRole } from '../../../utils/salespersonRoles';
 
@@ -54,15 +54,15 @@ import { isSalespersonRole } from '../../../utils/salespersonRoles';
 import { employeesApi } from '../../../api/employeesApi';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import { usersApi } from '../../../api/usersApi';
-import { hasRole } from '../../../api/auth';
-import { usePermissions } from '../../../context/PermissionContext';
-import { useBranch } from '../../../context/BranchContext';
+import { hasRole } from '@billbull/shared/api/auth';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import PerformanceTargets from './PerformanceTargets';
 import SetTargetsModal from './SetTargetsModal';
 import useEmployeePerformance, { monthKey, monthLabel } from './useEmployeePerformance';
 
-import { getImageUrl } from '../../../utils/urlUtils';
-import { formatDisplayDate as formatDateForDisplay } from '../../../utils/dateUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { formatDisplayDate as formatDateForDisplay } from '@billbull/shared/utils/dateUtils';
 import TableSkeleton from '../../../components/common/TableSkeleton';
 import { toast } from 'react-hot-toast';
 import { getWarehouses } from '../../../api/warehouseApi';

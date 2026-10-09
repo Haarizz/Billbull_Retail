@@ -7,8 +7,8 @@ import { CopyField, InfoRow, RailCard, SummaryStrip } from './previewParts';
 import { getPaymentVoucherById } from '../../../api/paymentApi';
 import { getPaymentVoucherStatusBadge } from '../utils/paymentVoucherStatusBadge';
 import { findVendorRecord } from '../../../utils/purchasePrintUtils';
-import { formatDisplayDate } from '../../../utils/dateUtils';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 
 const num = (v) => Number(v ?? 0);
 

@@ -5,10 +5,10 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "../../components/ui/card";
-import { Badge } from "../../components/ui/badge";
-import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
+} from "@billbull/shared/components/ui/card";
+import { Badge } from "@billbull/shared/components/ui/badge";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Input } from "@billbull/shared/components/ui/input";
 import { Progress } from "../../components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar";
 import {
@@ -17,11 +17,11 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { Separator } from "../../components/ui/separator";
+} from "@billbull/shared/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
+import { Separator } from "@billbull/shared/components/ui/separator";
 import { Skeleton } from "../../components/ui/skeleton";
-import { cn } from "../../components/ui/utils";
+import { cn } from "@billbull/shared/components/ui/utils";
 import { toast } from "sonner";
 import {
   BarChart as ReBarChart,
@@ -90,7 +90,7 @@ import {
   type GlobalSearchResult,
   type BranchSummary,
 } from "../../api/billbull-dashboard-service";
-import { useBranch } from "../../context/BranchContext";
+import { useBranch } from "@billbull/shared/context/BranchContext";
 import { entitySectionForResult } from "../../utils/entityNavigation";
 
 // Props

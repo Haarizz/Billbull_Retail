@@ -39,28 +39,28 @@ import {
 } from 'lucide-react';
 
 import { useMemo } from 'react';
-import CurrencyAmount from '../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 
 // âœ… REAL API IMPORTS
-import api from '../../api/axiosConfig';
-import { getAllCustomers } from '../../api/customerledgerApi';
+import api from '@billbull/shared/api/axiosConfig';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
 import { getAllQuotations, getQuotationById } from '../../api/quotationApi';
-import { getAllSalesOrders, getSalesOrderById } from '../../api/salesorderApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
+import { getAllSalesOrders, getSalesOrderById } from '@billbull/shared/api/salesorderApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generatePrintHtmlAsync, printHtml } from '@billbull/shared/utils/printGenerator';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
 import { sendProformaEmail } from '../../api/proformaApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { getImageUrl } from '../../utils/urlUtils';
-import { formatDisplayDate } from '../../utils/dateUtils';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
-import { resolveLineTaxRate, computeLineTaxTotals } from '../../utils/vatMath';
+import { resolveLineTaxRate, computeLineTaxTotals } from '@billbull/shared/utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
-import billBullLogo from '../../assets/billBullLogo.png';
-import { useCompany } from '../../context/CompanyContext';
-import { formatCurrencyDisplay } from '../../utils/countryCurrencyOptions';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { formatCurrencyDisplay } from '@billbull/shared/utils/countryCurrencyOptions';
 import { compareDocumentValues } from '../../utils/documentOrdering';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 
@@ -75,12 +75,12 @@ import {
   getProformaById
 } from "../../api/proformaApi";
 
-import { receiptVoucherApi } from "../../api/receiptVoucherApi";
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import { useBranch } from "../../context/BranchContext";
+import { receiptVoucherApi } from "@billbull/shared/api/receiptVoucherApi";
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import { useBranch } from "@billbull/shared/context/BranchContext";
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
 
 // ==========================================
 // 1. CONFIGURATION
@@ -106,7 +106,7 @@ import CustomerShippingPanel from '../../components/CustomerShippingPanel';
 
 // âœ… STOCK AVAILABILITY MODAL
 import StockAvailabilityModal from '../../components/StockAvailabilityModal';
-import { getStockAvailability } from '../../api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi'; // âœ… NEW API for LIVE STOCK
 import { isAutoNumberingEnabled } from '../../utils/salesNumbering';
 
 // âœ… SHORTCUTS HOOK

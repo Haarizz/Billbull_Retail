@@ -7,9 +7,9 @@ import {
     CheckCircle, UserCircle, BarChart2, List, CreditCard, Save, X, Maximize2,
     Construction
 } from 'lucide-react';
-import { getUserProfile, updateUserProfile, changePassword, logout } from '../api/auth';
-import { getImageUrl } from '../utils/urlUtils';
-import { formatUserDisplayName } from '../utils/displayName';
+import { getUserProfile, updateUserProfile, changePassword, logout } from '@billbull/shared/api/auth';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { formatUserDisplayName } from '@billbull/shared/utils/displayName';
 import MyTargetsPerformance from './MyTargetsPerformance';
 import toast from 'react-hot-toast';
 

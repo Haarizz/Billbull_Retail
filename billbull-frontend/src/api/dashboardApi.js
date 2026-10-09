@@ -1,16 +1,16 @@
-import api from './axiosConfig';
-import { getProducts } from './productsApi';
-import { getAllSalesInvoices } from './salesInvoiceApi';
-import { getAllSalesOrders } from './salesorderApi';
+import api from '@billbull/shared/api/axiosConfig';
+import { getProducts } from '@billbull/shared/api/productsApi';
+import { getAllSalesInvoices } from '@billbull/shared/api/salesInvoiceApi';
+import { getAllSalesOrders } from '@billbull/shared/api/salesorderApi';
 import { getAllQuotations } from './quotationApi';
-import { getAllSalesReturns } from './salesReturnApi';
+import { getAllSalesReturns } from '@billbull/shared/api/salesReturnApi';
 import { fetchExpenses } from './expensesApi';
 import { getLpos } from './lpoApi';
 import { getGrns } from './grnApi';
 import { getInquiries } from './customerApi';
 import { employeesApi } from './employeesApi';
 import { getStockTransfers } from './stockTransferApi';
-import { getAccounts } from './ledgerApi';
+import { getAccounts } from '@billbull/shared/api/ledgerApi';
 import {
     getLowStockReport,
     getOutOfStockReport,

@@ -15,19 +15,19 @@ vi.mock('../../../../api/vendorsApi', () => ({
   deleteVendor: vi.fn(),
 }));
 
-vi.mock('../../../../api/financialsApi', () => ({
+vi.mock('@billbull/shared/api/financialsApi', () => ({
   fetchStatementOfAccount: vi.fn(() => Promise.resolve([])),
 }));
 
-vi.mock('../../../../api/printTemplateApi', () => ({
+vi.mock('@billbull/shared/api/printTemplateApi', () => ({
   getTemplatesByCategory: vi.fn(() => Promise.resolve([])),
 }));
 
-vi.mock('../../../../context/BranchContext', () => ({
+vi.mock('@billbull/shared/context/BranchContext', () => ({
   useBranch: () => ({ activeBranch: { id: 1, name: 'Dubai' }, branches: [], isAllBranches: false }),
 }));
 
-vi.mock('../../../../context/CompanyContext', () => ({
+vi.mock('@billbull/shared/context/CompanyContext', () => ({
   default: React.createContext({ company: { currency: 'AED' } }),
   useCompany: () => ({ company: { currency: 'AED' } }),
 }));

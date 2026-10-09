@@ -19,7 +19,7 @@ import {
     Target
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { getSalesSettings, saveSalesSettings } from '../../api/salesSettingsApi';
+import { getSalesSettings, saveSalesSettings } from '@billbull/shared/api/salesSettingsApi';
 
 const DEFAULT_DOCUMENT_NUMBERING = [
     { documentType: 'CUSTOMER', label: 'Customer Code', autoNumberingEnabled: true, prefix: 'CUST', nextNumber: 1 },

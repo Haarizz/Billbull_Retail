@@ -7,11 +7,11 @@ import toast from 'react-hot-toast';
 import {
     getBranches, createBranch, updateBranch, setDefaultBranch, deleteBranch,
     setHeadquartersBranch, uploadBranchLogo, uploadBranchStamp
-} from '../../api/branchApi';
-import { getBranchTaxConfigurationForBranch, saveBranchTaxConfiguration } from '../../api/branchTaxApi';
+} from '@billbull/shared/api/branchApi';
+import { getBranchTaxConfigurationForBranch, saveBranchTaxConfiguration } from '@billbull/shared/api/branchTaxApi';
 import { getWarehouses } from '../../api/warehouseApi';
-import { getImageUrl } from '../../utils/urlUtils';
-import { useBranch } from '../../context/BranchContext';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import PaginationFooter from '../../components/common/PaginationFooter';
 
 const EMPTY_FORM = {

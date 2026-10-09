@@ -1,11 +1,11 @@
 ﻿import React from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
-import { Input } from "../../components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@billbull/shared/components/ui/card";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Badge } from "@billbull/shared/components/ui/badge";
+import { Input } from "@billbull/shared/components/ui/input";
 import { Progress } from "../../components/ui/progress";
-import { Separator } from "../../components/ui/separator";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Separator } from "@billbull/shared/components/ui/separator";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@billbull/shared/components/ui/table";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { Search, ArrowUpDown, AlertTriangle, Clock, RefreshCcw } from "lucide-react";
 

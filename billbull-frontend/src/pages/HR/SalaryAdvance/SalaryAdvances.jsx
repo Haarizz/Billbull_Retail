@@ -29,7 +29,7 @@ import {
 // --- API IMPORTS ---
 import { salaryAdvanceApi } from '../../../api/salaryAdvanceApi';
 import { employeesApi } from '../../../api/employeesApi';
-import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
 import TableSkeleton from '../../../components/common/TableSkeleton';
 

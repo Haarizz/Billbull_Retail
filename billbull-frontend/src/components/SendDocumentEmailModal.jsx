@@ -22,10 +22,10 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Mail, X } from 'lucide-react';
-import { getTemplatesByCategory } from '../api/printTemplateApi';
-import { generateEmailHtml } from '../utils/printGenerator';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { generateEmailHtml } from '@billbull/shared/utils/printGenerator';
 import { buildEmailBody } from '../utils/emailImageInliner';
-import billBullLogo from '../assets/billBullLogo.png';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
 import toast from 'react-hot-toast';
 
 const SendDocumentEmailModal = ({

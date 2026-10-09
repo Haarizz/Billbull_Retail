@@ -6,12 +6,12 @@ import userEvent from "@testing-library/user-event";
 import CashMovements from "../CashMovements";
 import * as cashMovementApi from "../../../api/posCashMovementApi";
 
-vi.mock("../../../context/BranchContext", () => ({
+vi.mock("@billbull/shared/context/BranchContext", () => ({
   useBranch: () => ({ activeBranch: { id: 7, name: "Main Branch" } }),
 }));
 
 const mockCanAction = vi.fn();
-vi.mock("../../../context/PermissionContext", () => ({
+vi.mock("@billbull/shared/context/PermissionContext", () => ({
   usePermissions: () => ({ canAction: mockCanAction }),
 }));
 

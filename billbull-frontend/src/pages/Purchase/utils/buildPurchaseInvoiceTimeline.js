@@ -1,4 +1,4 @@
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 
 // Builds a Purchase Invoice timeline from data already on the fetched entity:
 // creation, submission, posting, and each vendor payment. No fabricated events.

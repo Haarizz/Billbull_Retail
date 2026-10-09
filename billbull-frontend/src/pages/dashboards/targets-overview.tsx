@@ -1,12 +1,12 @@
 ﻿import React, { useState, useMemo } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@billbull/shared/components/ui/card";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Badge } from "@billbull/shared/components/ui/badge";
 import { Progress } from "../../components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { Separator } from "../../components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@billbull/shared/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@billbull/shared/components/ui/table";
+import { Separator } from "@billbull/shared/components/ui/separator";
 import { Alert, AlertDescription } from "../../components/ui/alert";
 import { Calendar } from "../../components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
@@ -67,7 +67,7 @@ import {
   Area,
   AreaChart
 } from "recharts";
-import { cn } from "../../components/ui/utils";
+import { cn } from "@billbull/shared/components/ui/utils";
 import { format } from "date-fns";
 
 // Mock data for the dashboard

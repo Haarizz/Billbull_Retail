@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Zap, Search, Plus, Loader2, Check } from 'lucide-react';
-import { getProductsList } from '../api/productsApi';
-import CurrencyAmount from './CurrencyAmount';
+import { getProductsList } from '@billbull/shared/api/productsApi';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 
 const FastEntryPanel = ({ isOpen, onClose, onAddItem, mode = 'sales', currency = 'AED' }) => {
     const [search, setSearch] = useState('');

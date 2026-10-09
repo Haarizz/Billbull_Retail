@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Banknote, Search, RefreshCw, Plus, CheckCircle2, AlertCircle, X, Download, FileText, ArrowRightLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { useCompany } from '../../../context/CompanyContext';
-import { getAdvanceSummary, getAdvanceHistory, receiveAdvance, refundAdvance } from '../../../api/advanceApplicationApi';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { getAdvanceSummary, getAdvanceHistory, receiveAdvance, refundAdvance } from '@billbull/shared/api/advanceApplicationApi';
 
 const CustomerAdvancesView = ({ customers = [] }) => {
     const { company } = useCompany();

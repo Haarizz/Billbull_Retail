@@ -13,7 +13,7 @@ import ChequePrintingDesigner, {
 import {
     getPrintTemplates, createPrintTemplate, updatePrintTemplate,
     deletePrintTemplate,
-} from "../../api/printTemplateApi";
+} from "@billbull/shared/api/printTemplateApi";
 
 // ─── Voucher type catalog ─────────────────────────────────────────────────────
 

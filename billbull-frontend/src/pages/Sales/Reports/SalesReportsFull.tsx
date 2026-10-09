@@ -35,17 +35,17 @@ import { Badge } from "./ui/badge";
 import { Separator } from "./ui/separator";
 import { Input } from "./ui/input";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Area, AreaChart } from "recharts";
-import { getSalesReportData, getSalesReportSalespersons, getSalesReportFilterSuggestions } from "../../../api/salesReportsApi";
+import { getSalesReportData, getSalesReportSalespersons, getSalesReportFilterSuggestions } from "@billbull/shared/api/salesReportsApi";
 import { getPosXReports, getPosZReports, getPosReportXDetail, getPosReportZDetail, checkPosReportPrintable, checkPosReportExportable } from "../../../api/posReportsApi";
-import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from "../../../utils/posReportViewModel";
-import { exportToExcel } from "../../../utils/exportUtils";
-import { generateReportA4Html, printHtml, downloadPdf } from "../../../utils/printGenerator";
-import { getCompanyProfile } from "../../../api/companyProfileApi";
+import { buildXReportViewModel as buildXReportViewModelShared, buildZReportViewModel as buildZReportViewModelShared } from "@billbull/shared/utils/posReportViewModel";
+import { exportToExcel } from "@billbull/shared/utils/exportUtils";
+import { generateReportA4Html, printHtml, downloadPdf } from "@billbull/shared/utils/printGenerator";
+import { getCompanyProfile } from "@billbull/shared/api/companyProfileApi";
 import ExportDropdown from "../../../components/common/ExportDropdown";
 import PaginationFooter from "../../../components/common/PaginationFooter";
-import { useBranch } from "../../../context/BranchContext";
-import { usePermissions } from "../../../context/PermissionContext";
-import { CurrencySymbol } from "../../../components/CurrencyAmount";
+import { useBranch } from "@billbull/shared/context/BranchContext";
+import { usePermissions } from "@billbull/shared/context/PermissionContext";
+import { CurrencySymbol } from "@billbull/shared/components/CurrencyAmount";
 
 type ReportGroupId =
   | "summary"

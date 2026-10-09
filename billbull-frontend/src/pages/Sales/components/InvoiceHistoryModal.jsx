@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, RotateCcw } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
 import { getSalesInvoiceHistory } from '../../../api/salesInvoiceHistoryApi';
 import { getHistoryEventStyle, getHistoryChipStyle } from '../utils/historyEventStyles';
 

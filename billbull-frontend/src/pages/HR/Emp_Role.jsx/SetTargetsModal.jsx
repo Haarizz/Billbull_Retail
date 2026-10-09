@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Target, Loader2, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { saveEmployeeTargetsBulk } from '../../../api/employeeTargetsApi';
+import { saveEmployeeTargetsBulk } from '@billbull/shared/api/employeeTargetsApi';
 import { monthLabel, recentMonths } from './useEmployeePerformance';
 
 /**

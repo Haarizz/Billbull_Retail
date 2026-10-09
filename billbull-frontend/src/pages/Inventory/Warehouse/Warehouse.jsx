@@ -7,9 +7,9 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { getWarehouseTree, createWarehouse, updateWarehouse, deleteWarehouse, getWarehouseStockSummary, getWarehouseStock } from '../../../api/warehouseApi';
-import { getBranches } from '../../../api/branchApi';
-import { hasRole } from '../../../api/auth';
-import { useBranch } from '../../../context/BranchContext';
+import { getBranches } from '@billbull/shared/api/branchApi';
+import { hasRole } from '@billbull/shared/api/auth';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import { getZones, createZone, updateZone, deleteZone, getLocators, createLocator, updateLocator, deleteLocator, getBins, createBin, updateBin, deleteBin, getBinStock, addBinStock, deleteBinStock } from '../../../api/warehouseLocationApi';
 import { getListSerialNumber } from '../../../utils/serialNumbering';
 

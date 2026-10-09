@@ -7,7 +7,7 @@
 // Templates designer (live preview), so editing header/terms/footer in
 // Settings updates both surfaces identically.
 
-import { formatUserDisplayName } from './displayName';
+import { formatUserDisplayName } from '@billbull/shared/utils/displayName';
 
 const fmt = (n) =>
     Number(n || 0).toLocaleString('en-AE', {

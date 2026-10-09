@@ -1,6 +1,6 @@
 import React from "react";
 
-import { cn } from "../ui/utils";
+import { cn } from "@billbull/shared/components/ui/utils";
 import { StatusChip } from "./details/DetailPanelShell";
 
 /**

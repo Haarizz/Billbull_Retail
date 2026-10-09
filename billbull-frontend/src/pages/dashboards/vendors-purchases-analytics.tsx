@@ -1,12 +1,12 @@
 ﻿import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Input } from "../../components/ui/input";
-import { Label } from "../../components/ui/label";
-import { Badge } from "../../components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@billbull/shared/components/ui/card";
+import { Button } from "@billbull/shared/components/ui/button";
+import { Input } from "@billbull/shared/components/ui/input";
+import { Label } from "@billbull/shared/components/ui/label";
+import { Badge } from "@billbull/shared/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@billbull/shared/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@billbull/shared/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@billbull/shared/components/ui/tabs";
 import { 
   BarChart3, TrendingUp, TrendingDown, Download, Calendar, Filter,
   AlertTriangle, CheckCircle2, Clock, XCircle, DollarSign, Package,

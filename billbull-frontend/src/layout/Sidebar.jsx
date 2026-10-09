@@ -17,10 +17,10 @@ import {
   PieChart, Users, Wallet, Banknote, ShieldCheck, Mail,
   UserCircle, TrendingUp, Hash, Search, MessageCircle
 } from "lucide-react";
-import { hasRole, logout, getUsernameFromToken } from "../api/auth";
-import { usePermissions } from "../context/PermissionContext";
-import { useCompany } from "../context/CompanyContext";
-import { formatUserDisplayName } from "../utils/displayName";
+import { hasRole, logout, getUsernameFromToken } from "@billbull/shared/api/auth";
+import { usePermissions } from "@billbull/shared/context/PermissionContext";
+import { useCompany } from "@billbull/shared/context/CompanyContext";
+import { formatUserDisplayName } from "@billbull/shared/utils/displayName";
 import BranchSelector from "../components/common/BranchSelector";
 import { clientConfig } from "../config/clientConfig";
 

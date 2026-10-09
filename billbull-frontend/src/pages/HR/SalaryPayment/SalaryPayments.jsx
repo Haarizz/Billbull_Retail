@@ -30,9 +30,9 @@ import {
 // Import APIs
 import { employeesApi } from '../../../api/employeesApi';
 import { salaryPaymentApi } from '../../../api/salaryPaymentApi';
-import CurrencyAmount, { CurrencySymbol } from '../../../components/CurrencyAmount';
+import CurrencyAmount, { CurrencySymbol } from '@billbull/shared/components/CurrencyAmount';
 import PaginationFooter from '../../../components/common/PaginationFooter';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import TableSkeleton from '../../../components/common/TableSkeleton';
 import toast from 'react-hot-toast';
 

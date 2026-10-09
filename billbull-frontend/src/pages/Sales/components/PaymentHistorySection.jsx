@@ -1,7 +1,7 @@
 import React from 'react';
 import { RotateCcw, Receipt } from 'lucide-react';
-import CurrencyAmount from '../../../components/CurrencyAmount';
-import { formatDisplayDate } from '../../../utils/dateUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import TableSkeleton from '../../../components/common/TableSkeleton';
 import VoucherRowMenu from './VoucherRowMenu';
 

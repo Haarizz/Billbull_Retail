@@ -35,8 +35,8 @@ import {
 } from 'lucide-react';
 
 // ✅ API IMPORTS
-import api from '../../api/axiosConfig';
-import { getAllCustomers } from '../../api/customerledgerApi';
+import api from '@billbull/shared/api/axiosConfig';
+import { getAllCustomers } from '@billbull/shared/api/customerledgerApi';
 import { getAllQuotations } from '../../api/quotationApi';
 import { getAllProformas } from '../../api/proformaApi';
 import {
@@ -47,25 +47,25 @@ import {
   uploadSalesOrderAttachment,
   getSalesOrderReceiptVouchers,
   getSalesOrderStats
-} from '../../api/salesorderApi';
-import { getTemplatesByCategory } from '../../api/printTemplateApi';
-import { formatDisplayDate } from '../../utils/dateUtils';
+} from '@billbull/shared/api/salesorderApi';
+import { getTemplatesByCategory } from '@billbull/shared/api/printTemplateApi';
+import { formatDisplayDate } from '@billbull/shared/utils/dateUtils';
 import { useWhatsAppDocumentSend } from '../../components/whatsapp/useWhatsAppDocumentSend';
 import { pickSalesItemPrice, isPolicyOverridingPackings } from '../../utils/salesPricing';
-import { computeLineTaxTotals, resolveLineTaxRate } from '../../utils/vatMath';
+import { computeLineTaxTotals, resolveLineTaxRate } from '@billbull/shared/utils/vatMath';
 import { getBranchTaxSummary } from '../../api/taxApi';
-import { generatePrintHtmlAsync, printHtml } from '../../utils/printGenerator';
-import { getImageUrl } from '../../utils/urlUtils';
+import { generatePrintHtmlAsync, printHtml } from '@billbull/shared/utils/printGenerator';
+import { getImageUrl } from '@billbull/shared/utils/urlUtils';
 import { getDefaultProductUnit, resolveUnitAmount } from '../../utils/unitPricing';
-import { getStockAvailability } from '../../api/stockAvailabilityApi';
-import { getSalesSettings } from '../../api/salesSettingsApi';
-import billBullLogo from '../../assets/billBullLogo.png';
-import { useCompany } from '../../context/CompanyContext';
-import { useBranch } from '../../context/BranchContext';
+import { getStockAvailability } from '@billbull/shared/api/stockAvailabilityApi';
+import { getSalesSettings } from '@billbull/shared/api/salesSettingsApi';
+import billBullLogo from '@billbull/shared/assets/billBullLogo.png';
+import { useCompany } from '@billbull/shared/context/CompanyContext';
+import { useBranch } from '@billbull/shared/context/BranchContext';
 import { buildDocumentHeaderProfile } from '../../utils/branchPrintProfile';
-import { sendSalesOrderEmail } from '../../api/salesorderApi';
+import { sendSalesOrderEmail } from '@billbull/shared/api/salesorderApi';
 import SendDocumentEmailModal from '../../components/SendDocumentEmailModal';
-import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '../../utils/documentSummaryUtils';
+import { summarizeSalesItems, summarizeStoredSalesItems, makeFooterDiscount, allocateFooterDiscount, resolveSourceFooterDiscount, summaryLineLookup, printLineMoney, FOOTER_DISCOUNT_HELP } from '@billbull/shared/utils/documentSummaryUtils';
 
 // ✅ PRODUCT SELECTOR
 import ProductSelector from '../../components/ProductSelector';
@@ -92,12 +92,12 @@ import BatchSelectionModal from '../../components/BatchSelectionModal';
 import useShortcuts from '../../hooks/useShortcuts';
 
 // ✅ PERMISSIONS
-import { usePermissions } from '../../context/PermissionContext';
+import { usePermissions } from '@billbull/shared/context/PermissionContext';
 import ExportDropdown from '../../components/common/ExportDropdown';
 import DateFilter from '../../components/common/DateFilter';
-import { exportToExcel, exportToPDF } from '../../utils/exportUtils';
-import CurrencyAmount from '../../components/CurrencyAmount';
-import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '../../utils/countryCurrencyOptions';
+import { exportToExcel, exportToPDF } from '@billbull/shared/utils/exportUtils';
+import CurrencyAmount from '@billbull/shared/components/CurrencyAmount';
+import { formatCurrencyDisplay, resolveCurrencyDisplayCode } from '@billbull/shared/utils/countryCurrencyOptions';
 import { getListSerialNumber, withListSerialNumbers } from '../../utils/serialNumbering';
 import TableSkeleton from '../../components/common/TableSkeleton';
 import KpiCards from '../../components/common/KpiCards';

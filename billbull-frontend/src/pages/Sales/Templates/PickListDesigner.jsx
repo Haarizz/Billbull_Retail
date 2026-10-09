@@ -1,6 +1,6 @@
 import React, { useState, useRef } from "react";
 import { ArrowLeft, Save, Printer, Upload, X, Image } from "lucide-react";
-import { defaultPickListSettings } from "../../../utils/pickListDefaults";
+import { defaultPickListSettings } from "@billbull/shared/utils/pickListDefaults";
 const MOCK = {
   company: {
     name: "Al Noor Trading & Contracting LLC",

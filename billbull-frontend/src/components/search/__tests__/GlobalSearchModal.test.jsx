@@ -8,7 +8,7 @@ import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 // --- Module mocks ------------------------------------------------------------
 
 const canViewMock = vi.fn(() => true);
-vi.mock('../../../context/PermissionContext', () => ({
+vi.mock('@billbull/shared/context/PermissionContext', () => ({
   usePermissions: () => ({ canView: canViewMock }),
 }));
 
