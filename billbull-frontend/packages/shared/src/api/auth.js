@@ -10,6 +10,16 @@ export const login = async (username, password) => {
   return res.data; // { token }
 };
 
+// 💾 Store a successful login response for the tab (sessionStorage — closing the tab signs out).
+// Shared by the Retail and standalone POS login screens so both keep the same session keys.
+export const persistLoginSession = (data) => {
+  sessionStorage.setItem("token", data.token);
+  sessionStorage.setItem("role", data.primaryRole || data.role);
+  sessionStorage.setItem("primaryRole", data.primaryRole || data.role);
+  sessionStorage.setItem("user", data.username);
+  sessionStorage.setItem("fullName", data.fullName || data.username);
+};
+
 // 🔍 Decode JWT
 export const getDecodedToken = () => {
   const token = sessionStorage.getItem("token");

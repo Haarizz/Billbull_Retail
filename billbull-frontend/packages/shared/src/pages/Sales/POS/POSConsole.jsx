@@ -5,6 +5,7 @@ import { usePermissions } from '../../../context/PermissionContext';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from '../../../components/ui/tooltip';
 import POSCounters from '../POSCounters';
+import { usePosHost } from './posHost';
 import { Switch } from '../../../components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
 import { Label } from '../../../components/ui/label';
@@ -158,6 +159,8 @@ const POSConsole = React.memo((props) => {
     // actions the user can't perform, but the backend (ModulePermissionService) is the actual
     // enforcement (see PosTerminalController.requireTerminalAction).
     const { canAction, hasAnyRole } = usePermissions();
+    // Terminal & counter administration is a Retail capability; the standalone till hides it.
+    const { terminalAdministration } = usePosHost();
     const canTerminalAction = (action) => canAction(`permissions.pos.terminal.${action}`, 'view');
     // The Behavior tab exposes supervisor-approval config (void gate, PIN/password) —
     // restrict it to supervisor-capable roles, mirroring the backend role gate in
@@ -629,7 +632,7 @@ const POSConsole = React.memo((props) => {
       ...(canManageBehaviorSettings ? [{ id:'behavior', label:'Behavior', icon:<Shield className="h-4 w-4" /> }] : []),
       { id:'devices',   label:'Devices',        icon:<Printer className="h-4 w-4" /> },
       { id:'templates', label:'Print Templates',icon:<FileText className="h-4 w-4" /> },
-      { id:'terminals', label:'Terminals & Counters', icon:<Hash className="h-4 w-4" /> },
+      ...(terminalAdministration ? [{ id:'terminals', label:'Terminals & Counters', icon:<Hash className="h-4 w-4" /> }] : []),
     ];
 
     const loadTerminals = async () => {
@@ -2712,7 +2715,7 @@ const POSConsole = React.memo((props) => {
           })()}
 
           {/* ══ TERMINALS ══ */}
-          {consoleTab === 'terminals' && (() => {
+          {consoleTab === 'terminals' && terminalAdministration && (() => {
             const maxSlots = posSettings?.maxTerminalsPerBranch ?? 5;
 
             const activeCount = terminalList.filter(t => ['ACTIVE', 'IDLE', 'NEW', 'PENDING_REGISTRATION'].includes(t.status)).length;

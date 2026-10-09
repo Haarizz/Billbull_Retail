@@ -29,6 +29,15 @@ const retryAfterSeconds = (error) => {
 
 const isRateLimited = (error) => error.response?.status === 429;
 const isAuthEndpoint = (config) => (config?.url || "").includes("/api/auth/");
+
+// ── Session expiry (401) ─────────────────────────────────────────────────────
+// Retail's default: toast, clear the session and redirect to /login. A host that must not navigate
+// away (the standalone POS keeps an in-progress cart mounted) registers its own handler instead;
+// the request still rejects so the caller's error path runs. Pass null to restore the default.
+let sessionExpiredHandler = null;
+export const setSessionExpiredHandler = (handler) => {
+  sessionExpiredHandler = typeof handler === "function" ? handler : null;
+};
 const isIdempotentGet = (config) => (config?.method || "get").toLowerCase() === "get";
 
 const notifyRateLimited = (waitSeconds) => {
@@ -98,6 +107,10 @@ api.interceptors.response.use(
 
     // Session expiration handling (token expired or invalid)
     if (error.response?.status === 401 && !isAuthEndpoint(error.config)) {
+      if (sessionExpiredHandler) {
+        sessionExpiredHandler(error);
+        return Promise.reject(error);
+      }
       if (!sessionStorage.getItem("__session_expired")) {
         sessionStorage.setItem("__session_expired", "true");
         toast.error("Your session has expired. Please log in again.", { id: "session-expired", duration: 5000 });

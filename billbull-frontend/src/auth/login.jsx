@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "@billbull/shared/api/auth";
+import { login, persistLoginSession } from "@billbull/shared/api/auth";
 import { useCompany } from "@billbull/shared/context/CompanyContext";
 import { Eye, EyeOff, ArrowRight, Loader2 } from "lucide-react";
 import billBullLogo from "@billbull/shared/assets/billBullLogo.png";
@@ -40,11 +40,7 @@ const Login = () => {
       const data = await login(formData.username, formData.password);
 
       // ✅ Store Auth Data
-      sessionStorage.setItem("token", data.token);
-      sessionStorage.setItem("role", data.primaryRole || data.role);
-      sessionStorage.setItem("primaryRole", data.primaryRole || data.role);
-      sessionStorage.setItem("user", data.username);
-      sessionStorage.setItem("fullName", data.fullName || data.username);
+      persistLoginSession(data);
 
       // Every login starts with the sidebar collapsed, regardless of how the
       // previous session left it. Toggling it during the session still persists.
