@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Two-module monorepo for the BillBull retail/ERP system, plus a standalone printing helper:
 
 - `billbull-backend/` — Spring Boot 3.5.9 / Java 17 / Maven, PostgreSQL via JPA + Hibernate + Flyway
-- `billbull-frontend/` — React 19 + Vite 7 + Tailwind v4, axios, react-router
+- `billbull-frontend/` — React 19 + Vite 7 + Tailwind v4, axios, react-router. An npm workspace root: the Retail app (`src/`), the standalone POS till (`apps/pos/`, served at `/pos/`) and `packages/shared/` (`@billbull/shared`, everything both apps use). See `docs/standalone-pos/ARCHITECTURE.md`.
+- `tools/pos-parity/` — headless-Chrome harness that runs the same till scenario through `/sales/pos` and `/pos/` and diffs requests/DB effects (disposable DB only).
 - `tools/pos-print-agent/` — standalone Node.js Windows tray app (`billbull-pos-print-agent`) that the frontend talks to over local HTTP to drive USB/Bluetooth/Windows-queue thermal printers. Packaged to `dist/BillBullPrintAgent.exe` via `pkg`, optionally wrapped by an Inno Setup installer (`installer/BillBullPrintAgent.iss`). Not part of the Maven/Vite build; versioned and released independently (currently 0.5.3).
 - `tools/generate_billbull_documentation.cjs` — one-off documentation generator, not part of the build.
 - `docs/` — architecture notes (e.g. `pos-device-architecture-specification-v2-2026-06-30.md`); root also has several deployment/testing markdown/PDF docs (`DEPLOYMENT_GUIDE.md`, `DEPLOYMENT_8_CLIENTS.md`, `ERP_MANUAL_TESTING_PLAN.md`, `QA_TEST_REPORT.md`, etc.) — no root `README.md`, `.cursorrules`, or Copilot instructions exist.
@@ -32,6 +33,8 @@ There is no Maven wrapper — use a system `mvn`.
 - Dev server: `npm run dev`
 - Production build: `npm run build`
 - Lint: `npm run lint`
+- Standalone POS: `npm run dev:pos` (port 5174, proxies `/api` + `/uploads`), `npm run build:pos` (→ `apps/pos/dist`), `npm run preview:pos`
+- Workspace boundaries: `npm run check:boundaries`; after adding a `@billbull/shared/...` import run `npm run shared:exports` (the boundary test in `npm test` fails if the export map is out of sync)
 - Preview production build: `npm run preview`
 
 **POS print agent** (`tools/pos-print-agent/`)
@@ -113,6 +116,8 @@ Manual journal vouchers above `financials.jv.approval-threshold-aed` (default 10
 **Reporting/export**: Apache POI (`poi`/`poi-ooxml`) for Excel export, Microsoft Playwright (headless Chromium) for HTML→PDF (`document/HtmlPdfService`). Auth uses `jjwt-api/-impl/-jackson` 0.11.5.
 
 ## Frontend architecture
+
+**Where code lives.** The POS workspace (`POSSales.jsx`, `pages/Sales/POS/**`), Sales Return, and every API/util/UI/context module they import live in `billbull-frontend/packages/shared/src/`, which mirrors the old `src/` layout. Retail-only code stays in `src/`. Retail and `apps/pos` import shared code as `@billbull/shared/<path-without-extension>` (explicit export map in `packages/shared/package.json`); inside the package, imports are relative. Relative imports never cross Retail / POS / shared (`scripts/workspaceBoundaries.mjs`, enforced by `scripts/__tests__/workspaceBoundaries.test.js` and an ESLint rule). Paths below such as `src/api/` or `src/utils/` refer to whichever of the two trees holds the file. POS characterization tests moved with their code and keep their `src/`-relative identities.
 
 - `src/api/` — one file per backend feature (`stockTakeApi.js`, `salesApi.js`, etc.; also domain subfolders like `api/purchase/`). All requests go through the shared `axiosConfig.js` instance, which reads the JWT from `sessionStorage` and attaches `Authorization: Bearer <token>`. New endpoints belong in the matching `api/` file, not inline in components.
 - Base URL: `import.meta.env.VITE_API_BASE_URL` if set, otherwise `window.location.origin` (so the build is proxy-ready behind a reverse proxy).

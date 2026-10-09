@@ -65,6 +65,22 @@ ls -la /var/www/billbull/ | head -20
 
 ---
 
+### Step 3b: Rebuild the standalone POS (only on servers where `/pos/` is rolled out)
+
+Skip this step until the standalone POS rollout is authorized for the server. Setup, nginx and rollback are in `docs/standalone-pos/DEPLOYMENT.md`. The bundle lives outside `/var/www/billbull` because Step 3 empties that folder.
+
+```bash
+cd /root/billbull/billbull-frontend
+npm run build:pos
+mkdir -p /var/www/billbull-pos/pos
+rm -rf /var/www/billbull-pos/pos/*
+cp -r apps/pos/dist/* /var/www/billbull-pos/pos/
+```
+
+**Expected:** `/var/www/billbull-pos/pos/` contains `index.html` and `assets/`. No nginx reload is needed for an update.
+
+---
+
 ### Step 4: Rebuild Backend JAR
 
 ```bash
