@@ -42,7 +42,8 @@ import {
     CardContent
 } from "../Purchase/Templates/PurchaseTemplateUI";
 import { InvoiceOverlayDesigner } from "./Templates/InvoiceOverlayDesigner";
-import { PickListDesigner, defaultPickListSettings } from "./Templates/PickListDesigner";
+import { PickListDesigner } from "./Templates/PickListDesigner";
+import { defaultPickListSettings } from "../../utils/pickListDefaults";
 import {
     CustomerSoATemplateDesigner,
     defaultCustomerSoaTemplateSettings

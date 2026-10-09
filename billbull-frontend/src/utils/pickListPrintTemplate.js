@@ -6,7 +6,7 @@
 // `template.displayOptions.salesDesignerSettings` (or `designerSettings`),
 // merged with `defaultPickListSettings`.
 
-import { defaultPickListSettings } from '../pages/Sales/Templates/PickListDesigner';
+import { defaultPickListSettings } from './pickListDefaults';
 
 const escapeHtml = (value) =>
     String(value ?? '')
