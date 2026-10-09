@@ -21,7 +21,11 @@ vi.mock('@billbull/shared/api/axiosConfig', () => ({ setSessionExpiredHandler: v
 // The real workspace is the 10k-line POSSales; here it only has to report the host it was given.
 vi.mock('@billbull/shared/pages/Sales/POSSales', async () => {
   const { usePosHost } = await import('@billbull/shared/pages/Sales/POS/posHost');
-  return { default: () => <div>POS WORKSPACE terminalAdministration={String(usePosHost().terminalAdministration)}</div> };
+  return {
+    default: function PosSalesStub() {
+      return <div>POS WORKSPACE terminalAdministration={String(usePosHost().terminalAdministration)}</div>;
+    },
+  };
 });
 
 import { TillRoutes } from '../PosApp';

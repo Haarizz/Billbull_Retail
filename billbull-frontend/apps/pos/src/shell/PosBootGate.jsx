@@ -38,9 +38,8 @@ export default function PosBootGate({ children }) {
     }
   }, [switchBranch]);
 
-  useEffect(() => {
-    if (decision?.status === 'ready') setReady(true);
-  }, [decision]);
+  // Latch during render (React's "store information from previous renders" pattern).
+  if (decision?.status === 'ready' && !ready) setReady(true);
 
   useEffect(() => {
     if (decision?.status === 'select' && !switching && !error) select(decision.branchId);

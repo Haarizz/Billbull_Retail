@@ -16,9 +16,8 @@ export default function RequirePosAccess({ children }) {
   const [slow, setSlow] = useState(false);
 
   const allowed = permissionsLoaded && canOperateTill(canView);
-  useEffect(() => {
-    if (allowed) setGranted(true);
-  }, [allowed]);
+  // Latch during render (React's "store information from previous renders" pattern).
+  if (allowed && !granted) setGranted(true);
 
   useEffect(() => {
     if (permissionsLoaded) return undefined;

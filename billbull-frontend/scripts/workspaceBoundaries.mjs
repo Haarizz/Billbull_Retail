@@ -21,7 +21,7 @@ const POS_PACKAGE = '@billbull/pos';
 
 const ZONES = [
   { name: 'shared', dir: 'packages/shared/src' },
-  { name: 'pos', dir: 'apps/pos/src' },
+  { name: 'pos', dir: 'apps/pos' }, // the app's own vite.config.js belongs to it too (dist/ is skipped)
   { name: 'retail', dir: 'src' },
 ];
 const CODE = /\.(js|jsx|ts|tsx|mjs|cjs)$/;
