@@ -13,8 +13,8 @@ Local workstation service for BillBull POS printer execution.
 ## Security (0.6.0+, printer setup 0.7.0+)
 
 The agent only serves BillBull sites it has been told to trust, and only browsers that
-have been paired with it. Full trust model, rollout and rollback:
-`docs/standalone-pos/PRINT_AGENT_SECURITY.md`. In short:
+have been paired with it. Full agent trust model, command allow-lists, CLI and release
+build: [SECURITY.md](SECURITY.md). In short:
 
 - **Host** must be `127.0.0.1:19777` or `localhost:19777` (stops DNS rebinding).
 - **Origin** must be on the allow-list in `%APPDATA%\BillBull\PrintAgent\config.json`,
@@ -163,7 +163,7 @@ For a quick local build, `npm run build:installer` produces
 still need (on 2026-10-12 they held the only copy of the 0.5.3-era rollback installer).
 
 A release is built from a clean copy into a new, empty folder. The steps are in
-`docs/standalone-pos/PRINT_AGENT_SECURITY.md` → "Building a release" (copy, `npm ci`,
+[SECURITY.md → Building a release](SECURITY.md#building-a-release) (copy, `npm ci`,
 `pkg`, `make-windowed.js`, `ISCC.exe /O<release folder>`). Record the SHA-256 of both
 exes. The setup file is the single thing handed to a till.
 
@@ -316,7 +316,7 @@ printer is a receipt printer and which a Zebra, so nothing is migrated automatic
 
 Security release. **The frontend change that pairs with the agent must be deployed
 before any till is upgraded**: a 0.6.0 agent refuses the older frontend's unauthenticated
-requests. See `docs/standalone-pos/PRINT_AGENT_SECURITY.md` for the rollout.
+requests. See [SECURITY.md](SECURITY.md) for what the agent enforces.
 
 - **Trusted sites only:** replaces `Access-Control-Allow-Origin: *` with an exact origin
   allow-list (`config.json`, installer page, `--add-origin`). Untrusted origins get 403
