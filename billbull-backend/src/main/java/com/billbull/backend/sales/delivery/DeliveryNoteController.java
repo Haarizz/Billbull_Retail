@@ -43,11 +43,14 @@ public class DeliveryNoteController {
                     : null;
 
             DeliveryNoteResponse dn = service.get(id);
+            String num = dn != null && dn.dnNumber != null ? dn.dnNumber : ("DN-" + id);
             if (subject == null || subject.isBlank()) {
-                String num = dn != null && dn.dnNumber != null ? dn.dnNumber : ("DN-" + id);
                 subject = "Delivery Note " + num + " from " + emailSender.getFromName();
             }
-            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            // pdfHtml is the print HTML; the attachment is named from the stored number.
+            DocumentEmailSender.PdfAttachment pdf = DocumentEmailSender.PdfAttachment.fromRequest(
+                    body, num, "Delivery-Note-" + id);
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, null, pdf);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());

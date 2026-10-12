@@ -245,6 +245,7 @@ import PosFeedbackToasts from './POS/features/notifications/PosFeedbackToasts';
 import ConfirmAction from './POS/features/notifications/ConfirmAction';
 import CouponsDialog from './POS/features/sales/CouponsDialog';
 import { buildThermalReceiptArtifacts as buildThermalReceiptArtifactsImpl } from './POS/device/printing/buildThermalReceiptArtifacts';
+import { buildPosReceiptPdfHtml } from './POS/device/printing/buildReceiptPdfHtml';
 import { round2Money, formatMoney2, todayInputDate, parseUTCDate } from './POS/lib/posFormatting';
 import { resolvePosFunctionAccessMode, isPosSupervisorUser as resolveIsPosSupervisorUser } from './POS/lib/posFunctionAccess';
 import { buildZReportExcelSections, buildXReportExcelRows } from './POS/features/reports/reportExcelBuilders';
@@ -3329,9 +3330,7 @@ export default function POSSales() {
     return (receiptShareChannel === 'email' ? cust.email : cust.phone || cust.mobile) || '';
   }, [lastPaidInvoice, receiptShareChannel]);
 
-  // The three send paths are unchanged — WhatsApp still opens wa.me, Email still
-  // calls sendSalesInvoiceEmail with the same payload. Throwing here keeps the
-  // dialog open so the cashier can retry.
+  // Email attaches the receipt as a PDF (buildReceiptPdfHtml) or is not sent. Throwing keeps the dialog open to retry.
   const handleReceiptShareSend = useCallback(async (value) => {
     if (!lastPaidInvoice) return;
     const summary = `Receipt ${lastPaidInvoice.id} – ${formatCurrencyStr(lastPaidInvoice.total)}`;
@@ -3349,14 +3348,15 @@ export default function POSSales() {
     }
     if (receiptShareChannel === 'email') {
       if (!lastPaidInvoice?.invoice?.id) throw new Error('Invoice is not available to email yet.');
+      const pdfHtml = await buildPosReceiptPdfHtml({ lastPaidInvoice, fetchInvoice: getSalesInvoiceById, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, templateSettings: receiptArtifactTemplateSettings, posContext: { activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession } });
       await sendSalesInvoiceEmail(lastPaidInvoice.invoice.id, {
-        toEmail: value,
+        toEmail: value, pdfHtml, pdfKind: 'POS_RECEIPT',
         subject: `Receipt ${lastPaidInvoice.id}`,
         htmlBody: `<p>Invoice: ${lastPaidInvoice.id}, Total: ${formatCurrencyStr(lastPaidInvoice.total)}</p>`,
       });
       setReceiptShareFeedback({ type: 'success', message: `Receipt emailed to ${value}.` });
     }
-  }, [lastPaidInvoice, receiptShareChannel]);
+  }, [lastPaidInvoice, receiptShareChannel, paperForSale, buildInvoiceSheetHtml, company, tplInvoiceShowStamp, receiptArtifactTemplateSettings, activeCurrency, cashierDisplayName, customerOptions, currentTerminal, currentSession]);
 
   useEffect(() => {
     if (!receiptShareFeedback) return undefined;

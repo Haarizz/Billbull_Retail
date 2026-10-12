@@ -86,14 +86,34 @@ public class SalesInvoiceController {
                 subject = "Sales Invoice " + invoice.getInvoiceNumber() + " from "
                         + emailSender.getFromNameForBranch(invoice.getBranchId());
             }
+            // pdfHtml is the print HTML; the attachment is named from the stored number.
+            DocumentEmailSender.PdfAttachment pdf = DocumentEmailSender.PdfAttachment.fromRequest(
+                    body, emailPdfDocumentName(invoice, body), "Sales-Invoice-" + id);
             // PDF §7.4 — branch-aware From + reply-to.
-            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, invoice.getBranchId());
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, invoice.getBranchId(), pdf);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }
+    }
+
+    /** {@code pdfKind} the POS till sends with its Email Receipt request. */
+    static final String PDF_KIND_POS_RECEIPT = "POS_RECEIPT";
+
+    /**
+     * Base name of the emailed PDF: the stored invoice number, or
+     * "POS_Receipt_{number}" when the till asks for its receipt and the invoice really
+     * is a POS sale. Only the prefix is the client's choice; the number is always the
+     * server's, and any other pdfKind keeps the plain invoice name.
+     */
+    static String emailPdfDocumentName(SalesInvoice invoice, Map<String, Object> body) {
+        String number = invoice.getInvoiceNumber();
+        if (number == null || number.isBlank()) return number;
+        boolean posReceipt = body != null && PDF_KIND_POS_RECEIPT.equals(body.get("pdfKind"));
+        boolean posSale = invoice.getSalesType() == SalesType.POS_SALE || invoice.getPosSessionId() != null;
+        return posReceipt && posSale ? "POS_Receipt_" + number : number;
     }
 
     /**

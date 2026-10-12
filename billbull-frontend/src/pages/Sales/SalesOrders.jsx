@@ -3244,6 +3244,8 @@ const SalesOrders = () => {
         companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: loadedSoBranchId ?? activeBranch?.id })}
         apiFn={sendSalesOrderEmail}
         buildPayload={buildSoPrintData}
+        // The attachment is the print document WhatsApp also sends.
+        buildPdfHtml={() => buildSoHtmlRef.current()}
       />
 
       {whatsAppElement}

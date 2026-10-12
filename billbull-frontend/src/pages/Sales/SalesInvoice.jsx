@@ -5133,6 +5133,11 @@ const SalesInvoice = () => {
                 companyProfile={buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: activeBranch?.id })}
                 apiFn={sendSalesInvoiceEmail}
                 buildPayload={buildCurrentInvoicePrintData}
+                // The attachment is the Download PDF document: same template choice and print HTML.
+                buildPdfHtml={() => {
+                    const source = buildCurrentFormPrintSource();
+                    return buildInvoiceHtml(source, { titleOverride: getInvoiceDocumentTitle(source), forPdf: false, storedValues: isReadOnlyInvoice });
+                }}
             />
 
             {/* Review-before-commit preview (Save Draft / Confirm) */}

@@ -5,15 +5,17 @@ const BASE_PATH = '/api/sales/receipt-vouchers';
 // QA-040: send the designed-template Receipt Voucher email.
 export const sendReceiptVoucherEmail = async (
     id,
-    { toEmail = '', subject = '', htmlBody = '', inlineAttachments = [] } = {}
+    { toEmail = '', subject = '', htmlBody = '', inlineAttachments = [], pdfHtml } = {}
 ) => {
     try {
         const res = await api.post(`${BASE_PATH}/${id}/send-email`, {
-            toEmail, subject, htmlBody, inlineAttachments,
+            toEmail, subject, htmlBody, inlineAttachments, pdfHtml,
         });
         return res.data;
     } catch (err) {
-        throw new Error(err?.response?.data || 'Failed to send email');
+        // Plain-text bodies from the send-email handlers; JSON { message } from the global handler.
+        const data = err?.response?.data;
+        throw new Error((typeof data === 'string' && data) || data?.message || 'Failed to send email');
     }
 };
 

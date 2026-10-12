@@ -52,11 +52,14 @@ public class ReceiptVoucherController {
                     : null;
 
             ReceiptVoucher rv = service.getReceiptById(id);
+            String num = rv != null && rv.getVoucherId() != null ? rv.getVoucherId() : ("RV-" + id);
             if (subject == null || subject.isBlank()) {
-                String num = rv != null && rv.getVoucherId() != null ? rv.getVoucherId() : ("RV-" + id);
                 subject = "Receipt Voucher " + num + " from " + emailSender.getFromName();
             }
-            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            // pdfHtml is the print HTML; the attachment is named from the stored number.
+            DocumentEmailSender.PdfAttachment pdf = DocumentEmailSender.PdfAttachment.fromRequest(
+                    body, num, "Receipt-Voucher-" + id);
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, null, pdf);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());

@@ -9,17 +9,20 @@ export const getSalesInvoiceStats = async () => {
 
 // QA-040: ship a designed-template HTML body + CID inline attachments to the
 // backend, which forwards via JavaMail. htmlBody empty → backend rejects.
+// pdfKind "POS_RECEIPT" (the till's Email Receipt) only changes the attachment name.
 export const sendSalesInvoiceEmail = async (
   id,
-  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [] } = {}
+  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [], pdfHtml, pdfKind } = {}
 ) => {
   try {
     const res = await api.post(`${BASE_URL}/${id}/send-email`, {
-      toEmail, subject, htmlBody, inlineAttachments,
+      toEmail, subject, htmlBody, inlineAttachments, pdfHtml, pdfKind,
     });
     return res.data;
   } catch (err) {
-    throw new Error(err?.response?.data || "Failed to send email");
+    // Plain-text bodies from the send-email handlers; JSON { message } from the global handler.
+    const data = err?.response?.data;
+    throw new Error((typeof data === "string" && data) || data?.message || "Failed to send email");
   }
 };
 

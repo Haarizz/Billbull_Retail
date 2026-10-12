@@ -87,7 +87,10 @@ public class SalesOrderController {
             if (subject == null || subject.isBlank()) {
                 subject = "Sales Order " + order.getSoNumber() + " from " + emailSender.getFromName();
             }
-            emailSender.send(toEmail, subject, htmlBody, inlineAttachments);
+            // pdfHtml is the print HTML; the attachment is named from the stored number.
+            DocumentEmailSender.PdfAttachment pdf = DocumentEmailSender.PdfAttachment.fromRequest(
+                    body, order.getSoNumber(), "Sales-Order-" + id);
+            emailSender.send(toEmail, subject, htmlBody, inlineAttachments, null, pdf);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());

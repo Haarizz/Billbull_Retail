@@ -3,15 +3,17 @@ import api from "@billbull/shared/api/axiosConfig";
 // QA-040: send the designed-template DN email.
 export const sendDeliveryNoteEmail = async (
   id,
-  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [] } = {}
+  { toEmail = "", subject = "", htmlBody = "", inlineAttachments = [], pdfHtml } = {}
 ) => {
   try {
     const res = await api.post(`/api/delivery-notes/${id}/send-email`, {
-      toEmail, subject, htmlBody, inlineAttachments,
+      toEmail, subject, htmlBody, inlineAttachments, pdfHtml,
     });
     return res.data;
   } catch (err) {
-    throw new Error(err?.response?.data || "Failed to send email");
+    // Plain-text bodies from the send-email handlers; JSON { message } from the global handler.
+    const data = err?.response?.data;
+    throw new Error((typeof data === "string" && data) || data?.message || "Failed to send email");
   }
 };
 

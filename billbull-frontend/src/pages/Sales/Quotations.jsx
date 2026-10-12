@@ -1928,7 +1928,23 @@ const Quotations = () => {
                 console.warn('Email body render/inline failed; backend will use legacy template.', renderErr);
             }
 
-            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody, inlineAttachments });
+            // PDF attachment: the PRINT HTML of the open quotation (what Print shows),
+            // rendered on the server. Never the cid email body. No PDF, no send.
+            let pdfHtml = '';
+            try {
+                const templates = await getTemplatesByCategory('Quotation');
+                const printTemplate = templates.find(t => t.isDefault) || templates[0];
+                if (printTemplate) {
+                    pdfHtml = await generatePrintHtmlAsync(printTemplate, buildQuotationDocPayload(), { companyProfile: buildDocumentHeaderProfile({ company, branches: availableBranches || [], branchId: quotationBranch?.id ?? activeBranch?.id }), billBullLogo });
+                }
+            } catch (pdfErr) {
+                console.warn('PDF attachment HTML could not be built:', pdfErr);
+            }
+            if (!pdfHtml) {
+                throw new Error('Could not prepare the PDF attachment. Check that a default "Quotation" print template exists in Settings → Print & Email Templates.');
+            }
+
+            await sendQuotationEmail(editingId, { toEmail: emailTo, subject: emailSubject, htmlBody, inlineAttachments, pdfHtml });
             setIsEmailModalOpen(false);
             setToastMessage(`Email sent successfully to ${emailTo}`);
             setToastType('success');
@@ -4556,6 +4572,14 @@ const Quotations = () => {
                                         onChange={(e) => setEmailSubject(e.target.value)}
                                         className="flex-1 px-3 py-1.5 border border-slate-200 rounded text-sm focus:outline-none focus:border-amber-400 bg-white"
                                     />
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs font-semibold text-slate-500 w-14 shrink-0">Attach</span>
+                                    <span className="flex items-center gap-1.5 text-xs text-slate-600">
+                                        <Paperclip size={12} className="text-slate-400" />
+                                        {/* The server names the file from the stored number with this same filter. */}
+                                        {`${String(getQuotationNo() || 'Quotation').replace(/[^A-Za-z0-9._\- ]/g, '_')}.pdf`}
+                                    </span>
                                 </div>
                             </div>
 

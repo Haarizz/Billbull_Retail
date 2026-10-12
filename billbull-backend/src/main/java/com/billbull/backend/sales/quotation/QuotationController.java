@@ -7,6 +7,7 @@ import java.util.Map;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mail.MailException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -22,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.billbull.backend.security.AuditLogService;
 import com.billbull.backend.security.ModulePermissionService;
+import com.billbull.backend.settings.email.DocumentEmailSender;
 import com.billbull.backend.settings.whatsapp.DocumentWhatsAppSender;
 import com.billbull.backend.settings.whatsapp.WhatsAppApiException;
 import com.billbull.backend.settings.whatsapp.WhatsAppDocumentType;
@@ -207,13 +209,20 @@ public class QuotationController {
 
         try {
             Quotation quotation = service.getQuotationById(id);
-            emailService.sendQuotationEmail(quotation, toEmail, subject, htmlBody, inlineAttachments);
+            // pdfHtml is the PRINT HTML (not the cid email body); the attachment is
+            // named from the stored quotation number, never from the client.
+            DocumentEmailSender.PdfAttachment pdf = DocumentEmailSender.PdfAttachment.fromRequest(
+                    body, quotation.getQtnNo(), "Quotation-" + id);
+            emailService.sendQuotationEmail(quotation, toEmail, subject, htmlBody, inlineAttachments, pdf);
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " +
                     (toEmail != null && !toEmail.isBlank() ? toEmail : quotation.getCustomerEmail())));
 
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (UnsupportedEncodingException | jakarta.mail.MessagingException e) {
+        } catch (UnsupportedEncodingException | jakarta.mail.MessagingException
+                 | MailException | IllegalStateException e) {
+            // IllegalStateException: email disabled / not configured, or the PDF
+            // attachment could not be generated — nothing was sent in either case.
             return ResponseEntity.internalServerError()
                     .body("Failed to send email: " + e.getMessage());
         }
