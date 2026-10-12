@@ -14,6 +14,12 @@ public interface SubDepartmentRepository extends JpaRepository<SubDepartment, Lo
 
     boolean existsByNameAndDepartmentIdAndActiveTrue(String name, Long departmentId);
 
+    // Product import: not active-filtered, like the V37 global-tier unique indexes they must respect.
+    java.util.Optional<SubDepartment> findFirstByNameIgnoreCaseAndDepartment_IdAndBranchIsNull(String name,
+            Long departmentId);
+
+    boolean existsByCodeAndBranchIsNull(String code);
+
     // ===== Branch-Level Inventory Phase 6B — branch-scoped variants (toggle-on path only). =====
     @Query("SELECT s FROM SubDepartment s WHERE s.active = true AND (s.branch.id IN :branchIds OR s.branch IS NULL)")
     List<SubDepartment> findActiveInBranchScope(@Param("branchIds") java.util.Collection<Long> branchIds);

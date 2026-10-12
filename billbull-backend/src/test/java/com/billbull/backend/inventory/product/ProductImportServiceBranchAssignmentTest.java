@@ -25,6 +25,8 @@ import com.billbull.backend.inventory.brand.Brand;
 import com.billbull.backend.inventory.brand.BrandRepository;
 import com.billbull.backend.inventory.department.Department;
 import com.billbull.backend.inventory.department.DepartmentRepository;
+import com.billbull.backend.inventory.subdepartment.SubDepartment;
+import com.billbull.backend.inventory.subdepartment.SubDepartmentRepository;
 import com.billbull.backend.inventory.units.Unit;
 import com.billbull.backend.inventory.units.UnitRepository;
 import com.billbull.backend.settings.branch.Branch;
@@ -54,6 +56,7 @@ class ProductImportServiceBranchAssignmentTest {
     @Mock private ProductPriceChangeRepository priceChangeRepo;
     @Mock private ProductImageStorageService imageStorageService;
     @Mock private BranchRepository branchRepo;
+    @Mock private SubDepartmentRepository subDepartmentRepo;
 
     private ProductImportService service;
     private List<Product> saved;
@@ -61,7 +64,8 @@ class ProductImportServiceBranchAssignmentTest {
     @BeforeEach
     void setUp() {
         service = new ProductImportService(productRepo, brandRepo, departmentRepo, unitRepo,
-                packingRepo, barcodeRepo, mediaRepo, priceChangeRepo, imageStorageService, branchRepo);
+                packingRepo, barcodeRepo, mediaRepo, priceChangeRepo, imageStorageService, branchRepo,
+                subDepartmentRepo);
         saved = new ArrayList<>();
 
         AtomicLong ids = new AtomicLong(1);
@@ -81,6 +85,9 @@ class ProductImportServiceBranchAssignmentTest {
         lenient().when(brandRepo.save(any(Brand.class))).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(departmentRepo.findByNameIgnoreCase(anyString())).thenReturn(Optional.empty());
         lenient().when(departmentRepo.save(any(Department.class))).thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(subDepartmentRepo.findFirstByNameIgnoreCaseAndDepartment_IdAndBranchIsNull(anyString(), any()))
+                .thenReturn(Optional.empty());
+        lenient().when(subDepartmentRepo.save(any(SubDepartment.class))).thenAnswer(inv -> inv.getArgument(0));
 
         lenient().when(unitRepo.findBySymbolIgnoreCaseAndIsActiveTrue(anyString())).thenReturn(Optional.empty());
         lenient().when(unitRepo.findByNameIgnoreCaseAndIsActiveTrue(anyString())).thenReturn(Optional.empty());
@@ -134,6 +141,69 @@ class ProductImportServiceBranchAssignmentTest {
 
         // "Item Code" must never be mistaken for the name column (the legacy SKU/Item swap path).
         assertThat(saved).noneSatisfy(p -> assertThat(p.getName()).isEqualTo(p.getCode()));
+    }
+
+    /**
+     * The 09.10.2026 revision of the workbook: title row, header on row 4 with trailing spaces,
+     * and a Sub Category column sitting before Category.
+     */
+    @Test
+    void mapsCategoryToDepartmentAndSubCategoryToSubDepartment() throws Exception {
+        Branch target = new Branch();
+        target.setId(42L);
+        when(branchRepo.findById(42L)).thenReturn(Optional.of(target));
+        List<Department> departments = new ArrayList<>();
+        when(departmentRepo.findByNameIgnoreCase(anyString())).thenAnswer(inv -> departments.stream()
+                .filter(d -> d.getName().equalsIgnoreCase(inv.getArgument(0))).findFirst());
+        when(departmentRepo.save(any(Department.class))).thenAnswer(inv -> {
+            Department d = inv.getArgument(0);
+            d.setId((long) departments.size() + 1);
+            departments.add(d);
+            return d;
+        });
+
+        service.importProducts(workbook(
+                new String[] { "AM0002", "BCAA 400grm - ALL MAX", "BCAA ", "ALL MAX", "Powder" },
+                new String[] { "AM0001", "Arginine HCI 400grm - ALL MAX", "", "ALL MAX", "Powder" },
+                new String[] { "XX0001", "EAA without category", "EAA", "ALL MAX", "" }), 42L);
+
+        assertThat(saved).hasSize(3);
+        Product bcaa = saved.get(0);
+        assertThat(bcaa.getCode()).isEqualTo("AM0002");
+        assertThat(bcaa.getName()).isEqualTo("BCAA 400grm - ALL MAX");
+        assertThat(bcaa.getBrand().getName()).isEqualTo("ALL MAX");
+        assertThat(bcaa.getDepartment().getName()).isEqualTo("Powder");
+        assertThat(bcaa.getCategory()).isEqualTo("Powder");
+        assertThat(bcaa.getSubDepartment().getName()).isEqualTo("BCAA");
+        assertThat(bcaa.getSubDepartment().getDepartment()).isSameAs(bcaa.getDepartment());
+
+        assertThat(saved.get(1).getSubDepartment()).isNull();
+        // No department to hang it from, so the sub category is dropped rather than failing the row.
+        assertThat(saved.get(2).getDepartment()).isNull();
+        assertThat(saved.get(2).getSubDepartment()).isNull();
+    }
+
+    private MockMultipartFile workbook(String[]... rows) throws Exception {
+        try (org.apache.poi.xssf.usermodel.XSSFWorkbook wb = new org.apache.poi.xssf.usermodel.XSSFWorkbook();
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            org.apache.poi.ss.usermodel.Sheet sheet = wb.createSheet("Supplements ");
+            sheet.createRow(1).createCell(1).setCellValue("SUPPLEMENTS PRODUCT LIST ");
+            String[] header = { "Sl. No", "Item Code", "Item Name ", "Sub Category ", "Brand Name", "Category" };
+            org.apache.poi.ss.usermodel.Row headerRow = sheet.createRow(3);
+            for (int c = 0; c < header.length; c++) {
+                headerRow.createCell(c + 1).setCellValue(header[c]);
+            }
+            for (int r = 0; r < rows.length; r++) {
+                org.apache.poi.ss.usermodel.Row row = sheet.createRow(4 + r);
+                row.createCell(1).setCellValue(r + 1);
+                for (int c = 0; c < rows[r].length; c++) {
+                    row.createCell(c + 2).setCellValue(rows[r][c]);
+                }
+            }
+            wb.write(out);
+            return new MockMultipartFile("file", "supplements.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", out.toByteArray());
+        }
     }
 
     @Test
