@@ -39,6 +39,8 @@ import com.billbull.backend.inventory.brand.Brand;
 import com.billbull.backend.inventory.brand.BrandRepository;
 import com.billbull.backend.inventory.department.Department;
 import com.billbull.backend.inventory.department.DepartmentRepository;
+import com.billbull.backend.inventory.subdepartment.SubDepartment;
+import com.billbull.backend.inventory.subdepartment.SubDepartmentRepository;
 import com.billbull.backend.inventory.units.Unit;
 import com.billbull.backend.inventory.units.UnitRepository;
 import com.billbull.backend.settings.branch.Branch;
@@ -108,6 +110,7 @@ public class ProductImportService {
     private final ProductRepository productRepo;
     private final BrandRepository brandRepo;
     private final DepartmentRepository departmentRepo;
+    private final SubDepartmentRepository subDepartmentRepo;
     private final UnitRepository unitRepo;
     private final BranchRepository branchRepo;
     private final ProductPackingRepository packingRepo;
@@ -122,10 +125,12 @@ public class ProductImportService {
             DepartmentRepository departmentRepo,
             UnitRepository unitRepo, ProductPackingRepository packingRepo, ProductBarcodeRepository barcodeRepo,
             ProductMediaRepository mediaRepo, ProductPriceChangeRepository priceChangeRepo,
-            ProductImageStorageService imageStorageService, BranchRepository branchRepo) {
+            ProductImageStorageService imageStorageService, BranchRepository branchRepo,
+            SubDepartmentRepository subDepartmentRepo) {
         this.productRepo = productRepo;
         this.brandRepo = brandRepo;
         this.departmentRepo = departmentRepo;
+        this.subDepartmentRepo = subDepartmentRepo;
         this.unitRepo = unitRepo;
         this.branchRepo = branchRepo;
         this.packingRepo = packingRepo;
@@ -293,6 +298,8 @@ public class ProductImportService {
                 Integer deptIdx = findContentIndex(headerMap, "department name", "department", "dept", "category",
                         "product group", "item group", "group",
                         "productcategory", "product category", "prd category");
+                Integer subDeptIdx = findContentIndex(headerMap, "sub department name", "sub department",
+                        "sub dept", "sub category", "subcategory", "sub group");
                 Integer costIdx = findContentIndex(headerMap, "cost", "purchase cost", "purchasecost",
                         "cost price");
                 Integer lastSupCostIdx = findContentIndex(headerMap, "last sup cost", "last supplier cost",
@@ -429,6 +436,7 @@ public class ProductImportService {
                         }
                         String valUnit = cell(row, unitIdx);
                         String valDept = cell(row, deptIdx);
+                        String valSubDept = cell(row, subDeptIdx);
                         String valGroup = hasCarriedForwardGroup ? lastGroupName : cell(row, deptIdx);
                         String valInactive = cell(row, inactiveIdx);
                         String valStatus = cell(row, statusIdx);
@@ -568,6 +576,13 @@ public class ProductImportService {
                             product.setCategory(department.getName());
                         } else if (isBlank(product.getCategory())) {
                             product.setCategory("General");
+                        }
+                        // A sub-department hangs off a department, so a row without a category
+                        // cannot carry one. Only a file with the column rewrites it on update.
+                        if (subDeptIdx != null) {
+                            product.setSubDepartment(!isBlank(valSubDept) && product.getDepartment() != null
+                                    ? getOrCreateSubDepartment(valSubDept, product.getDepartment())
+                                    : null);
                         }
 
                         ProductPricing pricing = product.getPricing() != null ? product.getPricing() : new ProductPricing();
@@ -1084,6 +1099,38 @@ public class ProductImportService {
         newDept.setName(trimmedName);
         newDept.setCode(generateUniqueDepartmentCode(trimmedName));
         return departmentRepo.save(newDept);
+    }
+
+    /** Company-wide like {@link #getOrCreateDepartment}; a deactivated match is revived, not duplicated. */
+    private SubDepartment getOrCreateSubDepartment(String subDeptName, Department department) {
+        String trimmedName = subDeptName.trim();
+        Optional<SubDepartment> found = subDepartmentRepo
+                .findFirstByNameIgnoreCaseAndDepartment_IdAndBranchIsNull(trimmedName, department.getId());
+        if (found.isPresent()) {
+            SubDepartment existing = found.get();
+            if (!existing.isActive()) {
+                existing.setActive(true);
+                return subDepartmentRepo.save(existing);
+            }
+            return existing;
+        }
+
+        SubDepartment newSubDept = new SubDepartment();
+        newSubDept.setName(trimmedName);
+        newSubDept.setCode(generateUniqueSubDepartmentCode(trimmedName));
+        newSubDept.setDepartment(department);
+        return subDepartmentRepo.save(newSubDept);
+    }
+
+    private String generateUniqueSubDepartmentCode(String name) {
+        String base = sanitizeCode(name, 6, "SUB");
+        String candidate = base;
+        int seq = 1;
+        while (subDepartmentRepo.existsByCodeAndBranchIsNull(candidate)) {
+            String suffix = String.valueOf(seq++);
+            candidate = limit(base, Math.max(1, 10 - suffix.length())) + suffix;
+        }
+        return candidate;
     }
 
     private Unit getOrCreateUnit(String unitCode, Unit fallbackUnit) {
