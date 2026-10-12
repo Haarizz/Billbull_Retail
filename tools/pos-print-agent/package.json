@@ -1,10 +1,11 @@
 {
   "name": "billbull-pos-print-agent",
   "private": true,
-  "version": "0.5.3",
+  "version": "0.7.0",
   "scripts": {
     "start": "node server.js",
     "start:tray": "node tray.js",
+    "test": "node --test test/*.test.js",
     "build": "pkg . --targets node18-win-x64 --output dist/BillBullPrintAgent.exe && node make-windowed.js",
     "build:installer": "npm run build && iscc installer\\BillBullPrintAgent.iss"
   },
@@ -12,7 +13,8 @@
   "pkg": {
     "assets": [
       "node_modules/trayicon/rsrcs/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "probe.html"
     ]
   },
   "dependencies": {
