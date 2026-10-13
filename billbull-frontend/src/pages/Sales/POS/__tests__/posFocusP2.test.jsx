@@ -320,9 +320,13 @@ const minusButton = (t) => {
   if (t === 'focus') return screen.getAllByRole('button', { name: '−' })[0];
   return document.querySelector('.group button svg.lucide-minus').closest('button');
 };
-const removeButton = (t) => {
-  if (t === 'compact') return screen.getAllByRole('button', { name: 'Remove item' })[0];
-  return screen.getByRole('button', { name: t === 'focus' ? 'Remove Item' : 'Remove' });
+// A cart row tap opens Alter Item on Quantity; its tabs switch to the other line fields.
+const openAlterItem = async (tab) => {
+  await click(screen.getAllByText('Widget')[0]);
+  await click(screen.getByRole('tab', { name: tab }));
+};
+const removeButton = () => {
+  return screen.getAllByRole('button', { name: 'Remove item' })[0];
 };
 const holdButton = (t) => (t === 'compact'
   ? screen.getByRole('button', { name: 'Hold invoice' })
@@ -617,13 +621,13 @@ describe('product tile / suggestion selection (5, 26)', () => {
 });
 
 describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
-  it.each([['Add Qty', T.QUANTITY], ['Disc %', T.DISCOUNT], ['Price', T.PRICE]])(
+  it.each([['Quantity', T.QUANTITY], ['Discount', T.DISCOUNT], ['Unit Price', T.PRICE]])(
     'Classic %s: the numpad field owns the caret, through a row click, a keypad click and a re-render',
     async (label, target) => {
       const { api } = setup('classic');
       await flush();
       await scan(WIDGET);
-      await click(screen.getByRole('button', { name: label }));
+      await openAlterItem(label);
       const field = alterField();
       expectFocus(field);
       expect(derivedTarget(api)).toBe(target);
@@ -644,7 +648,7 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     const { api } = setup('classic');
     await flush();
     await scan(WIDGET);
-    await click(screen.getByRole('button', { name: 'Add Qty' }));
+    await openAlterItem('Quantity');
     await click(screen.getAllByText('Widget')[0]);
     await type('4');
     await press('Enter');
@@ -652,12 +656,10 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     expectFocus(searchBox('classic'));
   });
 
-  it('Classic: a row click selects the line; clicking the selected line opens Alter Item on Quantity', async () => {
+  it('Classic: a single row click opens Alter Item on Quantity', async () => {
     const { api } = setup('classic');
     await flush();
     await scan(WIDGET);
-    await click(screen.getAllByText('Widget')[0]);
-    expect(screen.queryByRole('dialog')).toBeNull(); // selected only: +, − and Delete target it
     await click(screen.getAllByText('Widget')[0]);
     expect(screen.getByRole('tab', { name: 'Quantity' }).getAttribute('aria-selected')).toBe('true');
     expectFocus(alterField());
@@ -668,7 +670,6 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     const { api } = setup('classic');
     await flush();
     await scan(WIDGET);
-    await click(screen.getAllByText('Widget')[0]); // select
     await click(screen.getAllByText('Widget')[0]); // open
     await type('3');
     await press('ArrowDown'); // → Unit Price
@@ -694,7 +695,7 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     const { api } = setup('classic');
     await flush();
     await scan(WIDGET);
-    await click(screen.getByRole('button', { name: 'Price' }));
+    await openAlterItem('Unit Price');
     await type('99');
     await press('Escape');
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -702,13 +703,13 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     expectFocus(searchBox('classic'));
   });
 
-  it.each([['Add Qty', T.QUANTITY], ['Discount', T.DISCOUNT], ['Price', T.PRICE]])(
+  it.each([['Quantity', T.QUANTITY], ['Discount', T.DISCOUNT], ['Unit Price', T.PRICE]])(
     'Cart Focus %s: opens Alter Item, whose field owns the caret; a scan is a number, never a product',
     async (label, target) => {
       const { api } = setup('focus');
       await flush();
       await scan(WIDGET);
-      await click(screen.getByRole('button', { name: label }));
+      await openAlterItem(label);
       const field = alterField();
       expectFocus(field);
       expect(derivedTarget(api)).toBe(target);
@@ -723,12 +724,10 @@ describe('item keypad (ITEM_ENTRY) is never robbed by search (17–19)', () => {
     },
   );
 
-  it('Cart Focus: a row click selects the line; clicking it again opens Alter Item, and Enter applies and hands the caret back to search', async () => {
+  it('Cart Focus: a single row click opens Alter Item, and Enter applies and hands the caret back to search', async () => {
     const { api } = setup('focus');
     await flush();
     await scan(WIDGET);
-    await click(screen.getAllByText('Widget')[0]);
-    expect(screen.queryByRole('dialog')).toBeNull();
     await click(screen.getAllByText('Widget')[0]);
     expect(screen.getByRole('tab', { name: 'Quantity' }).getAttribute('aria-selected')).toBe('true');
     expectFocus(alterField());

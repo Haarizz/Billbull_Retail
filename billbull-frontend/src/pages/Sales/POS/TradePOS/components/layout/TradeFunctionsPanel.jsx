@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
-import { buildPosFunctionButtons } from '../../../lib/posFunctionButtons';
+import { buildPosFunctionButtons, groupPosFunctionButtons } from '../../../lib/posFunctionButtons';
 import { usePosInputV2, usePosOverlay } from '../../../input/PosOverlayContext';
 import { POS_SCOPES } from '../../../input/posScope';
 
@@ -31,15 +31,7 @@ export const TradeFunctionsPanel = React.memo(({ open, onClose, hiddenPanelButto
   const groups = useMemo(() => {
     const buttons = buildPosFunctionButtons(ctx, 'h-5 w-5')
       .filter(b => !hiddenPanelButtons?.has?.(b.id));
-    // Preserve first-seen group order so the panel follows the shared list's ordering.
-    const ordered = [];
-    const byName = new Map();
-    buttons.forEach(btn => {
-      const name = btn.group || 'Other';
-      if (!byName.has(name)) { byName.set(name, []); ordered.push(name); }
-      byName.get(name).push(btn);
-    });
-    return ordered.map(name => ({ name, buttons: byName.get(name) }));
+    return groupPosFunctionButtons(buttons);
     // ctx is a fresh object every render; the panel is cheap and only mounts while open.
   }, [ctx, hiddenPanelButtons]);
 

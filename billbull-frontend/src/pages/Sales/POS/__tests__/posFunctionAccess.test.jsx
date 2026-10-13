@@ -264,7 +264,7 @@ describe('no template can bypass the gate', () => {
   });
 
   it('the Compact panel passes its whole ctx to the builder, so nothing is filtered out', () => {
-    expect(TRADE_PANEL).toContain("import { buildPosFunctionButtons } from '../../../lib/posFunctionButtons';");
+    expect(TRADE_PANEL).toContain("import { buildPosFunctionButtons, groupPosFunctionButtons } from '../../../lib/posFunctionButtons';");
     expect(TRADE_PANEL).toContain('buildPosFunctionButtons(ctx,');
   });
 

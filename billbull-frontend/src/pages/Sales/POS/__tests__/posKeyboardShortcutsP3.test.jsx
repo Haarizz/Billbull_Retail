@@ -619,7 +619,9 @@ describe.each(TEMPLATES)('%s — sale shortcuts', (_, t) => {
       const api = await setup(t);
       await scan(WIDGET);
       await scan(GADGET);
-      await click(cartRow(t, PRODUCTS[0]));
+      await click(cartRow(t, PRODUCTS[0])); // opens Alter Item on the line
+      await press('Escape'); // cancelling keeps the line selected
+      expect(screen.queryByRole('dialog')).toBeNull();
       expect(api.selected()).toBe('p1');
       await press('+');
       await settleHotkey();
@@ -632,6 +634,7 @@ describe.each(TEMPLATES)('%s — sale shortcuts', (_, t) => {
       await scan(WIDGET);
       await scan(GADGET);
       await click(cartRow(t, PRODUCTS[0]));
+      await press('Escape');
       await press('Delete');
       expect(api.removed.mock.calls).toEqual([['p1']]);
       expect(api.items().map((i) => i.id)).toEqual(['p2']);
