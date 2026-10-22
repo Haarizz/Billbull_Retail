@@ -24,6 +24,18 @@ public class InvoicePayment {
     private LocalDate paymentDate;
     private String paymentMode;
 
+    /** Payment voucher that created this row; lets an issued cheque's cancellation remove exactly it. */
+    @jakarta.persistence.Column(name = "payment_voucher_id")
+    private Long paymentVoucherId;
+
+    public Long getPaymentVoucherId() {
+        return paymentVoucherId;
+    }
+
+    public void setPaymentVoucherId(Long paymentVoucherId) {
+        this.paymentVoucherId = paymentVoucherId;
+    }
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "invoice_id")
     private PurchaseInvoice invoice;

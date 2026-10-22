@@ -2216,7 +2216,7 @@ const DeliveryNote = () => {
                             {/* Toolbar */}
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 md:gap-0">
                                 <div className="flex flex-col md:flex-row items-center gap-2 w-full md:w-auto">
-                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                    <DateFilter loading={isListLoading} onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                     <div className="relative w-full md:w-auto">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                         <input
@@ -2746,7 +2746,7 @@ const DeliveryNote = () => {
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-100/50">
-                                                    {hasItemData ? [...items].reverse().map((item, index) => (
+                                                    {hasItemData ? items.map((item, index) => (
                                                         <React.Fragment key={item.id}>
                                                             <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isLockedForEdit ? 'opacity-80' : ''}`}>
                                                                 <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>

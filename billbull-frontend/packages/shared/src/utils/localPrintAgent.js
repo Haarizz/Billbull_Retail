@@ -9,6 +9,13 @@ const PRINT_AGENT_BASES = [
 ];
 
 let resolvedAgentBase = null;
+// What the resolved agent's /health reported: { version, protocol }. Agents before
+// 0.6.0 report no protocol and accept any caller; 0.6.0+ (protocol 2) require the
+// pairing token below.
+let resolvedAgentInfo = null;
+// Set when the agent is running but refuses this site's origin (not on its
+// allow-list), so the error can say so instead of "not reachable".
+let agentRefusesOrigin = false;
 // Once the agent is found missing, skip re-probing for this long — otherwise every
 // single POS sale re-runs the full "not found" probe against both hosts before
 // falling back to browser print, which is the opposite of fast for back-to-back sales.
@@ -17,6 +24,64 @@ const PROBE_RETRY_COOLDOWN_MS = 15000;
 // Bounds each health-check so a filtered/dropped port (vs. an actively refused one)
 // can't turn into a multi-second stall before falling back — fetch() has no default timeout.
 const HEALTH_PROBE_TIMEOUT_MS = 400;
+
+// The pairing token the agent issued to this site (see tools/pos-print-agent,
+// lib/pairing.js). localStorage, not sessionStorage: a till must not need
+// re-pairing every time the browser restarts. It is per origin, so Retail and
+// the standalone POS on the same tenant domain share one pairing, and no other
+// site can read it.
+const AGENT_TOKEN_KEY = "billbull.printAgent.token";
+const AGENT_PROTOCOL_TOKEN = 2;
+const TOKEN_REJECTED_CODES = new Set(["AGENT_TOKEN_INVALID", "AGENT_TOKEN_EXPIRED", "AGENT_TOKEN_REVOKED"]);
+
+const readAgentToken = () => {
+  try { return window.localStorage.getItem(AGENT_TOKEN_KEY) || null; } catch { return null; }
+};
+const writeAgentToken = (token) => {
+  try { window.localStorage.setItem(AGENT_TOKEN_KEY, token); } catch { /* storage blocked: pairing lasts this page only */ }
+};
+const clearAgentToken = () => {
+  try { window.localStorage.removeItem(AGENT_TOKEN_KEY); } catch { /* ignore */ }
+};
+
+const agentUsesTokens = () => Number(resolvedAgentInfo?.protocol || 0) >= AGENT_PROTOCOL_TOKEN;
+
+/**
+ * Error from the print agent, carrying its machine-readable `code` (AGENT_*) when it sent
+ * one, plus `attemptsRemaining` (wrong pairing code) or `category` (refused command).
+ */
+export class PrintAgentError extends Error {
+  constructor(message, { code = null, status = null, attemptsRemaining, category } = {}) {
+    super(message);
+    this.name = "PrintAgentError";
+    this.code = code;
+    this.status = status;
+    if (attemptsRemaining !== undefined) this.attemptsRemaining = attemptsRemaining;
+    if (category !== undefined) this.category = category;
+  }
+}
+
+const unreachableError = () => {
+  if (agentRefusesOrigin) {
+    const origin = typeof window !== "undefined" ? window.location.origin : "this site";
+    return new PrintAgentError(
+      `The BillBull Print Agent on this PC is running but does not trust ${origin}. `
+      + `On this PC run: BillBullPrintAgent.exe --add-origin ${origin} (or reinstall the agent and enter this address).`,
+      { code: "AGENT_ORIGIN_NOT_ALLOWED" },
+    );
+  }
+  return new PrintAgentError(
+    "Print agent not reachable. Start the BillBull Print Agent on this PC (Start menu → BillBull Print Agent).",
+    { code: "AGENT_UNREACHABLE" },
+  );
+};
+
+let warnedOutdated = false;
+const warnIfOutdated = () => {
+  if (warnedOutdated || !resolvedAgentInfo || agentUsesTokens()) return;
+  warnedOutdated = true;
+  console.warn(`[print-agent] This PC runs print agent ${resolvedAgentInfo.version || "(unknown version)"}, which accepts print and drawer commands from any web page. Install agent 0.6.0 or later.`);
+};
 
 const isBlank = (value) => value == null || String(value).trim() === "";
 
@@ -50,19 +115,33 @@ const normalizeStatusFromMessage = (message = "") => {
 
 const agentFetch = async (path, init = {}) => {
   const base = await resolvePrintAgentBase();
-  if (!base) {
-    throw new Error("Print agent not reachable. Start the BillBull POS print agent on this workstation.");
-  }
+  if (!base) throw unreachableError();
+  warnIfOutdated();
+  const token = agentUsesTokens() ? readAgentToken() : null;
+  // Content-Type only with a body: a GET with it, or with Authorization, is
+  // preflighted, which the 0.6.0+ agent answers for allow-listed origins only.
+  // Neither header is sent to an older agent, whose preflight accepts no
+  // Authorization header (so a stale token cannot break a rolled-back till).
   const response = await fetch(`${base}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers || {}),
     },
   });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
-    throw new Error(text || `Print agent error (${response.status})`);
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch { /* agent < 0.6.0 or a non-JSON body */ }
+    const code = parsed?.code || null;
+    if (TOKEN_REJECTED_CODES.has(code)) clearAgentToken();
+    throw new PrintAgentError(parsed?.message || text || `Print agent error (${response.status})`, {
+      code,
+      status: response.status,
+      attemptsRemaining: parsed?.attemptsRemaining,
+      category: parsed?.category,
+    });
   }
   if (response.status === 204) return null;
   return response.json();
@@ -72,13 +151,36 @@ const agentFetch = async (path, init = {}) => {
 // print) share ONE round of health checks instead of each running their own.
 let probeInFlight = null;
 
+const fetchWithTimeout = async (url, init = {}) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+// Resolves to the agent's { version, protocol } or null.
 const probeBase = async (base) => {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HEALTH_PROBE_TIMEOUT_MS);
-    const resp = await fetch(`${base}/health`, { signal: controller.signal });
-    clearTimeout(timer);
-    return resp.ok;
+    const resp = await fetchWithTimeout(`${base}/health`);
+    if (!resp.ok) return null;
+    const body = await resp.json().catch(() => ({}));
+    return { version: body?.version || null, protocol: Number(body?.protocol) || 1 };
+  } catch {
+    return null;
+  }
+};
+
+// A 0.6.0+ agent refuses an origin that is not on its allow-list with no CORS
+// header, which the browser reports exactly like a closed port. An opaque
+// (no-cors) request still completes when something is listening, which tells
+// "not trusted" apart from "not running" without reading anything.
+const agentListensOpaquely = async (base) => {
+  try {
+    await fetchWithTimeout(`${base}/health`, { mode: "no-cors" });
+    return true;
   } catch {
     return false;
   }
@@ -97,11 +199,14 @@ export const resolvePrintAgentBase = async () => {
   probeInFlight = (async () => {
     try {
       const results = await Promise.all(PRINT_AGENT_BASES.map(probeBase));
-      const winner = PRINT_AGENT_BASES.find((_, i) => results[i]);
-      if (winner) {
-        resolvedAgentBase = winner;
-        return winner;
+      const index = results.findIndex(Boolean);
+      if (index >= 0) {
+        resolvedAgentBase = PRINT_AGENT_BASES[index];
+        resolvedAgentInfo = results[index];
+        agentRefusesOrigin = false;
+        return resolvedAgentBase;
       }
+      agentRefusesOrigin = await agentListensOpaquely(PRINT_AGENT_BASES[0]);
       lastProbeFailedAt = Date.now();
       return null;
     } finally {
@@ -109,6 +214,82 @@ export const resolvePrintAgentBase = async () => {
     }
   })();
   return probeInFlight;
+};
+
+/** Forgets the probed agent so the next call re-checks it (after installing, upgrading or allow-listing). */
+export const resetPrintAgentProbe = () => {
+  resolvedAgentBase = null;
+  resolvedAgentInfo = null;
+  agentRefusesOrigin = false;
+  lastProbeFailedAt = 0;
+};
+
+/**
+ * Where this browser stands with the local agent, for the POS Devices screen:
+ *   unreachable | untrusted-origin | outdated | unpaired | paired
+ * `message` is ready to show; `version` is the agent's when known.
+ */
+export const getPrintAgentStatus = async () => {
+  const base = await resolvePrintAgentBase();
+  if (!base) {
+    const err = unreachableError();
+    return { state: agentRefusesOrigin ? "untrusted-origin" : "unreachable", version: null, message: err.message };
+  }
+  const version = resolvedAgentInfo?.version || null;
+  if (!agentUsesTokens()) {
+    return {
+      state: "outdated",
+      version,
+      message: `This PC runs print agent ${version || "(unknown version)"}, which accepts print and drawer commands from any web page. Install agent 0.6.0 or later, then pair it here.`,
+    };
+  }
+  if (!readAgentToken()) {
+    return { state: "unpaired", version, message: "This browser is not paired with the print agent on this PC." };
+  }
+  try {
+    const status = await agentFetch("/auth/status");
+    return { state: "paired", version, expiresAt: status?.expiresAt || null, message: "Paired with the print agent on this PC." };
+  } catch (err) {
+    if (err?.status === 401) return { state: "unpaired", version, message: err.message };
+    throw err;
+  }
+};
+
+/**
+ * Pairing, step 1: the agent shows a 6-digit code on this PC (tray notification
+ * and tray menu). Resolves to { pairingId, expiresInSeconds }.
+ */
+export const startPrintAgentPairing = async ({ label } = {}) => {
+  const base = await resolvePrintAgentBase();
+  if (!base) throw unreachableError();
+  if (!agentUsesTokens()) {
+    const version = resolvedAgentInfo?.version ? ` ${resolvedAgentInfo.version}` : "";
+    throw new PrintAgentError(
+      `The print agent${version} on this PC is too old to pair. Install agent 0.6.0 or later.`,
+      { code: "AGENT_OUTDATED" },
+    );
+  }
+  return agentFetch("/pair/start", { method: "POST", body: JSON.stringify({ label: label || null }) });
+};
+
+/** Pairing, step 2: exchanges the code the operator read off the tray for a token, and keeps it. */
+export const completePrintAgentPairing = async ({ pairingId, code }) => {
+  const result = await agentFetch("/pair/complete", {
+    method: "POST",
+    body: JSON.stringify({ pairingId, code: String(code || "").trim() }),
+  });
+  if (!result?.token) throw new PrintAgentError("The print agent did not return a pairing token.", { code: "AGENT_PAIRING_FAILED" });
+  writeAgentToken(result.token);
+  return { expiresAt: result.expiresAt || null };
+};
+
+/** Revokes this browser's pairing on the agent and forgets the token. */
+export const unpairPrintAgent = async () => {
+  try {
+    if (readAgentToken()) await agentFetch("/pair/revoke", { method: "POST", body: "{}" });
+  } finally {
+    clearAgentToken();
+  }
 };
 
 /**
@@ -135,6 +316,10 @@ const normalizeAgentPrinter = (printer) => {
     portName: printer.portName ?? printer.PortName ?? "",
     status: printer.status ?? printer.StatusLabel ?? "",
     isDefault: Boolean(printer.isDefault ?? printer.IsDefault),
+    // What this PC's agent is set up to print on the queue: "escpos", "zpl",
+    // "conflict", or null (not set up — every job is refused). undefined from
+    // agents that predate per-printer setup.
+    agentProtocol: printer.agentProtocol ?? printer.BillBullProtocol,
   };
 };
 
@@ -208,12 +393,56 @@ export const printEscPosThroughAgent = async ({
   });
 };
 
-export const testConfiguredPrinter = async (printer, { testText, escPosBase64, labelPayload } = {}) => {
+// Sends a ZPL label stream (base64 of its UTF-8 bytes) to a Zebra on a Windows
+// queue or the network, through the agent's ZPL route and command policy. An
+// agent older than 0.6.0 has no /print/zpl and filters nothing anyway; it gets
+// the old /print/escpos call so a till upgraded out of order still prints labels
+// (it is already flagged "outdated" on the Devices screen).
+export const printZplThroughAgent = async ({
+  printerName,
+  dataBase64,
+  connectionType,
+  ipAddress,
+  portNumber,
+  title,
+}) => {
+  const base = await resolvePrintAgentBase();
+  if (!base) throw unreachableError();
+  const isNetwork = connectionType === "NETWORK_IP";
+  return agentFetch(agentUsesTokens() ? "/print/zpl" : "/print/escpos", {
+    method: "POST",
+    body: JSON.stringify({
+      printerName,
+      dataBase64,
+      connectionType,
+      ipAddress: isNetwork ? ipAddress : undefined,
+      portNumber: isNetwork ? portNumber : undefined,
+      title,
+    }),
+  });
+};
+
+export const testConfiguredPrinter = async (printer, { testText, escPosBase64, zplBase64 } = {}) => {
   if (!printer) {
     throw new Error("Printer configuration is missing.");
   }
   if (printer.connectionType === "ZEBRA_BROWSER_PRINT") {
     throw new Error("Zebra Browser Print is no longer supported. Please edit this printer in POS Settings and change its connection type to Windows Queue.");
+  }
+  // Label printers speak ZPL: they get a ZPL test label, checked by the ZPL
+  // policy, and no plain-text fallback (a Zebra would not print it).
+  if (printer.deviceType === "LABEL_PRINTER" && zplBase64) {
+    if (printer.connectionType === "NETWORK_IP" && printer.id) {
+      return printPosPrinterEscPos(printer.id, zplBase64, { format: "ZPL" });
+    }
+    return printZplThroughAgent({
+      printerName: printer.systemPrinterName,
+      dataBase64: zplBase64,
+      connectionType: printer.connectionType,
+      ipAddress: printer.ipAddress,
+      portNumber: printer.portNumber,
+      title: "BillBull Label Printer Test",
+    });
   }
   // Network/IP printers test straight through the backend relay — no local agent
   // needed, so this works from any device including phones/tablets. Only USB/
@@ -233,6 +462,7 @@ export const testConfiguredPrinter = async (printer, { testText, escPosBase64, l
         portNumber: printer.portNumber,
       });
     } catch (err) {
+      if (err?.status >= 400 && err?.status < 500) throw err; // not paired / not trusted / refused — see sendEscPosReceiptToConfiguredPrinter
       escPosError = err?.message || String(err);
       console.warn('ESC/POS test print failed, falling back to plain-text test print', err);
     }
@@ -406,8 +636,10 @@ export const sendEscPosReceiptToConfiguredPrinter = async (printer, { dataBase64
         // text/GDI path so the customer still gets a receipt, and annotate the
         // result so callers surface a visible "compatibility mode" warning —
         // this must never be a silent downgrade, but a failed receipt at
-        // checkout is strictly worse than a plain-text one.
-        if (!receiptText) throw escPosErr;
+        // checkout is strictly worse than a plain-text one. A 4xx from the
+        // agent (not paired, site not trusted, command refused) is not a
+        // driver problem, and the text path would only hide why.
+        if (!receiptText || (escPosErr?.status >= 400 && escPosErr?.status < 500)) throw escPosErr;
         console.warn("ESC/POS receipt rejected, falling back to text/GDI print", escPosErr);
         try {
           const textResult = await printReceiptThroughAgent({

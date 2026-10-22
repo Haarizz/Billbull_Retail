@@ -136,6 +136,26 @@ describe('SalespersonScanModal', () => {
     expect(onVerify).not.toHaveBeenCalled();
   });
 
+  it('Enter on the confirmation continues (closes), even with focus on the page body', () => {
+    const { onClose, onVerify, onClear } = setup({ current: VERIFIED });
+    fireEvent.keyDown(document.body, { key: 'Enter' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onVerify).not.toHaveBeenCalled();
+    expect(onClear).not.toHaveBeenCalled();
+  });
+
+  it('Enter on a focused Scan New button keeps the button\'s own action', () => {
+    const { onClose } = setup({ current: VERIFIED });
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Scan New' }), { key: 'Enter' });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Escape on the confirmation closes', () => {
+    const { onClose } = setup({ current: VERIFIED });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('replaces the salesperson through the SAME onVerify callback', async () => {
     const onVerify = vi.fn().mockResolvedValue({ ...VERIFIED, id: 9, employeeCode: 'EMP0009' });
     render(<SalespersonScanModal open current={VERIFIED} onVerify={onVerify} onClear={vi.fn()} onClose={vi.fn()} />);

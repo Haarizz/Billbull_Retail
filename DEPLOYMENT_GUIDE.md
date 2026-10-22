@@ -14,12 +14,13 @@
 3. [Database Setup](#database-setup)
 4. [Code Deployment](#code-deployment)
 5. [Backend Configuration](#backend-configuration)
-6. [Systemd Services](#systemd-services)
-7. [Nginx Reverse Proxy](#nginx-reverse-proxy)
-8. [SSL Certificates](#ssl-certificates)
-9. [Admin User Setup](#admin-user-setup)
-10. [Testing](#testing)
-11. [Deployment Checklist](#deployment-checklist)
+6. [Encryption Key (EMAIL_ENC_KEY)](#encryption-key-email_enc_key)
+7. [Systemd Services](#systemd-services)
+8. [Nginx Reverse Proxy](#nginx-reverse-proxy)
+9. [SSL Certificates](#ssl-certificates)
+10. [Admin User Setup](#admin-user-setup)
+11. [Testing](#testing)
+12. [Deployment Checklist](#deployment-checklist)
 
 ---
 
@@ -289,6 +290,101 @@ mvn clean package -DskipTests
 
 ---
 
+## Encryption Key (EMAIL_ENC_KEY)
+
+Each client's backend encrypts the integration secrets it stores (the SMTP app password and the WhatsApp access token, app secret and verify token) with a key taken from the `EMAIL_ENC_KEY` environment variable. **A backend started with a client profile refuses to start** when `EMAIL_ENC_KEY` is:
+
+- not set or blank,
+- the development key that is in the source code, or
+- shorter than 32 characters.
+
+The refusal happens before the database is touched, and the log names the problem without printing the value:
+
+```
+java.lang.IllegalStateException: EMAIL_ENC_KEY is not set (active profiles: royaltools). ...
+```
+
+Only a local run with no profile (or only `dev`, `local` or `test`) may run without a key.
+
+**Rules**
+
+- **One key per client deployment**, generated independently. Never copy a key between clients, and never reuse one from a test server. The application cannot detect that two clients share a key; that is up to whoever provisions them.
+- Keep it in the service environment (an `EnvironmentFile` readable only by root) or a secret manager. Never put it in `application-*.properties`, the repository, a ticket or a chat.
+- Store a copy in the team's password manager, **separately from database backups**. A database backup plus the key reveals the secrets, so keep them apart. Without the key, the stored secrets cannot be decrypted.
+- **Never change or lose the key without re-encrypting.** With a different key the stored ciphertext no longer decrypts: Email and WhatsApp settings fail to load and every email and WhatsApp send fails until the secrets are re-encrypted (below) or entered again.
+
+### Step 1: Generate One Key per Client (new deployments)
+
+```bash
+install -d -m 700 /etc/billbull
+umask 077
+for c in royaltools leroyalflowers leroyalgifts; do
+  # The -e guard never overwrites an existing key.
+  [ -e /etc/billbull/$c.env ] || printf 'EMAIL_ENC_KEY=%s\n' "$(openssl rand -base64 48 | tr -d '\n')" > /etc/billbull/$c.env
+done
+chmod 600 /etc/billbull/*.env
+```
+
+`openssl rand -base64 48` gives a 64-character random value. Each systemd unit loads its file with `EnvironmentFile=/etc/billbull/<client>.env` (see [Systemd Services](#systemd-services)).
+
+### Step 2: Check the Keys Without Printing Them
+
+```bash
+# Length of each key (expect 64), never the value
+for f in /etc/billbull/*.env; do printf '%s: ' "$f"; sed -n 's/^EMAIL_ENC_KEY=//p' "$f" | tr -d '\n' | wc -c; done
+# Duplicate keys across clients: must print nothing
+for f in /etc/billbull/*.env; do sed -n 's/^EMAIL_ENC_KEY=//p' "$f" | sha256sum; done | sort | uniq -d
+# The unit loads the file, and started with it
+systemctl show billbull-royaltools -p EnvironmentFiles
+journalctl -u billbull-royaltools -n 200 | grep -E "EMAIL_ENC_KEY|Started BillbullBackendApplication"
+```
+
+Do not use `systemctl show -p Environment` or `cat` on the env files: those print the key.
+
+### Step 3: Upgrading an Existing Deployment
+
+Releases before this check fell back silently to the development key, so a client that never set `EMAIL_ENC_KEY` has its stored secrets encrypted under that public key. Before deploying this release, for each client:
+
+1. Check whether a key is set: `systemctl cat billbull-<client> | grep -c EMAIL_ENC_KEY` (counts, does not print). If it is set and at least 32 characters long, nothing else is needed.
+2. Otherwise (no key, or a short one), re-encrypt the stored secrets under a new key with the rotation tool in the backend jar. It runs offline, in one transaction, and by default as a dry run that checks every value and writes nothing:
+
+```bash
+systemctl stop billbull-royaltools
+sudo -u postgres pg_dump -Fc billbull_royaltools > /root/backups/billbull_royaltools-before-rekey-$(date +%F).dump
+
+umask 077
+printf 'EMAIL_ENC_KEY=%s\n' "$(openssl rand -base64 48 | tr -d '\n')" > /etc/billbull/royaltools.env.new
+
+cd /root/billbull/billbull-backend
+read -rs BILLBULL_DB_PASSWORD && export BILLBULL_DB_PASSWORD     # the billbull DB user's password (not echoed)
+export EMAIL_ENC_KEY_NEW="$(sed -n 's/^EMAIL_ENC_KEY=//p' /etc/billbull/royaltools.env.new)"
+# Old key: --old-key-is-dev-default when the client never set one. For a short key, instead
+# export EMAIL_ENC_KEY_OLD="$(sed -n 's/^EMAIL_ENC_KEY=//p' <old env file>)" and drop the flag.
+java -cp target/billbull-backend-0.0.1-SNAPSHOT.jar \
+  -Dloader.main=com.billbull.backend.common.crypto.EncryptionKeyRotationTool \
+  org.springframework.boot.loader.launch.PropertiesLauncher \
+  --url jdbc:postgresql://localhost:5432/billbull_royaltools --user billbull --old-key-is-dev-default
+```
+
+The dry run prints one line per secret column, for example `email_config.password: 1 re-encrypted, 0 plaintext encrypted, 0 already on the new key`, then `Dry run passed; nothing was written.` If it reports `Rotation failed`, the old key is wrong: stop and find the right one. Then:
+
+```bash
+# Same java command with --apply added, then:
+[ -e /etc/billbull/royaltools.env ] && mv /etc/billbull/royaltools.env /etc/billbull/royaltools.env.old
+mv /etc/billbull/royaltools.env.new /etc/billbull/royaltools.env
+unset EMAIL_ENC_KEY_NEW EMAIL_ENC_KEY_OLD BILLBULL_DB_PASSWORD
+systemctl daemon-reload && systemctl start billbull-royaltools
+```
+
+3. Verify: the backend starts, **Settings → Email Settings** and **Settings → WhatsApp Settings** load with their secrets shown as saved, **Send Test Email** arrives, and WhatsApp **Test Connection** succeeds (where configured).
+4. Keep the dump and `royaltools.env.old` until step 3 passes, then delete both. A repeat run with `--apply` is harmless: values already under the new key are left alone.
+
+**If verification fails:** stop the service, restore the dump (`pg_restore --clean -d billbull_royaltools <dump>`), put the old env file back, and repeat the rotation. As a last resort, clear the stored secrets (`UPDATE email_config SET password = NULL; UPDATE whatsapp_config SET access_token = NULL, app_secret = NULL, webhook_verify_token = NULL;`) and enter them again: a new Gmail app password and Meta system-user token can always be issued. A WhatsApp verify token entered again must also be pasted into Meta.
+
+**Rotating a key later** (suspected exposure, staff change): the same procedure with `EMAIL_ENC_KEY_OLD` set to the current key instead of `--old-key-is-dev-default`. Rotating the key does not change the secrets themselves; after an exposure, also revoke and reissue the Gmail app password and Meta token.
+
+---
+
 ## Systemd Services
 
 ### Step 1: Create Upload Directories
@@ -310,6 +406,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/royaltools.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=royaltools
 Restart=always
 RestartSec=10
@@ -332,6 +429,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/leroyalflowers.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=leroyalflowers
 Restart=always
 RestartSec=10
@@ -354,6 +452,7 @@ After=network.target postgresql.service
 [Service]
 User=root
 WorkingDirectory=/root/billbull/billbull-backend
+EnvironmentFile=/etc/billbull/leroyalgifts.env
 ExecStart=/usr/bin/java -jar target/billbull-backend-0.0.1-SNAPSHOT.jar --spring.profiles.active=leroyalgifts
 Restart=always
 RestartSec=10
@@ -663,6 +762,8 @@ All should show `active (running)` with no recent errors.
 - [ ] Backend JAR built successfully
 
 ### Services
+- [ ] One `EMAIL_ENC_KEY` per client generated in `/etc/billbull/<client>.env` (64 characters, no duplicates, mode 600)
+- [ ] Existing clients: stored secrets re-encrypted under the new key (dry run, then `--apply`)
 - [ ] 3 systemd service files created
 - [ ] Services enabled and started
 - [ ] All 3 services show "active (running)"
@@ -702,6 +803,8 @@ journalctl -u billbull-royaltools -n 100 -f
 - Database connection failed → Check PostgreSQL is running
 - Port already in use → Change port in application-*.properties
 - Flyway migration error → Ensure Flyway is disabled
+- `EMAIL_ENC_KEY is not set` / `is the public development key` / `is shorter than 32 characters` → see [Encryption Key](#encryption-key-email_enc_key). Do not "fix" it by setting an arbitrary new key on a client that already has saved Email or WhatsApp secrets: re-encrypt them first.
+- `Failed to decrypt value` → the key changed without re-encrypting. Put the previous key back, or follow the rotation procedure.
 
 ### Nginx 502 Bad Gateway
 

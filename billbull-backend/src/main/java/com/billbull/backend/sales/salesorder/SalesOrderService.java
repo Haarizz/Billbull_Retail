@@ -382,6 +382,8 @@ public class SalesOrderService {
     public SalesOrder getById(Long id) {
         SalesOrder order = orderRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Sales Order not found: " + id));
+        branchAccessService.assertTransactionBranchAccessible(
+                order.getBranch() != null ? order.getBranch().getId() : null, "Sales Order");
         ownershipAccessService.assertCanAccessRecord(order.getCreatedByUserId(), "Sales Order");
 
         Hibernate.initialize(order.getItems());
@@ -454,44 +456,55 @@ public class SalesOrderService {
     // ----------------------------
     @Transactional(readOnly = true)
     public List<SalesOrder> getAll() {
-
-        List<SalesOrder> orders = new ArrayList<>(
-                ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScopedByBranch(orderRepo.findAll(), SalesOrder::getBranch),
-                        SalesOrder::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
-                orders,
-                SalesOrder::getOrderDate,
-                SalesOrder::getSoNumber,
-                SalesOrder::getId);
-
-        // ✅ FORCE LAZY INITIALIZATION
-        orders.forEach(order -> {
-            Hibernate.initialize(order.getItems());
-            Hibernate.initialize(order.getWarehouse());
-            hydrateOrderItemDisplayData(order);
-        });
-
+        List<SalesOrder> orders = listScoped(null, null);
+        orders.forEach(this::hydrateForList);
         return orders;
     }
 
     @Transactional(readOnly = true)
     public List<SalesOrder> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesOrder> orders = listScoped(from, to);
+        orders.forEach(this::hydrateForList);
+        return orders;
+    }
+
+    /**
+     * The list tab's page: pages the bare rows, then hydrates only the visible page (a product
+     * lookup per line plus batch selections per order). A null range means every order.
+     */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.util.PageResponse<SalesOrder> getPage(
+            java.time.LocalDate from, java.time.LocalDate to, int page, int size, String search, String status) {
+        return com.billbull.backend.util.PaginationUtil.paginate(listScoped(from, to), page, size, search, status,
+                rows -> {
+                    rows.forEach(this::hydrateForList);
+                    return rows;
+                });
+    }
+
+    /** Branch/ownership-scoped, sorted, un-hydrated orders; a null range means all of them. */
+    private List<SalesOrder> listScoped(java.time.LocalDate from, java.time.LocalDate to) {
+        boolean ranged = from != null && to != null;
         List<SalesOrder> orders = new ArrayList<>(
                 ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScopedByBranch(orderRepo.findByOrderDateBetween(from, to), SalesOrder::getBranch),
+                        branchAccessService.filterBranchScopedByBranch(
+                                ranged ? orderRepo.findByOrderDateBetween(from, to) : orderRepo.findAll(),
+                                SalesOrder::getBranch),
                         SalesOrder::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
-                orders,
-                SalesOrder::getOrderDate,
-                SalesOrder::getSoNumber,
-                SalesOrder::getId);
-        orders.forEach(order -> {
-            Hibernate.initialize(order.getItems());
-            Hibernate.initialize(order.getWarehouse());
-            hydrateOrderItemDisplayData(order);
-        });
+        if (ranged) {
+            DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                    orders, SalesOrder::getOrderDate, SalesOrder::getSoNumber, SalesOrder::getId);
+        } else {
+            DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                    orders, SalesOrder::getOrderDate, SalesOrder::getSoNumber, SalesOrder::getId);
+        }
         return orders;
+    }
+
+    private void hydrateForList(SalesOrder order) {
+        Hibernate.initialize(order.getItems());
+        Hibernate.initialize(order.getWarehouse());
+        hydrateOrderItemDisplayData(order);
     }
 
     @Transactional

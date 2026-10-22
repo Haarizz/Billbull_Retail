@@ -4,6 +4,8 @@
 
 The POS is a static bundle served at `/pos/` on each tenant's **existing** origin. It needs no new backend, database, port, certificate, CORS entry or Spring profile. The `/api/` and `/uploads/` proxy rules stay exactly as they are.
 
+**Backend prerequisite (permission audit).** This branch adds a `sales.pos` check and branch scope to the existing POS endpoints, and makes adding, changing or removing cash drawers and printers need `pos.devices` / `pos.printers`. There is no schema or data change. Before deploying the backend to a tenant, run the read-only checks in [PERMISSIONS.md](PERMISSIONS.md#before-rollout) and resolve what they return. Otherwise users in those roles will get a 403 when they try to sell or to set up till hardware. The third pass (2026-10-10) adds checks 3–6. Counter, scanner and settings setup move to the `pos.*` keys. A network printer whose address is not a private LAN address on port 9100–9109 is refused, so correct it first. The defaults can be widened with `pos.printer.network.allowed-ports` / `allow-loopback` / `allow-public`; leave `allow-loopback` off outside development. There is still no schema or data change.
+
 ## 1. Build (on the server, alongside the usual Retail build)
 
 ```bash

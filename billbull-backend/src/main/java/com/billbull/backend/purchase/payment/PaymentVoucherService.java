@@ -44,6 +44,9 @@ public class PaymentVoucherService {
     @Autowired
     private com.billbull.backend.purchase.settings.PurchaseDocumentNumberingService documentNumberingService;
 
+    @Autowired
+    private com.billbull.backend.financials.cheque.PayChequeAllocationRepository chequeAllocationRepository;
+
     public List<PaymentVoucher> getAllVouchers() {
         List<PaymentVoucher> vouchers = new ArrayList<>(
                 ownershipAccessService.filterOwned(
@@ -163,6 +166,28 @@ public class PaymentVoucherService {
             return voucher;
         }
 
+        // A cheque payment is only allotted here. The money moves when its cheque is issued and
+        // paid in Financials → Pay Cheques, which is the only path from CHEQUE_PENDING to POSTED.
+        if (voucher.getStatus() == PaymentStatus.CHEQUE_PENDING) {
+            if (status == PaymentStatus.CHEQUE_PENDING) return voucher;
+            if (status != PaymentStatus.REJECTED) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "This cheque payment is posted when its cheque is issued in Financials → Pay Cheques.");
+            }
+            if (!chequeAllocationRepository.findBySourceTypeAndSourceIdInAndActiveTrue(
+                    com.billbull.backend.financials.cheque.PayChequeSourceType.PAYMENT_VOUCHER,
+                    java.util.List.of(voucher.getId())).isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "This payment is on a cheque. Cancel the cheque in Pay Cheques first.");
+            }
+        }
+        if (status == PaymentStatus.POSTED && voucher.getPaymentMode() == PaymentMode.CHEQUE) {
+            reserveChequePayment(voucher);
+            PaymentVoucher reserved = repository.save(voucher);
+            Hibernate.initialize(reserved.getBranch());
+            return reserved;
+        }
+
         voucher.setStatus(status);
 
         if (status == PaymentStatus.POSTED) {
@@ -175,6 +200,89 @@ public class PaymentVoucherService {
         PaymentVoucher result = repository.save(voucher);
         Hibernate.initialize(result.getBranch());
         return result;
+    }
+
+    public BigDecimal getReservedChequeAmountForInvoice(Long invoiceId, Long excludeVoucherId) {
+        if (invoiceId == null) return BigDecimal.ZERO;
+        BigDecimal reserved = repository.sumReservedChequeAmountByInvoiceId(invoiceId, excludeVoucherId);
+        return reserved != null ? reserved : BigDecimal.ZERO;
+    }
+
+    /**
+     * Approving a CHEQUE-mode voucher reserves its invoice instead of paying it: same checks as a
+     * real payment, counting other unissued cheque allotments as taken, but no invoice payment
+     * row and no journal. {@link #issueChequePayment} completes it.
+     */
+    private void reserveChequePayment(PaymentVoucher voucher) {
+        if (voucher.getAmount() == null || voucher.getAmount().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Payment voucher amount must be greater than zero.");
+        }
+        if (voucher.getInvoiceId() != null) {
+            PurchaseInvoice invoice = invoiceRepository.findById(voucher.getInvoiceId())
+                    .orElseThrow(() -> new RuntimeException("Purchase Invoice not found"));
+            if (invoice.getStatus() != InvoiceStatus.POSTED) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Only POSTED purchase invoices can receive payments.");
+            }
+            BigDecimal paid = getPostedAmountForInvoice(invoice.getId(), voucher.getId());
+            if (paid.compareTo(BigDecimal.ZERO) <= 0) paid = sumInvoicePayments(invoice);
+            BigDecimal reserved = getReservedChequeAmountForInvoice(invoice.getId(), voucher.getId());
+            BigDecimal total = invoice.getGrandTotal() != null ? invoice.getGrandTotal() : BigDecimal.ZERO;
+            BigDecimal available = total.subtract(paid).subtract(reserved);
+            if (voucher.getAmount().compareTo(available) > 0) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, available.signum() <= 0
+                        ? "This purchase invoice is already fully paid or allotted to a cheque."
+                        : "Payment exceeds the invoice balance not yet allotted to a cheque (" + available + ").");
+            }
+        }
+        voucher.setStatus(PaymentStatus.CHEQUE_PENDING);
+    }
+
+    /**
+     * Called by Pay Cheques when the cheque carrying this voucher is issued: the payment is now
+     * real, dated the issue date, and applied to its invoice. The journal (Dr AP / Cr 2150) is
+     * posted by the caller for the whole cheque, so none is posted here.
+     */
+    @Transactional
+    public PaymentVoucher issueChequePayment(Long voucherId, java.time.LocalDate issueDate) {
+        PaymentVoucher voucher = repository.findById(voucherId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment voucher not found"));
+        if (voucher.getStatus() != PaymentStatus.CHEQUE_PENDING) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    voucher.getVoucherNumber() + " is not waiting for a cheque.");
+        }
+        voucher.setPaymentDate(issueDate);
+        if (voucher.getInvoiceId() != null) {
+            applyPaymentToInvoice(voucher);
+        } else {
+            voucher.setAllocated(voucher.getAmount());
+            voucher.setUnallocated(BigDecimal.ZERO);
+        }
+        voucher.setStatus(PaymentStatus.POSTED);
+        return repository.save(voucher);
+    }
+
+    /** Undoes {@link #issueChequePayment} when an issued cheque is cancelled. */
+    @Transactional
+    public PaymentVoucher reverseChequePayment(Long voucherId) {
+        PaymentVoucher voucher = repository.findById(voucherId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment voucher not found"));
+        if (voucher.getStatus() != PaymentStatus.POSTED || voucher.getPaymentMode() != PaymentMode.CHEQUE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    voucher.getVoucherNumber() + " is not an issued cheque payment.");
+        }
+        if (voucher.getInvoiceId() != null) {
+            invoiceRepository.findById(voucher.getInvoiceId()).ifPresent(invoice -> {
+                invoice.getPayments().removeIf(p -> voucher.getId().equals(p.getPaymentVoucherId()));
+                updateInvoicePaymentStatus(invoice, getPostedAmountForInvoice(invoice.getId(), voucher.getId()));
+                invoiceRepository.save(invoice);
+            });
+        }
+        voucher.setAllocated(BigDecimal.ZERO);
+        voucher.setUnallocated(voucher.getAmount());
+        voucher.setStatus(PaymentStatus.CHEQUE_PENDING);
+        return repository.save(voucher);
     }
 
     private void applyPaymentToInvoice(PaymentVoucher voucher) {
@@ -215,6 +323,7 @@ public class PaymentVoucherService {
         payment.setPaymentDate(voucher.getPaymentDate());
         payment.setPaymentMode(voucher.getPaymentMode().name()); // Enum to String
         payment.setInvoice(invoice);
+        payment.setPaymentVoucherId(voucher.getId());
 
         invoice.getPayments().add(payment);
 

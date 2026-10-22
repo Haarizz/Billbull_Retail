@@ -94,6 +94,9 @@ public class SalesInvoiceController {
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            // Branch scope (403) and ownership (404) from the document lookup keep their status.
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }
@@ -137,6 +140,11 @@ public class SalesInvoiceController {
                     (String) body.get("html"),
                     invoice.getInvoiceNumber(),
                     invoiceTemplateParams(invoice, companyProfileService.getProfile().getCurrency()))));
+        } catch (com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException e) {
+            // Server-side: the PDF could not be produced, so nothing was uploaded to Meta.
+            return ResponseEntity.status(e.reason() == com.billbull.backend.document.DocumentPdfGuard.Reason.TOO_LARGE
+                    ? org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY
+                    : org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR).body(e.getMessage());
         } catch (IllegalArgumentException | IllegalStateException | WhatsAppApiException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
@@ -184,13 +192,11 @@ public class SalesInvoiceController {
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
         modulePermissionService.requireCanView("sales.invoice");
-        java.util.List<SalesInvoice> all = (fromDate != null || toDate != null)
-                ? service.getAllByDateRange(
-                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
-                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
-                : service.getAll();
-        com.billbull.backend.util.PageResponse<SalesInvoice> pageResponse =
-                com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        boolean ranged = fromDate != null || toDate != null;
+        com.billbull.backend.util.PageResponse<SalesInvoice> pageResponse = service.getPage(
+                ranged ? (fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1)) : null,
+                ranged ? (toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now()) : null,
+                page, size, search, status);
         // Enrich only the returned page's rows (not the full unpaginated list) with the
         // customer's TRN/phone/email/address, the same server-side resolution getById
         // already applies — so printing an older invoice straight from this list no
@@ -262,8 +268,18 @@ public class SalesInvoiceController {
         return service.deleteBatchSelection(invoiceId, itemId);
     }
 
+    /** The screens that preview the next invoice number: the invoice editor and the till. */
+    static final String[] NEXT_NUMBER_READERS = {"sales.invoice", "sales.pos"};
+    /** The screens that show a customer's previous outstanding: the invoice editor and the till. */
+    static final String[] OUTSTANDING_READERS = {"sales.invoice", "sales.pos"};
+    /** The item-entry screens that show an item's recent selling prices. */
+    static final String[] PRICE_HISTORY_READERS = {"sales.invoice", "sales.quotation", "sales.delivery", "sales.pos"};
+
+    // A read-only preview: the number is only taken when the invoice is saved.
     @GetMapping("/next-number")
+    @PreAuthorize("isAuthenticated()")
     public Map<String, String> getNextNumber() {
+        modulePermissionService.requireCanViewAny(NEXT_NUMBER_READERS);
         return Map.of("invoiceNumber", service.generateInvoiceNumber());
     }
 
@@ -274,6 +290,8 @@ public class SalesInvoiceController {
     @GetMapping("/outstanding")
     @PreAuthorize("isAuthenticated()")
     public Map<String, Object> getCustomerOutstanding(@RequestParam String customerCode) {
+        // The service limits the customer to the caller's branch scope.
+        modulePermissionService.requireCanViewAny(OUTSTANDING_READERS);
         return service.getCustomerOutstanding(customerCode);
     }
 
@@ -367,6 +385,8 @@ public class SalesInvoiceController {
     public PriceHistoryResponse getPriceHistory(
             @PathVariable String itemCode,
             @RequestParam(required = false) String customerCode) {
+        // The service already limits the history to the caller's own branch.
+        modulePermissionService.requireCanViewAny(PRICE_HISTORY_READERS);
         return service.getPriceHistory(itemCode, customerCode);
     }
 

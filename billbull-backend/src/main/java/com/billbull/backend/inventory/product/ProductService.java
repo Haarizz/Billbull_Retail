@@ -1350,6 +1350,8 @@ public class ProductService {
             item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
+            // POS Default Discount %: what the till applies on add (maxDiscount is only the cap).
+            item.put("defaultDiscount", pr != null ? pr.getDefaultDiscount() : null);
             item.put("isSerial", p.isSerial());
             item.put("isBatch", p.isBatch());
             item.put("expiryEnabled", p.isExpiryEnabled());
@@ -1607,6 +1609,8 @@ public class ProductService {
             item.put("defaultUnitId", inv != null && inv.getDefaultUnit() != null ? inv.getDefaultUnit().getId() : null);
 
             item.put("maxDiscount", p.getMaxDiscount());
+            // POS Default Discount %: what the till applies on add (maxDiscount is only the cap).
+            item.put("defaultDiscount", pr != null ? pr.getDefaultDiscount() : null);
             item.put("isSerial", p.isSerial());
             item.put("isBatch", p.isBatch());
             item.put("expiryEnabled", p.isExpiryEnabled());

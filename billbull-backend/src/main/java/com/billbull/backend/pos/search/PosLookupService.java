@@ -11,6 +11,7 @@ import com.billbull.backend.sales.customerledger.OpeningInvoiceRepository;
 import com.billbull.backend.sales.invoice.SalesInvoice;
 import com.billbull.backend.sales.invoice.SalesInvoiceItem;
 import com.billbull.backend.sales.invoice.SalesInvoiceRepository;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,19 +32,38 @@ public class PosLookupService {
     private final BatchMasterRepository batchMasterRepository;
     private final StockMovementRepository stockMovementRepository;
     private final OpeningInvoiceRepository openingInvoiceRepository;
+    private final BranchAccessService branchAccessService;
 
     public PosLookupService(CustomerRepository customerRepository,
                             SalesInvoiceRepository invoiceRepository,
                             AdvanceApplicationService advanceApplicationService,
                             BatchMasterRepository batchMasterRepository,
                             StockMovementRepository stockMovementRepository,
-                            OpeningInvoiceRepository openingInvoiceRepository) {
+                            OpeningInvoiceRepository openingInvoiceRepository,
+                            BranchAccessService branchAccessService) {
         this.customerRepository = customerRepository;
         this.invoiceRepository = invoiceRepository;
         this.advanceApplicationService = advanceApplicationService;
         this.batchMasterRepository = batchMasterRepository;
         this.stockMovementRepository = stockMovementRepository;
         this.openingInvoiceRepository = openingInvoiceRepository;
+        this.branchAccessService = branchAccessService;
+    }
+
+    /** The first candidate the caller may see, under the same branch scope as customer search. */
+    private Optional<Customer> firstInScope(List<Customer> candidates) {
+        java.util.Set<String> visible = customerRepository.codesInScope(
+                candidates.stream().map(Customer::getCode).toList(),
+                branchAccessService.currentSearchScope());
+        return candidates.stream().filter(c -> visible.contains(c.getCode())).findFirst();
+    }
+
+    /** Drops invoices from branches the caller may not act on, deciding once per branch. */
+    private List<SalesInvoice> onlyAccessibleBranches(List<SalesInvoice> invoices) {
+        Map<Long, Boolean> decided = new java.util.HashMap<>();
+        return invoices.stream()
+                .filter(inv -> decided.computeIfAbsent(inv.getBranchId(), branchAccessService::canAccessTransactionBranch))
+                .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
@@ -53,18 +73,17 @@ public class PosLookupService {
         }
         String query = q.trim();
 
-        // Exact match on code / mobile / phone / email
+        // Exact match on code / mobile / phone / email. A customer outside the caller's branch
+        // scope reads as not found, the same as the customer search the till uses.
         Optional<Customer> opt = customerRepository
                 .findFirstByCodeIgnoreCaseOrMobileIgnoreCaseOrPhoneIgnoreCaseOrEmailIgnoreCase(
-                        query, query, query, query);
+                        query, query, query, query)
+                .flatMap(c -> firstInScope(List.of(c)));
 
         // Fallback: partial name / code search
         if (opt.isEmpty()) {
-            List<Customer> byName = customerRepository
-                    .findByNameContainingIgnoreCaseOrCodeContainingIgnoreCase(query, query);
-            if (!byName.isEmpty()) {
-                opt = Optional.of(byName.get(0));
-            }
+            opt = firstInScope(customerRepository
+                    .findByNameContainingIgnoreCaseOrCodeContainingIgnoreCase(query, query));
         }
 
         if (opt.isEmpty()) {
@@ -144,6 +163,8 @@ public class PosLookupService {
         } else if (resolvedItemCode != null) {
             invoices = invoiceRepository.findByItemCodeWithItems(resolvedItemCode);
         }
+        // Sold-item history is per branch: another branch's sales stay out of the result.
+        invoices = onlyAccessibleBranches(invoices);
 
         List<PosBatchCheckResponse.BatchSoldItem> results = new ArrayList<>();
         final String finalBatchNumber = resolvedBatchNumber;
@@ -202,8 +223,11 @@ public class PosLookupService {
     @Transactional(readOnly = true)
     public List<Map<String, Object>> customerHistory(String customerCode) {
         if (customerCode == null || customerCode.isBlank()) return List.of();
-        List<SalesInvoice> invoices = invoiceRepository.findRecentByCustomerCode(
-                customerCode.trim(), PageRequest.of(0, 20));
+        // Scoped in the query, so the 20 rows are 20 the caller may see. A direct API call can
+        // name any customer, so the till's own branch cannot be assumed here.
+        BranchAccessService.ListScope scope = branchAccessService.currentSearchScope();
+        List<SalesInvoice> invoices = invoiceRepository.findRecentByCustomerCodeScoped(
+                customerCode.trim(), scope.allBranches(), scope.branchIds(), PageRequest.of(0, 20));
         return invoices.stream().map(inv -> {
             Map<String, Object> m = new java.util.LinkedHashMap<>();
             m.put("id", inv.getId());

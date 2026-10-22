@@ -1,5 +1,5 @@
 import { getPosPrinters, printPosPrinterEscPos } from '@billbull/shared/api/posPrinterApi';
-import { resolvePrinterForContext, printEscPosThroughAgent } from '@billbull/shared/utils/localPrintAgent';
+import { resolvePrinterForContext, printZplThroughAgent } from '@billbull/shared/utils/localPrintAgent';
 
 /**
  * THE way anything in this app spools ZPL to a Zebra label printer.
@@ -97,11 +97,13 @@ export const sendZplToLabelPrinter = async (printer, zpl, { title = 'BillBull La
   // btoa is Latin-1 only; the encodeURIComponent/unescape pair is what carries any non-ASCII
   // byte in the ZPL (the ^CI28 UTF-8 header means there can be some) through it intact.
   const dataBase64 = btoa(unescape(encodeURIComponent(zpl)));
+  // Both routes check the job against the ZPL command policy before sending a byte:
+  // the backend because this is a LABEL_PRINTER, the agent because of its /print/zpl route.
   if (printer.connectionType === 'NETWORK_IP') {
-    await printPosPrinterEscPos(printer.id, dataBase64);
+    await printPosPrinterEscPos(printer.id, dataBase64, { format: 'ZPL' });
     return { transport: 'network', target: `${printer.ipAddress}:${printer.portNumber}` };
   }
-  await printEscPosThroughAgent({
+  await printZplThroughAgent({
     printerName: printer.systemPrinterName,
     dataBase64,
     connectionType: printer.connectionType,

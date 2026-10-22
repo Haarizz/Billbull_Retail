@@ -3254,7 +3254,7 @@ const Quotations = () => {
                             <h2 className="font-bold text-slate-700 text-lg">Quotations</h2>
 
                             <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
-                                <DateFilter onChange={(range) => {
+                                <DateFilter loading={isListLoading} onChange={(range) => {
                                     setDateRange(prev => (prev?.fromDate === range?.fromDate && prev?.toDate === range?.toDate) ? prev : range);
                                 }} />
                                 {/* Search */}
@@ -3912,7 +3912,7 @@ const Quotations = () => {
                                                             </div>
                                                         </td>
                                                     </tr>
-                                                ) : [...items].reverse().map((item, index) => (
+                                                ) : items.map((item, index) => (
                                                     <React.Fragment key={item.id}>
                                                         <tr className="group hover:bg-slate-50/50 transition-colors bg-white align-middle" onClick={() => setFocusedRowId(item.id)}>
                                                             {/* Index */}

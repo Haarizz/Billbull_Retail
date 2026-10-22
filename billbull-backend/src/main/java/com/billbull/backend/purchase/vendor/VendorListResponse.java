@@ -96,6 +96,11 @@ public class VendorListResponse {
     public void setOpeningBalance(BigDecimal openingBalance) { this.openingBalance = openingBalance; }
     public BigDecimal getOpeningBalanceOutstanding() { return openingBalanceOutstanding; }
     public void setOpeningBalanceOutstanding(BigDecimal openingBalanceOutstanding) { this.openingBalanceOutstanding = openingBalanceOutstanding; }
+
+    /** Part of the outstanding opening balance allotted to a cheque that is not issued yet. */
+    private BigDecimal openingBalanceChequeReserved = BigDecimal.ZERO;
+    public BigDecimal getOpeningBalanceChequeReserved() { return openingBalanceChequeReserved; }
+    public void setOpeningBalanceChequeReserved(BigDecimal v) { this.openingBalanceChequeReserved = v; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public Boolean getIsPreferred() { return isPreferred; }

@@ -15,6 +15,10 @@ public class EmailConfig {
     @Column(name = "smtp_port")
     private Integer smtpPort = 587;
 
+    /** {@link SmtpSecurity} name. Null on rows saved before it existed; see {@link SmtpSecurity#resolve}. */
+    @Column(name = "smtp_security", length = 16)
+    private String smtpSecurity;
+
     @Column(name = "username")
     private String username;
 
@@ -45,12 +49,15 @@ public class EmailConfig {
     public Integer getSmtpPort() { return smtpPort; }
     public void setSmtpPort(Integer smtpPort) { this.smtpPort = smtpPort; }
 
+    public String getSmtpSecurity() { return smtpSecurity; }
+    public void setSmtpSecurity(String smtpSecurity) { this.smtpSecurity = smtpSecurity; }
+
     public String getUsername() { return username; }
     public void setUsername(String username) { this.username = username; }
 
-    // NOTE: not @JsonIgnore — EmailConfigService.getConfigMasked() deliberately serializes a masked
-    // "••••" placeholder so the UI knows a password is set and echoes the sentinel back on save
-    // (saveConfig preserves the stored value when it sees it). The real value is never serialized.
+    // The API answers with EmailConfigResponse (passwordSet only) and never serializes this entity;
+    // @JsonIgnore keeps it that way if someone returns the entity again.
+    @com.fasterxml.jackson.annotation.JsonIgnore
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
 

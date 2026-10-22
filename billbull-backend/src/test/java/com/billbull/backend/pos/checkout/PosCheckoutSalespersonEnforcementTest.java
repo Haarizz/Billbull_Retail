@@ -95,6 +95,8 @@ class PosCheckoutSalespersonEnforcementTest {
             new com.billbull.backend.pos.businessdate.BusinessDayClock("Asia/Kolkata");
     @org.mockito.Spy private PosPaymentAllocationResolver allocationResolver = new PosPaymentAllocationResolver();
 
+    // Till permission (sales.pos) check on every till endpoint; a bare mock grants it.
+    @Mock private com.billbull.backend.security.ModulePermissionService modulePermissionService;
     @InjectMocks private PosCheckoutController controller;
 
     private AutoCloseable mocks;

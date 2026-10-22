@@ -21,7 +21,7 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     List<String> findVoucherNumbersByPrefix(@Param("prefix") String prefix);
 
     // --- STATEMENT QUERIES ---
-    @org.springframework.data.jpa.repository.Query("SELECT SUM(p.amount) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate < :startDate AND p.status <> 'CANCELLED'")
+    @org.springframework.data.jpa.repository.Query("SELECT SUM(p.amount) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate < :startDate AND p.status <> 'CANCELLED' AND p.status <> com.billbull.backend.purchase.payment.PaymentStatus.CHEQUE_PENDING")
     java.math.BigDecimal calculateOpeningBalance(String vendorName, java.time.LocalDate startDate);
 
     /** Total posted/cleared payments made to a vendor (excludes pending approval and rejected). */
@@ -55,7 +55,7 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     @Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.invoiceId IS NOT NULL AND p.status IN (com.billbull.backend.purchase.payment.PaymentStatus.POSTED, com.billbull.backend.purchase.payment.PaymentStatus.CLEARED)")
     BigDecimal sumInvoiceLinkedPaymentsByVendorName(@Param("vendorName") String vendorName);
 
-    @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(p.paymentDate, p.voucherNumber, 'PAYMENT_MADE', p.amount, CAST(0 AS big_decimal), CAST(p.status AS string)) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate BETWEEN :startDate AND :endDate AND p.status <> 'CANCELLED'")
+    @org.springframework.data.jpa.repository.Query("SELECT new com.billbull.backend.financials.statement.StatementEntryDTO(p.paymentDate, p.voucherNumber, 'PAYMENT_MADE', p.amount, CAST(0 AS big_decimal), CAST(p.status AS string)) FROM PaymentVoucher p WHERE p.vendorName = :vendorName AND p.paymentDate BETWEEN :startDate AND :endDate AND p.status <> 'CANCELLED' AND p.status <> com.billbull.backend.purchase.payment.PaymentStatus.CHEQUE_PENDING")
     java.util.List<com.billbull.backend.financials.statement.StatementEntryDTO> findStatementEntries(String vendorName,
             java.time.LocalDate startDate, java.time.LocalDate endDate);
 
@@ -66,6 +66,27 @@ public interface PaymentVoucherRepository extends JpaRepository<PaymentVoucher, 
     BigDecimal sumPostedAmountByInvoiceIdExcludingVoucher(
             @Param("invoiceId") Long invoiceId,
             @Param("excludeVoucherId") Long excludeVoucherId);
+
+    /**
+     * Cheque payments allotted in Pay Invoices but not yet issued (CHEQUE_PENDING). They are not
+     * "paid", but they reserve the invoice so it cannot be allotted twice.
+     */
+    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.invoiceId = :invoiceId "
+            + "AND p.status = com.billbull.backend.purchase.payment.PaymentStatus.CHEQUE_PENDING "
+            + "AND (:excludeVoucherId IS NULL OR p.id <> :excludeVoucherId)")
+    BigDecimal sumReservedChequeAmountByInvoiceId(@Param("invoiceId") Long invoiceId,
+                                                  @Param("excludeVoucherId") Long excludeVoucherId);
+
+    /** Same reservation for on-account (opening balance) cheque payments, per vendor. */
+    @Query("SELECT COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.vendorName = :vendorName "
+            + "AND p.invoiceId IS NULL "
+            + "AND p.status = com.billbull.backend.purchase.payment.PaymentStatus.CHEQUE_PENDING")
+    BigDecimal sumReservedOnAccountChequeByVendorName(@Param("vendorName") String vendorName);
+
+    /** Batched variant of {@link #sumReservedOnAccountChequeByVendorName}. Rows: [vendorName, sum]. */
+    @Query("SELECT p.vendorName, COALESCE(SUM(p.amount), 0) FROM PaymentVoucher p WHERE p.invoiceId IS NULL "
+            + "AND p.status = com.billbull.backend.purchase.payment.PaymentStatus.CHEQUE_PENDING GROUP BY p.vendorName")
+    List<Object[]> sumReservedOnAccountChequeGroupedByVendorName();
 
     java.util.List<PaymentVoucher> findByLpoIdOrderByPaymentDateDesc(Long lpoId);
 

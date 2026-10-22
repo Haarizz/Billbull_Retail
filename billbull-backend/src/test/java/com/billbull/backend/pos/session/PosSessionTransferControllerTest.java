@@ -20,7 +20,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 /**
@@ -35,6 +36,8 @@ class PosSessionTransferControllerTest {
     @Mock private ObjectMapper objectMapper;
     @Mock private PosDayStatusService dayStatusService;
     @Mock private BranchAccessService branchAccessService;
+    // Till permission check on every session endpoint; a bare mock grants it.
+    @Mock private com.billbull.backend.security.ModulePermissionService modulePermissionService;
 
     @InjectMocks private PosSessionController controller;
 
@@ -43,6 +46,8 @@ class PosSessionTransferControllerTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
+        // The controller reads the session to check its branch before validating the request.
+        when(service.getById(5L)).thenReturn(sessionMoved());
     }
 
     private static Map<String, Object> body(String destinationTerminalId, Boolean confirm, String reason, String pin) {
@@ -84,7 +89,7 @@ class PosSessionTransferControllerTest {
                 () -> controller.transferSession(5L, body("T2", null, null, null)));
 
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
-        verifyNoInteractions(service);
+        verify(service, never()).transferSession(any(), any(), any(), any());
     }
 
     @Test
@@ -92,7 +97,7 @@ class PosSessionTransferControllerTest {
         assertThrows(ResponseStatusException.class,
                 () -> controller.transferSession(5L, body("T2", false, null, null)));
 
-        verifyNoInteractions(service);
+        verify(service, never()).transferSession(any(), any(), any(), any());
     }
 
     @Test
@@ -101,7 +106,7 @@ class PosSessionTransferControllerTest {
                 () -> controller.transferSession(5L, body(null, true, null, null)));
 
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
-        verifyNoInteractions(service);
+        verify(service, never()).transferSession(any(), any(), any(), any());
     }
 
     @Test
@@ -109,7 +114,7 @@ class PosSessionTransferControllerTest {
         assertThrows(ResponseStatusException.class,
                 () -> controller.transferSession(5L, body("  ", true, null, null)));
 
-        verifyNoInteractions(service);
+        verify(service, never()).transferSession(any(), any(), any(), any());
     }
 
     // -----------------------------------------------------------------

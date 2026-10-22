@@ -147,11 +147,34 @@ public class SalesReturnService {
 
     @Transactional(readOnly = true)
     public List<SalesReturn> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        List<SalesReturn> returns = listScopedByDateRange(from, to);
+        returns.forEach(this::initReturnGraph);
+        return returns;
+    }
+
+    /**
+     * The list tab's page: pages the bare rows, then initializes item batches for the visible
+     * page only. A null range falls back to {@link #getAllReturns()}, whose JOIN FETCH already
+     * loads the items.
+     */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.util.PageResponse<SalesReturn> getPage(
+            java.time.LocalDate from, java.time.LocalDate to, int page, int size, String search, String status) {
+        if (from == null || to == null) {
+            return com.billbull.backend.util.PaginationUtil.paginate(getAllReturns(), page, size, search, status);
+        }
+        return com.billbull.backend.util.PaginationUtil.paginate(
+                listScopedByDateRange(from, to), page, size, search, status, rows -> {
+                    rows.forEach(this::initReturnGraph);
+                    return rows;
+                });
+    }
+
+    private List<SalesReturn> listScopedByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
         List<SalesReturn> returns = new ArrayList<>(
                 ownershipAccessService.filterOwned(
                         branchAccessService.filterBranchScopedByBranch(salesReturnRepository.findByReturnDateBetween(from, to), SalesReturn::getBranch),
                         SalesReturn::getCreatedByUserId));
-        returns.forEach(this::initReturnGraph);
         DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
                 returns,
                 SalesReturn::getReturnDate,

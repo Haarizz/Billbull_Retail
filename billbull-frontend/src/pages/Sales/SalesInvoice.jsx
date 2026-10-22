@@ -2924,7 +2924,11 @@ const SalesInvoice = () => {
                 warehouse: printBranch.defaultWarehouseName || '',
                 deliveryTerms: '',
                 salesPerson: salesperson || '',
-                notes: invoiceNotes || ''
+                notes: invoiceNotes || '',
+                // Read by the styled invoice layouts only (Pay Mode / Balance Due);
+                // kept out of totals so standard templates print unchanged.
+                paymentMode: paymentMode || '',
+                amountPaid: Number(amountCollected) || 0
             }
         };
     };
@@ -3111,7 +3115,11 @@ const SalesInvoice = () => {
                         warehouse: printBranch.defaultWarehouseName || '',
                         deliveryTerms: dataToPrint.deliveryType || '',
                         salesPerson: dataToPrint.salesperson || '',
-                        notes: dataToPrint.customerNotes || dataToPrint.notes || ''
+                        notes: dataToPrint.customerNotes || dataToPrint.notes || '',
+                        // Read by the styled invoice layouts only (Pay Mode / Balance Due);
+                        // kept out of totals so standard templates print unchanged.
+                        paymentMode: dataToPrint.paymentMode || '',
+                        amountPaid: Number(dataToPrint.amountPaid) || 0
                     }
                 };
 
@@ -3637,7 +3645,7 @@ const SalesInvoice = () => {
                             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
                                 <h3 className="font-bold text-slate-700 text-sm">All Invoices</h3>
                                 <div className="flex flex-col md:flex-row gap-3 items-center w-full md:w-auto">
-                                    <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                                    <DateFilter loading={isListLoading} onChange={(range) => { setDateRange(range); setListPage(0); }} />
                                     <div className="relative w-full md:w-auto">
                                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
                                         <input type="text" placeholder="Search invoices..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-9 pr-4 py-2 border border-slate-200 rounded-md text-xs w-full md:w-64 focus:outline-none focus:border-[#F5C742]" />
@@ -4248,7 +4256,7 @@ const SalesInvoice = () => {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-100/50">
-                                                        {[...items].reverse().map((item, index) => {
+                                                        {items.map((item, index) => {
                                                             const isVoided = Boolean(item.voided ?? item.isVoided ?? false);
                                                             return (
                                                             <React.Fragment key={item.id}>

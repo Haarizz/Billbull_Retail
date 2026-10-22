@@ -58,6 +58,9 @@ public class ProformaController {
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            // Branch scope (403) and ownership (404) from the document lookup keep their status.
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }
@@ -78,12 +81,11 @@ public class ProformaController {
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
         modulePermissionService.requireCanView(MODULE);
-        java.util.List<ProformaResponse> all = (fromDate != null || toDate != null)
-                ? service.listByDateRange(
-                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
-                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
-                : service.list();
-        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        boolean ranged = fromDate != null || toDate != null;
+        return service.page(
+                ranged ? (fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1)) : null,
+                ranged ? (toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now()) : null,
+                page, size, search, status);
     }
 
     @GetMapping("/next-number")

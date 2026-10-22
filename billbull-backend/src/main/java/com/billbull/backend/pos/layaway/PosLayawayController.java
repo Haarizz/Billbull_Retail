@@ -1,5 +1,7 @@
 package com.billbull.backend.pos.layaway;
 
+import com.billbull.backend.pos.auth.PosTillPermission;
+import com.billbull.backend.security.ModulePermissionService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -17,14 +19,23 @@ import java.util.List;
 public class PosLayawayController {
 
     private final PosLayawayService service;
+    private final ModulePermissionService modulePermissionService;
 
-    public PosLayawayController(PosLayawayService service) {
+    public PosLayawayController(PosLayawayService service, ModulePermissionService modulePermissionService) {
         this.service = service;
+        this.modulePermissionService = modulePermissionService;
+    }
+
+    // Every layaway endpoint is a till operation. Cancel and release-reservation additionally
+    // keep their supervisor check inside PosLayawayService.
+    private void requireTillAccess() {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
     }
 
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosLayaway> create(@RequestBody PosLayawayCreateRequest request) {
+        requireTillAccess();
         return ResponseEntity.ok(service.create(request));
     }
 
@@ -35,12 +46,14 @@ public class PosLayawayController {
             @RequestParam(required = false) PosLayawayStatus status,
             @RequestParam(required = false) String customer,
             @RequestParam(required = false) String number) {
+        requireTillAccess();
         return ResponseEntity.ok(service.search(branchId, status, customer, number));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosLayaway> get(@PathVariable Long id) {
+        requireTillAccess();
         return ResponseEntity.ok(service.getById(id));
     }
 
@@ -50,6 +63,7 @@ public class PosLayawayController {
                                              @RequestParam(required = false) Long posSessionId) {
         // Stated by the caller, validated server-side, never inferred. Required when the
         // deposit being returned was taken in cash.
+        requireTillAccess();
         return ResponseEntity.ok(service.cancel(id, posSessionId));
     }
 
@@ -57,12 +71,14 @@ public class PosLayawayController {
     @PostMapping("/{id}/release-reservation")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosLayaway> releaseReservation(@PathVariable Long id) {
+        requireTillAccess();
         return ResponseEntity.ok(service.releaseReservation(id));
     }
 
     @PostMapping("/{id}/convert")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosLayaway> convert(@PathVariable Long id, @RequestBody ConvertRequest body) {
+        requireTillAccess();
         return ResponseEntity.ok(service.markConverted(id, body.getInvoiceId(), body.getInvoiceNumber()));
     }
 
@@ -71,6 +87,7 @@ public class PosLayawayController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosLayawayPayment> recordPayment(@PathVariable Long id,
                                                             @RequestBody PaymentRequest body) {
+        requireTillAccess();
         return ResponseEntity.ok(service.recordPayment(
                 id, body.getAmount(), body.getPaymentMode(), body.getReferenceNumber(), body.getNotes(),
                 body.getPosSessionId()));
@@ -79,6 +96,7 @@ public class PosLayawayController {
     @GetMapping("/{id}/payments")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<List<PosLayawayPayment>> getPayments(@PathVariable Long id) {
+        requireTillAccess();
         return ResponseEntity.ok(service.getPayments(id));
     }
 

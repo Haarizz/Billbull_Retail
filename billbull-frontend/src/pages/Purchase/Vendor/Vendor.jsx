@@ -276,7 +276,8 @@ const PayInvoices = ({ vendors, initialVendor }) => {
           ...inv,
           grandTotal: Number(inv.grandTotal || 0),
           amountPaid: Number(inv.amountPaid || 0),
-          balanceDue: Number(inv.balanceDue ?? inv.grandTotal ?? 0),
+          // Amounts already allotted to a cheque that is not issued yet are not available again.
+          balanceDue: Number(inv.balanceDue ?? inv.grandTotal ?? 0) - Number(inv.chequeReserved || 0),
         }))
         .filter(inv =>
           ((inv.vendorId === selectedVendor.code) ||
@@ -460,7 +461,9 @@ const PayInvoices = ({ vendors, initialVendor }) => {
       setLastSavedPayment(latestSavedPayment);
       setLastSavedInvoice(latestSavedInvoice);
 
-      alert("Payment processed successfully!");
+      alert(paymentMethod === 'Cheque'
+        ? "Cheque payment allotted. Create and issue the cheque in Financials → Pay Cheques; the ledger posts when the cheque is issued and paid."
+        : "Payment processed successfully!");
       setReference('');
       setNotes('');
       setSelectedInvoices({});

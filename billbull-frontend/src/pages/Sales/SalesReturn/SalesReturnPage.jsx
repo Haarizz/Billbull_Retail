@@ -1008,7 +1008,7 @@ const SalesReturn = () => {
                      <div className="mb-6">
                         <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2"><Filter size={16} /> Filters</h3>
                         <div className="flex items-center gap-3 mb-3">
-                           <DateFilter onChange={(range) => { setDateRange(range); setReturnsPage(0); }} />
+                           <DateFilter loading={isLoading} onChange={(range) => { setDateRange(range); setReturnsPage(0); }} />
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
                            <div className="md:col-span-2 relative">

@@ -76,6 +76,31 @@ export default function SalespersonScanModal({
     return () => window.clearTimeout(timer);
   }, [open, current, replacing, error]);
 
+  // Confirmation state ("Employee Found" / "Current Salesperson"): Enter continues, Escape closes.
+  // The scan field unmounts after a successful verify, so focus falls to <body> and no element
+  // would otherwise receive the key. A focused button inside the dialog (Change / X) keeps its own
+  // native Enter activation. Capture phase so the key never reaches the sale behind the modal.
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    if (!open || !current || replacing) return undefined;
+    const onKeyDown = (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onClose?.();
+        return;
+      }
+      if (event.key !== 'Enter') return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('button') && dialogRef.current?.contains(target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) onClose?.();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [open, current, replacing, onClose]);
+
   // Reset when the dialog closes, adjusted during render rather than in an effect. React's
   // documented pattern for "reset state when a prop changes": an effect here would set state
   // synchronously on every close and trigger a cascading re-render for no benefit.
@@ -119,7 +144,7 @@ export default function SalespersonScanModal({
       className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/40 p-4"
       data-pos-scan-suppress="true"
     >
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-[0_20px_60px_rgba(15,23,42,0.25)] overflow-hidden">
+      <div ref={dialogRef} className="w-full max-w-md rounded-2xl bg-white shadow-[0_20px_60px_rgba(15,23,42,0.25)] overflow-hidden">
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
           <div className="flex items-center gap-2 min-w-0">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#327F74]/10 text-[#327F74]">

@@ -124,8 +124,9 @@ describe('EmployeeBarcodeCard', () => {
 
     it('carries the employee code as a CODE128 barcode with its text underneath', () => {
       // ^BC is Code 128; the third parameter Y prints the interpretation line, which is what
-      // makes the code readable off the label when the bars will not scan.
-      expect(zpl()).toMatch(/\^BCN,\d+,Y,N,N\^FDEMP9664\^FS/);
+      // makes the code readable off the label when the bars will not scan. ^FH hex-escapes the
+      // field data, so an employee code can never end its field and run a printer command.
+      expect(zpl()).toMatch(/\^BCN,\d+,Y,N,N\^FH\^FDEMP9664\^FS/);
     });
 
     it('prints the brand, name, role and code as text', () => {

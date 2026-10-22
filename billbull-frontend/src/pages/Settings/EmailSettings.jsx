@@ -14,6 +14,12 @@ import {
 } from 'lucide-react';
 import { getEmailConfig, saveEmailConfig, sendTestEmail } from '../../api/emailConfigApi';
 
+// These fields hold the tenant's SMTP account, not the signed-in user's BillBull login. Browsers
+// and password managers must neither fill the login into them nor offer to save them as it:
+// "new-password" on the secret (Chrome ignores "off" on password inputs), "off" plus a unique
+// name/id elsewhere, and the opt-out attributes the common password managers honour.
+const NO_PASSWORD_MANAGER = { 'data-1p-ignore': 'true', 'data-lpignore': 'true', 'data-bwignore': 'true' };
+
 const EMPTY_FORM = {
     smtpHost: 'smtp.gmail.com',
     smtpPort: 587,
@@ -192,13 +198,17 @@ export default function EmailSettings() {
                             </div>
 
                             <div className="md:col-span-3">
-                                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <label htmlFor="smtp-username" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                                     Email Address
                                 </label>
                                 <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 focus-within:border-[#F5C742] focus-within:ring-4 focus-within:ring-[#F5C742]/15">
                                     <User size={15} className="shrink-0 text-slate-400" />
                                     <input
+                                        id="smtp-username"
+                                        name="smtp-username"
                                         type="email"
+                                        autoComplete="off"
+                                        {...NO_PASSWORD_MANAGER}
                                         value={form.username || ''}
                                         onChange={(e) => handleChange('username', e.target.value)}
                                         placeholder="your@gmail.com"
@@ -208,13 +218,17 @@ export default function EmailSettings() {
                             </div>
 
                             <div className="md:col-span-2">
-                                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <label htmlFor="smtp-app-password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                                     App Password
                                 </label>
                                 <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 focus-within:border-[#F5C742] focus-within:ring-4 focus-within:ring-[#F5C742]/15">
                                     <Lock size={15} className="shrink-0 text-slate-400" />
                                     <input
+                                        id="smtp-app-password"
+                                        name="smtp-app-password"
                                         type={showPassword ? 'text' : 'password'}
+                                        autoComplete="new-password"
+                                        {...NO_PASSWORD_MANAGER}
                                         value={form.password || ''}
                                         onChange={(e) => handleChange('password', e.target.value)}
                                         placeholder="16-character app password"
@@ -234,13 +248,16 @@ export default function EmailSettings() {
                             </div>
 
                             <div>
-                                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                <label htmlFor="smtp-sender-name" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
                                     Sender Name
                                 </label>
                                 <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 focus-within:border-[#F5C742] focus-within:ring-4 focus-within:ring-[#F5C742]/15">
                                     <Tag size={15} className="shrink-0 text-slate-400" />
                                     <input
+                                        id="smtp-sender-name"
+                                        name="smtp-sender-name"
                                         type="text"
+                                        autoComplete="off"
                                         value={form.fromName || ''}
                                         onChange={(e) => handleChange('fromName', e.target.value)}
                                         placeholder="BillBull ERP"
@@ -298,7 +315,11 @@ export default function EmailSettings() {
                             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 focus-within:border-[#F5C742] focus-within:ring-4 focus-within:ring-[#F5C742]/15">
                                 <Mail size={15} className="shrink-0 text-slate-400" />
                                 <input
+                                    id="smtp-test-recipient"
+                                    name="smtp-test-recipient"
                                     type="email"
+                                    autoComplete="off"
+                                    aria-label="Test email recipient"
                                     value={testEmail}
                                     onChange={(e) => setTestEmail(e.target.value)}
                                     placeholder="Send test to this email..."

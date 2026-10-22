@@ -1383,15 +1383,21 @@ export const generateReportPrintHtml = (_template, reportTitle, columns, data, c
 // breaks and alignment, identical to Ctrl+P → Save as PDF. This replaces the
 // html2canvas slice-and-dice path (downloadPdf below) which cuts content
 // mid-row because it screenshots the page and chops the bitmap at fixed offsets.
-export const downloadPdfViaServer = async (htmlContent, filename = 'document') => {
+// The server-side PDF (headless Chromium) as a Blob — the exact file
+// downloadPdfViaServer saves. Also used by template designers for an exact
+// print preview.
+export const renderPdfViaServer = async (htmlContent, filename = 'document') => {
     const { default: api } = await import('../api/axiosConfig');
     const res = await api.post(
         '/api/documents/pdf',
         { html: htmlContent, filename },
         { responseType: 'blob' }
     );
+    return new Blob([res.data], { type: 'application/pdf' });
+};
 
-    const blob = new Blob([res.data], { type: 'application/pdf' });
+export const downloadPdfViaServer = async (htmlContent, filename = 'document') => {
+    const blob = await renderPdfViaServer(htmlContent, filename);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

@@ -1,5 +1,6 @@
 package com.billbull.backend.pos.printer;
 
+import com.billbull.backend.pos.cashdrawer.PosDrawerKickAuthorizer;
 import com.billbull.backend.pos.device.PosDevice;
 import com.billbull.backend.pos.device.PosDeviceStatus;
 import com.billbull.backend.pos.device.PosDeviceType;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.time.LocalDateTime;
@@ -22,10 +24,15 @@ public class PosPrinterService {
 
     private final PosPrinterRepository repo;
     private final DeviceManager deviceManager;
+    private final PrinterNetworkPolicy networkPolicy;
+    private final PosDrawerKickAuthorizer drawerKickAuthorizer;
 
-    public PosPrinterService(PosPrinterRepository repo, DeviceManager deviceManager) {
+    public PosPrinterService(PosPrinterRepository repo, DeviceManager deviceManager,
+                             PrinterNetworkPolicy networkPolicy, PosDrawerKickAuthorizer drawerKickAuthorizer) {
         this.repo = repo;
         this.deviceManager = deviceManager;
+        this.networkPolicy = networkPolicy;
+        this.drawerKickAuthorizer = drawerKickAuthorizer;
     }
 
     public List<PosPrinter> list(Long branchId, String terminalId, PosPrinterType deviceType) {
@@ -98,9 +105,26 @@ public class PosPrinterService {
      * ever be reached by the specific machine they're physically plugged into.
      * Only ever dials the IP/port already stored on this printer's own row (set by
      * an authenticated admin via the printer config screen) — never a
-     * client-supplied address — so this can't be used as an arbitrary network probe.
+     * client-supplied address. The stored address must still pass {@link PrinterNetworkPolicy}
+     * (private LAN, printer port), re-checked here against its current DNS answer, and the
+     * socket is opened to exactly the address that was checked.
+     *
+     * <p>The whole payload must pass the command policy of the language this printer speaks
+     * ({@link PrinterCommandProtocol#of}: ZPL for a label printer, ESC/POS otherwise) — chosen from
+     * the stored printer, never from the request. A payload that would open the cash drawer is
+     * refused unless the caller may open it ({@link PosDrawerKickAuthorizer}). Every check runs
+     * before the socket is opened, so a refused print sends nothing.
      */
     public void printEscPos(Long id, String dataBase64) {
+        printRaw(id, dataBase64, null);
+    }
+
+    /**
+     * {@link #printEscPos} with the format the client believes it is sending ({@code ESCPOS} or
+     * {@code ZPL}). The format never selects the policy; a mismatch with the printer's own
+     * protocol is refused with a clear message instead of a generic command refusal.
+     */
+    public void printRaw(Long id, String dataBase64, String declaredFormat) {
         PosPrinter printer = get(id);
         if (printer.getConnectionType() != PosPrinterConnectionType.NETWORK_IP) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
@@ -118,8 +142,30 @@ public class PosPrinterService {
         } catch (IllegalArgumentException e) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "dataBase64 is not valid base64.");
         }
+        PrinterCommandProtocol protocol = PrinterCommandProtocol.of(printer);
+        PrinterCommandProtocol declared;
+        try {
+            declared = PrinterCommandProtocol.parse(declaredFormat);
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "format must be ESCPOS or ZPL.");
+        }
+        if (declared != null && declared != protocol) {
+            throw new PrintCommandRejectedException(protocol, "PROTOCOL_MISMATCH",
+                    "This is a " + (protocol == PrinterCommandProtocol.ZPL ? "label printer (ZPL)" : "receipt printer (ESC/POS)")
+                            + " but the job is " + declared.name() + ". Nothing was sent to the printer.");
+        }
+        PrintCommandVerdict verdict = protocol.inspect(payload);
+        if (!verdict.allowed()) {
+            throw new PrintCommandRejectedException(protocol, verdict);
+        }
+        // The policy reports well-formed pulses; EscPosDrawerKick is kept as a second, independent
+        // detector so drawer authorisation never depends on one walker alone.
+        if (protocol == PrinterCommandProtocol.ESCPOS && (verdict.drawerPulse() || EscPosDrawerKick.present(payload))) {
+            drawerKickAuthorizer.assertMayOpenDrawer(printer.getBranchId());
+        }
+        InetAddress target = networkPolicy.resolveAllowed(printer.getIpAddress(), printer.getPortNumber());
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(printer.getIpAddress(), printer.getPortNumber()), 5000);
+            socket.connect(new InetSocketAddress(target, printer.getPortNumber()), 5000);
             socket.getOutputStream().write(payload);
             socket.getOutputStream().flush();
             // Give the printer controller a moment to actually consume the bytes —
@@ -186,6 +232,7 @@ public class PosPrinterService {
             if (isBlank(req.ipAddress()) || req.portNumber() == null) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Network printers require IP address and port.");
             }
+            networkPolicy.validateConfigured(req.ipAddress().trim(), req.portNumber());
         }
 
         if (requiresSystemPrinterName(req.connectionType()) && isBlank(req.systemPrinterName())) {

@@ -343,7 +343,7 @@ const ListView = ({ lpos, processedData, onEdit, onView, onPrint, onDownload, ac
 
       {/* Search Bar - Full width on mobile */}
       <div className="flex flex-col md:flex-row gap-3 mb-6">
-        <DateFilter onChange={(range) => setDateRange({ from: range.fromDate, to: range.toDate })} />
+        <DateFilter loading={loading} onChange={(range) => setDateRange({ from: range.fromDate, to: range.toDate })} />
         <div className="relative flex-1 w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
@@ -1720,7 +1720,7 @@ const EditorView = ({ initialData, vendors, warehouses, onSave, onSubmit, onPrin
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {[...calculations.calculatedItems].reverse().map((item, index) => (
+                  {calculations.calculatedItems.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="group hover:bg-slate-50">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>

@@ -52,12 +52,11 @@ public class SalesReturnController {
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
         modulePermissionService.requireCanView(MODULE);
-        java.util.List<SalesReturn> all = (fromDate != null || toDate != null)
-                ? salesReturnService.getAllByDateRange(
-                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
-                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
-                : salesReturnService.getAllReturns();
-        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        boolean ranged = fromDate != null || toDate != null;
+        return salesReturnService.getPage(
+                ranged ? (fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1)) : null,
+                ranged ? (toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now()) : null,
+                page, size, search, status);
     }
 
     @GetMapping("/{id}")

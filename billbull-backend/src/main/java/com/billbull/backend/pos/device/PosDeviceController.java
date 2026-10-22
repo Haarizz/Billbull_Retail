@@ -1,5 +1,8 @@
 package com.billbull.backend.pos.device;
 
+import com.billbull.backend.pos.auth.PosTillPermission;
+import com.billbull.backend.security.ModulePermissionService;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -22,22 +25,49 @@ import java.util.Map;
  * PUT    /api/pos/devices/{id}/status        activate / deactivate / decommission
  * POST   /api/pos/devices/{id}/heartbeat     terminal pings to show it is alive
  * DELETE /api/pos/devices/{id}               soft-delete (sets isActive = false)
+ *
+ * <p>Registering, editing, changing status and removing a device is device administration:
+ * {@code pos.devices} create, edit or delete. These writes used to require a
+ * {@code POS_SETTINGS} authority that no login carries, so they were refused for everyone.
+ * Reads are for device administrators ({@code pos.devices} view); lookup by code and the
+ * heartbeat also admit the till ({@code sales.pos}). Every call is limited to devices of a branch
+ * the caller may act on, judged on the stored device and on the requested branch for a write.
  */
 @RestController
 @RequestMapping("/api/pos/devices")
 public class PosDeviceController {
 
-    private final PosDeviceRepository repo;
+    static final String DEVICE_ADMIN = "pos.devices";
+    private static final String LABEL = "Device";
 
-    public PosDeviceController(PosDeviceRepository repo) {
+    private final PosDeviceRepository repo;
+    private final ModulePermissionService modulePermissionService;
+    private final BranchAccessService branchAccessService;
+
+    public PosDeviceController(PosDeviceRepository repo, ModulePermissionService modulePermissionService,
+                               BranchAccessService branchAccessService) {
         this.repo = repo;
+        this.modulePermissionService = modulePermissionService;
+        this.branchAccessService = branchAccessService;
+    }
+
+    private PosDevice deviceInScope(Long id) {
+        PosDevice device = repo.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
+        branchAccessService.assertTransactionBranchAccessible(device.getBranchId(), LABEL);
+        return device;
     }
 
     // ── Registration ─────────────────────────────────────────────────────────
 
     @PostMapping
-    @PreAuthorize("hasAuthority('POS_SETTINGS')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosDevice> register(@RequestBody RegisterRequest req) {
+        modulePermissionService.requireCanCreate(DEVICE_ADMIN);
+        if (req == null || req.branchId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Branch is required.");
+        }
+        branchAccessService.assertTransactionBranchAccessible(req.branchId(), LABEL);
         if (repo.existsByDeviceCode(req.deviceCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "Device code already registered: " + req.deviceCode());
@@ -60,36 +90,52 @@ public class PosDeviceController {
     public List<PosDevice> list(
             @RequestParam(required = false) Long branchId,
             @RequestParam(required = false) PosDeviceStatus status) {
+        modulePermissionService.requireCanView(DEVICE_ADMIN);
+        branchAccessService.assertTransactionBranchAccessible(branchId, LABEL);
+        List<PosDevice> devices;
         if (branchId != null && status != null) {
-            return repo.findByBranchIdAndStatus(branchId, status);
+            devices = repo.findByBranchIdAndStatus(branchId, status);
+        } else if (status != null) {
+            devices = repo.findAllByStatus(status);
+        } else {
+            devices = repo.findAll();
         }
-        if (status != null) {
-            return repo.findAllByStatus(status);
-        }
-        return repo.findAll();
+        // Without a branchId the queries span every branch, so the rows are filtered here.
+        Map<Long, Boolean> decided = new java.util.HashMap<>();
+        return devices.stream()
+                .filter(d -> branchId == null || branchId.equals(d.getBranchId()))
+                .filter(d -> decided.computeIfAbsent(d.getBranchId(), branchAccessService::canAccessTransactionBranch))
+                .toList();
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public PosDevice getById(@PathVariable Long id) {
-        return repo.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
+        modulePermissionService.requireCanView(DEVICE_ADMIN);
+        return deviceInScope(id);
     }
 
     @GetMapping("/code/{code}")
     @PreAuthorize("isAuthenticated()")
     public PosDevice getByCode(@PathVariable String code) {
-        return repo.findByDeviceCode(code)
+        modulePermissionService.requireCanViewAny(PosTillPermission.MODULE, DEVICE_ADMIN);
+        PosDevice device = repo.findByDeviceCode(code)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + code));
+        branchAccessService.assertTransactionBranchAccessible(device.getBranchId(), LABEL);
+        return device;
     }
 
     // ── Updates ───────────────────────────────────────────────────────────────
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAuthority('POS_SETTINGS')")
+    @PreAuthorize("isAuthenticated()")
     public PosDevice update(@PathVariable Long id, @RequestBody RegisterRequest req) {
-        PosDevice device = repo.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
+        modulePermissionService.requireCanEdit(DEVICE_ADMIN);
+        PosDevice device = deviceInScope(id);
+        if (req == null || req.branchId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Branch is required.");
+        }
+        branchAccessService.assertTransactionBranchAccessible(req.branchId(), LABEL);
         device.setDeviceName(req.deviceName());
         device.setBranchId(req.branchId());
         device.setBranchName(req.branchName());
@@ -99,10 +145,10 @@ public class PosDeviceController {
     }
 
     @PutMapping("/{id}/status")
-    @PreAuthorize("hasAuthority('POS_SETTINGS')")
+    @PreAuthorize("isAuthenticated()")
     public PosDevice updateStatus(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        PosDevice device = repo.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
+        modulePermissionService.requireCanEdit(DEVICE_ADMIN);
+        PosDevice device = deviceInScope(id);
         String statusStr = body.get("status");
         try {
             device.setStatus(PosDeviceStatus.valueOf(statusStr));
@@ -115,8 +161,8 @@ public class PosDeviceController {
     @PostMapping("/{id}/heartbeat")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> heartbeat(@PathVariable Long id) {
-        PosDevice device = repo.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
+        modulePermissionService.requireCanViewAny(PosTillPermission.MODULE, DEVICE_ADMIN);
+        PosDevice device = deviceInScope(id);
         device.setLastHeartbeat(LocalDateTime.now());
         repo.save(device);
         return ResponseEntity.ok().build();
@@ -125,10 +171,10 @@ public class PosDeviceController {
     // ── Soft-delete ───────────────────────────────────────────────────────────
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('POS_SETTINGS')")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
-        PosDevice device = repo.findById(id)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Device not found: " + id));
+        modulePermissionService.requireCanDelete(DEVICE_ADMIN);
+        PosDevice device = deviceInScope(id);
         device.setActive(false);
         device.setStatus(PosDeviceStatus.DECOMMISSIONED);
         repo.save(device);

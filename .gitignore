@@ -28,6 +28,8 @@ billbull-backend/.settings/
 # React / Vite Frontend
 # ===========================
 billbull-frontend/node_modules/
+billbull-frontend/apps/*/node_modules/
+billbull-frontend/packages/*/node_modules/
 billbull-frontend/dist/
 billbull-frontend/dist_check/
 billbull-frontend/apps/*/dist/

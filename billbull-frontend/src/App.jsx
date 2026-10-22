@@ -65,6 +65,7 @@ import Expenses from "./pages/Financials/Expenses";
 import Followups from "./pages/Customer/Followups";
 import StockTransfer from "./pages/Inventory/StockTransfer/StockTransfer";
 import BankReconciliation from "./pages/Financials/BankReconciliation";
+import PayCheques from "./pages/Financials/PayCheques";
 import BarcodePrinter from "./pages/Inventory/Barcode/BarcodePrinter";
 import ReceiptVoucher from "./pages/Financials/ReceiptVoucher";
 import FinancialsPaymentVoucher from "./pages/Financials/PaymentVoucher";
@@ -466,8 +467,12 @@ function App() {
                     <Route
                       path="/sales/pos"
                       element={
-                        <ResourceGuard module="sales.invoice">
-                          <POSSales />
+                        // sales.pos is the till permission the POS APIs enforce; sales.invoice
+                        // covers the invoice reads the till makes. Same rule as the standalone till.
+                        <ResourceGuard module="sales.pos">
+                          <ResourceGuard module="sales.invoice">
+                            <POSSales />
+                          </ResourceGuard>
                         </ResourceGuard>
                       }
                     />
@@ -523,6 +528,15 @@ function App() {
                       element={
                         <ResourceGuard module="finance.voucher">
                           <Expenses />
+                        </ResourceGuard>
+                      }
+                    />
+
+                    <Route
+                      path="/finance/paycheques"
+                      element={
+                        <ResourceGuard module="finance.voucher">
+                          <PayCheques />
                         </ResourceGuard>
                       }
                     />

@@ -15,6 +15,7 @@ import {
 import { generatePickListHtml } from './pickListPrintTemplate';
 import { INTER_REGULAR_B64, INTER_BOLD_B64 } from './interFontBase64';
 import { computeLineTaxTotals, VAT_MODES } from './vatMath';
+import { getSalesInvoiceLayoutStyle, renderStyledSalesInvoiceHtml } from './salesInvoiceStyledLayouts';
 
 const PURCHASE_TEMPLATE_CATEGORIES = new Set([
     'Local Purchase Order',
@@ -5869,7 +5870,41 @@ table { width: 100%; border-collapse: collapse; }
 </body></html>`;
 };
 
+// A Sales Invoice template whose designer settings carry a layoutStyle
+// (Minimal Bilingual / Column Bilingual / Elegant) is drawn by
+// salesInvoiceStyledLayouts instead of the standard document builder. It still
+// goes through normaliseSalesDesignerLayout, so items, totals, VAT mode and the
+// branch company profile resolve exactly as they do for the standard layout.
+const styledSalesInvoiceLayout = (template) => (
+    template?.category === 'Sales Invoice'
+        ? getSalesInvoiceLayoutStyle(getTemplateDesignerSettings(template))
+        : ''
+);
+
+const renderStyledSalesInvoice = (layoutStyle, template, data = {}, options = {}, renderTarget = 'print') => {
+    const layout = normaliseSalesDesignerLayout(template, data, options.companyProfile || {}, renderTarget, options);
+    return renderStyledSalesInvoiceHtml({
+        layoutStyle,
+        layout,
+        data,
+        settings: getTemplateDesignerSettings(template),
+        renderTarget,
+        amountInWords: formatAmountInWords(layout.totals.grandTotal, layout.currency),
+        documentTitle: generateDocFilename(
+            layout.title,
+            layout.docNo,
+            layout.party?.name,
+            firstNonEmpty(data.date, resolveLayoutDate(layout)),
+            layout.currency
+        )
+    });
+};
+
 export const generateDocumentPrintHtml = (template, data, options = {}) => {
+    const layoutStyle = styledSalesInvoiceLayout(template);
+    if (layoutStyle) {
+        return renderStyledSalesInvoice(layoutStyle, template, data, options, 'print');
+    }
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
     }
@@ -5891,6 +5926,10 @@ export const generateDocumentPrintHtml = (template, data, options = {}) => {
 // PDF render target: identical layout to print but with flat CSS (no @media/@page)
 // so html2canvas captures it correctly for direct file download.
 export const generateDocumentPdfHtml = (template, data, options = {}) => {
+    const layoutStyle = styledSalesInvoiceLayout(template);
+    if (layoutStyle) {
+        return renderStyledSalesInvoice(layoutStyle, template, data, options, 'pdf');
+    }
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
     }
@@ -5910,6 +5949,10 @@ export const generateDocumentPdfHtml = (template, data, options = {}) => {
 };
 
 export const generateDocumentEmailHtml = (template, data, options = {}) => {
+    const layoutStyle = styledSalesInvoiceLayout(template);
+    if (layoutStyle) {
+        return renderStyledSalesInvoice(layoutStyle, template, data, options, 'email');
+    }
     if (template?.category === 'Pick List') {
         return generatePickListHtml(template, data, options);
     }

@@ -1,4 +1,6 @@
 // Zebra ZPL generator.
+import { zplFieldData } from '@billbull/shared/utils/zplText';
+
 const DPI = 8; // ZD220t is 203 DPI ≈ 8 dots/mm
 const mmToDots = (mmValue) => Math.round(mmValue * DPI);
 
@@ -6,10 +8,9 @@ const mmToDots = (mmValue) => Math.round(mmValue * DPI);
 // this is close enough for centering. 35 base (start + checksum + stop) + 11/char.
 const estimateCode128Modules = (data) => 35 + 11 * String(data || '').length;
 
-const escapeZpl = (s) => String(s ?? '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\^/g, '\\^')
-    .replace(/~/g, '\\~');
+// Field data goes out as ^FH hex escapes (see @billbull/shared/utils/zplText): a backslash
+// does not escape '^' or '~' in ZPL, so the old "\^" form let a product name end its field
+// and run a printer command. The print agent and the backend refuse such labels outright.
 
 const DEBUG_LAYOUT = true; // Enabled for development layout diagnostics as requested
 
@@ -242,10 +243,10 @@ const buildLabelZpl = (data) => {
         }
 
         if (el.type === 'text') {
-            out.push(`^FO0,${el.y}^FB${layout.labelWidthDots},${el.maxLines || 1},0,C,0^A0N,${el.fontH},${el.fontH}^FD${escapeZpl(el.displayValue || el.value)}^FS`);
+            out.push(`^FO0,${el.y}^FB${layout.labelWidthDots},${el.maxLines || 1},0,C,0^A0N,${el.fontH},${el.fontH}^FH^FD${zplFieldData(el.displayValue || el.value, { fieldBlock: true })}^FS`);
         } else if (el.type === 'barcode') {
             out.push(`^BY${el.by},2,${el.barcodeHeight}`);
-            out.push(`^FO${el.x},${el.y}^BCN,${el.barcodeHeight},Y,N,N^FD${escapeZpl(el.value)}^FS`);
+            out.push(`^FO${el.x},${el.y}^BCN,${el.barcodeHeight},Y,N,N^FH^FD${zplFieldData(el.value)}^FS`);
         }
     });
 

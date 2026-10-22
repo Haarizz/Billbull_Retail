@@ -36,10 +36,14 @@ public class ProductController {
     private final ProductImportService importService;
     private final ModulePermissionService modulePermissionService;
     private final LegacyTaxAuditService legacyTaxAuditService;
+    /** Strips purchase/landing cost from reads that are open to callers with no costing screen. */
+    private final ProductCostMasking costMasking;
 
     public ProductController(ProductService service, ObjectMapper objectMapper, AuditLogService auditLogService,
             ProductExportService exportService, ProductImportService importService,
-            ModulePermissionService modulePermissionService, LegacyTaxAuditService legacyTaxAuditService) {
+            ModulePermissionService modulePermissionService, LegacyTaxAuditService legacyTaxAuditService,
+            ProductCostMasking costMasking) {
+        this.costMasking = costMasking;
         this.service = service;
         this.objectMapper = objectMapper;
         this.auditLogService = auditLogService;
@@ -185,8 +189,8 @@ public class ProductController {
     // -------------------------------------------------
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<ProductAggregateResponse>> list() {
-        return ResponseEntity.ok(service.getAll());
+    public ResponseEntity<?> list() {
+        return ResponseEntity.ok(costMasking.forCaller(service.getAll(), false));
     }
 
     // -------------------------------------------------
@@ -239,8 +243,8 @@ public class ProductController {
 
     @GetMapping("/by-barcode")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<List<ProductAggregateResponse>> getByBarcode(@RequestParam String barcode) {
-        return ResponseEntity.ok(service.searchProductsByBarcode(barcode));
+    public ResponseEntity<?> getByBarcode(@RequestParam String barcode) {
+        return ResponseEntity.ok(costMasking.forCaller(service.searchProductsByBarcode(barcode), false));
     }
 
     // -------------------------------------------------
@@ -262,13 +266,18 @@ public class ProductController {
         return ResponseEntity.ok().build();
     }
 
+    // Favourites, Recently Sold and Top Sold are the till's product panels and nothing else
+    // calls them. They return the same full aggregate as /list (cost and pricing included), so
+    // they need the till permission rather than authentication alone. Cost is kept only where it
+    // is the till's price floor (see ProductCostMasking).
     @GetMapping("/favourites")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<java.util.Map<String, Object>> getFavourites(
+    public ResponseEntity<?> getFavourites(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int size) {
+        modulePermissionService.requireCanView(com.billbull.backend.pos.auth.PosTillPermission.MODULE);
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
-        return ResponseEntity.ok(service.getFavouriteProducts(username, page, size));
+        return ResponseEntity.ok(costMasking.forCaller(service.getFavouriteProducts(username, page, size), true));
     }
 
     // -------------------------------------------------
@@ -276,10 +285,11 @@ public class ProductController {
     // -------------------------------------------------
     @GetMapping("/recently-sold")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<java.util.Map<String, Object>> getRecentlySold(
+    public ResponseEntity<?> getRecentlySold(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int size) {
-        return ResponseEntity.ok(service.getRecentlySold(page, size));
+        modulePermissionService.requireCanView(com.billbull.backend.pos.auth.PosTillPermission.MODULE);
+        return ResponseEntity.ok(costMasking.forCaller(service.getRecentlySold(page, size), true));
     }
 
     // -------------------------------------------------
@@ -287,10 +297,11 @@ public class ProductController {
     // -------------------------------------------------
     @GetMapping("/top-sold")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<java.util.Map<String, Object>> getTopSold(
+    public ResponseEntity<?> getTopSold(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int size) {
-        return ResponseEntity.ok(service.getTopSold(page, size));
+        modulePermissionService.requireCanView(com.billbull.backend.pos.auth.PosTillPermission.MODULE);
+        return ResponseEntity.ok(costMasking.forCaller(service.getTopSold(page, size), true));
     }
 
     // -------------------------------------------------
@@ -298,8 +309,8 @@ public class ProductController {
     // -------------------------------------------------
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<ProductAggregateResponse> get(@PathVariable Long id) {
-        return ResponseEntity.ok(service.getById(id));
+    public ResponseEntity<?> get(@PathVariable Long id) {
+        return ResponseEntity.ok(costMasking.forCaller(service.getById(id), false));
     }
 
     // -------------------------------------------------

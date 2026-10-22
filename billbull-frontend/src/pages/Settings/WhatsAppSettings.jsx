@@ -22,6 +22,19 @@ import { getWhatsAppConfig, saveWhatsAppConfig, testWhatsAppConnection } from '.
 
 const MASK = '••••••••••••••••';
 
+// These fields hold the tenant's Meta credentials, not the signed-in user's BillBull login.
+// Browsers and password managers must neither fill the login into them nor offer to save them as
+// it: "new-password" on secrets (Chrome ignores "off" on password inputs), "off" plus a unique
+// name/id elsewhere, and the opt-out attributes the common password managers honour.
+const NO_PASSWORD_MANAGER = { 'data-1p-ignore': 'true', 'data-lpignore': 'true', 'data-bwignore': 'true' };
+
+// Meta's Phone Number ID and WABA ID are numeric. The backend enforces the same rule.
+const META_ID = /^\d{1,64}$/;
+const isInvalidMetaId = (value) => {
+    const v = String(value ?? '').trim();
+    return v !== '' && !META_ID.test(v);
+};
+
 const EMPTY_FORM = {
     enabled: false,
     graphApiVersion: 'v21.0',
@@ -78,6 +91,14 @@ export default function WhatsAppSettings() {
     };
 
     const handleSave = async () => {
+        if (isInvalidMetaId(form.phoneNumberId)) {
+            showToast('Phone Number ID must contain digits only.', 'error');
+            return;
+        }
+        if (isInvalidMetaId(form.businessAccountId)) {
+            showToast('WhatsApp Business Account ID must contain digits only.', 'error');
+            return;
+        }
         if (form.enabled && (!form.phoneNumberId || !form.accessToken)) {
             showToast('Phone Number ID and Access Token are required to enable WhatsApp.', 'error');
             return;
@@ -87,8 +108,9 @@ export default function WhatsAppSettings() {
             const res = await saveWhatsAppConfig(form);
             setForm({ ...EMPTY_FORM, ...stripNulls(res.data) });
             showToast('WhatsApp settings saved successfully.');
-        } catch {
-            showToast('Failed to save WhatsApp settings.', 'error');
+        } catch (err) {
+            const message = err?.response?.data?.message;
+            showToast(typeof message === 'string' && message ? message : 'Failed to save WhatsApp settings.', 'error');
         } finally {
             setSaving(false);
         }
@@ -200,14 +222,15 @@ export default function WhatsAppSettings() {
 
                     <Card title="Meta API Credentials" subtitle="From developers.facebook.com → your app → WhatsApp → API Setup.">
                         <div className="grid gap-4 md:grid-cols-2">
-                            <Field label="Phone Number ID" icon={Hash} hint="The numeric ID, not the phone number itself.">
-                                <input value={form.phoneNumberId} onChange={(e) => handleChange('phoneNumberId', e.target.value)} placeholder="e.g. 106540352242922" className={inputCls} />
+                            <Field label="Phone Number ID" icon={Hash} htmlFor="whatsapp-phone-number-id" hint="The numeric ID, not the phone number itself.">
+                                <input id="whatsapp-phone-number-id" name="whatsapp-phone-number-id" autoComplete="off" inputMode="numeric" pattern="[0-9]*" aria-invalid={isInvalidMetaId(form.phoneNumberId)} {...NO_PASSWORD_MANAGER} value={form.phoneNumberId} onChange={(e) => handleChange('phoneNumberId', e.target.value)} placeholder="e.g. 106540352242922" className={inputCls} />
                             </Field>
-                            <Field label="WhatsApp Business Account ID" icon={Hash}>
-                                <input value={form.businessAccountId} onChange={(e) => handleChange('businessAccountId', e.target.value)} placeholder="e.g. 102290129340398" className={inputCls} />
+                            <Field label="WhatsApp Business Account ID" icon={Hash} htmlFor="whatsapp-business-account-id" hint="Numeric, from WhatsApp → API Setup.">
+                                <input id="whatsapp-business-account-id" name="whatsapp-business-account-id" autoComplete="off" inputMode="numeric" pattern="[0-9]*" aria-invalid={isInvalidMetaId(form.businessAccountId)} {...NO_PASSWORD_MANAGER} value={form.businessAccountId} onChange={(e) => handleChange('businessAccountId', e.target.value)} placeholder="e.g. 102290129340398" className={inputCls} />
                             </Field>
                             <div className="md:col-span-2">
                                 <SecretField
+                                    id="whatsapp-access-token"
                                     label="Permanent Access Token"
                                     icon={KeyRound}
                                     hint="System User token with whatsapp_business_messaging and whatsapp_business_management. Temporary 24-hour tokens stop working the next day."
@@ -218,6 +241,7 @@ export default function WhatsAppSettings() {
                                 />
                             </div>
                             <SecretField
+                                id="whatsapp-app-secret"
                                 label="App Secret"
                                 icon={Lock}
                                 hint="App settings → Basic. Used to verify webhook calls really come from Meta."
@@ -226,8 +250,8 @@ export default function WhatsAppSettings() {
                                 revealed={revealed.appSecret}
                                 onToggle={() => setRevealed((r) => ({ ...r, appSecret: !r.appSecret }))}
                             />
-                            <Field label="Graph API Version" icon={Globe}>
-                                <input value={form.graphApiVersion} onChange={(e) => handleChange('graphApiVersion', e.target.value)} placeholder="v21.0" className={inputCls} />
+                            <Field label="Graph API Version" icon={Globe} htmlFor="whatsapp-graph-api-version">
+                                <input id="whatsapp-graph-api-version" name="whatsapp-graph-api-version" autoComplete="off" value={form.graphApiVersion} onChange={(e) => handleChange('graphApiVersion', e.target.value)} placeholder="v21.0" className={inputCls} />
                             </Field>
                         </div>
                     </Card>
@@ -236,18 +260,18 @@ export default function WhatsAppSettings() {
                         <div className="grid gap-4 md:grid-cols-3">
                             {TEMPLATE_FIELDS.map(({ key, label, placeholder, hint }) => (
                                 <div key={key} className="md:col-span-3">
-                                    <Field label={label} icon={FileText} hint={hint}>
-                                        <input value={form[key] || ''} onChange={(e) => handleChange(key, e.target.value)} placeholder={placeholder} className={inputCls} />
+                                    <Field label={label} icon={FileText} hint={hint} htmlFor={`whatsapp-${key}`}>
+                                        <input id={`whatsapp-${key}`} name={`whatsapp-${key}`} autoComplete="off" value={form[key] || ''} onChange={(e) => handleChange(key, e.target.value)} placeholder={placeholder} className={inputCls} />
                                     </Field>
                                 </div>
                             ))}
-                            <Field label="Language Code" icon={Languages}>
-                                <input value={form.templateLanguage} onChange={(e) => handleChange('templateLanguage', e.target.value)} placeholder="en" className={inputCls} />
+                            <Field label="Language Code" icon={Languages} htmlFor="whatsapp-template-language">
+                                <input id="whatsapp-template-language" name="whatsapp-template-language" autoComplete="off" value={form.templateLanguage} onChange={(e) => handleChange('templateLanguage', e.target.value)} placeholder="en" className={inputCls} />
                             </Field>
-                            <Field label="Default Country Code" icon={Globe} hint="Added to local numbers like 050 123 4567.">
+                            <Field label="Default Country Code" icon={Globe} htmlFor="whatsapp-default-country-code" hint="Added to local numbers like 050 123 4567.">
                                 <div className="flex w-full items-center gap-1">
                                     <span className="text-sm text-slate-400">+</span>
-                                    <input value={form.defaultCountryCode} onChange={(e) => handleChange('defaultCountryCode', e.target.value.replace(/\D/g, ''))} placeholder="971" maxLength={4} className={inputCls} />
+                                    <input id="whatsapp-default-country-code" name="whatsapp-default-country-code" autoComplete="off" inputMode="numeric" value={form.defaultCountryCode} onChange={(e) => handleChange('defaultCountryCode', e.target.value.replace(/\D/g, ''))} placeholder="971" maxLength={4} className={inputCls} />
                                 </div>
                             </Field>
                         </div>
@@ -262,6 +286,7 @@ export default function WhatsAppSettings() {
                             <div className="flex items-end gap-2">
                                 <div className="flex-1">
                                     <SecretField
+                                        id="whatsapp-webhook-verify-token"
                                         label="Verify Token"
                                         icon={Lock}
                                         hint="Paste the same value into Meta's “Verify token” box."
@@ -356,10 +381,10 @@ function Card({ title, subtitle, children }) {
     );
 }
 
-function Field({ label, icon: Icon, hint, children }) {
+function Field({ label, icon: Icon, hint, htmlFor, children }) {
     return (
         <div>
-            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</label>
+            <label htmlFor={htmlFor} className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</label>
             <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 focus-within:border-[#F5C742] focus-within:ring-4 focus-within:ring-[#F5C742]/15">
                 {Icon && <Icon size={15} className="shrink-0 text-slate-400" />}
                 {children}
@@ -371,12 +396,14 @@ function Field({ label, icon: Icon, hint, children }) {
 
 // A saved secret arrives as MASK. Focusing clears it so the user can type a replacement;
 // leaving it blank restores MASK, which the backend reads as "keep the stored value".
-function SecretField({ label, icon, hint, value, onChange, revealed, onToggle }) {
+function SecretField({ id, label, icon, hint, value, onChange, revealed, onToggle }) {
     const isMasked = value === MASK;
     const [hadSaved, setHadSaved] = useState(false);
     return (
-        <Field label={label} icon={icon} hint={hint}>
+        <Field label={label} icon={icon} hint={hint} htmlFor={id}>
             <input
+                id={id}
+                name={id}
                 type={revealed && !isMasked ? 'text' : 'password'}
                 value={value || ''}
                 onFocus={() => { if (isMasked) { setHadSaved(true); onChange(''); } }}
@@ -384,7 +411,8 @@ function SecretField({ label, icon, hint, value, onChange, revealed, onToggle })
                 onChange={(e) => onChange(e.target.value)}
                 placeholder={isMasked ? 'Saved — type to replace' : ''}
                 className={inputCls}
-                autoComplete="off"
+                autoComplete="new-password"
+                {...NO_PASSWORD_MANAGER}
             />
             {!isMasked && (
                 <button type="button" onClick={onToggle} className="text-slate-400 hover:text-slate-600">

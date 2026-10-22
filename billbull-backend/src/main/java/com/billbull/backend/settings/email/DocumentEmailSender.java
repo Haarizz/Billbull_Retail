@@ -1,5 +1,6 @@
 package com.billbull.backend.settings.email;
 
+import com.billbull.backend.document.DocumentPdfGuard;
 import com.billbull.backend.document.HtmlPdfService;
 import com.billbull.backend.settings.branch.Branch;
 import com.billbull.backend.settings.branch.BranchRepository;
@@ -45,13 +46,8 @@ public class DocumentEmailSender {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentEmailSender.class);
 
-    /**
-     * Upper bound on the print HTML accepted for rendering. Print HTML carries its
-     * QR code, dirham glyph and fonts as data: URIs; logos and stamps are URLs. 10M
-     * characters is far above any real document and stops runaway payloads before
-     * they reach Chromium.
-     */
-    static final int MAX_PDF_HTML_CHARS = 10_000_000;
+    /** See {@link DocumentPdfGuard#MAX_HTML_CHARS}. */
+    static final int MAX_PDF_HTML_CHARS = DocumentPdfGuard.MAX_HTML_CHARS;
 
     /**
      * Upper bound on the rendered PDF. Base64 transfer encoding adds about a third,
@@ -59,8 +55,6 @@ public class DocumentEmailSender {
      * (Gmail included) with room for the inline images.
      */
     static final int MAX_PDF_BYTES = 15 * 1024 * 1024;
-
-    private static final byte[] PDF_SIGNATURE = {'%', 'P', 'D', 'F', '-'};
 
     private final EmailConfigService emailConfigService;
     private final BranchRepository branchRepository;
@@ -255,31 +249,13 @@ public class DocumentEmailSender {
         }
     }
 
+    /** Throws {@link DocumentPdfGuard.PdfRejectedException} (an IllegalStateException) before SMTP is touched. */
     private byte[] renderPdf(PdfAttachment pdf) {
-        byte[] bytes;
-        try {
-            bytes = pdfService.render(pdf.html());
-        } catch (RuntimeException e) {
-            log.warn("PDF render failed for email attachment {}: {}", pdf.filename(), e.getMessage());
-            throw new IllegalStateException("Could not generate the PDF attachment, so the email was not sent.", e);
-        }
-        if (!isPdf(bytes)) {
-            log.warn("Renderer returned a non-PDF result for email attachment {} ({} bytes)",
-                    pdf.filename(), bytes == null ? 0 : bytes.length);
-            throw new IllegalStateException("Could not generate the PDF attachment, so the email was not sent.");
-        }
-        if (bytes.length > MAX_PDF_BYTES) {
-            throw new IllegalStateException("The PDF attachment is larger than "
-                    + (MAX_PDF_BYTES / (1024 * 1024)) + " MB, so the email was not sent.");
-        }
-        return bytes;
+        return DocumentPdfGuard.render(pdfService, pdf.html(), "email attachment " + pdf.filename(),
+                MAX_PDF_BYTES, "PDF attachment", "the email was not sent");
     }
 
     static boolean isPdf(byte[] bytes) {
-        if (bytes == null || bytes.length <= PDF_SIGNATURE.length) return false;
-        for (int i = 0; i < PDF_SIGNATURE.length; i++) {
-            if (bytes[i] != PDF_SIGNATURE[i]) return false;
-        }
-        return true;
+        return DocumentPdfGuard.hasSignature(bytes);
     }
 }

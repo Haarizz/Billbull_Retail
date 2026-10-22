@@ -99,6 +99,23 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * A raw printer job refused by its command policy (ESC/POS or ZPL) before any byte was sent —
+     * 422 with what was refused, so the till can say "this job would power the printer off"
+     * rather than a bare failure.
+     */
+    @ExceptionHandler(com.billbull.backend.pos.printer.PrintCommandRejectedException.class)
+    public ResponseEntity<Map<String, Object>> handlePrintCommandRejected(
+            com.billbull.backend.pos.printer.PrintCommandRejectedException ex) {
+        log.warn("PrintCommandRejected requestId={} {}: {}", requestId(), ex.details(), ex.getMessage());
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("code", "PRINT_COMMAND_REJECTED");
+        body.put("message", ex.getMessage());
+        body.putAll(ex.details());
+        body.put("requestId", requestId());
+        return ResponseEntity.unprocessableEntity().body(body);
+    }
+
+    /**
      * Explicit HTTP status rejections (e.g. 401 from AuthController) — return the
      * declared status and log at WARN without a stack trace.
      */

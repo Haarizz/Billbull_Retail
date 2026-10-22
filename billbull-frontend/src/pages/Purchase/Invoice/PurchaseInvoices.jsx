@@ -732,7 +732,7 @@ const InvoiceListView = ({ invoices, filteredInvoices, activeFilter, setActiveFi
             <h3 className="text-sm font-semibold text-slate-700">Purchase Invoices</h3>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
-            <DateFilter onChange={(range) => setDateRange({ start: range.fromDate, end: range.toDate })} />
+            <DateFilter loading={isLoading} onChange={(range) => setDateRange({ start: range.fromDate, end: range.toDate })} />
             <div className="relative w-full sm:w-auto flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input type="text" placeholder="Search document no, vendor, invoice no..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-9 pr-4 h-9 w-full sm:w-64 text-sm border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F5C742]/50 placeholder:text-slate-400 text-xs" />
@@ -2294,7 +2294,7 @@ const CreateEditView = ({ onSaveDraft, onSubmitApproval, onPostDirectly, onCreat
                       <td colSpan={5} className="p-3 text-[11px] text-slate-400">Type above to add an item or click "Select from Products".</td>
                     </tr>
                   )}
-                  {[...formData.items].reverse().map((item, index) => {
+                  {formData.items.map((item, index) => {
                     const calc = calculateRow(item);
                     return (
                       <React.Fragment key={item.id}>

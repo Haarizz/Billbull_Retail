@@ -157,6 +157,8 @@ public class VendorService {
         java.util.Map<String, BigDecimal> invoiceLinkedPaidByName = toAmountMap(payRepo.sumInvoiceLinkedPaymentsGroupedByVendorName());
         // On-account payments (not linked to any invoice — settle opening balance).
         java.util.Map<String, BigDecimal> onAccountByName = toAmountMap(payRepo.sumOnAccountPaidGroupedByVendorName());
+        // On-account cheque allotments not issued yet: still owed, but not available to allot again.
+        java.util.Map<String, BigDecimal> chequeReservedByName = toAmountMap(payRepo.sumReservedOnAccountChequeGroupedByVendorName());
 
         List<VendorListResponse> result = repo.findByIsActiveTrue()
                 .stream()
@@ -198,6 +200,7 @@ public class VendorService {
                     r.setOpeningBalanceDate(v.getOpeningBalanceDate());
                     r.setOpeningBalanceNotes(v.getOpeningBalanceNotes());
                     r.setOpeningBalanceOutstanding(openingOutstanding);
+                    r.setOpeningBalanceChequeReserved(chequeReservedByName.getOrDefault(v.getName(), BigDecimal.ZERO));
                     r.setNickname(v.getNickname());
                     r.setTaxId(v.getTaxId());
                     r.setWebsite(v.getWebsite());

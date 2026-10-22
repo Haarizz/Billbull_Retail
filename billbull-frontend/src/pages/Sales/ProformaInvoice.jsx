@@ -1569,7 +1569,7 @@ const ProformaInvoice = () => {
               <h2 className="font-bold text-slate-700 text-lg">Proforma Invoices</h2>
 
               <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
-                <DateFilter onChange={(range) => { setDateRange(range); setListPage(0); }} />
+                <DateFilter loading={isListLoading} onChange={(range) => { setDateRange(range); setListPage(0); }} />
                 {/* Search */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -2062,7 +2062,7 @@ const ProformaInvoice = () => {
                               </div>
                             </td>
                           </tr>
-                        ) : [...items].reverse().map((item, index) => (
+                        ) : items.map((item, index) => (
                           <React.Fragment key={item.id}>
                             <tr className={`group hover:bg-slate-50/50 transition-colors bg-white align-middle ${isReadOnly ? 'opacity-80' : ''}`}>
                               <td className="p-2 text-center text-slate-400 text-xs font-medium">{index + 1}</td>

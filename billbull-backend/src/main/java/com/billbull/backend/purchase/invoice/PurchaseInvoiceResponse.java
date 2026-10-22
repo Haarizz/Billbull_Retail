@@ -48,8 +48,18 @@ public class PurchaseInvoiceResponse {
     private List<LandedCostRequest> landedCosts;
     private BigDecimal amountPaid;
     private BigDecimal balanceDue;
+    /** Part of balanceDue already allotted to a cheque that is not issued yet (CHEQUE_PENDING vouchers). */
+    private BigDecimal chequeReserved = BigDecimal.ZERO;
 
     private LocalDate dueDate;
+
+    public BigDecimal getChequeReserved() {
+        return chequeReserved;
+    }
+
+    public void setChequeReserved(BigDecimal chequeReserved) {
+        this.chequeReserved = chequeReserved;
+    }
 
     private InvoiceStatus status;
     private PaymentStatus paymentStatus;

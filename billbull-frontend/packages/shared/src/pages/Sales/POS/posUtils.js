@@ -26,7 +26,10 @@ export const mapPosProductListItem = (d = {}) => ({
   departmentName: d.departmentName || '',
   productType: d.productType || '',
   salesTax: (d.salesTax != null && d.salesTax !== '') ? toNumber(d.salesTax) : null,
-  defaultDiscount: toNumber(d.maxDiscount ?? d.defaultDiscount, 0),
+  // The product's "POS Default Discount %" (ProductPricing.defaultDiscount), applied on add.
+  // Never maxDiscount: that is the "Maximum Discount %" cap on what a cashier may give, and
+  // applying it by default pushed full-price items below their minimum price.
+  defaultDiscount: toNumber(d.defaultDiscount, 0),
   // Inventory control flags — drive POS one-batch-one-unit enforcement.
   // The /api/products/list and /api/pos/resolve payloads both carry these.
   isBatch: Boolean(d.isBatch),
@@ -55,7 +58,8 @@ export const mapPosProductAggregateItem = (entry = {}, scannedBarcode = '') => {
     departmentName: product.department?.name,
     productType: product.productType,
     salesTax: entry.tax?.salesTax ?? product.tax?.salesTax,
-    maxDiscount: product.maxDiscount,
+    // Branch price rows carry no default discount, so read it from the product-level pricing.
+    defaultDiscount: (entry.effectivePricing || entry.pricing || product.pricing)?.defaultDiscount,
     isBatch: product.isBatch,
     isSerial: product.isSerial,
     fefoEnabled: product.fefoEnabled,

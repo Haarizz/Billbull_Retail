@@ -67,6 +67,21 @@ public interface CustomerRepository extends JpaRepository<Customer, Long> {
         @org.springframework.data.repository.query.Param("branchIds") java.util.Collection<Long> branchIds);
 
     /**
+     * Of these customer codes, the ones a caller with {@code scope} may see. Same rule as the
+     * customer typeahead ({@link #findByCodesInScope}), for reads keyed by a customer code that
+     * the caller typed rather than picked from a scoped list: balances, credit, history.
+     */
+    default java.util.Set<String> codesInScope(java.util.Collection<String> codes,
+            com.billbull.backend.settings.branch.BranchAccessService.ListScope scope) {
+        java.util.List<String> present = codes.stream().filter(java.util.Objects::nonNull).toList();
+        if (present.isEmpty()) return java.util.Set.of();
+        if (scope.allBranches()) return java.util.Set.copyOf(present);
+        return findByCodesInScope(present, false, scope.branchIds()).stream()
+            .map(Customer::getCode)
+            .collect(java.util.stream.Collectors.toSet());
+    }
+
+    /**
      * The first few customers, for the global search modal's empty-query preview.
      *
      * <p>The same branch predicate as {@link #searchAllFields}, with the match clause

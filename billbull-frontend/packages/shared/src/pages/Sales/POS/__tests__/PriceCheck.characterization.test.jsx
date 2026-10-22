@@ -349,10 +349,11 @@ const PLACEHOLDER = 'Scan barcode or type item name / code...';
 const IDLE = 'Scan a barcode or type an item name to check price and availability.';
 const NOT_FOUND = 'No item found for the scanned barcode or search keyword.';
 
-// resolver aggregate: price 100, discount 10%, VAT 5% -> 90 -> 94.50
+// resolver aggregate: price 100, POS default discount 10%, VAT 5% -> 90 -> 94.50. The 25%
+// maximum discount is only a cap and is never applied (it used to be, as the default).
 const aggregate = (o = {}) => ({
-  product: { id: 'p1', code: 'C1', name: 'Widget', barcode: 'BC-1', department: { id: 'd1', name: 'Tools' }, maxDiscount: 10 },
-  effectivePricing: { retailPrice: 100 },
+  product: { id: 'p1', code: 'C1', name: 'Widget', barcode: 'BC-1', department: { id: 'd1', name: 'Tools' }, maxDiscount: 25 },
+  effectivePricing: { retailPrice: 100, defaultDiscount: 10 },
   stock: 7,
   tax: { salesTax: 5 },
   ...o,
@@ -853,7 +854,8 @@ describe.each([['reference'], ['extracted']])('%s', (variant) => {
     it.each([
       ['salesTax null -> VAT 0% (toNumber(null, 5) is 0)', { salesTax: null }, '0', '20.00'],
       ['negative stock -> Out of Stock', { stock: -2, salesTax: 5 }, '5', '21.00'],
-      ['fractional discount', { maxDiscount: 12.5, retailPrice: 80, salesTax: 5 }, '5', '73.50'],
+      ['fractional discount', { defaultDiscount: 12.5, retailPrice: 80, salesTax: 5 }, '5', '73.50'],
+      ['a maximum discount alone is a cap, not a discount', { maxDiscount: 12.5, retailPrice: 80, salesTax: 5 }, '5', '84.00'],
     ])('%s', async (_label, over, vat, price) => {
       getProductsList.mockResolvedValue(page([listDto(over)]));
       renderHarness();

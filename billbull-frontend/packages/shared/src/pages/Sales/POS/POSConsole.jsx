@@ -28,7 +28,9 @@ import { getPosCashDrawers, createPosCashDrawer, decommissionPosCashDrawer } fro
 import { assignTerminalCounter, archivePosTerminal, restorePosTerminal, decommissionPosTerminal, keepTerminalActive, archiveTerminalNow, setTerminalAutoArchiveExempt } from '../../../api/posApi';
 import { getActiveCounters } from '../../../api/counterApi';
 import { listPrintAgentPrinters, runtimeStatusFromPrintError, runtimeStatusFromPrintSuccess, testConfiguredPrinter } from '../../../utils/localPrintAgent';
+import PrintAgentPairing from './device/printing/PrintAgentPairing';
 import { buildEscPosTestReceipt } from '../../../utils/escPosReceipt';
+import { buildZplTestLabel, zplToBase64 } from '../../../utils/zplText';
 
 /**
  * Renders the real, resolved Back Office "Sales Invoice"/"Sales Return" PrintTemplate
@@ -547,7 +549,11 @@ const POSConsole = React.memo((props) => {
         printerName: printer.systemPrinterName || printer.deviceName,
         paperSize: printer.paperSize || '80mm',
       };
-      const escPosBase64 = buildEscPosTestReceipt(testParams);
+      // A label printer speaks ZPL, so it gets a ZPL test label; the backend and the agent
+      // check each against its own protocol's command policy.
+      const isLabelPrinter = printer.deviceType === 'LABEL_PRINTER';
+      const zplBase64 = isLabelPrinter ? zplToBase64(buildZplTestLabel(testParams)) : null;
+      const escPosBase64 = isLabelPrinter ? null : buildEscPosTestReceipt(testParams);
       const testText = buildThermalTestReceiptText(testParams);
       // Mirror the routing logic inside testConfiguredPrinter so the debug block can name
       // the endpoint that will actually be hit (agent vs. backend relay vs. Zebra).
@@ -555,23 +561,25 @@ const POSConsole = React.memo((props) => {
         ? 'Browser Print (Zebra ZPL)'
         : (printer.connectionType === 'NETWORK_IP'
             ? `Backend relay → POST /api/pos/printers/${printer.id}/print/escpos`
-            : 'Local agent → POST http://127.0.0.1:19777/print/escpos');
+            : `Local agent → POST http://127.0.0.1:19777/print/${isLabelPrinter ? 'zpl' : 'escpos'}`);
+      const payloadBase64 = zplBase64 || escPosBase64;
       const trace = {
         at: new Date().toISOString(),
         endpoint: target,
         connectionType: printer.connectionType,
         systemPrinterName: printer.systemPrinterName || null,
-        payloadKind: 'ESC/POS (base64)',
-        payloadBytes: escPosBase64 ? Math.floor((escPosBase64.length * 3) / 4) : 0,
+        payloadKind: isLabelPrinter ? 'ZPL (base64)' : 'ESC/POS (base64)',
+        payloadBytes: payloadBase64 ? Math.floor((payloadBase64.length * 3) / 4) : 0,
       };
       // eslint-disable-next-line no-console
       console.groupCollapsed(`[printer-test] ${printer.deviceName} → ${target}`);
       // eslint-disable-next-line no-console
-      console.info('request', { ...trace, escPosBase64, testText });
+      console.info('request', { ...trace, escPosBase64, zplBase64, testText });
       try {
         const result = await testConfiguredPrinter(printer, {
           testText,
           escPosBase64,
+          zplBase64,
         });
         // fallbackUsed means the ESC/POS send was rejected (typically a v4/WSD
         // driver refusing datatype RAW) and only the text/GDI fallback printed.
@@ -1485,7 +1493,9 @@ const POSConsole = React.memo((props) => {
                 <div>
                   <p className="text-sm font-bold text-[#1E293B]">Local Print Agent</p>
                   <p className="text-xs text-gray-400 mt-0.5">Detects USB / Windows-queue printers installed on this specific PC — it only ever sees printers plugged into this workstation, not other devices. For a printer with a network/LAN port, add it below as "Network / IP" instead — that works from any device (phone, tablet, other PCs) with no agent needed.</p>
-                  {agentError && <p className="text-xs text-red-500 mt-2">{agentError} — start it by running "npm start" in tools/pos-print-agent on this PC.</p>}
+                  {agentError && <p className="text-xs text-red-500 mt-2">{agentError}</p>}
+                  <PrintAgentPairing onPaired={refreshAgentPrinters} label={currentTerminal?.terminalId || null} />
+
                 </div>
                 <button
                   type="button"
@@ -1512,6 +1522,14 @@ const POSConsole = React.memo((props) => {
                           </div>
                         </div>
                         <p className="text-xs text-gray-500">{printer.driverName || 'Driver unknown'}{printer.portName ? ` · ${printer.portName}` : ''}</p>
+                        {printer.agentProtocol !== undefined && (
+                          <p className={`text-[11px] mt-1 ${printer.agentProtocol === 'escpos' || printer.agentProtocol === 'zpl' ? 'text-gray-500' : 'text-amber-700'}`}>
+                            {printer.agentProtocol === 'escpos' && 'Print agent: receipt printer (ESC/POS)'}
+                            {printer.agentProtocol === 'zpl' && 'Print agent: label printer (ZPL)'}
+                            {printer.agentProtocol === 'conflict' && 'Print agent: conflicting setup on this PC — jobs are refused'}
+                            {printer.agentProtocol == null && 'Not set up in the print agent on this PC — choose it in the agent\'s tray menu → Printers'}
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>

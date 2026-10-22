@@ -63,6 +63,9 @@ public class ReceiptVoucherController {
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            // Branch scope (403) and ownership (404) from the document lookup keep their status.
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }

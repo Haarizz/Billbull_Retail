@@ -101,9 +101,11 @@
     "./utils/posReportViewModel": "./src/utils/posReportViewModel.js",
     "./utils/printGenerator": "./src/utils/printGenerator.js",
     "./utils/printTemplateConfig": "./src/utils/printTemplateConfig.js",
+    "./utils/salesInvoiceStyledLayouts": "./src/utils/salesInvoiceStyledLayouts.js",
     "./utils/salesReturnPrint": "./src/utils/salesReturnPrint.js",
     "./utils/statementUtils": "./src/utils/statementUtils.js",
     "./utils/urlUtils": "./src/utils/urlUtils.js",
-    "./utils/vatMath": "./src/utils/vatMath.js"
+    "./utils/vatMath": "./src/utils/vatMath.js",
+    "./utils/zplText": "./src/utils/zplText.js"
   }
 }

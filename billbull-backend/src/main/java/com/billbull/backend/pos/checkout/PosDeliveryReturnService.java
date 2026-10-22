@@ -15,6 +15,7 @@ import com.billbull.backend.sales.returns.SalesReturnReasonCode;
 import com.billbull.backend.sales.returns.SalesReturnRefundMethod;
 import com.billbull.backend.sales.returns.SalesReturnService;
 import com.billbull.backend.sales.returns.SalesReturnStatus;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -77,6 +78,9 @@ public class PosDeliveryReturnService {
     @Autowired
     private PosSettingsService posSettingsService;
 
+    @Autowired
+    private BranchAccessService branchAccessService;
+
     /**
      * Returns an unpaid delivery order goods and closes the order out when nothing is left to
      * collect.
@@ -98,6 +102,9 @@ public class PosDeliveryReturnService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Delivery order not found."));
 
+        // Settling goes through SalesInvoiceService.getById, which checks the branch. This path
+        // loads the order directly, so it checks here, before anything is written.
+        branchAccessService.assertTransactionBranchAccessible(invoice.getBranchId(), "Delivery order");
         assertReturnableDeliveryOrder(invoice);
 
         List<SalesReturnItem> lines = buildReturnLines(invoice, req);

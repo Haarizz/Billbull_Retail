@@ -8,8 +8,9 @@ import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import jakarta.persistence.AttributeConverter;
@@ -24,9 +25,11 @@ import jakarta.persistence.Converter;
  * holds {@code base64(iv || ciphertext)}.
  *
  * KEY MANAGEMENT: the 256-bit key is derived from the EMAIL_ENC_KEY environment variable (any
- * string; SHA-256-folded to 32 bytes). A DEV-ONLY default is used when the var is absent so local
- * runs work, but every shared/tenant deployment MUST set EMAIL_ENC_KEY — rotating it requires
- * re-saving affected secrets. Decryption is backward-compatible: a value that is not valid
+ * string; SHA-256-folded to 32 bytes). {@link EncryptionKeyPolicy} decides which values are
+ * acceptable: a deployment profile must set its own key of at least 32 characters, and only a local
+ * run may fall back to the public development key. {@link EncryptionKeyStartupCheck} applies the
+ * same policy before the context starts. Changing the key makes existing ciphertext unreadable, so
+ * re-encrypt it with {@link EncryptionKeyRotationTool}. Decryption is backward-compatible: a value that is not valid
  * ciphertext (legacy plaintext already in the column) is returned as-is, so existing rows keep
  * working and are upgraded to ciphertext the next time the entity is saved.
  */
@@ -37,13 +40,19 @@ public class EncryptedStringConverter implements AttributeConverter<String, Stri
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
     private static final int IV_LENGTH = 12;        // 96-bit IV, recommended for GCM
     private static final int TAG_LENGTH_BITS = 128; // GCM auth tag
-    private static final String PREFIX = "enc:v1:"; // marks values this converter produced
+    static final String PREFIX = "enc:v1:"; // marks values this converter produced
 
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final SecretKeySpec key;
 
-    public EncryptedStringConverter(@Value("${EMAIL_ENC_KEY:billbull-dev-email-encryption-key-change-me}") String secret) {
+    @Autowired
+    public EncryptedStringConverter(@Value("${EMAIL_ENC_KEY:}") String secret, Environment environment) {
+        this(EncryptionKeyPolicy.resolve(secret, environment.getActiveProfiles()));
+    }
+
+    /** Uses {@code secret} as given, without {@link EncryptionKeyPolicy}: for tests and key rotation. */
+    EncryptedStringConverter(String secret) {
         this.key = deriveKey(secret);
     }
 

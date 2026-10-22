@@ -186,4 +186,89 @@ class PaymentVoucherServiceTest {
         assertEquals(new BigDecimal("2500.00"), created.getUnallocated());
         verify(branchAccessService, org.mockito.Mockito.never()).getRequiredCurrentUserBranch();
     }
+
+    // ── Cheque payments (V120): approval reserves, Pay Cheques posts ─────────
+
+    private PaymentVoucher chequeVoucher(String amount) {
+        PaymentVoucher v = new PaymentVoucher();
+        v.setId(30L);
+        v.setVoucherNumber("PV-0030");
+        v.setVendorName("Vendor A");
+        v.setPaymentDate(LocalDate.of(2026, 10, 16));
+        v.setPaymentMode(PaymentMode.CHEQUE);
+        v.setAmount(new BigDecimal(amount));
+        v.setInvoiceId(77L);
+        v.setStatus(PaymentStatus.PENDING_APPROVAL);
+        return v;
+    }
+
+    private com.billbull.backend.purchase.invoice.PurchaseInvoice postedInvoice(String total) {
+        com.billbull.backend.purchase.invoice.PurchaseInvoice inv = new com.billbull.backend.purchase.invoice.PurchaseInvoice();
+        inv.setId(77L);
+        inv.setStatus(com.billbull.backend.purchase.invoice.InvoiceStatus.POSTED);
+        inv.setGrandTotal(new BigDecimal(total));
+        return inv;
+    }
+
+    @Test
+    void approvingAChequePaymentOnlyReservesTheInvoiceAndPostsNothing() {
+        PaymentVoucher v = chequeVoucher("2500.00");
+        when(repository.findById(30L)).thenReturn(Optional.of(v));
+        when(repository.save(v)).thenReturn(v);
+        when(invoiceRepository.findById(77L)).thenReturn(Optional.of(postedInvoice("5000.00")));
+        when(repository.sumReservedChequeAmountByInvoiceId(77L, 30L)).thenReturn(new BigDecimal("2000.00"));
+
+        PaymentVoucher saved = service.updateStatus(30L, PaymentStatus.POSTED);
+
+        assertEquals(PaymentStatus.CHEQUE_PENDING, saved.getStatus());
+        verifyNoInteractions(postingEngineService);
+    }
+
+    @Test
+    void aChequeAllotmentCannotExceedWhatOtherUnissuedChequesLeaveOnTheInvoice() {
+        PaymentVoucher v = chequeVoucher("3500.00");
+        when(repository.findById(30L)).thenReturn(Optional.of(v));
+        when(invoiceRepository.findById(77L)).thenReturn(Optional.of(postedInvoice("5000.00")));
+        when(repository.sumReservedChequeAmountByInvoiceId(77L, 30L)).thenReturn(new BigDecimal("2000.00"));
+
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> service.updateStatus(30L, PaymentStatus.POSTED));
+        verifyNoInteractions(postingEngineService);
+    }
+
+    @Test
+    void aChequePendingVoucherCannotBePostedOutsidePayCheques() {
+        PaymentVoucher v = chequeVoucher("2500.00");
+        v.setStatus(PaymentStatus.CHEQUE_PENDING);
+        when(repository.findById(30L)).thenReturn(Optional.of(v));
+
+        org.junit.jupiter.api.Assertions.assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                () -> service.updateStatus(30L, PaymentStatus.CLEARED));
+    }
+
+    @Test
+    void issuingThenReversingAChequePaymentAppliesAndRemovesExactlyItsInvoicePayment() {
+        PaymentVoucher v = chequeVoucher("2500.00");
+        v.setStatus(PaymentStatus.CHEQUE_PENDING);
+        com.billbull.backend.purchase.invoice.PurchaseInvoice inv = postedInvoice("5000.00");
+        when(repository.findById(30L)).thenReturn(Optional.of(v));
+        when(repository.save(v)).thenReturn(v);
+        when(invoiceRepository.findById(77L)).thenReturn(Optional.of(inv));
+        LocalDate issued = LocalDate.of(2026, 10, 18);
+
+        service.issueChequePayment(30L, issued);
+
+        assertEquals(PaymentStatus.POSTED, v.getStatus());
+        assertEquals(issued, v.getPaymentDate());
+        assertEquals(1, inv.getPayments().size());
+        assertEquals(30L, inv.getPayments().get(0).getPaymentVoucherId());
+        assertEquals(com.billbull.backend.purchase.invoice.PaymentStatus.PARTIALLY_PAID, inv.getPaymentStatus());
+        verifyNoInteractions(postingEngineService);
+
+        service.reverseChequePayment(30L);
+
+        assertEquals(PaymentStatus.CHEQUE_PENDING, v.getStatus());
+        assertEquals(0, inv.getPayments().size());
+        assertEquals(com.billbull.backend.purchase.invoice.PaymentStatus.UNPAID, inv.getPaymentStatus());
+    }
 }

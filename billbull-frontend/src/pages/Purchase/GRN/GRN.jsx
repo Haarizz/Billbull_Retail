@@ -175,7 +175,7 @@ const GRNListView = ({ data, onView, onEdit, onDelete, onPost, onPrint, onDownlo
             <h3 className="text-sm font-semibold text-slate-700">Goods Receipt Notes</h3>
           </div>
           <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto">
-            <DateFilter onChange={(range) => setDateRange(range)} />
+            <DateFilter loading={isLoading} onChange={(range) => setDateRange(range)} />
             <div className="relative w-full sm:w-auto flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
               <input
@@ -1929,7 +1929,7 @@ const EditorView = ({ initialData, onSaveDraft, onSubmitQC, onPost, onPrint, grn
                         {grnType === "Against LPO" || grnType === "Against Direct Purchase" ? "Select a document to load items or type above." : "Type above to add an item."}
                       </td>
                     </tr>
-                  ) : [...items].reverse().map((item, index) => (
+                  ) : items.map((item, index) => (
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50 group">
                         <td className="p-3 text-center text-slate-400 text-xs font-medium">{index + 1}</td>

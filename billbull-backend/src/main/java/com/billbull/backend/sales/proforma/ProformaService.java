@@ -110,38 +110,57 @@ public class ProformaService {
 
     @Transactional(readOnly = true)
     public List<ProformaResponse> list() {
-        List<ProformaInvoice> proformas = new ArrayList<>(
-                ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScopedByBranch(repo.findAll(), ProformaInvoice::getBranch),
-                        ProformaInvoice::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
-                proformas,
-                ProformaInvoice::getPiDate,
-                ProformaInvoice::getPiNumber,
-                ProformaInvoice::getId);
-        return proformas.stream()
+        return listScoped(null, null).stream()
                 .map(this::toResponse) // mapping happens INSIDE TX
                 .toList();
     }
 
+    /**
+     * The list tab's page: searches and pages header-only responses, then maps only the
+     * visible rows with their items. A null range means every proforma.
+     */
     @Transactional(readOnly = true)
-    public List<ProformaResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+    public com.billbull.backend.util.PageResponse<ProformaResponse> page(
+            java.time.LocalDate from, java.time.LocalDate to, int page, int size, String search, String status) {
+        List<ProformaInvoice> proformas = listScoped(from, to);
+        Map<Long, ProformaInvoice> byId = new HashMap<>();
+        proformas.forEach(pi -> byId.put(pi.getId(), pi));
+        return com.billbull.backend.util.PaginationUtil.paginate(
+                proformas.stream().map(pi -> toResponse(pi, false)).toList(),
+                page, size, search, status,
+                rows -> rows.stream().map(r -> toResponse(byId.get(r.getId()))).toList());
+    }
+
+    /** Branch/ownership-scoped, sorted proformas; a null range means all of them. */
+    private List<ProformaInvoice> listScoped(java.time.LocalDate from, java.time.LocalDate to) {
+        boolean ranged = from != null && to != null;
         List<ProformaInvoice> proformas = new ArrayList<>(
                 ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScopedByBranch(repo.findByPiDateBetween(from, to), ProformaInvoice::getBranch),
+                        branchAccessService.filterBranchScopedByBranch(
+                                ranged ? repo.findByPiDateBetween(from, to) : repo.findAll(),
+                                ProformaInvoice::getBranch),
                         ProformaInvoice::getCreatedByUserId));
-        DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
-                proformas,
-                ProformaInvoice::getPiDate,
-                ProformaInvoice::getPiNumber,
-                ProformaInvoice::getId);
-        return proformas.stream().map(this::toResponse).toList();
+        if (ranged) {
+            DocumentOrderingUtil.sortByDocumentDateAndNumberDesc(
+                    proformas, ProformaInvoice::getPiDate, ProformaInvoice::getPiNumber, ProformaInvoice::getId);
+        } else {
+            DocumentOrderingUtil.sortByDocumentNumberAndDateDesc(
+                    proformas, ProformaInvoice::getPiDate, ProformaInvoice::getPiNumber, ProformaInvoice::getId);
+        }
+        return proformas;
+    }
+
+    @Transactional(readOnly = true)
+    public List<ProformaResponse> listByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        return listScoped(from, to).stream().map(this::toResponse).toList();
     }
 
     @Transactional(readOnly = true)
     public ProformaResponse get(Long id) {
         ProformaInvoice pi = repo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Proforma not found"));
+        branchAccessService.assertTransactionBranchAccessible(
+                pi.getBranch() != null ? pi.getBranch().getId() : null, "Proforma Invoice");
         ownershipAccessService.assertCanAccessRecord(pi.getCreatedByUserId(), "Proforma Invoice");
         return toResponse(pi);
     }
@@ -325,7 +344,17 @@ public class ProformaService {
     /* ================= DTO MAPPER ================= */
 
     public ProformaResponse toResponse(ProformaInvoice pi) {
-        hydrateProformaItemDisplayData(pi);
+        return toResponse(pi, true);
+    }
+
+    /**
+     * {@code withItems=false} builds the header only (no product/media lookups) — the list
+     * page searches and pages those, then maps just the visible rows in full.
+     */
+    private ProformaResponse toResponse(ProformaInvoice pi, boolean withItems) {
+        if (withItems) {
+            hydrateProformaItemDisplayData(pi);
+        }
 
         ProformaResponse res = new ProformaResponse();
 
@@ -366,6 +395,11 @@ public class ProformaService {
 
         res.setStatus(pi.getStatus());
         res.setRevisionNo(pi.getRevisionNo());
+
+        if (!withItems) {
+            res.setItems(List.of());
+            return res;
+        }
 
         List<ProformaItemResponse> itemResponses = pi.getItems().stream().map(item -> {
                     ProformaItemResponse ir = new ProformaItemResponse();

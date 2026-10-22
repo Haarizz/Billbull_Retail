@@ -42,6 +42,20 @@ public class PosLayawayService {
     @org.springframework.beans.factory.annotation.Autowired
     private PosLayawayCashMovementService cashMovementService;
 
+    /** Branch scope for every layaway read and change: the stored layaway's branch, and the
+     *  branch of any POS session the caller names. Field-injected like the one above. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.billbull.backend.settings.branch.BranchAccessService branchAccessService;
+
+    private static final String LABEL = "Layaway";
+
+    /** 403 when the named session belongs to a branch the caller may not act on. Null names none. */
+    private void requireSessionInScope(Long sessionId) {
+        if (sessionId == null) return;
+        sessionRepository.findById(sessionId).ifPresent(session ->
+                branchAccessService.assertTransactionBranchAccessible(session.getBranchId(), "POS session"));
+    }
+
     private final PosLayawayRepository repo;
     private final PosLayawayPaymentRepository paymentRepo;
     private final ProductRepository productRepository;
@@ -114,6 +128,9 @@ public class PosLayawayService {
     }
 
     public PosLayaway create(PosLayawayCreateRequest req) {
+        // Before anything is reserved or numbered: the layaway's branch and its session's.
+        branchAccessService.assertTransactionBranchAccessible(req.getBranchId(), LABEL);
+        requireSessionInScope(req.getSessionId());
         if (req.getItems() == null || req.getItems().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot save a layaway with an empty cart");
         }
@@ -336,7 +353,12 @@ public class PosLayawayService {
         // Cap at 200 most-recent — the query is already branch-scoped and filtered;
         // a hard limit prevents memory spikes on stores with many historical layaways.
         PageRequest page = PageRequest.of(0, 200);
-        List<PosLayaway> results = repo.search(branchId, status != null ? status.name() : null, cust, num, page);
+        branchAccessService.assertTransactionBranchAccessible(branchId, LABEL);
+        // A null branchId searches every branch, so the rows are filtered too.
+        java.util.Map<Long, Boolean> decided = new java.util.HashMap<>();
+        List<PosLayaway> results = repo.search(branchId, status != null ? status.name() : null, cust, num, page).stream()
+                .filter(l -> decided.computeIfAbsent(l.getBranchId(), branchAccessService::canAccessTransactionBranch))
+                .toList();
         // ARCHFIX §1.6: items is LAZY — init (batched) in-session so the response serializes.
         results.forEach(l -> org.hibernate.Hibernate.initialize(l.getItems()));
         return results;
@@ -346,6 +368,9 @@ public class PosLayawayService {
     public PosLayaway getById(Long id) {
         PosLayaway layaway = repo.findById(id).orElseThrow(() ->
                 new ResponseStatusException(HttpStatus.NOT_FOUND, "Layaway not found: " + id));
+        // Every change below loads through here first, so this also guards cancel, convert,
+        // payments and release before they write anything.
+        branchAccessService.assertTransactionBranchAccessible(layaway.getBranchId(), LABEL);
         org.hibernate.Hibernate.initialize(layaway.getItems()); // ARCHFIX §1.6
         return layaway;
     }
@@ -366,6 +391,7 @@ public class PosLayawayService {
                     "Supervisor permission is required to cancel a layaway");
         }
         PosLayaway layaway = getById(id);
+        requireSessionInScope(posSessionId);
         if (!layaway.isOpen()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Only an open layaway can be cancelled (current status: " + layaway.getStatus() + ")");
@@ -442,6 +468,7 @@ public class PosLayawayService {
                                             String paymentMode, String referenceNumber, String notes,
                                             Long posSessionId) {
         PosLayaway layaway = getById(layawayId);
+        requireSessionInScope(posSessionId);
         if (!layaway.isOpen()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Cannot record payment against a " + layaway.getStatus() + " layaway");
@@ -491,6 +518,7 @@ public class PosLayawayService {
 
     @Transactional(readOnly = true)
     public List<PosLayawayPayment> getPayments(Long layawayId) {
+        getById(layawayId); // 404, or 403 for another branch's layaway
         return paymentRepo.findByLayaway_IdOrderByPaymentDateAsc(layawayId);
     }
 

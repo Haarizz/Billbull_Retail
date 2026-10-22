@@ -1,9 +1,10 @@
 // Till entry rules. Pure functions so the shell's decisions are unit-testable.
 
-// The live system's till permission is `sales.pos` ("POS Sales" in Roles & Permissions — it drives
-// the Retail sidebar link; day-to-day cashiering lives under it per ModuleCatalog). The embedded
-// /sales/pos route is additionally guarded by `sales.invoice`, since every POS sale is an invoice.
-// The till requires both, so it never admits anyone the embedded route would turn away.
+// `sales.pos` ("POS Sales" in Roles & Permissions) is the till permission: the backend requires it
+// on checkout, held sales, layaways, delivery settlement and session open (PosTillPermission).
+// `sales.invoice` is required too because the till reads invoices through /api/sales/invoices
+// (receipt print, history preview, next number), which checks it. The embedded /sales/pos route
+// applies the same two keys. See docs/standalone-pos/PERMISSIONS.md.
 export const TILL_PERMISSIONS = Object.freeze(['sales.pos', 'sales.invoice']);
 
 export const canOperateTill = (canView) => TILL_PERMISSIONS.every((module) => canView(module) === true);

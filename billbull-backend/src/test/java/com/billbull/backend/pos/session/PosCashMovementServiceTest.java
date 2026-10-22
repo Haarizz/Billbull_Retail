@@ -250,10 +250,11 @@ class PosCashMovementServiceTest {
         PosSession session = openSessionForDay(false);
         PosCashMovement m = activeMovement(session, PosCashMovementType.DROP_IN, new BigDecimal("20"));
         Page<PosCashMovement> page = new PageImpl<>(List.of(m));
-        when(repo.search(eq(7L), isNull(), eq(PosCashMovementStatus.ACTIVE), isNull(), isNull(), isNull(), isNull(), any()))
+        when(repo.search(eq(true), any(), eq(7L), isNull(), eq(PosCashMovementStatus.ACTIVE), isNull(), isNull(), isNull(), isNull(), any()))
                 .thenReturn(page);
 
-        PageResponse<PosCashMovementResponse> result = service.list(7L, null, PosCashMovementStatus.ACTIVE,
+        PageResponse<PosCashMovementResponse> result = service.list(
+                new com.billbull.backend.settings.branch.BranchAccessService.ListScope(true, java.util.Set.of(-1L)), 7L, null, PosCashMovementStatus.ACTIVE,
                 null, null, null, null, 0, 20);
 
         assertEquals(1, result.getTotalElements());

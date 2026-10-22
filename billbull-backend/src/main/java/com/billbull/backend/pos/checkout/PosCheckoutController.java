@@ -10,6 +10,7 @@ import com.billbull.backend.inventory.serial.SerialMaster;
 import com.billbull.backend.inventory.serial.SerialMasterRepository;
 import com.billbull.backend.inventory.serial.SerialStatus;
 import com.billbull.backend.pos.audit.PosAuditService;
+import com.billbull.backend.pos.auth.PosTillPermission;
 import com.billbull.backend.pos.receipt.ZatcaQrGenerator;
 import com.billbull.backend.pos.session.PosSessionService;
 import com.billbull.backend.pos.settings.PosSettings;
@@ -25,6 +26,7 @@ import com.billbull.backend.sales.invoice.SalesType;
 import com.billbull.backend.sales.payment.Payment;
 import com.billbull.backend.sales.payment.PaymentRepository;
 import com.billbull.backend.security.RolePermissionService;
+import com.billbull.backend.settings.branch.BranchAccessService;
 import com.billbull.backend.settings.branch.BranchRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -101,6 +103,9 @@ public class PosCheckoutController {
     /** The other way a delivery ends: the customer refused it and the goods came back.
      *  See {@link PosDeliveryReturnService}. */
     private final PosDeliveryReturnService deliveryReturnService;
+    /** Branch scope for the invoice reads below: the stored invoice's branch decides, never a
+     *  branch id sent by the client. */
+    private final BranchAccessService branchAccessService;
 
     public PosCheckoutController(SalesInvoiceService invoiceService, PosSessionService sessionService,
                                   SalesInvoiceRepository invoiceRepository, CustomerRepository customerRepository,
@@ -128,7 +133,9 @@ public class PosCheckoutController {
                                   PosDeliverySettlementService deliverySettlementService,
                                   PosDeliveryReturnService deliveryReturnService,
                                   com.billbull.backend.sales.invoice.InvoiceCustomerContactService invoiceCustomerContactService,
-                                  com.billbull.backend.sales.payment.InvoicePaymentSummaryService paymentSummaryService) {
+                                  com.billbull.backend.sales.payment.InvoicePaymentSummaryService paymentSummaryService,
+                                  BranchAccessService branchAccessService) {
+        this.branchAccessService = branchAccessService;
         this.paymentSummaryService = paymentSummaryService;
         this.invoiceCustomerContactService = invoiceCustomerContactService;
         this.deliverySettlementService = deliverySettlementService;
@@ -194,6 +201,9 @@ public class PosCheckoutController {
     @PostMapping
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<?> checkout(@RequestBody PosCheckoutRequest request) {
+        // Till permission first, ahead of even the idempotent replay: a caller who may not
+        // operate the till must not be able to read back a sale by its checkout key either.
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
         // Idempotency guard: if the frontend sends the same checkoutKey twice (network retry),
         // return the already-completed invoice instead of creating a duplicate.
         // Deliberately BEFORE the Business Day gate below: a sale that already
@@ -499,6 +509,7 @@ public class PosCheckoutController {
             @RequestParam(required = false) String customerMobile,
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
 
         if (invoiceNumber != null && !invoiceNumber.isBlank()) {
             // Items are eagerly fetched in the query itself — the repository call's own
@@ -506,11 +517,16 @@ public class PosCheckoutController {
             // post-hoc inv.getItems().size() here throws LazyInitializationException.
             Optional<SalesInvoice> found = invoiceRepository.findByInvoiceNumberWithItems(invoiceNumber.trim().toUpperCase());
             if (found.isEmpty()) {
-                // Try prefix search — return first (latest) match
+                // Try prefix search — return the first (latest) match the caller may see. A match
+                // in a branch they cannot reach is skipped rather than returned.
                 List<SalesInvoice> byPrefix = invoiceRepository.findByInvoiceNumberPrefixWithItems(invoiceNumber.trim().toUpperCase());
-                if (byPrefix.isEmpty()) return ResponseEntity.notFound().build();
-                return ResponseEntity.ok(byPrefix.get(0));
+                return onlyAccessibleBranches(byPrefix).stream().findFirst()
+                        .<ResponseEntity<?>>map(ResponseEntity::ok)
+                        .orElse(ResponseEntity.notFound().build());
             }
+            // An exact number names one invoice. Another branch's invoice is a 403, the same
+            // status the reprint endpoint returns for it.
+            branchAccessService.assertTransactionBranchAccessible(found.get().getBranchId(), "Sales Invoice");
             return ResponseEntity.ok(found.get());
         }
 
@@ -521,8 +537,10 @@ public class PosCheckoutController {
                             mobile, mobile, mobile, mobile);
             if (customer.isEmpty()) return ResponseEntity.notFound().build();
             String code = customer.get().getCode();
+            requireBranchAccessible(branchId);
             LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : businessDayClock.now().toLocalDate().minusDays(90);
-            List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, businessDayClock.now().toLocalDate(), branchId);
+            List<SalesInvoice> invoices = onlyAccessibleBranches(
+                    invoiceRepository.findPosInvoicesByDateRange(from, businessDayClock.now().toLocalDate(), branchId));
             Optional<String> matchedInvoiceNumber = invoices.stream()
                     .filter(i -> code.equalsIgnoreCase(i.getCustomerCode()))
                     .findFirst()
@@ -548,11 +566,32 @@ public class PosCheckoutController {
             @RequestParam(required = false) String dateFrom,
             @RequestParam(required = false) String dateTo,
             @RequestParam(required = false) Long branchId) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
+        requireBranchAccessible(branchId);
         LocalDate from = dateFrom != null ? LocalDate.parse(dateFrom) : businessDayClock.now().toLocalDate();
         LocalDate to   = dateTo   != null ? LocalDate.parse(dateTo)   : businessDayClock.now().toLocalDate();
-        List<SalesInvoice> invoices = invoiceRepository.findPosInvoicesByDateRange(from, to, branchId);
+        // A null branchId means every branch to the query, so the rows are filtered here too.
+        List<SalesInvoice> invoices = onlyAccessibleBranches(
+                invoiceRepository.findPosInvoicesByDateRange(from, to, branchId));
         applyActualPaymentMode(invoices);
         return invoices;
+    }
+
+    /** 403 when the client names a branch the caller may not act on. Null names no branch. */
+    private void requireBranchAccessible(Long branchId) {
+        if (branchId != null && !branchAccessService.canAccessTransactionBranch(branchId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "This branch is not accessible in the current session.");
+        }
+    }
+
+    /** Drops invoices from branches the caller may not act on. Decided once per branch, since the
+     *  access check can hit the database. */
+    private List<SalesInvoice> onlyAccessibleBranches(List<SalesInvoice> invoices) {
+        Map<Long, Boolean> decided = new java.util.HashMap<>();
+        return invoices.stream()
+                .filter(inv -> decided.computeIfAbsent(inv.getBranchId(), branchAccessService::canAccessTransactionBranch))
+                .toList();
     }
 
     /** Overrides each invoice's stored {@code paymentMode} text with a label built from the
@@ -591,6 +630,7 @@ public class PosCheckoutController {
     @GetMapping("/invoices/{id}/receipt")
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<Map<String, Object>> getReceiptData(@PathVariable Long id) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
         SalesInvoice invoice = invoiceService.getById(id);
         invoiceCustomerContactService.attach(invoice);
         if (invoice.getItems() != null) invoice.getItems().size(); // init LAZY
@@ -704,7 +744,9 @@ public class PosCheckoutController {
     @GetMapping("/deliveries")
     @PreAuthorize("isAuthenticated()")
     public List<SalesInvoice> getPendingDeliveries(@RequestParam(required = false) Long branchId) {
-        List<SalesInvoice> deliveries = invoiceRepository.findPendingDeliveryOrders(branchId);
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
+        requireBranchAccessible(branchId);
+        List<SalesInvoice> deliveries = onlyAccessibleBranches(invoiceRepository.findPendingDeliveryOrders(branchId));
         invoiceCustomerContactService.attach(deliveries);
         return deliveries;
     }
@@ -723,6 +765,7 @@ public class PosCheckoutController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<SalesInvoice> settleDelivery(@PathVariable Long id,
             @RequestBody DeliverySettleRequest req) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
         LocalDate fallbackBusinessDate = posBusinessDate(req.getSessionId());
         SalesInvoice result = deliverySettlementService.settle(id, req, fallbackBusinessDate);
         return ResponseEntity.ok(result);
@@ -741,6 +784,7 @@ public class PosCheckoutController {
     @PreAuthorize("isAuthenticated()")
     public ResponseEntity<PosDeliveryReturnResponse> returnDelivery(@PathVariable Long id,
             @RequestBody PosDeliveryReturnRequest req) {
+        modulePermissionService.requireCanView(PosTillPermission.MODULE);
         return ResponseEntity.ok(deliveryReturnService.returnDelivery(id, req));
     }
 

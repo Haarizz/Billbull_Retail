@@ -30,10 +30,12 @@ public class DeliveryNoteController {
     }
 
     // QA-040: send the DN email using the frontend-rendered HTML body.
+    // Checked before the try: the catch-all below would turn the denial into a 500.
     @PostMapping("/{id}/send-email")
     @SuppressWarnings("unchecked")
     public ResponseEntity<?> sendEmail(@PathVariable Long id,
                                        @RequestBody(required = false) Map<String, Object> body) {
+        modulePermissionService.requireCanView(MODULE);
         try {
             String toEmail = body != null ? (String) body.get("toEmail") : null;
             String subject = body != null ? (String) body.get("subject") : null;
@@ -54,6 +56,9 @@ public class DeliveryNoteController {
             return ResponseEntity.ok(Map.of("message", "Email sent successfully to " + toEmail));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            // Branch scope (403) and ownership (404) from the document lookup keep their status.
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Failed to send email: " + e.getMessage());
         }
@@ -73,12 +78,11 @@ public class DeliveryNoteController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
-        java.util.List<DeliveryNoteResponse> all = (fromDate != null || toDate != null)
-                ? service.listByDateRange(
-                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
-                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
-                : service.list();
-        return com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status);
+        boolean ranged = fromDate != null || toDate != null;
+        return service.page(
+                ranged ? (fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1)) : null,
+                ranged ? (toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now()) : null,
+                page, size, search, status);
     }
 
     @GetMapping("/next-number")

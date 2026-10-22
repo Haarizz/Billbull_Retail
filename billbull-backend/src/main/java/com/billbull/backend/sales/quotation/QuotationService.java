@@ -207,27 +207,40 @@ public class QuotationService {
     // -------------------------------------------------
     @Transactional(readOnly = true)
     public List<Quotation> getAllQuotations() {
-        List<Quotation> quotations = new ArrayList<>(
-                ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScoped(quotationRepo.findAll(), Quotation::getBranchId),
-                        Quotation::getCreatedByUserId));
-        quotations.sort((a, b) -> Long.compare(
-                b.getId() == null ? 0 : b.getId(),
-                a.getId() == null ? 0 : a.getId()));
-        quotations.forEach(this::initialize);
-        enrichQuotationImages(quotations);
-        return quotations;
+        return hydrateForList(listScoped(null, null));
     }
 
     @Transactional(readOnly = true)
     public List<Quotation> getAllByDateRange(java.time.LocalDate from, java.time.LocalDate to) {
+        return hydrateForList(listScoped(from, to));
+    }
+
+    /**
+     * The list tab's page: pages the bare rows, then initializes and enriches only the visible
+     * page (a product lookup per item code per quotation). A null range means every quotation.
+     */
+    @Transactional(readOnly = true)
+    public com.billbull.backend.util.PageResponse<Quotation> getPage(
+            java.time.LocalDate from, java.time.LocalDate to, int page, int size, String search, String status) {
+        return com.billbull.backend.util.PaginationUtil.paginate(
+                listScoped(from, to), page, size, search, status, this::hydrateForList);
+    }
+
+    /** Branch/ownership-scoped quotations, newest first; a null range means all of them. */
+    private List<Quotation> listScoped(java.time.LocalDate from, java.time.LocalDate to) {
         List<Quotation> quotations = new ArrayList<>(
                 ownershipAccessService.filterOwned(
-                        branchAccessService.filterBranchScoped(quotationRepo.findByDateBetween(from, to), Quotation::getBranchId),
+                        branchAccessService.filterBranchScoped(
+                                from != null && to != null ? quotationRepo.findByDateBetween(from, to) : quotationRepo.findAll(),
+                                Quotation::getBranchId),
                         Quotation::getCreatedByUserId));
         quotations.sort((a, b) -> Long.compare(
                 b.getId() == null ? 0 : b.getId(),
                 a.getId() == null ? 0 : a.getId()));
+        return quotations;
+    }
+
+    private List<Quotation> hydrateForList(List<Quotation> quotations) {
         quotations.forEach(this::initialize);
         enrichQuotationImages(quotations);
         return quotations;
@@ -248,6 +261,9 @@ public class QuotationService {
     public Quotation getQuotationById(Long id) {
         Quotation quotation = quotationRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Quotation not found with id: " + id));
+        // Branch scope, as for Delivery Note and Sales Invoice. Every by-id path (open, email,
+        // WhatsApp, revision, attachment) comes through here, so a guessed id from another branch stops.
+        branchAccessService.assertTransactionBranchAccessible(quotation.getBranchId(), "Quotation");
         // Ownership guard (user-based data visibility) — restricted users may only open their own
         // quotations; 404 to avoid id-enumeration. No-op when the toggle is off / override held.
         ownershipAccessService.assertCanAccessRecord(quotation.getCreatedByUserId(), "Quotation");

@@ -87,12 +87,11 @@ public class QuotationController {
             @RequestParam(required = false) String fromDate,
             @RequestParam(required = false) String toDate) {
         permissionService.requireCan(MODULE, "view");
-        java.util.List<Quotation> all = (fromDate != null || toDate != null)
-                ? service.getAllByDateRange(
-                        fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1),
-                        toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now())
-                : service.getAllQuotations();
-        return ResponseEntity.ok(com.billbull.backend.util.PaginationUtil.paginate(all, page, size, search, status));
+        boolean ranged = fromDate != null || toDate != null;
+        return ResponseEntity.ok(service.getPage(
+                ranged ? (fromDate != null ? java.time.LocalDate.parse(fromDate) : java.time.LocalDate.of(2000, 1, 1)) : null,
+                ranged ? (toDate != null ? java.time.LocalDate.parse(toDate) : java.time.LocalDate.now()) : null,
+                page, size, search, status));
     }
 
     @GetMapping("/{id}")
@@ -251,6 +250,11 @@ public class QuotationController {
                     quotation.getQtnNo(),
                     quotationTemplateParams(quotation)));
             return ResponseEntity.ok(sent);
+        } catch (com.billbull.backend.document.DocumentPdfGuard.PdfRejectedException e) {
+            // Server-side: the PDF could not be produced, so nothing was uploaded to Meta.
+            return ResponseEntity.status(e.reason() == com.billbull.backend.document.DocumentPdfGuard.Reason.TOO_LARGE
+                    ? org.springframework.http.HttpStatus.UNPROCESSABLE_ENTITY
+                    : org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR).body(e.getMessage());
         } catch (IllegalArgumentException | IllegalStateException | WhatsAppApiException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }

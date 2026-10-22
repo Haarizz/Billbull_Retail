@@ -74,6 +74,18 @@ public class ModulePermissionService {
         }
     }
 
+    /**
+     * Horizontal, for an endpoint several screens share: passes when the user can VIEW at least
+     * one of {@code modules}. Each module is resolved by the usual rules (explicit row, then
+     * parent). When none passes, the denial names the first module.
+     */
+    public void requireCanViewAny(String... modules) {
+        for (String module : modules) {
+            if (canView(module)) return;
+        }
+        deny(modules.length > 0 ? modules[0] : "", "view");
+    }
+
     /** Generic action-level check */
     public void requireCan(String module, String action) {
         switch (action.toLowerCase()) {

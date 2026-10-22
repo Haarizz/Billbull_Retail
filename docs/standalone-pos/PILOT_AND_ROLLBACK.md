@@ -8,6 +8,9 @@
 - [ ] `QA_PARITY.md`: the full 30-transaction script passed in Classic, Compact and Cart Focus, with no unexplained differences.
 - [ ] `/pos/` deployed to the pilot tenant only (`DEPLOYMENT.md`), with production rollout authorized.
 - [ ] Every pilot till has a working `/sales/pos` bookmark as well as `/pos/`.
+- [ ] The pre-rollout role checks in `PERMISSIONS.md` have been run on the pilot tenant, and every role they returned has been resolved.
+- [ ] Every network printer on the pilot tenant has a private-LAN address on port 9100–9109 (`PERMISSIONS.md` check 4). Otherwise the server refuses to print to it.
+- [ ] Supervisors who configure the till have `pos.settings` edit (check 3), and the drawer behaviour expected at checkout is set on the printer or its driver: no BillBull code sends a drawer pulse (`PERMISSIONS.md`, "How the till actually prints").
 - [ ] A named owner for daily reconciliation, and a named person who can order an immediate rollback.
 
 ## Running the pilot (one volunteer tenant, one full trading week)
@@ -48,7 +51,7 @@ Roll back at once if any unexplained financial or operational divergence appears
 2. **Tenant (if needed):** remove the four `/pos` location blocks from the vhost, then `nginx -t && systemctl reload nginx`.
 3. Record what happened, keep the logs (browser console / client-logs, backend logs, `pos_print_jobs`) and investigate before retrying.
 
-Both apps use the same API and database, so nothing in the data needs reverting.
+Both apps use the same API and database, so nothing in the data needs reverting. The backend till check (`PERMISSIONS.md`) applies to `/sales/pos` and `/pos/` alike, so rolling back to `/sales/pos` does not require reverting it.
 
 ## Decommissioning `/sales/pos` — separate, gated, not part of this work
 
